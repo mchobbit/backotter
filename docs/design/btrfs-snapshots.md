@@ -120,7 +120,8 @@ time.
      holds the `.snapshots`.
 
   Made in that order too; a snapshot keeps its source ID when nothing
-  made before it took a later one.
+  made before it took a later one.  Families interleave by source ID (each
+  member after its base), keeping each family's own order.
 - **Clone source**: the restored tree of the family's live subvolume (for
   snapper, the subvolume mounted at `X`).  It is passed to each snapshot's
   restore as `--clone-from`, below.

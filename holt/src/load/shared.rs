@@ -78,8 +78,9 @@ pub struct Child {
 pub struct Plan {
     /// Backup paths where a mounted subvolume shows up a second time.
     pub aliases: Vec<String>,
-    /// In the order they are made: their contents' (`gen`), which is the
-    /// source's ID order but after a rollback.
+    /// In the order they are made: each family's in its contents' (`gen`),
+    /// which is the source's ID order but after a rollback, and the
+    /// families interleaved by source ID, each after its base.
     pub shared: Vec<Shared>,
     pub notes: Vec<String>,
 }
@@ -294,9 +295,10 @@ pub fn plan(subs: &[Sub], mounts: &[Mount]) -> Plan {
     // each shared snapshot's children right after it.
     let shared: BTreeSet<String> = accepted.iter().flat_map(|(_, a)| std::iter::once(a.path.clone()).chain(a.children.iter().map(|c| c.path.clone()))).collect();
     let mut next = subs.iter().filter(|s| !shared.contains(&s.path)).filter_map(|s| s.id).max().map_or(256, |m| m + 1).max(256);
+    let accepted = interleave(accepted, next);
     let mut assign = |path: &str, id: Option<u64>, notes: &mut Vec<String>| -> (u64, Vec<u64>) {
         match id {
-            Some(id) if id >= next && id - next <= 4096 => {
+            Some(id) if keeps(id, next) => {
                 let ph = (next..id).collect();
                 next = id + 1;
                 (id, ph)
@@ -320,6 +322,91 @@ pub fn plan(subs: &[Sub], mounts: &[Mount]) -> Plan {
         plan.shared.push(a);
     }
     plan
+}
+
+/// A subvolume with the source's ID ID gets it here when NEXT is the next
+/// free ID: placeholders burn the gap, up to 4096 of them.
+fn keeps(id: u64, next: u64) -> bool {
+    id >= next && id - next <= 4096
+}
+
+/// The next free ID after A and its children are made from NEXT, and how
+/// many of them don't get the source's ID (plan's assign).
+fn step(a: &Shared, next: u64) -> (u64, usize) {
+    std::iter::once(a.id).chain(a.children.iter().map(|c| c.id)).fold((next, 0), |(n, moved), id| match id {
+        Some(id) if keeps(id, n) => (id + 1, moved),
+        Some(_) => (n + 1, moved + 1),
+        None => (n + 1, moved),
+    })
+}
+
+/// The shared snapshots in the order they are made, and so numbered, from
+/// NEXT, the first free ID.  Each family's own order stays ACCEPTED's
+/// (their contents', which its bases chain along); between families the
+/// order shares nothing, but it costs IDs.  So the families are merged by
+/// source ID: of their next members, the one with the lowest ID is made
+/// first, so that a snapshot keeps its source ID whenever its own family's
+/// order allows.  Each waits until what it is made from is made: its base
+/// and its children's (another family's shared snapshot, as its origin).
+/// Where a family's own order costs IDs (one can't keep its ID, as after a
+/// rollback), taking that one first can cost another family's; then the
+/// merge that takes the members that keep their IDs first, or ACCEPTED's
+/// order, if one of those keeps more.
+fn interleave(accepted: Vec<(String, Shared)>, next: u64) -> Vec<(String, Shared)> {
+    let moved = |o: &[usize]| {
+        o.iter()
+            .fold((next, 0), |(n, m), &i| {
+                let (n, k) = step(&accepted[i].1, n);
+                (n, m + k)
+            })
+            .1
+    };
+    let mut best = merge(&accepted, next, false);
+    for o in [merge(&accepted, next, true), (0..accepted.len()).collect()] {
+        if moved(&o) < moved(&best) {
+            best = o;
+        }
+    }
+    // Each index once (merge takes every member of every family).
+    let mut slots: Vec<Option<(String, Shared)>> = accepted.into_iter().map(Some).collect();
+    best.into_iter().filter_map(|i| slots[i].take()).collect()
+}
+
+/// ACCEPTED's indices, its families merged (interleave): of the ready next
+/// members, the lowest source ID first; with KEEPING_FIRST, those that keep
+/// their IDs first.  ACCEPTED's own order has every base before what is
+/// made from it, so its earliest member left is always ready; that is
+/// taken if no other is (it can't arise).
+fn merge(accepted: &[(String, Shared)], mut next: u64, keeping_first: bool) -> Vec<usize> {
+    let mut families: Vec<(&str, std::collections::VecDeque<usize>)> = Vec::new();
+    for (i, (f, _)) in accepted.iter().enumerate() {
+        match families.iter_mut().find(|(g, _)| g == f) {
+            Some((_, q)) => q.push_back(i),
+            None => families.push((f, std::collections::VecDeque::from([i]))),
+        }
+    }
+    // What is made later: shared snapshots and their children not yet taken.
+    let mut pending: BTreeSet<&str> = accepted.iter().flat_map(|(_, a)| std::iter::once(a.path.as_str()).chain(a.children.iter().map(|c| c.path.as_str()))).collect();
+    let mut out = Vec::new();
+    loop {
+        // (family, member) of each family's next member.
+        let heads: Vec<(usize, usize)> = families.iter().enumerate().filter_map(|(k, (_, q))| Some((k, *q.front()?))).collect();
+        let ready = |a: &Shared| !pending.contains(a.base.as_str()) && a.children.iter().all(|c| c.base.as_deref().is_none_or(|b| !pending.contains(b)));
+        let key = |i: usize| {
+            let a = &accepted[i].1;
+            (keeping_first && !a.id.is_some_and(|id| keeps(id, next)), a.id.unwrap_or(u64::MAX), i)
+        };
+        let Some((k, pick)) = heads.iter().copied().filter(|&(_, i)| ready(&accepted[i].1)).min_by_key(|&(_, i)| key(i)).or_else(|| heads.iter().copied().min_by_key(|&(_, i)| i)) else { break };
+        families[k].1.pop_front();
+        let a = &accepted[pick].1;
+        pending.remove(a.path.as_str());
+        for c in &a.children {
+            pending.remove(c.path.as_str());
+        }
+        next = step(a, next).0;
+        out.push(pick);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -412,6 +499,79 @@ mod tests {
         );
         assert_eq!(p.notes.len(), 3, "{:?}", p.notes);
         assert!(p.notes.iter().any(|n| n.starts_with("@/.snapshots/1/snapshot: ID 264 on the source, 269 here")), "{:?}", p.notes);
+    }
+
+    /// BackShot2 anduinos2: a deployment snapshot of @root (262) and a
+    /// personal one of @home (263), two families; 262 was written after
+    /// 263 was made.  The families interleave by ID: both keep theirs.
+    #[test]
+    fn two_families_keep_their_ids() {
+        let root = "@snapshots/anduinos-btrfs-snapshots-manager/deployments/d1/root";
+        let home = "@snapshots/anduinos-btrfs-snapshots-manager/personal/snapshots/p1/home";
+        let mut subs = vec![
+            sub("@root", 256, "r", None, false),
+            sub("@home", 257, "h", None, false),
+            sub("@snapshots", 258, "s", None, false),
+            sub(root, 262, "d1", Some("r"), true),
+            sub(home, 263, "p1", Some("h"), true),
+        ];
+        subs[3].generation = Some(31);
+        subs[4].generation = Some(30);
+        let p = plan(&subs, &[m("/", "@root"), m("/home", "@home"), m("/snapshots", "@snapshots")]);
+        let got: Vec<(&str, &str, u64, Vec<u64>)> = p.shared.iter().map(|s| (s.path.as_str(), s.base.as_str(), s.new_id, s.placeholders.clone())).collect();
+        assert_eq!(got, vec![(root, "@root", 262, vec![259, 260, 261]), (home, "@home", 263, vec![])]);
+        assert!(p.notes.is_empty(), "{:?}", p.notes);
+    }
+
+    /// A family's own order still costs IDs where it isn't the ID order:
+    /// the rollback's chain as in after_a_rollback, with another family's
+    /// snapshot (of @/home, written first of all) that keeps its ID.
+    #[test]
+    fn a_family_reorder_still_renumbers() {
+        let mut subs = suse(&[
+            sub("@/.snapshots/2/snapshot", 265, "u265", Some("u264"), true),
+            sub("@/.snapshots/3/snapshot", 266, "u266", Some("u264"), true),
+            sub("@/.snapshots/4/snapshot", 267, "u267", Some("u265"), false),
+            sub("@/home/.pre-update", 271, "u271", Some("u262"), true),
+        ]);
+        subs.iter_mut().find(|s| s.id == Some(264)).unwrap().generation = Some(266);
+        subs.iter_mut().find(|s| s.id == Some(271)).unwrap().generation = Some(263);
+        let p = plan(&subs, &suse_mounts("@/.snapshots/4/snapshot"));
+        let got: Vec<(&str, &str, u64)> = p.shared.iter().map(|s| (s.path.as_str(), s.base.as_str(), s.new_id)).collect();
+        assert_eq!(
+            got,
+            vec![
+                ("@/.snapshots/2/snapshot", "@/.snapshots/4/snapshot", 268),
+                ("@/.snapshots/1/snapshot", "@/.snapshots/2/snapshot", 269),
+                ("@/.snapshots/3/snapshot", "@/.snapshots/1/snapshot", 270),
+                ("@/home/.pre-update", "@/home", 271),
+            ]
+        );
+        assert_eq!(p.notes.len(), 3, "{:?}", p.notes);
+        assert!(p.notes.iter().any(|n| n.starts_with("@/.snapshots/1/snapshot: ID 264 on the source, 269 here")), "{:?}", p.notes);
+        // Two snapshots of @/home, the older (265) written after the newer:
+        // their family's order, so 265 is renumbered.  The snapshot of @/var
+        // (267) is made before it, not after: taken first, 265 would cost
+        // 267 its ID too.
+        let mut subs = suse(&[sub("@/home/a", 265, "a", Some("u262"), true), sub("@/home/b", 266, "b", Some("u262"), true), sub("@/var/.pre", 267, "v", Some("u257"), true)]);
+        subs[5].generation = Some(270);
+        let p = plan(&subs, &suse_mounts("@/.snapshots/1/snapshot"));
+        let got: Vec<(&str, &str, u64)> = p.shared.iter().map(|s| (s.path.as_str(), s.base.as_str(), s.new_id)).collect();
+        assert_eq!(got, vec![("@/home/b", "@/home", 266), ("@/var/.pre", "@/var", 267), ("@/home/a", "@/home/b", 268)]);
+        assert_eq!(p.notes, vec!["@/home/a: ID 265 on the source, 268 here (a subvolume made after it on the source is made first here)".to_string()]);
+    }
+
+    /// One family's origin is another's shared snapshot: the snapshot of it
+    /// is made after it, though its own ID is lower.
+    #[test]
+    fn a_cross_family_origin_comes_first() {
+        // Made first, the snapshot of copy would keep 260 and copy 261.
+        let mut subs = vec![sub("@", 256, "a", None, false), sub("@/snaps/of-copy", 260, "c", Some("b"), true), sub("@/snaps/copy", 261, "b", Some("a"), false)];
+        subs[1].generation = Some(270);
+        let p = plan(&subs, &[m("/", "@")]);
+        let got: Vec<(&str, &str, u64)> = p.shared.iter().map(|s| (s.path.as_str(), s.base.as_str(), s.new_id)).collect();
+        assert_eq!(got, vec![("@/snaps/copy", "@", 261), ("@/snaps/of-copy", "@/snaps/copy", 262)]);
+        assert_eq!(p.notes, vec!["@/snaps/of-copy: ID 260 on the source, 262 here (a subvolume made after it on the source is made first here)".to_string()]);
     }
 
     #[test]

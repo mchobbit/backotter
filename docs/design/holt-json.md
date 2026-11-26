@@ -3595,7 +3595,7 @@ for oq14"; stick-config.md's step 2 now says each):
     old reports off.  Or leave them, and say in the Report screen's words
     that reports take the stick's room until removed.
 18. **Why a stick holds no layout, as data** (from open question 16's
-    review).  bko-rescue sees only bko-holt's `no_layout` code, after
+    review; answered: approved 2026-11-26 by the user, the recommendation; not built yet).  bko-rescue sees only bko-holt's `no_layout` code, after
     the password and the snapshot are chosen.  It can't tell
     `stick_full`, where room helps, from `system_too_big`, which no stick
     takes, or from a system.json with no `layout` at all.  So its
@@ -3607,7 +3607,7 @@ for oq14"; stick-config.md's step 2 now says each):
     screen, before the password, with advice for that code alone.  Or
     keep today's conditional words.
 19. **The whole file once the older copies go** (from open question 16's
-    review).  When even `body` doesn't fit beside the machine's older
+    review; answered: approved 2026-11-26 by the user, the recommendation; not built yet).  When even `body` doesn't fit beside the machine's older
     copies, `stick_write` removes them and writes `body`.  If the whole
     file would fit once they are gone, writing it keeps the layout on the
     stick, and nothing more is lost: the copies go either way.
@@ -3615,7 +3615,7 @@ for oq14"; stick-config.md's step 2 now says each):
     `RemoveOld` (restore fidelity first).  Or keep `body` there, as the
     approved text says.
 20. **A wrong clock and the newest reports** (from open question 17's
-    review).  bko-rescue keeps the 5 newest report pairs by their stamp:
+    review; answered: approved 2026-11-26 by the user, the recommendation; not built yet).  bko-rescue keeps the 5 newest report pairs by their stamp:
     the clock of the computer that saved each one.  On a computer whose
     clock is wrong, "newest" is wrong too.  A dead clock (2000-01-01)
     saves report A, which stays; ten minutes later report B removes A,
@@ -3630,7 +3630,7 @@ for oq14"; stick-config.md's step 2 now says each):
     is copied off.  Or keep today's build: the new pair always stays, the
     others go by stamp.
 21. **A stick whose bko-holt restores system.json** (from open question
-    15's build).  load leaves `/.bko-holt/system.json` out of every
+    15's build; answered: approved 2026-11-26 by the user, the recommendation; not built yet).  load leaves `/.bko-holt/system.json` out of every
     restore since 134286f, but an image built before it doesn't: restoring
     a backup the backup tool made (every snapshot holds the file) onto
     such a stick brings back `/.bko-holt/system.json` and `/.bko-holt` on
@@ -3642,7 +3642,7 @@ for oq14"; stick-config.md's step 2 now says each):
     `snapshot_layout`, as it does for `dump_schemas`.  Or nothing: the
     files are small and hold no secret, and judge-like checks see them.
 22. **A snapshot whose read-back failed** (from open question 15's
-    review).  The backup tool's read-backs (`snapshot-layout`, then
+    review; answered: approved 2026-11-26 by the user, the recommendation; not built yet).  The backup tool's read-backs (`snapshot-layout`, then
     `luks-headers`) make a failure "a failed backup of that machine", but
     the snapshot stays in the repository, and bko-rescue's Snapshot screen
     lists it like any other.  If the staging failed, it holds no
@@ -3660,7 +3660,7 @@ for oq14"; stick-config.md's step 2 now says each):
     `no_system_json` is a problem screen, never the stick's copy.  Or
     forget the snapshot (its files are lost too).  Or nothing: the
     failure is said at backup time, and Disks says which copy it used.
-23. **The staging root off Linux** (from open question 14's build).  The
+23. **The staging root off Linux** (from open question 14's build; answered: approved 2026-11-26 by the user, the recommendation; not built yet).  The
     staging root needs a private mount namespace (`unshare -m`), and only
     Linux has one.  Open question 15 puts system.json in every machine's
     snapshot, so the BSDs, illumos and Haiku need a way too (their disks

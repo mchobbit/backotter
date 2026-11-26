@@ -389,7 +389,7 @@ What the backup tool must do (not built: it comes with the backup tool):
       file systems busy (a `cryptsetup close` or `zpool export` after the
       backup works).  Only a tool killed by SIGKILL can't: the archiver
       then gets SIGTERM, but what it started may stay.  Linux only: off
-      Linux, open question 23.
+      Linux, open question 23 (approved 2026-11-26: `--add-file` in both archivers).
    2. Mount a tmpfs (64 MiB, mode 0700) at `/run/bko-holt/stage`.  Before
       that, the nearest of it and its parents that is there (`/run` on a
       normal boot, which has no `/run/bko-holt` until a dump made it) must
@@ -549,13 +549,13 @@ What the backup tool must do (not built: it comes with the backup tool):
    snapshot in the repository; if it holds no system.json (the staging
    failed), bko-rescue takes it for a backup from before and uses the
    stick's copy.  What the backup tool does with it is holt-json.md's
-   open question 22.
+   open question 22 (approved 2026-11-26).
 4. Only then write system.json to the stick (below, "How it writes").
 
 load's restore leaves `/.bko-holt/system.json` out of every tree, and
 `/.bko-holt` when no raw volume is under it (built, 134286f), so the
 record never lands on the restored disks.  An image built before that
-doesn't (holt-json.md's open question 21).
+doesn't (holt-json.md's open question 21, approved 2026-11-26).
 
 At restore time:
 

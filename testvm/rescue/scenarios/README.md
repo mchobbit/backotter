@@ -68,7 +68,11 @@ by the words on standard input (the call's `stdin`: BIP39's test vector,
 as bko-rescue sends it, each word completed; the fake takes a word's first
 4 letters or more for it, as bko-holt does) and, for the good words,
 writing the password to OUT (its `out`); the fake watches that OUT is
-removed as it watches key files.
+removed as it watches key files.  `stick-three` and `stick-layouts` hold
+`stick --copy ID * --json` calls (holt-json.md's open question 8), run
+on the same tree: what one wrote to OUT is its `out` (the fake writes it
+to argv[3] and doesn't watch it: bko-rescue keeps the layout for the
+session).
 
 | Scenario | What the Machine screen sees |
 |---|---|
@@ -80,6 +84,7 @@ removed as it watches key files.
 | `stick-empty` | the config partition, no machines yet |
 | `stick-missing` | no partition 3 (a file-copying writer): `missing`, exit 1 |
 | `stick-reformatted` | another FAT serial: `damaged`, exit 1 |
+| `stick-layouts` | lovelace's system.json carrying holt/tests/corpus/debian13-stack's dump as its `layout`, babbage's none, hopper's a wrong checksum: `03-copy` writes lovelace's layout (the corpus dump, byte for byte), `04-copy-no-layout` `no_layout`, `05-copy-checksum-bad` `machine_not_ok`, `06-copy-no-machine` `no_such_machine` (each exit 1) |
 | `stick-invalid` | hand-written, wrong on purpose (`invalid`): a missing config with machines, a recovery verdict `ok` with a problem, two rows `this_computer`, a machine named `../../etc` |
 
 The recovery calls (`stick-three`, `stick-this-computer`): `good` (exit 0,
@@ -94,7 +99,7 @@ Hand-written by `../make-app-fixtures.py` for `../app-test.py`:
 
 | Scenario | What it is |
 |---|---|
-| `app-three` | `stick-three`'s recorded calls (version, stick, recovery-words) and `report-bug`'s: its `out` is the report, written to `--output`'s file |
+| `app-three` | `stick-three`'s recorded calls (version, stick, recovery-words, stick --copy's refusal) and `report-bug`'s: its `out` is the report, written to `--output`'s file |
 | `app-dry` | the same, its api document saying the dry-run lock took (`no_commit`, `dry_run` true) |
 
 rustic-bko's answers are beside these, in `../rustic/NAME` (not here, so
@@ -112,8 +117,10 @@ stick's, 14 backups), `mismatch` (another repository's ID), `shared`
 
 Written by `../make-disk-fixtures.py`: each answers bko-rescue's plan and
 status calls, by the argv shape `src/app/holt_args.rs` builds, from Disks
-to Review, and holds `system.json` (and `system.path`) for the read-only
-mount of the config partition (the Rust tests' fake, `../fake-bin/mount`).
+to Review, and holds `03-copy`, `stick-layouts`' recorded `stick --copy`
+of lovelace's layout, which Disks runs before its first plan (the Rust
+tests' fake answers it too).  `stick-three`'s `08-copy` is the refusal
+(`no_layout`): app-three's and app-dry's Disks show it.
 
 | Scenario | What Disks to Review see |
 |---|---|

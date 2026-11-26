@@ -1,23 +1,8 @@
 #!/bin/sh
-# A fake mount for app-test.py's Disks runs: bko-rescue mounts the stick's
-# config partition read-only to copy the machine's system.json (src/app/
-# layout.rs); this puts the scenario's system.json where that mount would
-# show it.  Only a read-only mount is taken: any other is refused, so a
-# write to the stick can't pass unseen.  POSIX sh.
-ro=no
-dir=
-while [ $# -gt 0 ]; do
-    case $1 in
-        -o) shift; case $1 in ro|ro,*) ro=yes ;; esac ;;
-        -t) shift ;;
-        *) dir=$1 ;;
-    esac
-    shift
-done
-if [ "$ro" != yes ]; then
-    echo "fake mount: only a read-only mount is taken here" >&2
-    exit 32
-fi
-scen=${FAKE_BKO_HOLT_SCENARIO:?}
-rel=$(cat "$scen/system.path") || exit 32
-mkdir -p "$dir/$(dirname "$rel")" && cp "$scen/system.json" "$dir/$rel"
+# A fake mount for app-test.py's runs: it refuses every mount.  bko-rescue
+# mounts the stick's config partition only read-write, for the restore log
+# (src/app/report.rs, restore.rs): refused here, so the log stays in RAM and
+# a write to the stick can't pass unseen.  The layout comes from `bko-holt
+# stick --copy` (src/app/layout.rs), which mounts nothing.  POSIX sh.
+echo "fake mount: no mount is taken here" >&2
+exit 32

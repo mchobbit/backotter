@@ -1,6 +1,6 @@
 # bko-rescue: the terminal layer and its widgets
 
-Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"), RT4 and RT5 the same day ahead of RT3, with a provisional table (see "What RT4 and RT5 found"), RT6 and RT7 after them (see "What RT6 and RT7 found"), RT8 after those (see "What RT8 found"), RT3 the same day on every console of the seven images, its findings folded into the table (see "What RT3 found"); RT11 on 2026-11-25 (see "What RT11 found"); RT12's first part (Disks, Passphrases, Resume, Review) the same day (see "What RT12 part 1 found"), its second part (Restore, Done, Failure) too (see "What RT12 part 2 found"); RT9 and RT13 on are not.  RT10's own spec (D12), `holt-json.md`, approved 2026-11-24 with every recommendation (J1-J21); D14's first lock amended by J6.
+Status: approved 2026-11-19, with every recommendation (D1-D13); D14 (dry run) added at the user's request 2026-11-24.  RT1 and RT2 built 2026-11-24 (see "What RT1 and RT2 found"), RT4 and RT5 the same day ahead of RT3, with a provisional table (see "What RT4 and RT5 found"), RT6 and RT7 after them (see "What RT6 and RT7 found"), RT8 after those (see "What RT8 found"), RT3 the same day on every console of the seven images, its findings folded into the table (see "What RT3 found"); RT11 on 2026-11-25 (see "What RT11 found"); RT12's first part (Disks, Passphrases, Resume, Review) the same day (see "What RT12 part 1 found"), its second part (Restore, Done, Failure) too (see "What RT12 part 2 found"); the layout from `bko-holt stick --copy` 2026-11-26 (see "What stick --copy changed"); RT9 and RT13 on are not.  RT10's own spec (D12), `holt-json.md`, approved 2026-11-24 with every recommendation (J1-J21); D14's first lock amended by J6.
 
 An implementation plan for the stick's terminal UI that `ui.md` describes and
 the user decided on 2026-11-19: one Whiptail-style 80x24 program,
@@ -1475,19 +1475,22 @@ Fixtures: `testvm/rescue/make-disk-fixtures.py` writes
 `scenarios/app-rec-debian13` (debian13-stack's recorded plan and its
 status after partition, answering every call) and the hand-written
 `app-lovelace`, `-dry` and `-small` (the mocks' disks, by fit's rules;
-no guest has them); `fake-bin/mount` is the config partition's
-read-only mount for the pty runs.
+no guest has them); `fake-bin/mount` was the config partition's
+read-only mount for the pty runs (since "What stick --copy changed", a
+mount that refuses every mount).
 
 - **Defaults taken** where rescue-screens.md and holt-json.md are open,
   each in one place:
-  - The layout's copy (holt-json.md open question 8, which blocks RT12):
+  - The layout's copy (holt-json.md open question 8, which blocks RT12;
+    replaced 2026-11-26, "What stick --copy changed"):
     the stick's system.json, copied off the config partition mounted
     read-only (`layout::FROM`, `mount_ro_argv`), its checksum not checked
     again (bko-holt checked it at `stick --json`; no SHA-256 here, D2).
     A typed location has no layout: a screen says so.  A real stick's
     system.json isn't a layout load takes until the backup tool's spec
     says how it carries the dump: bko-holt then refuses it
-    (`layout_refused`), and Disks shows that as its problem.
+    (`layout_refused`), and Disks shows that as its problem (gone with
+    "What stick --copy changed": a system.json carries it as `layout`).
   - The size line (J5): `plan::OFFER_PCT`, 10.  `--fit-largest` is the
     largest percentage agreed for any disk (it applies to every disk);
     Review's "as you chose" marks a decided shrink.  Grow to fill isn't
@@ -1665,7 +1668,8 @@ whole-disk md5 the same before and after, no partition record or lock.
   run.  The stick itself still can't be real end to end: its system.json
   isn't a layout load takes (holt-json.md open question 8), so
   real-dry-run.py answers `stick --json` alone with a document naming a
-  FAT image on a loop device that holds the dump.
+  FAT image on a loop device that holds the dump (real since "What stick
+  --copy changed").
 - **Not built here:** `rustic-bko` restores to the repository (the log's
   copy there); the per-platform restart, power off and mount commands are
   *Check* at RT13 (`restart_argv`, `power_off_argv`); a full-screen pass of
@@ -1722,6 +1726,51 @@ left in `/run/bko-rescue`).  Fixed:
   not the Restore's; an attached run's Done asks nothing about the stick
   (its device isn't known without reading it, and asking on every
   stick-less restore would be wrong).
+
+## What stick --copy changed
+
+2026-11-26, after the user approved holt-json.md's open question 8 with its
+recommendation: the layout's copy is `bko-holt stick --copy INSTALL_ID OUT
+--json` (holt-json.md, "bko-holt-stick-copy" and "What stick --copy
+found"), OUT the session's `layout.json` in its 0700 directory.  bko-holt
+checks system.json's `.sha256` and writes the dump it carries (its
+`layout`) from the bytes it checked; bko-rescue mounts nothing for it and
+reads no FAT.  `layout.rs` lost `FROM`, `mount_ro_argv` and the read-only
+mount; the restore log's read-write mount is as it was.  Its run is
+`holt_args.rs`'s `HoltCmd::StickCopy`; the document must be
+`bko-holt-stick-copy` of the api's version, exit 0, for the machine asked
+for, with `bytes` the file's size, else the file is wiped and Disks shows
+bko-holt's words (`strings::layout_refused`).  The `layout_refused`
+interim is gone: a system.json with a layout now passes, and one without
+(every one today: the backup tool isn't built) is bko-holt's `no_layout`.
+
+- **Fixtures:** `record-stick.py` records `stick-layouts` (lovelace's
+  system.json carrying holt/tests/corpus/debian13-stack's dump; its
+  `03-copy` wrote that dump to OUT byte for byte) and stick-three's
+  `08-copy` (`no_layout`).  `make-disk-fixtures.py` puts `03-copy` in each
+  app-lovelace and app-rec scenario in place of `system.json` and
+  `system.path`; app-three and app-dry get stick-three's `08-copy`.  The
+  fake writes a `stick --copy`'s `out` to its argv[3] and doesn't watch it
+  as a key file (the session keeps it); the Rust tests' fake answers it
+  from the disks scenario, then the stick's.  `fake-bin/mount` refuses
+  every mount.
+- **Tested** on czerny (Rust 1.85.1): `cargo build` without warnings,
+  `cargo test` (281 tests: the copy's argv, the layout the fake wrote used
+  by every load, no mount; a refusal said in bko-holt's words, no load
+  run), `abi/check.sh`, `pty-test.py`, `demo-test.py`, `app-test.py` (the
+  copy once, its OUT every load's layout; the refusal's words) and
+  holt_schema.py over every scenario.  No golden changed.
+- **Real end to end** (chopin, debian13-stack's HoltTest rescuer kept up by
+  `ht1-debug.sh`, bko-holt built from this tree, HT_PORT 2694):
+  `real-dry-run.py --stick-dir` now makes a real stick, a GPT image on a
+  loop device, marker.py's config partition as partition 3 with the
+  machine's system.json (the share's layout as its `layout`) and the
+  marker on partition 1 mounted at /cdrom.  No wrapper: `stick --json`
+  found it (`/dev/loop4p3`), `stick --copy` wrote the share's layout byte
+  for byte (57009 bytes), the plain-mode dry run would have run 92
+  commands and exited 0, and vdb, vdc, the decoy vdd and the stick image
+  kept their md5; no partition record, no lock, no session left.  Then
+  `ht1-debug done`.
 
 ## The app on top (later)
 

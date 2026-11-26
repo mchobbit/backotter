@@ -1,3 +1,3 @@
-Recorded by testvm/rescue/record-stick.py from bko-holt 0.2.6 at 2026-11-25T15:31:47Z: lovelace twice (reinstalled under a new install ID), both backed up from this computer: neither is taken for it.
-The config partition made by stick/marker.py (image 6fc1dc7b-6b1d-472f-8d89-0c13dcf4bb44, serial A194-C50F, 256 MiB, partition 3),
+Recorded by testvm/rescue/record-stick.py from bko-holt 0.2.6 at 2026-11-26T05:10:07Z: lovelace twice (reinstalled under a new install ID), both backed up from this computer: neither is taken for it.
+The config partition made by stick/marker.py (image 3af7864e-49d5-4d05-80b7-2eee75cc36c5, serial 5CF7-5958, 256 MiB, partition 3),
 machines put on it by mtools, read by `bko-holt stick --json --sysroot TREE` (argv kept as bko-rescue's).

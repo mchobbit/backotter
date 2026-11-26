@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Records the fake's `stick-*` scenarios (RT11's fixtures) from a real
-bko-holt: `bko-holt --version --json`, `bko-holt stick --json` (RT10k) and
-`bko-holt recovery-words OUT --json` (RT10p), each run as bko-rescue runs
-it, its standard output and exit kept as a fake-bko-holt call.
+bko-holt: `bko-holt --version --json`, `bko-holt stick --json` (RT10k),
+`bko-holt recovery-words OUT --json` (RT10p) and `bko-holt stick --copy
+INSTALL_ID OUT --json` (holt-json.md's open question 8), each run as
+bko-rescue runs it, its standard output and exit kept as a fake-bko-holt
+call.
 
     record-stick.py BKO_HOLT OUT_DIR
 
@@ -18,6 +20,10 @@ sysfs says it starts, the marker in /cdrom/.disk, this computer's DMI UUID).
 The scenarios' argv is bko-rescue's (`stick --json`), not the --sysroot
 the recording used.  The recovery words are BIP39's test vector, typed as
 a person would; the call with the good words writes the password to OUT.
+A `stick --copy` call's argv is `stick --copy ID * --json`, and what it
+wrote to OUT is the call's `out`: stick-layouts' lovelace carries a real
+dump as its system.json's `layout` (holt/tests/corpus/debian13-stack's
+src.json), so that copy is the layout bko-rescue's scenarios load.
 
 Each scenario's recorded.txt says what and when.  Python's stdlib only.
 """
@@ -33,6 +39,8 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MARKER = os.path.join(HERE, "..", "..", "stick", "marker.py")
+# The layout stick-layouts' lovelace carries: a real dump of the corpus.
+DUMP = os.path.join(HERE, "..", "..", "holt", "tests", "corpus", "debian13-stack", "src.json")
 CONFIG_PART = 3
 CONFIG_MIB = 256
 START = 4096                    # sdc3's first sector, as sysfs gives it
@@ -88,11 +96,31 @@ def three():
     ]
 
 
+def layouts():
+    """lovelace carrying a layout (a real dump), babbage none (today's
+    system.json), hopper one whose checksum is wrong."""
+    with open(DUMP) as f:
+        dump = json.load(f)
+    lv = system(LOVELACE, "lovelace", "debian", "13", LOVELACE_DMI.upper(), "2026-11-22T01:00:11Z", 42,
+                "sftp://nas.local/backotter/lovelace", {"layout": dump})
+    hp = system(HOPPER, "hopper", "debian", "13", "", "2026-11-18T01:00:00Z", 5,
+                "sftp://nas.local/backotter/hopper", {"layout": dump})
+    return [(LOVELACE, lv, "ok"), three()[1], (HOPPER, hp, "bad")]
+
+
+TURING = "3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7"
+
 # Each stick: (scenario, machines [(id, system.json, how its .sha256 is)],
-# this computer's DMI UUID, what's done to the stick, recovery calls, why).
+# this computer's DMI UUID, what's done to the stick, recovery calls, why,
+# stick --copy calls [(name, install ID)]).
 STICKS = [
     ("stick-three", three(), "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", None, True,
-     "three machines, none backed up from this computer (the Machine screen's mock-up)"),
+     "three machines, none backed up from this computer (the Machine screen's mock-up)",
+     [("copy", LOVELACE)]),
+    ("stick-layouts", layouts(), "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", None, False,
+     "lovelace's system.json carrying a real dump as its layout, babbage's none, hopper's a wrong checksum: "
+     "stick --copy of each, and of a machine not there",
+     [("copy", LOVELACE), ("copy-no-layout", BABBAGE), ("copy-checksum-bad", HOPPER), ("copy-no-machine", TURING)]),
     ("stick-this-computer", three(), LOVELACE_DMI, None, True,
      "the same three, lovelace backed up from this computer"),
     ("stick-one", three()[:1], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", None, False,
@@ -203,7 +231,8 @@ def main(argv):
     version = subprocess.run([holt, "--version", "--json"], stdout=subprocess.PIPE, check=True).stdout
     ver = json.loads(version)["version"]
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    for scen, machines, here, damage, with_recovery, why in STICKS:
+    for scen, machines, here, damage, with_recovery, why, *more in STICKS:
+        copies = more[0] if more else []
         dest = os.path.join(out_dir, scen)
         if os.path.exists(dest):
             shutil.rmtree(dest)
@@ -229,13 +258,29 @@ def main(argv):
                     call(dest, "%02d-recovery-%s" % (3 + i, name[3:]), ["recovery-words", "*", "--json"], r.stdout, r.returncode,
                          stdin=typed, outfile=written)
                     print("  recovery %s: exit %d" % (name, r.returncode))
+            first = 3 + (len(TYPED) if with_recovery else 0)
+            k = os.path.join(work, "copies")
+            os.mkdir(k, 0o700)
+            for i, (name, mid) in enumerate(copies):
+                o = os.path.join(k, name)
+                r = subprocess.run([holt, "stick", "--copy", mid, o, "--json", "--sysroot", tree], stdout=subprocess.PIPE, stdin=subprocess.DEVNULL)
+                written = None
+                if os.path.exists(o):
+                    with open(o, "rb") as f:
+                        written = f.read()
+                    os.remove(o)
+                call(dest, "%02d-%s" % (first + i, name), ["stick", "--copy", mid, "*", "--json"], r.stdout, r.returncode,
+                     outfile=written)
+                print("  %s %s: exit %d, %s" % (name, mid, r.returncode, json.loads(r.stdout).get("code") or "written"))
         write(os.path.join(dest, "recorded.txt"),
               "Recorded by testvm/rescue/record-stick.py from bko-holt %s at %s: %s.\n"
               "The config partition made by stick/marker.py (image %s, serial %s, %d MiB, partition %d),\n"
               "machines put on it by mtools, read by `bko-holt stick --json --sysroot TREE` (argv kept as bko-rescue's).\n"
               % (ver, stamp, why, marker["image_id"], marker["config_partition"]["fat_serial"], CONFIG_MIB, CONFIG_PART)
               + ("The recovery-words calls answer by the words on standard input (the fake's `stdin`);\n"
-                 "the good words' call writes the password to OUT (its `out`).\n" if with_recovery else ""))
+                 "the good words' call writes the password to OUT (its `out`).\n" if with_recovery else "")
+              + ("The stick --copy calls (argv `stick --copy ID * --json`) were run with --sysroot TREE too;\n"
+                 "what one wrote to OUT is its `out`.\n" if copies else ""))
     return 0
 
 

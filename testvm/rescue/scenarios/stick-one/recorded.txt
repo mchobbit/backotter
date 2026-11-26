@@ -1,3 +1,3 @@
-Recorded by testvm/rescue/record-stick.py from bko-holt 0.2.6 at 2026-11-25T14:54:58Z: one machine, lovelace, on a new computer.
-The config partition made by stick/marker.py (image 0c459878-62d2-464b-b22e-c10e46074e37, serial 3440-FEB2, 256 MiB, partition 3),
+Recorded by testvm/rescue/record-stick.py from bko-holt 0.2.6 at 2026-11-26T05:10:07Z: one machine, lovelace, on a new computer.
+The config partition made by stick/marker.py (image 9de458d5-e9dc-4ff3-b9e9-5aef24951bff, serial 7C8D-307E, 256 MiB, partition 3),
 machines put on it by mtools, read by `bko-holt stick --json --sysroot TREE` (argv kept as bko-rescue's).

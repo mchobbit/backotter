@@ -1,5 +1,7 @@
-Recorded by testvm/rescue/record-stick.py from bko-holt 0.2.6 at 2026-11-25T14:54:58Z: three machines, none backed up from this computer (the Machine screen's mock-up).
-The config partition made by stick/marker.py (image 0065cd78-41b6-41b6-8d8e-c33f9dbc78ae, serial F4FA-AFD5, 256 MiB, partition 3),
+Recorded by testvm/rescue/record-stick.py from bko-holt 0.2.6 at 2026-11-26T05:10:07Z: three machines, none backed up from this computer (the Machine screen's mock-up).
+The config partition made by stick/marker.py (image 87a00d9d-1a35-4f0f-b1d5-e8b6327f18d9, serial C213-8D71, 256 MiB, partition 3),
 machines put on it by mtools, read by `bko-holt stick --json --sysroot TREE` (argv kept as bko-rescue's).
 The recovery-words calls answer by the words on standard input (the fake's `stdin`);
 the good words' call writes the password to OUT (its `out`).
+The stick --copy calls (argv `stick --copy ID * --json`) were run with --sysroot TREE too;
+what one wrote to OUT is its `out`.

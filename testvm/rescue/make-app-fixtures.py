@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Writes the app's hand-made fixtures (RT11): rustic-bko's answers for
 fake-rustic-bko (`rustic/`), and `scenarios/app-three`, stick-three's
-recorded calls with report-bug's beside them.  Run again after changing
+recorded calls (its stick --copy refused: no layout) with report-bug's
+beside them.  Run again after changing
 it; the files are committed.  Python's stdlib only.
 
 rustic/NAME/ calls, in order (fake-bko-holt's rules):
@@ -98,7 +99,7 @@ def main():
     shutil.rmtree(app, ignore_errors=True)
     shutil.copytree(os.path.join(HERE, "scenarios", "stick-three"), app)
     os.remove(os.path.join(app, "recorded.txt"))
-    write(app, "README", "stick-three's recorded calls (version, stick, recovery-words), and report-bug's, "
+    write(app, "README", "stick-three's recorded calls (version, stick, recovery-words, stick --copy's no_layout), and report-bug's, "
                          "hand-written: written by make-app-fixtures.py for app-test.py.\n")
     report = os.path.join(app, "08-report")
     write(report, "argv", "report-bug\n--output\n*\n--strip-file\n*\n")

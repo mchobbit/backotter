@@ -1,0 +1,1 @@
+{"format":"bko-holt-error","schema":1,"version":"0.2.6","generated":"2026-11-26T05:10:08Z","dry_run":false,"exit":1,"code":"no_such_machine","text":"bko-holt stick --copy: the stick has no machine 3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7: it has 3"}

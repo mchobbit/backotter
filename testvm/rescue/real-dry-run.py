@@ -4,8 +4,8 @@ rustic-bko (rescue-tui.md, RT12), in a throwaway HoltTest rescuer, and the
 proof it wrote nothing: every target's and the decoy's whole contents, and
 the stick's, the same before and after.
 
-    real-dry-run.py --out DIR [--reset] [--targets vdb,vdc] [--decoy vdd]
-                    [--bko-rescue /root/bko-rescue] [--share /mnt/share]
+    real-dry-run.py --out DIR --stick-dir DIR [--reset] [--targets vdb,vdc]
+                    [--decoy vdd] [--bko-rescue /root/bko-rescue] [--share /mnt/share]
 
 Run as root inside the rescuer that `ht1-debug.sh GUEST again partition`
 keeps up (testvm/holttest1d), with drive.py and screen.py beside this file.
@@ -13,12 +13,17 @@ keeps up (testvm/holttest1d), with drive.py and screen.py beside this file.
 (/run/bko-holt), so they are as blank as a new rescuer's: only on a
 throwaway rescuer.
 
-The stick: no rescuer has one, and a stick's system.json isn't yet a layout
-bko-holt loads (holt-json.md, open question 8).  So the config partition
-is a FAT image on a loop device holding the share's layout.json as the
-machine's system.json, and `bko-holt stick --json` alone is answered by a
-document made here naming that device (a wrapper, DIR/holt-wrap); every
-other bko-holt call, `--version --json` among them, is the real one's.
+The stick: no rescuer has one, so one is made here, a disk image on a loop
+device (DIR/stick.img, its partitions read by the kernel): partition 1 a
+FAT holding the image's marker in .disk/ and mounted at /cdrom read-only,
+as casper mounts the stick's medium; partition 3 the config partition
+--stick-dir holds, as `stick/marker.py --config-part 3` made it (its
+backotter.json and config.img: no rescuer has mtools), with the machine's
+system.json put on it: the share's layout.json as its `layout`, the
+share's repository and the backup's hostname.  Every bko-holt call is the
+real one's: `stick --json` finds that stick as on a real one, and `stick
+--copy` (holt-json.md, open question 8) gives load its layout.  Before the
+flow, a `stick --copy` of its own checks the copy is the share's layout.
 
 The flow, in plain mode (the prompts parsed, nothing hard-wired but the
 order): the one machine, the backup password (the share's), the newest
@@ -29,7 +34,7 @@ each disk's confirmation as its prompt asks, then r: the dry run, to
 Done says nothing was written and how many commands would have run;
 BKO_HOLT_NO_COMMIT's lock confirmed (`no_commit`); the targets, the decoy
 and the stick image unchanged (md5 of each whole); no partition record or
-lock of bko-holt's made.  DIR gets the transcript (transcript.txt), the
+lock of bko-holt's made; /cdrom unmounted and the loop device let go.  DIR gets the transcript (transcript.txt), the
 checksums and summary.json.  Exit 0 when every check passes.
 
 Python's stdlib only.
@@ -76,9 +81,54 @@ def md5(path):
             h.update(b)
 
 
+def make_stick(a, system):
+    """The stick: a GPT disk image on a loop device, partition 1 a FAT with
+    the marker in .disk/ (mounted at /cdrom read-only), 2 a filler, 3 the
+    config partition marker.py made, with SYSTEM as the machine's
+    system.json (and its .sha256) put on it.  Its image and device."""
+    marker_path = os.path.join(a.stick_dir, "backotter.json")
+    marker = json.load(open(marker_path))
+    cp = marker["config_partition"]
+    if cp["number"] != 3:
+        raise SystemExit("--stick-dir: the config partition is %s, not 3 (marker.py --config-part 3)" % cp["number"])
+    img = os.path.join(a.out, "stick.img")
+    if os.path.exists(img):
+        sh("losetup -j %s | cut -d: -f1 | xargs -r -n1 losetup -d" % img, check_rc=False)
+        os.remove(img)
+    if sh("findmnt -n /cdrom", check_rc=False).strip():
+        raise SystemExit("/cdrom is mounted already: not a rescuer this can use")
+    p3 = 20480
+    sh("truncate -s %d %s" % ((p3 + cp["sectors"] + 2048) * 512, img))
+    fat = "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"
+    table = "label: gpt\nstart=2048, size=16384, type=%s\nstart=18432, size=2048, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4\nstart=%d, size=%d, type=%s\n" % (fat, p3, cp["sectors"], fat)
+    subprocess.run(["sfdisk", "-q", img], input=table.encode(), check=True)
+    dev = sh("losetup -fP --show %s" % img).strip()
+    sh("udevadm settle", check_rc=False)
+    for _ in range(50):
+        if os.path.exists(dev + "p3"):
+            break
+        time.sleep(0.1)
+    sh("mkfs.vfat -n BKOMEDIUM %sp1 >/dev/null" % dev)
+    sh("dd if=%s of=%sp3 bs=1M conv=fsync status=none" % (os.path.join(a.stick_dir, "config.img"), dev))
+    mnt = os.path.join(a.out, "stick-mnt")
+    os.makedirs(mnt, exist_ok=True)
+    rel = "backotter/machines/%s" % INSTALL_ID
+    body = (json.dumps(system, indent=2) + "\n").encode()
+    sh("mount -t vfat %sp3 %s && mkdir -p %s/%s" % (dev, mnt, mnt, rel))
+    with open(os.path.join(mnt, rel, "system.json"), "wb") as f:
+        f.write(body)
+    with open(os.path.join(mnt, rel, "system.json.sha256"), "w") as f:
+        f.write("%s  system.json\n" % hashlib.sha256(body).hexdigest())
+    sh("sync && umount %s" % mnt)
+    sh("mount -t vfat %sp1 %s && mkdir -p %s/.disk && cp %s %s/.disk/backotter.json && sync && umount %s" % (dev, mnt, mnt, marker_path, mnt, mnt))
+    sh("mkdir -p /cdrom && mount -t vfat -o ro %sp1 /cdrom" % dev)
+    return img, dev
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
+    ap.add_argument("--stick-dir", required=True)
     ap.add_argument("--reset", action="store_true")
     ap.add_argument("--targets", default="vdb,vdc")
     ap.add_argument("--decoy", default="vdd")
@@ -100,20 +150,9 @@ def main():
     if not os.path.exists("/usr/local/bin/rustic-bko"):
         os.symlink(rustic, "/usr/local/bin/rustic-bko")
 
-    # The stick's config partition: a FAT image on a loop device.
-    img = os.path.join(a.out, "stick.img")
-    if os.path.exists(img):
-        sh("losetup -j %s | cut -d: -f1 | xargs -r -n1 losetup -d" % img, check_rc=False)
-        os.remove(img)
-    sh("truncate -s 64M %s && mkfs.vfat -n BACKOTTER %s >/dev/null" % (img, img))
-    dev = sh("losetup -f --show %s" % img).strip()
-    mnt = os.path.join(a.out, "stick-mnt")
-    os.makedirs(mnt, exist_ok=True)
-    rel = "backotter/machines/%s/system.json" % INSTALL_ID
-    sh("mount -t vfat %s %s && mkdir -p %s/%s && cp %s/layout.json %s/%s && sync && umount %s" % (
-        dev, mnt, mnt, os.path.dirname(rel), a.share, mnt, rel, mnt))
-    layout = json.load(open(os.path.join(a.share, "layout.json")))
-    host = (layout.get("system") or {}).get("hostname") or layout.get("hostname") or "debian13-stack"
+    layout_text = open(os.path.join(a.share, "layout.json"), "rb").read()
+    layout = json.loads(layout_text)
+    host = (layout.get("host") or {}).get("hostname") or "debian13-stack"
     pw_file = os.path.join(a.share, "repo-password")
     snaps = json.loads(sh("%s --repository %s/repo --password-file %s --no-progress snapshots --json 2>/dev/null" % (rustic, a.share, pw_file)))
     flat = []
@@ -124,29 +163,35 @@ def main():
     conf = sh("%s --repository %s/repo --password-file %s --no-progress cat config 2>/dev/null" % (rustic, a.share, pw_file))
     repo_id = json.loads(conf).get("id")
     version = json.loads(sh("%s --version --json" % holt))["version"]
-    stick = {
-        "format": "bko-holt-stick", "schema": 1, "version": version,
-        "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "dry_run": True,
-        "boot_disk": {"node": os.path.basename(dev), "found_by": "test"},
-        "config": {"state": "ok", "partition": 1, "label": "BACKOTTER", "why": None, "dev": dev},
-        "image": {"image_id": "real-dry-run", "platform": "linux", "built": "2026-11-25T00:00:00Z", "system_schemas": [1]},
-        "stick": {"stick_id": None, "name": None}, "here": {"dmi_uuid": None},
-        "machines": [{
-            "install_id": INSTALL_ID, "path": rel, "state": "ok", "why": None, "schema": 1, "known_schema": True,
-            "hostname": snap_host, "os": {"id": "debian", "version_id": "13"},
-            "written": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "sequence": 1, "dmi_uuid": None,
-            "this_computer": False, "repository": {"kind": "local", "url": "%s/repo" % a.share},
-            "repository_id": repo_id, "keyboard": None, "time": None, "password_hint": None}],
-        "notes": [],
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    system = {
+        "format": "backotter-system", "schema": 1, "sequence": 1, "written": now, "written_by": "real-dry-run.py",
+        "machine": {"install_id": INSTALL_ID, "hostname": snap_host, "dmi": {"system_uuid": None}},
+        "os": {"id": (layout.get("os") or {}).get("id"), "version_id": (layout.get("os") or {}).get("version_id")},
+        "backup": {"engine": "rustic", "repository": {"kind": "local", "url": "%s/repo" % a.share},
+                   "repository_id": repo_id, "credential": {"kind": "prompt"}},
+        "requirements": {"zfs_features": [], "kernel_modules": []},
+        "layout": layout,
     }
-    stick_doc = os.path.join(a.out, "stick.json")
-    with open(stick_doc, "w") as f:
-        json.dump(stick, f)
-    wrap = os.path.join(a.out, "holt-wrap")
-    with open(wrap, "w") as f:
-        f.write("#!/bin/sh\n# stick --json alone is answered here (no rescuer has a stick); the rest is bko-holt's.\n"
-                "if [ \"$1\" = stick ] && [ \"$2\" = --json ] && [ $# -eq 2 ]; then cat %s; exit 0; fi\nexec %s \"$@\"\n" % (stick_doc, holt))
-    os.chmod(wrap, 0o755)
+    img, dev = make_stick(a, system)
+
+    # bko-holt's view of it, read only: the stick found, the machine ok,
+    # and its copy the share's layout.
+    st = json.loads(sh("BKO_HOLT_NO_COMMIT=1 %s stick --json" % holt))
+    machines = st.get("machines") or []
+    check(st["config"]["state"] == "ok" and st["config"]["dev"] == dev + "p3", "stick --json: the config partition %s found on %s (%s)" % (
+        st["config"]["dev"], (st.get("boot_disk") or {}).get("node"), st["config"]["why"]))
+    check(len(machines) == 1 and machines[0]["state"] == "ok" and machines[0]["install_id"] == INSTALL_ID,
+          "stick --json: the machine is there and ok (%s)" % [(m["install_id"], m["state"], m["why"]) for m in machines])
+    kdir = os.path.join(a.out, "copy-check")
+    sh("rm -rf %s && mkdir -m 700 %s" % (kdir, kdir))
+    r = subprocess.run([holt, "stick", "--copy", INSTALL_ID, os.path.join(kdir, "layout.json"), "--json"], capture_output=True,
+                       env=dict(os.environ, BKO_HOLT_NO_COMMIT="1"))
+    copied = open(os.path.join(kdir, "layout.json"), "rb").read() if os.path.exists(os.path.join(kdir, "layout.json")) else b""
+    check(r.returncode == 0 and json.loads(r.stdout).get("format") == "bko-holt-stick-copy", "stick --copy: exit 0, its document (%s)" % r.stdout.decode(errors="replace")[:300])
+    check(copied and json.loads(copied) == layout, "stick --copy: OUT is the share's layout (%d bytes, byte for byte: %s)" % (len(copied), copied == layout_text))
+    summary_copy = {"bytes": len(copied), "same_bytes": copied == layout_text}
+    sh("rm -rf %s" % kdir)
 
     # Before: every disk the run could touch, and the stick, whole.
     disks = ["/dev/%s" % t for t in targets + [a.decoy]]
@@ -158,8 +203,8 @@ def main():
     holt_state_before = sorted(os.listdir("/run/bko-holt")) if os.path.isdir("/run/bko-holt") else []
 
     env = {"TERM": "xterm", "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
-    d = drive.Drive(a.bko_rescue, ["--dry-run", "--plain", "--holt", wrap, "--rustic", rustic], 24, 80, env, timeout=120)
-    summary = {"host": snap_host, "version": version, "stick_dev": dev}
+    d = drive.Drive(a.bko_rescue, ["--dry-run", "--plain", "--holt", holt, "--rustic", rustic], 24, 80, env, timeout=120)
+    summary = {"host": snap_host, "version": version, "stick_dev": dev, "copy": summary_copy}
     pp = "dry-run passphrase"
     try:
         d.wait("t, s]: ")
@@ -228,7 +273,9 @@ def main():
 
     sh("sync")
     after = {x: md5(x) for x in disks}
+    sh("umount /cdrom", check_rc=False)
     sh("losetup -d %s" % dev, check_rc=False)
+    check(not sh("findmnt -n /cdrom", check_rc=False).strip(), "/cdrom unmounted")
     after[img] = md5(img)
     with open(os.path.join(a.out, "md5-after.json"), "w") as f:
         json.dump(after, f, indent=1)

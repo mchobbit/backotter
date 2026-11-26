@@ -1,0 +1,5 @@
+Recorded by testvm/rescue/record-stick.py from bko-holt 0.2.6 at 2026-11-26T05:10:07Z: lovelace's system.json carrying a real dump as its layout, babbage's none, hopper's a wrong checksum: stick --copy of each, and of a machine not there.
+The config partition made by stick/marker.py (image f03060b5-689e-444b-b87e-cce0e94cfd4e, serial AB43-2360, 256 MiB, partition 3),
+machines put on it by mtools, read by `bko-holt stick --json --sysroot TREE` (argv kept as bko-rescue's).
+The stick --copy calls (argv `stick --copy ID * --json`) were run with --sysroot TREE too;
+what one wrote to OUT is its `out`.

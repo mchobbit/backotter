@@ -70,8 +70,10 @@ Each call's argv is the shape bko-rescue builds (src/app/holt_args.rs):
          [--reformat M=T]...
 
 so the Rust tests' fake and fake-bko-holt answer the same calls.  Each
-scenario also has `system.json`, what the tests' read-only mount of the
-config partition finds as the machine's settings.
+scenario also has `03-copy`, `bko-holt stick --copy` of lovelace's layout
+as record-stick.py recorded it (scenarios/stick-layouts/03-copy: the
+document, and the dump it wrote to OUT as the call's `out`), which
+bko-rescue's Disks runs before its first plan (src/app/layout.rs).
 
 Python's stdlib only.
 """
@@ -150,22 +152,11 @@ def copy_call(src_scen, src_call, scen, name):
     shutil.copytree(os.path.join(SC, src_scen, src_call), os.path.join(SC, scen, name))
 
 
-SYSTEM_JSON = {"format": "backotter-system", "schema": 1, "machine": {"install_id": "0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90"},
-               "note": "a test's: what the read-only mount of the config partition finds"}
-
-
-LOVELACE_PATH = "backotter/machines/0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90/system.json"
-
-
 def stick(scen, version="stick-three"):
     copy_call(version, "01-version", scen, "01-version")
     copy_call("stick-three", "02-stick", scen, "02-stick")
-    with open(os.path.join(SC, scen, "system.json"), "w") as f:
-        json.dump(SYSTEM_JSON, f)
-        f.write("\n")
-    # Where fake-bin/mount puts it: lovelace's path on the stick.
-    with open(os.path.join(SC, scen, "system.path"), "w") as f:
-        f.write(LOVELACE_PATH + "\n")
+    # lovelace's layout, copied off the stick by bko-holt (recorded).
+    copy_call("stick-layouts", "03-copy", scen, "03-copy")
 
 
 # ---- app-rec-debian13: recorded documents ---------------------------------

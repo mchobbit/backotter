@@ -105,7 +105,8 @@ class Run:
         if reach:
             env["BKO_RESCUE_ASSUME_REACHABLE"] = "1"
         if fake_mount:
-            # The config partition's read-only mount (fake-bin/mount).
+            # A mount that refuses every mount (fake-bin/mount): the
+            # restore log's read-write one fails, so the log stays in RAM.
             env["PATH"] = os.path.join(HERE, "fake-bin") + ":/usr/bin:/bin"
         self.d = drive.Drive(BIN, ["--holt", HOLT, "--rustic", RUSTIC] + list(args), rows, cols, env, timeout=10)
 
@@ -145,8 +146,8 @@ class Run:
         end = time.time() + 5
         while True:
             ls = self.calls()
-            # A report is an OUT that is kept: not a secret.
-            keys = {k["path"] for l in ls if "argv" in l and l["argv"][:1] != ["report-bug"] for k in l.get("keys", [])}
+            # A report and the layout are OUTs that are kept: not secrets.
+            keys = {k["path"] for l in ls if "argv" in l and l["argv"][:1] not in (["report-bug"], ["stick"]) for k in l.get("keys", [])}
             gone = {l["removed"] for l in ls if "removed" in l}
             if keys <= gone or time.time() > end:
                 break
@@ -196,9 +197,13 @@ def test_full_utf8_colour():
     check(r.says("(*) 22 Nov 2026 02:00 UTC+01:00 61.2 GB newest a7f3c901"), "full: the newest backup chosen, its own offset")
     golden("app-snapshot.utf8-colour", d.dump())
     d.keys("Down", "Enter")
-    # Disks: the stick's settings can't be mounted here (not root).
+    # Disks: lovelace's system.json on this stick carries no layout, and
+    # bko-holt's stick --copy says so (stick-three's recorded refusal).
     d.wait("Problem: the old disks' layout isn't here")
-    check(r.says("The BACKOTTER partition couldn't be read"), "full: the layout's copy needs the partition")
+    check(r.says("bko-holt couldn't copy the layout off the BACKOTTER partition"), "full: the layout's copy is bko-holt's")
+    copies = [c for c in r.calls() if c.get("argv", [])[:2] == ["stick", "--copy"]]
+    check(len(copies) == 1 and copies[0]["call"] == "08-copy" and copies[0]["argv"][3].endswith("/layout.json"),
+          "full: one stick --copy into the session (%s)" % [c.get("argv") for c in copies])
     d.signal(signal.SIGTERM)
     r.finish(143)
     calls = r.secrets_checked(4)
@@ -269,7 +274,7 @@ def test_plain():
     d.type(PASSWORD, line=True)
     d.wait("Choose [1-14, b]: ", since=m)
     d.type("1", line=True)
-    # Disks: the stick's settings can't be mounted here (not root).
+    # Disks: bko-holt's stick --copy finds no layout in lovelace's system.json.
     d.wait("Problem: the old disks' layout isn't here")
     d.wait("Choose [")
     # Plain mode raises the signal again once its files are gone.
@@ -278,8 +283,7 @@ def test_plain():
     text = d.dump()
     check("\x1b" not in text, "plain: no escape sequences")
     check("nope" not in text and PASSWORD not in text, "plain: nothing typed for a password shows")
-    # Up to Disks' problem: its text quotes mount's, which names the run's
-    # own temporary directory.
+    # Up to Disks' problem: its text quotes bko-holt's refusal.
     cut = text.find("Problem: the old disks' layout isn't here")
     golden("app-plain", text[:text.index("\n", cut) + 1] if cut >= 0 else text)
     r.secrets_checked(4)
@@ -437,6 +441,11 @@ def test_disks_to_review():
     check(len(loads) == 6, "disks: six plans and statuses (%d)" % len(loads))
     keyed = [c for c in loads if any(a.startswith("cryptroot=") for a in c["argv"])]
     check(len(keyed) == 2 and all(any(k["path"].endswith("/k0") for k in c["keys"]) for c in keyed), "disks: the passphrase as a key file, checked by the fake (%s)" % [c["keys"] for c in keyed])
+    # The layout: bko-holt's copy off the stick, once, the file every load reads.
+    copies = [c for c in calls if c["argv"][:2] == ["stick", "--copy"]]
+    out = copies[0]["argv"][3] if len(copies) == 1 else None
+    check(len(copies) == 1 and copies[0]["call"] == "03-copy" and all(c["argv"][1] == out for c in loads),
+          "disks: one stick --copy, its OUT every load's layout (%s)" % [c["argv"][:4] for c in copies])
 
 
 def test_disks_dry_run():

@@ -7,7 +7,8 @@
 //! then refuses `--commit` itself (exit 2).
 //!
 //! RT11 runs `--version --json`, `stick --json`, `recovery-words OUT
-//! --json` and `report-bug`; RT12 the plans and status of Disks,
+//! --json` and `report-bug`; RT12 `stick --copy INSTALL_ID OUT --json`
+//! (the layout, holt-json.md's open question 8), the plans and status of Disks,
 //! Passphrases, Resume and Review, and builds Restore's run from Review's
 //! (rescue-screens.md, "The full argument list": the plan reviewed is the
 //! run made, with `--through close --commit --expect-plan` in its stage's
@@ -88,6 +89,11 @@ impl Load {
 pub enum HoltCmd<'a> {
     Version,
     Stick,
+    /// The machine's layout, from its system.json on the stick, to `out`.
+    StickCopy {
+        install_id: &'a str,
+        out: &'a Path,
+    },
     /// The words go on standard input; the password to `out`.
     RecoveryWords {
         out: &'a Path,
@@ -110,6 +116,7 @@ pub fn argv(cmd: &HoltCmd, dry_run: bool) -> Vec<OsString> {
     match cmd {
         HoltCmd::Version => vec![os("--version"), os("--json")],
         HoltCmd::Stick => vec![os("stick"), os("--json")],
+        HoltCmd::StickCopy { install_id, out } => vec![os("stick"), os("--copy"), os(install_id), out.as_os_str().to_owned(), os("--json")],
         HoltCmd::RecoveryWords { out } => vec![os("recovery-words"), out.as_os_str().to_owned(), os("--json")],
         HoltCmd::ReportBug { out, no_redact, strip, attach } => {
             let mut v = vec![os("report-bug"), os("--output"), out.as_os_str().to_owned()];
@@ -192,6 +199,7 @@ mod tests {
         vec![
             HoltCmd::Version,
             HoltCmd::Stick,
+            HoltCmd::StickCopy { install_id: "0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90", out: p },
             HoltCmd::RecoveryWords { out: p },
             HoltCmd::ReportBug { out: p, no_redact: false, strip: Some(p), attach: &[] },
             HoltCmd::ReportBug { out: p, no_redact: true, strip: None, attach: &[] },
@@ -285,6 +293,7 @@ mod tests {
         let s = |c: HoltCmd| argv(&c, false).iter().map(|x| x.to_string_lossy().to_string()).collect::<Vec<_>>().join(" ");
         assert_eq!(s(HoltCmd::Version), "--version --json");
         assert_eq!(s(HoltCmd::Stick), "stick --json");
+        assert_eq!(s(HoltCmd::StickCopy { install_id: "0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90", out: p }), "stick --copy 0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90 /r/o --json");
         assert_eq!(s(HoltCmd::RecoveryWords { out: p }), "recovery-words /r/o --json");
         assert_eq!(s(HoltCmd::ReportBug { out: p, no_redact: false, strip: Some(Path::new("/r/s")), attach: &[] }), "report-bug --output /r/o --strip-file /r/s");
         assert_eq!(s(HoltCmd::ReportBug { out: p, no_redact: true, strip: Some(Path::new("/r/s")), attach: &[] }), "report-bug --output /r/o --no-redact", "--strip-file means nothing there");

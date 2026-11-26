@@ -60,8 +60,9 @@ ssh HOST 'cd ~/backotter-work/rescue-build/rescue &&
 
 `testvm/rescue/real-dry-run.py` runs the whole flow as a dry run against a
 real bko-holt and rustic-bko inside a HoltTest rescuer kept up by
-`ht1-debug.sh GUEST again partition`, and checks nothing was written (its
-docstring says how).
+`ht1-debug.sh GUEST again partition`, on a real stick image it makes from
+`stick/marker.py`'s config partition (`--stick-dir`), and checks nothing
+was written (its docstring says how).
 
 (`testvm/rescue` is for the pty tests and the app's fixtures;
 `holt/src/bip39-english.txt` lets the test that `src/bip39-english.txt`
@@ -199,7 +200,7 @@ are checked too; Linux's static ones can't be.
 | `src/secret.rs` | `Secret`, the password buffer: fixed, wiped, no Debug; 0600 key files in a 0700 directory |
 | `src/plain.rs` | plain mode: numbered questions, one line at a time |
 | `src/demo.rs` | `--demo` |
-| `src/app/` | the screens: `mod.rs` (the steps, the help screens, the runner), `strings.rs` (every word), `holt_args.rs` (every bko-holt command line, the dry-run lock), `plan.rs` (the plan and status documents, the 10 % line), `disks.rs` (Disks and its size screens), `review.rs` (Passphrases, Resume, Review), `layout.rs` (the layout off the config partition), `stick.rs` (`stick --json`), `repo.rs` (rustic-bko: addresses, codes, snapshots), `time.rs` (zones, POSIX rules), `keyboard.rs`, `report.rs`, `sys.rs` (programs, the session's directory), `tests.rs` |
+| `src/app/` | the screens: `mod.rs` (the steps, the help screens, the runner), `strings.rs` (every word), `holt_args.rs` (every bko-holt command line, the dry-run lock), `plan.rs` (the plan and status documents, the 10 % line), `disks.rs` (Disks and its size screens), `review.rs` (Passphrases, Resume, Review), `layout.rs` (the layout, by `bko-holt stick --copy`), `stick.rs` (`stick --json`), `repo.rs` (rustic-bko: addresses, codes, snapshots), `time.rs` (zones, POSIX rules), `keyboard.rs`, `report.rs`, `sys.rs` (programs, the session's directory), `tests.rs` |
 | `src/bip39.rs`, `src/bip39-english.txt` | the recovery key's word list, a copy of holt's, for completion |
 | `src/widgets/words.rs` | the recovery key's twelve word fields |
 | `tests/widget_screens.rs`, `tests/screens/w-*.txt` | every widget in every line style, colour and mono; their bytes in every profile; random keys |
@@ -213,4 +214,4 @@ are checked too; Linux's static ones can't be.
 | `../testvm/rescue/holt_schema.py` | bko-holt's documents and events checked against holt-json.md's schema: its goldens, the fake's scenarios, recorded runs |
 | `../testvm/rescue/demo-test.py`, `screens/` | `--demo` through every widget, both modes, with the fake |
 | `../testvm/rescue/app-test.py`, `fake-rustic-bko`, `rustic/`, `make-app-fixtures.py` | the app's screens on a pty with the fakes, both modes |
-| `../testvm/rescue/make-disk-fixtures.py`, `fake-bin/` | RT12's scenarios (`app-rec-debian13`, `app-lovelace*`); a read-only mount of the config partition for the pty runs |
+| `../testvm/rescue/make-disk-fixtures.py`, `fake-bin/` | RT12's scenarios (`app-rec-debian13`, `app-lovelace*`); a mount that refuses every mount, for the pty runs |

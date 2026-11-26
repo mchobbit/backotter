@@ -82,8 +82,8 @@ struct Fake {
     seen: Rc<RefCell<Seen>>,
     tools: Vec<&'static str>,
     /// The scenario bko-holt's `load` calls are answered from (RT12), by
-    /// their argv as fake-bko-holt answers them, and the system.json its
-    /// read-only mount of the config partition finds.
+    /// their argv as fake-bko-holt answers them, and its `stick --copy`
+    /// (the layout, written to OUT).
     disks: String,
     /// Calls answered in turn, as fake-bko-holt's FAKE_BKO_HOLT_STATE does:
     /// the first matching one not answered yet, then the last again.
@@ -162,6 +162,17 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
+/// The first call (by name) in scenario directory DIR whose argv matches
+/// A, as fake-bko-holt picks one without a state file.
+fn find_call(dir: &str, a: &[String]) -> Option<PathBuf> {
+    let mut calls: Vec<PathBuf> = fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).filter(|p| p.join("argv").is_file()).collect();
+    calls.sort();
+    calls.into_iter().find(|c| {
+        let want: Vec<String> = fs::read_to_string(c.join("argv")).unwrap().lines().map(str::to_string).collect();
+        want.len() == a.len() && want.iter().zip(a).all(|(w, x)| glob(w.as_bytes(), x.as_bytes()))
+    })
+}
+
 /// fnmatch's `*` and `?`, as fake-bko-holt matches a call's argv.
 fn glob(p: &[u8], s: &[u8]) -> bool {
     match (p.first(), s.first()) {
@@ -176,8 +187,6 @@ fn glob(p: &[u8], s: &[u8]) -> bool {
 /// bko-holt's log, as the fake has it.
 const FAKE_LOG: &str = "==== bko-holt load /run/bko-rescue/layout.json --json --through close\n# ---- partition ----\nwipefs --all /dev/vdb\n";
 
-/// lovelace's settings on the stick (stick-three's path for it).
-const LOVELACE_PATH: &str = "backotter/machines/0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90/system.json";
 
 struct Ready(Output);
 
@@ -199,6 +208,20 @@ impl Fake {
         match prog.as_str() {
             "bko-holt" => match a[0].as_str() {
                 "--version" => ok(self.version.clone().map(String::into_bytes).unwrap_or_else(|| fixture(&format!("scenarios/{}/01-version/stdout", self.holt)))),
+                "stick" if a.get(1).map(String::as_str) == Some("--copy") => {
+                    // The layout's copy: the disks scenario's recorded
+                    // call, else the stick's (a refusal), writing its OUT.
+                    for scen in [self.disks.clone(), self.holt.clone()] {
+                        if let Some(c) = find_call(&format!("{FIX}/scenarios/{scen}"), &a) {
+                            if let Ok(b) = fs::read(c.join("out")) {
+                                write_new(Path::new(&a[3]), &b).unwrap();
+                            }
+                            let code = fs::read_to_string(c.join("exit")).ok().and_then(|x| x.trim().parse().ok()).unwrap_or(0);
+                            return Output { code: Some(code), stdout: fs::read(c.join("stdout")).unwrap_or_default(), ..Output::default() };
+                        }
+                    }
+                    Output { code: Some(98), stderr: format!("fake: no stick --copy call matches {a:?}").into_bytes(), ..Output::default() }
+                }
                 "stick" => {
                     let doc = self.stick.clone().map(String::into_bytes).unwrap_or_else(|| fixture(&format!("scenarios/{}/02-stick/stdout", self.holt)));
                     let state_ok = String::from_utf8_lossy(&doc).contains(r#""state":"ok","partition""#);
@@ -252,19 +275,11 @@ impl Fake {
                 self.seen.borrow_mut().layouts.push(a.join(" "));
                 ok(b"keymaps 0-127\n".to_vec())
             }
-            "mount" if a.iter().any(|x| x.starts_with("ro")) => {
-                // The read-only mount of the config partition: its
-                // system.json is there.
-                let dir = PathBuf::from(a.last().unwrap());
-                let f = dir.join(LOVELACE_PATH);
-                fs::create_dir_all(f.parent().unwrap()).unwrap();
-                fs::write(&f, fixture(&format!("scenarios/{}/system.json", self.disks))).unwrap();
-                ok(Vec::new())
-            }
+            "mount" if a.iter().any(|x| x.starts_with("ro")) => panic!("a read-only mount of the stick: bko-holt stick --copy gives the layout"),
             "umount" => {
                 // What was written there (a restore log) is on the stick.
                 let m = PathBuf::from(a.last().unwrap());
-                if m.join("backotter").is_dir() && !m.join(LOVELACE_PATH).is_file() {
+                if m.join("backotter").is_dir() {
                     copy_tree(&m.join("backotter"), &self.base.join("stick/backotter"));
                 }
                 let _ = fs::remove_dir_all(PathBuf::from(a.last().unwrap()).join("backotter/machines"));
@@ -1207,6 +1222,16 @@ fn lovelace_from_disks_to_review() {
     assert!(w.contains("--through close") && w.ends_with("--commit") && w.contains(&format!("--expect-plan {sha}")), "{w}");
     let dry: Vec<String> = holt_args::argv(&HoltCmd::Load(&run), true).iter().map(|x| x.to_string_lossy().to_string()).collect();
     assert!(!dry.iter().any(|x| x == "--commit") && dry.iter().any(|x| x == "--erase"), "a dry run: --erase, never --commit");
+    // The layout: bko-holt's copy off the stick, the session's own file,
+    // once; nothing mounted for it.
+    let layout = dir.join("layout.json");
+    let r = ran(&t);
+    let copies: Vec<&String> = r.iter().filter(|l| l.contains(" stick --copy ")).collect();
+    assert_eq!(copies, [&format!("/fake/bin/bko-holt stick --copy 0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90 {} --json", layout.display())], "{r:#?}");
+    assert!(!r.iter().any(|l| l.contains("mount")), "{r:#?}");
+    assert_eq!(fs::read(&layout).unwrap(), fixture("scenarios/stick-layouts/03-copy/out"));
+    assert_eq!(fs::metadata(&layout).unwrap().permissions().mode() & 0o777, 0o600);
+    assert!(lines.iter().all(|(l, _)| l.starts_with(&format!("/fake/bin/bko-holt load {} --json", layout.display()))), "{lines:#?}");
     ui.golden("Where each disk goes", 0, "disks");
     ui.golden("Old disk 1 of 2: where does it go?", 0, "one-disk");
     ui.golden("This disk is much bigger", 0, "much-bigger");
@@ -1561,6 +1586,20 @@ fn the_size_screens_other_rows() {
             ui.golden("This disk is much smaller: you decide", 0, "beyond-limit");
         }
     }
+}
+
+#[test]
+fn a_layout_bko_holt_wont_copy_is_said_in_its_words() {
+    // stick-three's lovelace: today's system.json, with no layout in it
+    // (recorded: bko-holt's no_layout refusal).
+    let mut t = disks_t("stick-three", false);
+    let mut ui = Shots::new(script(&[&to_disks(), &[Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    let p = ui.flat("Problem: the old disks' layout isn't here", 0);
+    assert!(p.contains("bko-holt couldn't copy the layout off the BACKOTTER partition:") && p.contains("carries no disk layout"), "{p}");
+    assert!(!t.app.session.path("layout.json").exists(), "nothing left for load");
+    assert!(t.app.layout.is_none());
+    assert!(!ran(&t).iter().any(|l| l.contains("bko-holt load")), "no plan without a layout");
 }
 
 #[test]

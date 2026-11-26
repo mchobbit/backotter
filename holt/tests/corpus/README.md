@@ -484,9 +484,12 @@ of the tree (`!/.bko-holt/luks-headers/**`, the directory itself,
 `/.bko-holt/system.json` and `/.bko-holt`, re-blessed 2026-11-26 for
 holt-json.md's open question 12, again for its review fixes, and for open
 question 15).  Since open question 15 every plan's restore leaves
-`/.bko-holt/system.json` and `/.bko-holt` out (two `--glob` arguments, or
-lines of its glob file): each snapshot the backup tool makes holds the
-machine's system.json there.  At boot they regenerate nothing: the check of modeenv against
+`/.bko-holt/system.json` and `/.bko-holt` out: each snapshot the backup
+tool makes holds the machine's system.json there.  Since its review fixes
+every plan's restore also leaves out the headers' copies, whatever the
+layout kept (a layout given may be another backup's): four `--glob`
+arguments when nothing else is left out (uc24-fde's too, no glob file
+now), else lines of its glob file; re-blessed 2026-11-26 for that alone.  At boot they regenerate nothing: the check of modeenv against
 the restored trees, `bko-holt snapcore-boot-areas`, the log and the atimes;
 no grub-install, update-grub, chroot or NVRAM entry.  The kept headers' key
 files and header files are the golden plans' own (common/mod.rs, "The

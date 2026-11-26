@@ -657,12 +657,21 @@ longer the first screen (it was step 1 of `ui.md`'s "Screens").
 - Fed by `rustic-bko snapshots --json`, filtered to the machine's
   hostname (and its install ID tag), or to the hostname picked on "Which
   machine?".  Tags such as `weekly` are shown.
-- The layout comes from the chosen backup's `system.json`.  If that
-  differs from the stick's copy, a line says "This backup's disk layout
-  differs from the stick's copy; the backup's is used".  Not built: the
-  backup tool doesn't keep a system.json with each backup yet, so the
-  layout is the stick's copy only, the dump `bko-holt stick --copy`
-  takes from the machine's system.json (its `layout` member).
+- The layout comes from the chosen backup's `system.json` (built:
+  holt-json.md's open question 15).  On Disks, once the backup is chosen,
+  `bko-holt snapshot-layout` reads it from that backup, the newest too.
+  If it differs from the stick's copy (`bko-holt stick --copy` into a
+  second file, compared as JSON, then wiped), Disks' first line under
+  the disks says "This backup's disk layout differs from the stick's
+  copy; the backup's is used."  A backup from before the backup tool
+  kept one (`no_system_json`) uses the stick's copy, and the line says
+  "This backup holds no disk layout of its own (it was made before
+  backups kept one): the stick's copy is used, written 20 Nov 2026 03:00
+  CET." (the stick's `written`, in the machine's zone).  Every other
+  failure is a problem screen, never the stick's copy.  A bko-holt that
+  can't read a backup's own layout (no `snapshot_layout` in its api), or
+  a typed address, says nothing.  Until the backup tool exists, every
+  backup is from before.
 - A machine with one backup still gets this screen, so the date is seen.
 - Back goes to Repository, with the password kept.
 
@@ -1194,9 +1203,10 @@ bko-holt load /run/bko-rescue/layout.json
 - `--snapshot` is the ID chosen on Snapshot.  Without it load restores
   `latest`, which may not be the backup the user picked.
 - The layout file is the dump the chosen backup's `system.json` carries,
-  or the stick's copy when they match.  Today it is always the stick's:
-  the `layout` member `bko-holt stick --copy` writes to the session's
-  `layout.json`.
+  which `bko-holt snapshot-layout` writes to the session's `layout.json`;
+  the stick's copy (`bko-holt stick --copy`'s, the same file) only for a
+  backup that holds none, or with a bko-holt that can't read it (Snapshot,
+  above).
 
 ### Commands
 

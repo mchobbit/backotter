@@ -1966,7 +1966,8 @@ and Disks plans from the chosen snapshot's own layout.
 - On Disks, before the headers and the first plan, `layout_file` runs
   `bko-holt snapshot-layout OUT --repo URL --password-file FILE --snapshot
   ID [--install-id ID] --json` (`HoltCmd::SnapshotLayout`) under a gauge
-  ("Reading this backup's layout", `SNAP_MS` 300 s), OUT the session's
+  ("Reading this backup's layout", `SNAP_MS` 30 minutes since the review
+  fixes, was 300 s), OUT the session's
   `layout.json`, the install ID the chosen machine's (none for a typed
   address).  Every snapshot is asked, the newest too: the stick's copy is
   the newest backup it was plugged in for, often older.
@@ -2009,6 +2010,33 @@ and Disks plans from the chosen snapshot's own layout.
   the layout and the headers from the backup chosen, its install ID, every
   load reading that layout, gone with the session), holt_schema.py 535
   checked, 0 problems.  No screen golden changed.
+- **Review fixes** ("holt, rescue: review fixes for oq15"):
+  - Disks says where the layout came from, first under the disks
+    (`App::layout_note`).  When the snapshot's own differs from the
+    stick's copy (`differs_from_stick`: `stick --copy` into the session's
+    `stick-layout.json`, compared as JSON, wiped), "This backup's disk
+    layout differs from the stick's copy; the backup's is used." (the line
+    rescue-screens.md asks for).  When the stick's copy is used for a
+    backup that holds none, "This backup holds no disk layout of its own
+    (it was made before backups kept one): the stick's copy is used,
+    written ..." with the stick's `written` in the machine's zone
+    (stick-config.md's "Which copy wins", step 3).  A typed address, or a
+    bko-holt that can't ask, says nothing.
+  - A `header_mismatch` on the stick's copy says the backup holds none of
+    its own only when it was asked and said so (`layout_none_in_backup`);
+    from a bko-holt that can't ask, `HEADERS_MISMATCH_UNASKED_TODO` says
+    this bko-holt can't read a backup's own.
+  - A machine whose install ID can't be passed isn't asked: the stick's
+    copy's words say the ID is bad (`LAYOUT_NO_ID`), not "bko-holt ...
+    said".
+  - `SNAP_MS` is 30 minutes: the archiver loads the repository's index
+    first, which a big repository over a slow link takes minutes for;
+    load's restore has no cap, and the gauge's Back stops it.
+  - New tests: `a_backup_layout_unlike_the_sticks_says_so`, and the two
+    older ones check the line (none when the layouts match; the stick's
+    copy and its time on the fallback).  app-test's
+    `test_disks_older_backup` now allows the one `stick --copy` to
+    compare, after the backup's, into its own file, wiped.
 
 ## The app on top (later)
 

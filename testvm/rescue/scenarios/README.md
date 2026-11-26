@@ -112,10 +112,17 @@ its own LUKS2 headers (ubuntu-data-enc's differ), and one with no header.
 same JSON as its system.json's `layout`), `03-older-headers` the older
 one's headers fetched against `02-older`'s layout, `05-before`
 `no_system_json`, `06-other-machine` `system_refused`, `07-wrong-password`
-`system_fetch_failed`; 02 to 06 match only the right password.  It also
-restored the older backup with load's glob file and the last with load's
-two `--glob` arguments: no header, no system.json and no `.bko-holt` came
-back (recorded.txt).  `luks-headers`' recorded.txt is from before open
+`system_fetch_failed`, `08-headers-only` (a backup that kept headers but
+no system.json: rustic-bko's "Node `system.json` not found")
+`no_system_json`; 02 to 06 and 08 match only the right password.  It also
+restored the older backup with load's glob file and a fourth with load's
+four `--glob` arguments: no header, no system.json and no `.bko-holt` came
+back.  A richer backup (modes, setuid, sticky, a hard link, a symbolic
+link, a FIFO, set times, `.bko-holtx`, `etc/.bko-holt`) restored with the
+four `--glob` arguments and without any gave the same tree and root
+directory but for `/.bko-holt`.  Given a restic-bko, it records restic's
+words for the same two missing paths, its dump run by hand
+(recorded.txt).  `luks-headers`' recorded.txt is from before open
 question 15, with three globs; record-luks.py now writes load's four.
 
 The recovery calls (`stick-three`, `stick-this-computer`): `good` (exit 0,

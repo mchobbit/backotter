@@ -377,16 +377,17 @@ What the backup tool must do (not built: it comes with the backup tool):
    staging root in RAM in a private mount namespace, D bind-mounted at
    `S/.bko-holt/luks-headers`, S backed up with `--as-path /`).  load's
    restore leaves `/.bko-holt/luks-headers`, its files, and `/.bko-holt`
-   when no raw volume is under it out of the tree, so not even a bare
-   mount point comes back.
+   when no raw volume is under it out of every tree, whatever the layout
+   kept, so not even a bare mount point comes back.
 3. Read them back from the new snapshot with `bko-holt luks-headers
    LAYOUT DIR --repo REPO --password-file FILE --snapshot ID` (DIR a new
    private directory; LAYOUT the snapshot's own, read back by
    `snapshot-layout`, "Which copy wins" step 3): exit 0 means the snapshot
    holds every header the layout names, each its size and SHA-256.
    Anything else is a failed backup of that machine: the restore couldn't
-   keep the disks' keys.  Then wipe D and DIR (each file zeroed, then
-   removed).
+   keep the disks' keys.  What becomes of that snapshot (it stays in the
+   repository, and bko-rescue lists it) is holt-json.md's open question
+   22.  Then wipe D and DIR (each file zeroed, then removed).
 4. Only then write system.json (with that `layout`) to the stick, as
    below.  The backup's own copy went in the snapshot with the headers
    ("Which copy wins", step 1).
@@ -400,8 +401,9 @@ against the layout's size and SHA-256.  The layout is the snapshot's own
 older snapshot's headers are its own.  Only a snapshot from before the
 backup tool kept its system.json uses the stick's copy, and its headers
 may then differ (`header_mismatch`).  load's restore leaves `/.bko-holt/luks-headers` and its
-files out of the tree (and `/.bko-holt`, with no raw volume under it), so
-the headers never land on the restored disks.  A layout that kept headers needs a bko-rescue and a
+files out of every tree, whatever the layout kept (and `/.bko-holt`, with
+no raw volume under it), so the headers never land on the restored
+disks, even when the layout given is another backup's.  A layout that kept headers needs a bko-rescue and a
 bko-holt from 2026-11-26 or later: an older bko-holt's `stick --copy`
 refuses it (`layout_refused`).  So every image's marker.py refuses a
 bko-holt whose api `features` lack `luks_headers` (3100b25 or later), or
@@ -437,7 +439,11 @@ What the backup tool must do (not built: it comes with the backup tool):
    (OUT a new private file): exit 0 means the snapshot holds this
    machine's layout, one load takes.  Anything else is a failed backup of
    that machine.  Then the headers' read-back ("LUKS2 headers in the
-   backup", step 3) against that OUT.
+   backup", step 3) against that OUT.  A failed read-back leaves the
+   snapshot in the repository; if it holds no system.json (the staging
+   failed), bko-rescue takes it for a backup from before and uses the
+   stick's copy.  What the backup tool does with it is holt-json.md's
+   open question 22.
 4. Only then write system.json to the stick (below, "How it writes").
 
 load's restore leaves `/.bko-holt/system.json` out of every tree, and
@@ -459,8 +465,14 @@ At restore time:
    against it.  A snapshot from before the backup tool kept the file
    (`no_system_json`) uses the stick's copy, as below.
 3. If not, restore from the stick's copy, and say how old it is (`written`,
-   `sequence`).  A kept header then may be another backup's: the fetch is
-   `header_mismatch`, and bko-rescue says to choose the newest backup.
+   `sequence`).  Built: Disks says "This backup holds no disk layout of its
+   own (it was made before backups kept one): the stick's copy is used,
+   written ..." with the stick's `written` in the machine's zone
+   (`sequence` isn't in `stick --json`'s machine rows).  When the
+   backup's own differs from the stick's copy, Disks says the backup's is
+   used (rescue-screens.md, Snapshot).  A kept header then may be another
+   backup's: the fetch is `header_mismatch`, and bko-rescue says to
+   choose the newest backup.
 
 ## Finding the stick at backup time
 

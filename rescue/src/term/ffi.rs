@@ -599,9 +599,14 @@ pub fn take_signal() -> Option<c_int> {
 
 /// The room on the file system `path` is on, as statvfs gives it: the
 /// bytes free to us (`f_bavail` times `f_frsize`) and the fragment size
-/// (`f_frsize`: on FAT, the cluster).
+/// (`f_frsize`: on FAT, the cluster).  An error when it can't be read: on a
+/// 32-bit system, whose fields are 4 bytes, not the 8 read here (none is
+/// built; its header test would fail first).
 pub fn free_room(path: &std::path::Path) -> io::Result<(u64, u64)> {
     use std::os::unix::ffi::OsStrExt as _;
+    if cfg!(not(target_pointer_width = "64")) {
+        return Err(io::ErrorKind::Unsupported.into());
+    }
     let c = std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
     let mut b = Box::new(StatvfsBuf([0; STATVFS_BUF]));
     // SAFETY: c is NUL-terminated; b is STATVFS_BUF writable bytes, more
@@ -609,8 +614,19 @@ pub fn free_room(path: &std::path::Path) -> io::Result<(u64, u64)> {
     check(unsafe { statvfs(c.as_ptr(), &mut *b) })?;
     let (fr, av) = STATVFS_AT;
     let word = |at: usize| u64::from_ne_bytes(b.0[at..at + 8].try_into().unwrap_or([0; 8]));
-    let frsize = word(fr);
-    Ok((word(av).saturating_mul(frsize), frsize))
+    room_of(word(fr), word(av))
+}
+
+/// The room from statvfs's `f_frsize` and `f_bavail`.  A 0 fragment size
+/// says nothing: an error, the room unread.  A count over i64::MAX is a
+/// negative one cast (OpenBSD's statfs count is signed, below 0 on an FFS
+/// past its reserve; never on FAT): no room for us.
+fn room_of(frsize: u64, bavail: u64) -> io::Result<(u64, u64)> {
+    if frsize == 0 {
+        return Err(io::Error::other("statvfs gave no fragment size"));
+    }
+    let bavail = if bavail > i64::MAX as u64 { 0 } else { bavail };
+    Ok((bavail.saturating_mul(frsize), frsize))
 }
 
 /// Standard input as a File, read directly (std's stdin buffers, which
@@ -748,6 +764,11 @@ mod tests {
         let (free, frsize) = free_room(std::path::Path::new("/")).unwrap();
         assert!(frsize > 0 && frsize.is_power_of_two() && free % frsize == 0, "{free} {frsize}");
         assert!(free_room(std::path::Path::new("/no/such/dir/bko")).is_err());
+        // A 0 fragment size: unread; a negative count cast: none free.
+        assert!(room_of(0, 10).is_err());
+        assert_eq!(room_of(512, (-3i64) as u64).unwrap(), (0, 512));
+        assert_eq!(room_of(512, 10).unwrap(), (5120, 512));
+        assert_eq!(room_of(1 << 20, i64::MAX as u64).unwrap(), (u64::MAX, 1 << 20));
     }
 
     #[test]

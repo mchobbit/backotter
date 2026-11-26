@@ -1052,11 +1052,24 @@ pub fn report_why_ram(why: &str) -> String {
 pub fn report_too_big(size: &str, cap: &str) -> String {
     format!("it is {size}, over the {cap} the stick takes for one file")
 }
-pub fn report_no_room(need: &str, free: &str) -> String {
-    format!("it needs {need}, and the stick's BACKOTTER partition has {free} free.  To make room, copy the older reports in backotter/reports off the stick on another computer, then remove them there")
+/// What makes room for a report: the older reports, when there are some
+/// (OLDER), else whatever else is on the partition.
+fn report_room_way(older: bool) -> &'static str {
+    if older {
+        "To make room, copy the older reports in backotter/reports off the stick on another computer, then remove them there"
+    } else {
+        "To make room, copy files you don't need off the stick's BACKOTTER partition on another computer, then remove them there"
+    }
 }
-pub fn report_short(after: &str, min: &str) -> String {
-    format!("it would leave the stick's BACKOTTER partition {after} free, and a restore needs {min} there for its log.  To make room, copy the older reports in backotter/reports off the stick on another computer, then remove them there")
+pub fn report_no_room(need: &str, free: &str, older: bool) -> String {
+    format!("it needs {need}, and the stick's BACKOTTER partition has {free} free.  {}", report_room_way(older))
+}
+pub fn report_short(after: &str, min: &str, older: bool) -> String {
+    format!("it would leave the stick's BACKOTTER partition {after} free, and the restore logs need {min} there.  {}", report_room_way(older))
+}
+/// Why neither report was saved, when the two reasons differ.
+pub fn report_why_ram_each(first: &str, second: &str) -> String {
+    format!("The report couldn't be saved on the stick: {first}.\nThe UNREDACTED one couldn't be saved on the stick: {second}.")
 }
 pub fn reports_removed(n: usize) -> String {
     let kept = super::report::REPORTS_KEPT;

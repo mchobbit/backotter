@@ -975,9 +975,9 @@ fn a_report_that_would_leave_under_22_mib_stays_in_ram() {
         if saved {
             assert!(text.contains("The report is on this stick"), "{text}");
         } else if free == 4096 {
-            assert!(text.contains("in this computer's memory only") && text.contains("it needs 0.1 MiB, and the stick's BACKOTTER partition has 0.0 MiB free.  To make room, copy the older reports in backotter/reports off the stick"), "{text}");
+            assert!(text.contains("in this computer's memory only") && text.contains("it needs 0.1 MiB, and the stick's BACKOTTER partition has 0.0 MiB free.  To make room, copy files you don't need off the stick's BACKOTTER partition"), "{text}");
         } else {
-            assert!(text.contains("in this computer's memory only") && text.contains("it would leave the stick's BACKOTTER partition 21.9 MiB free, and a restore needs 22.0 MiB there for its log"), "{text}");
+            assert!(text.contains("in this computer's memory only") && text.contains("it would leave the stick's BACKOTTER partition 21.9 MiB free, and the restore logs need 22.0 MiB there"), "{text}");
             assert!(text.contains("< Shell >"), "{text}");
         }
     }

@@ -370,8 +370,9 @@ fn mib(n: u128, up: bool) -> String {
 /// FREE bytes free in clusters of CLUSTER, once REMOVE go after it.  The
 /// save is the copy and the removal after it: the room it leaves counts
 /// the files it removes, and it must fit beside them first.  Each file
-/// and folder takes whole clusters.  Why not, in words.
-fn report_room(files: Option<&[(String, u64)]>, remove: &[String], len: u64, free: u64, cluster: u64) -> Result<(), String> {
+/// and folder takes whole clusters.  Why not, in words: they name the
+/// older reports to copy off only when there are some (OLDER).
+fn report_room(files: Option<&[(String, u64)]>, remove: &[String], len: u64, free: u64, cluster: u64, older: bool) -> Result<(), String> {
     if len > REPORT_MAX {
         return Err(s::report_too_big(&mib(len.into(), true), &mib(REPORT_MAX.into(), false)));
     }
@@ -382,15 +383,17 @@ fn report_room(files: Option<&[(String, u64)]>, remove: &[String], len: u64, fre
     let free = u128::from(free);
     let min = u128::from(REPORT_ROOM_MIN);
     if free < new {
-        return Err(s::report_no_room(&mib(new, true), &mib(free, false)));
+        return Err(s::report_no_room(&mib(new, true), &mib(free, false), older));
     }
     if free - new + freed < min {
-        return Err(s::report_short(&mib(free - new + freed, false), &mib(min, true)));
+        return Err(s::report_short(&mib(free - new + freed, false), &mib(min, true), older));
     }
     Ok(())
 }
 
-/// The files in DIR, each name and size; None when DIR isn't there.
+/// The files in DIR, each name and size; None when DIR isn't there.  An
+/// entry that can't be read (a damaged FAT entry) is left out: it isn't
+/// counted, and it isn't removed.
 fn list_files(dir: &Path) -> std::io::Result<Option<Vec<(String, u64)>>> {
     let rd = match fs::read_dir(dir) {
         Ok(rd) => rd,
@@ -398,9 +401,8 @@ fn list_files(dir: &Path) -> std::io::Result<Option<Vec<(String, u64)>>> {
         Err(e) => return Err(e),
     };
     let mut v = Vec::new();
-    for e in rd {
-        let e = e?;
-        let m = e.metadata()?;
+    for e in rd.flatten() {
+        let Ok(m) = e.metadata() else { continue };
         if let Some(n) = e.file_name().to_str() {
             v.push((n.to_string(), if m.is_dir() { 0 } else { m.len() }));
         }
@@ -415,13 +417,19 @@ fn list_files(dir: &Path) -> std::io::Result<Option<Vec<(String, u64)>>> {
 /// (pairs) went.  When the room can't be read, the copy goes ahead, as it
 /// did before the check (a default taken: refusing would keep every
 /// report off the stick where statvfs fails); a copy the partition can't
-/// take still fails.
+/// take still fails.  So does a folder that can't be listed: the copy
+/// goes ahead unchecked, and nothing is removed.
 fn save_report(file: &Path, dir: &Path, name: &str, room: Option<(u64, u64)>) -> Result<usize, String> {
-    let files = list_files(dir).map_err(|e| e.to_string())?;
-    let remove = reports_to_remove(files.as_deref().unwrap_or(&[]), name);
     let len = fs::metadata(file).map_err(|e| e.to_string())?.len();
+    let (room, files) = match list_files(dir) {
+        Ok(files) => (room, files),
+        Err(_) => (None, Some(Vec::new())),
+    };
+    let remove = reports_to_remove(files.as_deref().unwrap_or(&[]), name);
     if let Some((free, cluster)) = room {
-        report_room(files.as_deref(), &remove, len, free, cluster)?;
+        let new = report_stamp(name);
+        let older = files.as_deref().unwrap_or(&[]).iter().filter_map(|(n, _)| report_stamp(n)).any(|st| Some(st) != new);
+        report_room(files.as_deref(), &remove, len, free, cluster, older)?;
     }
     copy_in(file, dir, name).map_err(|e| e.to_string())?;
     let mut pairs: Vec<&str> = remove.iter().filter_map(|n| report_stamp(n)).collect();
@@ -455,10 +463,16 @@ fn saved_text(path: &Path, first: &Result<String, String>, second: Option<(&Path
             if first.is_err() || r2.is_err() {
                 t.push('\n');
                 t.push_str(&s::report_in_ram(&path.parent().unwrap_or(path).display().to_string()));
-                // Why: the room words say what to copy off.
-                if let Err(why) = r2.as_ref().and(first.as_ref()) {
+                // Why: the room words say what to copy off.  Both, when the
+                // two failed for different reasons.
+                let why = match (first, r2) {
+                    (Err(a), Err(b)) if a != b => Some(s::report_why_ram_each(a, b)),
+                    (Err(w), _) | (_, Err(w)) => Some(s::report_why_ram(w)),
+                    _ => None,
+                };
+                if let Some(why) = why {
                     t.push('\n');
-                    t.push_str(&s::report_why_ram(why));
+                    t.push_str(&why);
                 }
             }
             t
@@ -480,12 +494,17 @@ fn saved_text(path: &Path, first: &Result<String, String>, second: Option<(&Path
 }
 
 /// Copy a report into `dir` (made if missing) as a new file, synced, the
-/// directory synced too.  One over REPORT_MAX isn't copied.
+/// directory synced too.  One over REPORT_MAX isn't copied: the words
+/// give its size as the file system says it (only REPORT_MAX + 1 bytes are
+/// read).
 fn copy_in(src: &Path, dir: &Path, name: &str) -> std::io::Result<()> {
     let mut b = Vec::new();
-    fs::File::open(src)?.take(REPORT_MAX + 1).read_to_end(&mut b)?;
+    let f = fs::File::open(src)?;
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    f.take(REPORT_MAX + 1).read_to_end(&mut b)?;
     if b.len() as u64 > REPORT_MAX {
-        return Err(std::io::Error::other(s::report_too_big(&mib(b.len() as u128, true), &mib(REPORT_MAX.into(), false))));
+        let size = len.max(b.len() as u64);
+        return Err(std::io::Error::other(s::report_too_big(&mib(size.into(), true), &mib(REPORT_MAX.into(), false))));
     }
     fs::create_dir_all(dir)?;
     let dest = dir.join(name);
@@ -544,21 +563,21 @@ mod tests {
         let none: Option<&[(String, u64)]> = None;
         let here = files(&[("bko-report-20261101-090000.txt", 3 * MIB), ("bko-report-20261101-090000-UNREDACTED.txt", 4096 + 1)]);
         // A new folder and the file, each in whole clusters.
-        assert!(report_room(none, &[], 4097, min + 3 * 4096, 4096).is_ok());
-        assert!(report_room(none, &[], 4097, min + 3 * 4096 - 1, 4096).is_err());
-        assert!(report_room(Some(&here), &[], 4096, min + 4096, 4096).is_ok());
-        assert_eq!(report_room(Some(&here), &[], 4096, min + 4095, 4096).unwrap_err(), s::report_short("21.9 MiB", "22.0 MiB"));
+        assert!(report_room(none, &[], 4097, min + 3 * 4096, 4096, true).is_ok());
+        assert!(report_room(none, &[], 4097, min + 3 * 4096 - 1, 4096, true).is_err());
+        assert!(report_room(Some(&here), &[], 4096, min + 4096, 4096, true).is_ok());
+        assert_eq!(report_room(Some(&here), &[], 4096, min + 4095, 4096, true).unwrap_err(), s::report_short("21.9 MiB", "22.0 MiB", true));
         // What it removes after counts: the old pair's 3 MiB and two clusters.
         let gone: Vec<String> = here.iter().map(|(n, _)| n.clone()).collect();
-        assert!(report_room(Some(&here), &gone, MIB, min - 2 * MIB - 2 * 4096, 4096).is_ok());
-        assert!(report_room(Some(&here), &gone, MIB, min - 2 * MIB - 2 * 4096 - 1, 4096).is_err());
+        assert!(report_room(Some(&here), &gone, MIB, min - 2 * MIB - 2 * 4096, 4096, true).is_ok());
+        assert!(report_room(Some(&here), &gone, MIB, min - 2 * MIB - 2 * 4096 - 1, 4096, true).is_err());
         // ...but it must fit beside them first.
-        assert_eq!(report_room(Some(&here), &gone, MIB, MIB - 1, 4096).unwrap_err(), s::report_no_room("1.0 MiB", "0.9 MiB"));
+        assert_eq!(report_room(Some(&here), &gone, MIB, MIB - 1, 4096, true).unwrap_err(), s::report_no_room("1.0 MiB", "0.9 MiB", true));
         // Over the cap, whatever the room; a 0 cluster counts bytes.
-        assert_eq!(report_room(Some(&here), &[], REPORT_MAX + 1, u64::MAX, 4096).unwrap_err(), s::report_too_big("64.1 MiB", "64.0 MiB"));
-        assert!(report_room(Some(&here), &[], REPORT_MAX, u64::MAX, 4096).is_ok());
-        assert!(report_room(Some(&here), &[], 10, min + 10, 0).is_ok());
-        assert!(report_room(Some(&here), &[], 10, min + 9, 0).is_err());
+        assert_eq!(report_room(Some(&here), &[], REPORT_MAX + 1, u64::MAX, 4096, true).unwrap_err(), s::report_too_big("64.1 MiB", "64.0 MiB"));
+        assert!(report_room(Some(&here), &[], REPORT_MAX, u64::MAX, 4096, true).is_ok());
+        assert!(report_room(Some(&here), &[], 10, min + 10, 0, true).is_ok());
+        assert!(report_room(Some(&here), &[], 10, min + 9, 0, true).is_err());
     }
 
     #[test]
@@ -586,6 +605,87 @@ mod tests {
         assert_eq!(save_report(&src, &fresh, "bko-report-20261123-142630.txt", Some((u64::MAX, 4096))), Ok(0));
         assert!(fresh.join("bko-report-20261123-142630.txt").is_file());
         fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn the_room_words_name_old_reports_only_when_there_are_some() {
+        let d = std::env::temp_dir().join(format!("bko-rescue-report-words-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        let dir = d.join("reports");
+        fs::create_dir_all(&dir).unwrap();
+        let src = d.join("new.txt");
+        fs::write(&src, b"new\n").unwrap();
+        let short = Some((REPORT_ROOM_MIN - 1, 4096));
+        // No reports there, only notes: the words name other files.
+        fs::write(dir.join("notes.txt"), b"x").unwrap();
+        let e = save_report(&src, &dir, "bko-report-20261123-142630.txt", short).unwrap_err();
+        assert!(e.contains("copy files you don't need off the stick's BACKOTTER partition") && !e.contains("older reports"), "{e}");
+        assert!(e.contains("and the restore logs need 22.0 MiB there."), "{e}");
+        // Its own twin is no older report.
+        fs::write(dir.join("bko-report-20261123-142630.txt"), b"x").unwrap();
+        let e = save_report(&src, &dir, "bko-report-20261123-142630-UNREDACTED.txt", short).unwrap_err();
+        assert!(!e.contains("older reports"), "{e}");
+        // An older one: named.
+        fs::write(dir.join("bko-report-20261101-090000.txt"), b"x").unwrap();
+        let e = save_report(&src, &dir, "bko-report-20261123-142630-UNREDACTED.txt", short).unwrap_err();
+        assert!(e.contains("copy the older reports in backotter/reports off the stick"), "{e}");
+        let e = save_report(&src, &dir, "bko-report-20261123-142630-UNREDACTED.txt", Some((1, 4096))).unwrap_err();
+        assert!(e.starts_with("it needs 0.1 MiB") && e.contains("older reports"), "{e}");
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn a_folder_that_cant_be_listed_doesnt_stop_the_save() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let d = std::env::temp_dir().join(format!("bko-rescue-report-unlisted-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        let dir = d.join("reports");
+        fs::create_dir_all(&dir).unwrap();
+        for day in 1..=6 {
+            fs::write(dir.join(format!("bko-report-202611{day:02}-090000.txt")), b"old\n").unwrap();
+        }
+        let src = d.join("new.txt");
+        fs::write(&src, b"new\n").unwrap();
+        // Written and searched, not read: as a folder whose listing fails.
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o300)).unwrap();
+        let unlisted = fs::read_dir(&dir).is_err();
+        // Too little room, but it can't be checked: the copy goes ahead,
+        // and nothing is removed.
+        let r = save_report(&src, &dir, "bko-report-20261123-142630.txt", Some((1, 4096)));
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        if unlisted {
+            assert_eq!(r, Ok(0));
+            assert_eq!(fs::read_dir(&dir).unwrap().count(), 7);
+        }
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn a_file_over_the_cap_is_refused_with_its_size() {
+        let d = std::env::temp_dir().join(format!("bko-rescue-report-big-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        let src = d.join("big.txt");
+        // Sparse: 70 MiB on paper.
+        fs::File::create(&src).unwrap().set_len(70 << 20).unwrap();
+        let e = copy_in(&src, &d.join("out"), "big.txt").unwrap_err().to_string();
+        assert_eq!(e, s::report_too_big("70.0 MiB", "64.0 MiB"));
+        assert!(!d.join("out/big.txt").exists());
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn both_reasons_show_when_both_saves_fail() {
+        let p = Path::new("/run/bko-rescue/reports/bko-report-20261123-142630.txt");
+        let p2 = Path::new("/run/bko-rescue/reports/bko-report-20261123-142630-UNREDACTED.txt");
+        let (room, big): (Result<String, String>, Result<String, String>) = (Err("no room".into()), Err("too big".into()));
+        let t = saved_text(p, &room, Some((p2, &big)), 0);
+        assert!(t.contains(&s::report_why_ram_each("no room", "too big")), "{t}");
+        let t = saved_text(p, &room, Some((p2, &room)), 0);
+        assert!(t.contains(&s::report_why_ram("no room")) && !t.contains("UNREDACTED one couldn't"), "{t}");
+        let ok: Result<String, String> = Ok("backotter/reports/x.txt".into());
+        assert!(saved_text(p, &ok, Some((p2, &big)), 0).contains(&s::report_why_ram("too big")));
+        assert!(saved_text(p, &room, Some((p2, &ok)), 0).contains(&s::report_why_ram("no room")));
     }
 
     #[test]

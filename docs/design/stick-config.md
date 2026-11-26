@@ -327,7 +327,12 @@ chosen (restic or borg).
   bytes.  The backup's own copy always has `layout`.  `stick --copy`'s
   `no_layout` then says why in plain words: the backup holds the layout,
   and this stick can't restore the machine's disks until it comes from
-  the backup.  A dump that kept LUKS2 headers has them in the backup, not
+  the backup.  `stick --json` says the same in each machine's row
+  (`layout`: present, left out with the code and size, or none;
+  holt-json.md's open question 18), so bko-rescue says it on the Machine
+  screen, before the password.  The backup tool writes the member only as
+  `without_layout` makes it: CODE one of the two, N an integer.  Any other
+  code is passed on as none named.  A dump that kept LUKS2 headers has them in the backup, not
   on the stick (below, "LUKS2 headers in the backup"; holt-json.md's open
   question 12, built 2026-11-26).
 
@@ -649,7 +654,12 @@ backup tool calls `stick_write` (below), which checks the room with
   wrote it into the backup and `len` its size as printed.  The answer is
   one of three:
   - `Whole`: `room_check` took the file.  Write it as "How it writes"
-    says, and say its warnings.
+    says, and say its warnings.  With `remove_old` (holt-json.md's open
+    question 19, approved 2026-11-26): it fits only once the machine's
+    older copies are gone, and not even `body` fits beside them.  Remove
+    them first, as for `WithoutLayout`'s `remove_old` (the folder stays),
+    fsync the directory, then write the whole file as above (nothing
+    becomes `system.prev.json`), and say `text`.
   - `WithoutLayout`: the whole file was refused.  Write `body` in its
     place, as "How it writes" says, its `.sha256` of `body`'s bytes.
     `body` is system.json without `layout`, with `layout_left_out`
@@ -660,7 +670,7 @@ backup tool calls `stick_write` (below), which checks the room with
     2, open question 15); and what makes room, when room would help.
     Say `body`'s own warnings too.  With `remove_old`, `body` fits only
     once the machine's older copies are gone, as they would be for
-    `RemoveOld`: remove them first (the folder stays), fsync the
+    `RemoveOld`, and the whole file doesn't fit even then: remove them first (the folder stays), fsync the
     directory, then write `body` as above.  With no system.json there,
     nothing becomes `system.prev.json`.
   - `RemoveOld`: even `body` doesn't fit, even once the older copies are
@@ -845,9 +855,12 @@ feature means the stick can't import the pool at all.
 - What the stick holds after a refused write is built as far as it can be
   before the backup tool: `stick.rs`'s `stick_write` and `without_layout`
   (the decision and the layout-less copy, with their words, and the
-  older copies removed first when only that makes room), `stick
-  --copy`'s words for a `layout_left_out`, and bko-rescue's Disks words
-  for a system.json with no layout (holt-json.md's open question 16).
+  older copies removed first when only that makes room, the whole file
+  tried first then: open question 19), `stick --copy`'s words for a
+  `layout_left_out`, each `stick --json` row's `layout` (open question
+  18), and bko-rescue's words for a system.json with no layout: on
+  Machine before the password, and on Disks, each with the advice for its
+  reason (holt-json.md's open questions 16 and 18).
 - Bug reports on the stick (holt-json.md's open question 17): bko-rescue
   keeps the 5 newest pairs and refuses a save that would leave under
   22 MiB (`report.rs`, statvfs in `ffi.rs`); `room_check` takes the

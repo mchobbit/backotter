@@ -1912,12 +1912,12 @@ The stick still finds the backup; it can't restore the disks.
   runs).  bko-holt's own line says why the layout was left out.  The
   room advice is conditional because bko-rescue sees only the code:
   `no_layout` also covers `system_too_big`, which no stick takes, and a
-  system.json with no `layout` at all (open question 18 would give the
-  reason as data).  A typed address and every other refusal keep
+  system.json with no `layout` at all (open question 18 gives the reason
+  as data since: "What the stick's reason for no layout changed").  A typed address and every other refusal keep
   `NO_LAYOUT_WHY` and `NO_LAYOUT_TODO`.
 - The title is as it was, so app-plain's golden didn't change.
-- Not done: the first screen doesn't say it (`stick --json` has no field
-  for it); the fetch from the backup is open question 15's (built since:
+- Not done then: the first screen didn't say it (`stick --json` had no
+  field for it; built since, open question 18); the fetch from the backup is open question 15's (built since:
   "What a snapshot's own layout changed").
 
 ## What bug reports on the stick changed
@@ -2059,6 +2059,34 @@ changed.
   so Snapshot shows the same.  The review fixes ("rescue, holt-json,
   stick-config: review fixes for oq14") changed nothing in bko-rescue
   either.
+
+## What the stick's reason for no layout changed
+
+2026-11-26, holt-json.md's open question 18 (approved that day with its
+recommendation; 547cec4): each machine row of `bko-holt stick --json`
+says whether its system.json carries the layout (`layout`: present, left
+out with the code and size, or none).
+
+- `stick.rs` reads it into `OnStick`; a row without it (an older
+  bko-holt) is `Unknown`, and nothing new is said.
+- Machine: choosing a machine whose layout is left out or none shows "No
+  disk layout on this stick" before the password (`mod.rs`'s
+  `no_layout_notice`): why, from the row (`strings.rs`'s
+  `left_out_why`); what the backup gives (`FROM_BACKUP` when bko-holt
+  reads a snapshot's own layout, else `NOT_FROM_BACKUP`); and the advice
+  for that code alone (`Machine::no_layout`): `ADVICE_ROOM` for
+  `stick_full`, `ADVICE_TOO_BIG` for `system_too_big`, `ADVICE_NONE` for
+  none, nothing for a code bko-holt doesn't name.  Go on, Shell, Back
+  (Back stays on Machine).  The machine stays choosable: the backup may
+  hold its own layout.
+- Disks: the `no_layout` problem's what-to-do is the first sentence it
+  had, then the same advice (`no_layout_todo`), in place of "if bko-holt's
+  words say the stick had no room".  Unknown keeps the old words, so no
+  golden screen changed.
+- Tested: `a_machine_whose_stick_holds_no_layout_is_said_before_the_password`,
+  `disks_gives_the_advice_for_the_reason_the_stick_said`, and app-test.py's
+  `test_machine_no_layout` (golden `app-machine-no-layout.utf8-colour`), on
+  the recorded `stick-left-out` scenario.
 
 ## The app on top (later)
 

@@ -17,7 +17,9 @@ Haiku; Redox and Sculpt OS from Linux):
 - `bko-holt stick --json` reads the rescue stick's config partition (its
   machines' `system.json`) off the disk the system booted from, without
   mounting it, for bko-rescue (`src/stick.rs`, `src/fatfs.rs`;
-  docs/design/holt-json.md, "bko-holt-stick").
+  docs/design/holt-json.md, "bko-holt-stick").  Each machine's row says
+  whether its system.json carries the disk layout (`layout`: present,
+  left out and why, or none; open question 18).
 - `bko-holt stick --copy INSTALL_ID OUT --json` reads it the same way (that
   machine's system.json only) and writes its disk layout to a new private
   file OUT for `load`: the `bko-holt dump` its system.json carries as
@@ -34,8 +36,8 @@ Haiku; Redox and Sculpt OS from Linux):
   `stick::stick_write` is what the backup tool calls: the whole file; else
   one without its layout (`layout_left_out` says why), so the stick still
   finds the backup, with the machine's older copies removed first when
-  only that makes room; else nothing, the older copies removed (open
-  question 16).
+  only that makes room (the whole file tried first then, open question
+  19); else nothing, the older copies removed (open question 16).
 - `bko-holt recovery-words OUT --json` checks a BackOtter recovery key, its
   words on standard input, and writes the repository password it stands
   for to a new private file OUT, for bko-rescue (`src/recoverycmd.rs`;

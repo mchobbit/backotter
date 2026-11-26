@@ -17,7 +17,8 @@ RT3 ran the spike on every console of the seven images under QEMU and
 the header test in every build guest; the profile table is what it
 found ("What RT3 found" in the plan).  RT11's first screens (`src/app/`):
 with no hidden option, `bko-rescue` runs Machine (`bko-holt stick
---json`), Type a location, the Network notice, Repository (the password,
+--json`; a machine whose stick holds no layout is said before the
+password, holt-json.md's open question 18), Type a location, the Network notice, Repository (the password,
 the hint after two wrong ones, the recovery key through `bko-holt
 recovery-words --json`), the keyboard offer and the Keyboard screen,
 Which machine?, Snapshot, the problems' help screens and the bug report.

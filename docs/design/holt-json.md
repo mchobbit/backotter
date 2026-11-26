@@ -886,7 +886,8 @@ reads boot sectors only, the *Check* settled at RT10k).
     "this_computer": false,
     "repository": {"kind": "sftp", "url": "sftp://nas.local/backotter/lovelace"},
     "repository_id": "a3f9…", "keyboard": null, "time": null,
-    "password_hint": null}
+    "password_hint": null,
+    "layout": {"state": "present", "code": null, "bytes": null}}
  ],
  "notes": [{"code": "settings_ignored", "text": "backotter/settings.toml isn't read yet …"}]}
 ```
@@ -935,6 +936,21 @@ only when it is a UUID), a string field over 4 KiB
   `this_computer_ambiguous`, so nothing wrong is preselected.
   `here.dmi_uuid` is Linux's (sysfs, as read), null elsewhere, as the
   plan's `here`, so off Linux no row is "this computer" yet.
+- `layout` (open question 18): whether the machine's system.json
+  carries its disk layout, judged as `stick --copy` judges it.
+  `present`: its `layout` is a JSON object.  `left_out`: it has no
+  `layout`, and `layout_left_out` says why (the backup tool left it out
+  for the stick's room, open question 16): `code` is `system_too_big` or
+  `stick_full` (`stick.rs`'s `LAYOUT_LEFT_OUT_CODES`), null for any other
+  code; `bytes` is the whole file's size when `code` is named and it is a
+  number (for `system_too_big`, only over `SYSTEM_MAX`), else null.
+  `none`: no `layout`, or one that isn't an object, and no reason.  `code`
+  and `bytes` are null but for `left_out`.  The whole member is null when
+  the file couldn't be judged (not JSON, not `backotter-system`, another
+  install ID), so an `ok` row always has one.  The layout itself is never
+  read here: `present` doesn't say load takes it (`stick --copy`'s
+  `layout_refused` does), so the scan costs no more than the parse it
+  already does.  A row from a bko-holt before this has no member.
 - `keyboard` and `time` are system.json's top-level sections of those
   names passed on as they are, null until the backup tool writes them
   (RT10l's dump sections): the screens then say US English and UTC.
@@ -949,8 +965,9 @@ only when it is a UUID), a string field over 4 KiB
   2 for bad arguments (`bko-holt-error`).  Allowed under
   `BKO_HOLT_NO_COMMIT` (it reads only).  `--sysroot DIR` reads a Linux
   tree instead, for tests (as dump's).
-- The layout itself isn't in the document: `stick --copy` writes it to a
-  file for load (below; open question 8, answered).
+- The layout itself isn't in the document, only the row's `layout`
+  state: `stick --copy` writes it to a file for load (below; open
+  question 8, answered).
 - `image` is what the marker says: `system_schemas`, and `dump_schemas`
   (the dump schemas the image's bko-holt load reads, open question 11),
   null when the marker is from before markers named them.  Such an image
@@ -1015,7 +1032,8 @@ same bytes: the stick isn't read again between the check and the write.
   `no_layout` (no `layout`, or one that isn't a document: a system.json
   of today; one the backup tool wrote without its layout for the stick's
   room says so in the words, from its `layout_left_out`, open question
-  16), `layout_refused` (load wouldn't take it, or its kept LUKS
+  16; the row's `layout` said the same before the copy, open question
+  18), `layout_refused` (load wouldn't take it, or its kept LUKS
   headers can't be fetched), `copy_failed` (OUT couldn't be written: nothing left there,
   or, when a file appeared there after the check, that file left as it
   is).
@@ -2756,7 +2774,8 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     in `Room`, so it isn't counted).  If `body` fits then, the answer is
     `WithoutLayout` with `remove_old`: remove them first, then write
     `body`.  `RemoveOld` is only left when even that fails.  Whether the
-    whole file should be tried there first is open question 19.
+    whole file should be tried there first is open question 19 (built
+    since, 547cec4: it is).
   - The words name only the copies that are there (system.json,
     system.prev.json, or both).
   - `stick --copy` doesn't say a size for a `system_too_big` at or under
@@ -2789,7 +2808,8 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
 - **Spec problems:**
   - `stick --json` doesn't say a machine has no layout, so bko-rescue says
     it only on Disks, after the password and the snapshot.  A `layout`
-    field in each row would let the first screen say it.  Not built.
+    field in each row would let the first screen say it.  Built since:
+    open question 18, 547cec4.
   - After `RemoveOld` with `restore-logs/` left, `stick --json` lists the
     folder as `unreadable` ("system.json is missing").  The words are
     true, but they read as damage.
@@ -3270,6 +3290,107 @@ for oq14"; stick-config.md's step 2 now says each):
   copied link: cinqcent has no SELinux); an automount; a SIGKILL of the
   script; the rest of the earlier "Not run" list.
 
+### What why a stick holds no layout built
+
+Built 2026-11-26 (open question 18, approved that day by the user, the
+recommendation; 547cec4):
+
+- **bko-holt:** each machine row of `stick --json` has `layout`
+  (`stick.rs`'s `layout_row`), as "bko-holt-stick" says: `present`,
+  `left_out` with the checked `code` and `bytes`, or `none`; null when
+  the file couldn't be judged.  `left_out_checked` is the one check of
+  `layout_left_out`, used by the row and by `stick --copy`'s `no_layout`
+  words, so the two never disagree.  The schema stays 1: a new member,
+  which readers skip.
+- **bko-rescue:** `stick.rs` reads the member into `OnStick` (`Present`,
+  `LeftOut { code, bytes }`, `None`, `Unknown` for a missing or unknown
+  one).  When a machine is chosen whose row is `left_out` or `none`, the
+  Machine screen shows "No disk layout on this stick" before the
+  password: why (the row's code, and its size), what the backup gives
+  (with a bko-holt that reads a snapshot's own layout, the chosen backup's
+  is read; else this stick can't restore the machine's disks), and the
+  advice for that code alone.  Go on goes to the password; Back stays on
+  Machine.  The Disks screen's `no_layout` problem gives the same advice
+  in place of "if bko-holt's words say the stick had no room".  A row
+  without the member (an older bko-holt) says nothing, and Disks keeps
+  the old words.
+- **Defaults chosen** (each in one place):
+  - The member is an object, `{"state", "code", "bytes"}`, not a bare
+    string beside a second member (`stick.rs`'s `layout_row`).
+  - `present` means only that `layout` is an object.  The layout isn't
+    passed to load's `Layout::from_json` for every machine: `stick --copy`
+    does that for the one chosen (`stick.rs`'s module doc).
+  - An unknown code is passed on as null, and its bytes as null too
+    (`stick.rs`'s `left_out_checked`).
+  - A `layout` that isn't an object, with or without `layout_left_out`,
+    is `none`, as `stick --copy` names it (`layout_row`).
+  - A machine without a layout can still be chosen: the backup may hold
+    its own (open question 15).  The notice informs; it blocks nothing
+    (`mod.rs`'s `no_layout_notice`).
+  - The advice: `stick_full`, make room or write a newer image, then back
+    up again; `system_too_big`, no stick can hold it; `none`, back up
+    again with this stick plugged in; an unknown code, none
+    (`stick.rs`'s `Machine::no_layout`, the words in `strings.rs`).
+- **Recorded:** `stick-left-out` by `record-stick.py` (new
+  `stick-left-out` stick, and SCENARIO names to record only some) from a
+  bko-holt built from this tree, on chopin: lovelace present, babbage
+  `stick_full` (20 MiB), hopper `system_too_big` (70 MiB), turing none,
+  and `stick --copy` of the three.  `stick-invalid/05-stick-layout-code`
+  is wrong on purpose (a `present` row with a code).
+- **Tested:** `stick.rs`'s `each_machine_says_whether_it_carries_a_layout`
+  (each state, each code, a size at the limit, an unknown code, a
+  `layout` that isn't a document, a file that isn't JSON; golden
+  `stick-json/layouts.json`, new; the copy's words agree with the row);
+  the stick-json goldens three, failing and not-install-ids re-blessed on
+  purpose for the new member alone (checked: no other line changed).
+  bko-rescue's `a_machine_whose_stick_holds_no_layout_is_said_before_the_password`
+  and `disks_gives_the_advice_for_the_reason_the_stick_said`, and
+  app-test.py's `test_machine_no_layout` (golden
+  `app-machine-no-layout.utf8-colour`, new).  holt_schema.py checks the
+  member (`Opt`: recordings from before don't carry it).  The holt gate
+  on chopin: cargo test 985 passed, 0 failed, 4 ignored; 110 golden plans
+  of 98 dumps, 0 differ; redact-corpus passed.  bko-rescue on czerny
+  (Rust 1.85.1): cargo build without warnings, cargo test 304 + 15
+  passed, abi/check.sh ok (54 facts, 10 symbols), pty-test.py 117 ok,
+  demo-test.py 383 ok, app-test.py 347 ok, each 0 failed;
+  holt_schema.py over the scenarios, holt's fixtures and corpus 543
+  checked, 0 problems.
+- **Waits on the backup tool:** nothing new.  It must write
+  `layout_left_out` as `without_layout` does (one of the two codes, the
+  whole file's size as an integer), or the row says less.
+- **Waits on a release round:** images and their bko-holt and bko-rescue
+  get the member and the notice at their next build.  Until then a stick
+  says it only on Disks, as before.
+- **Spec problems:** none found.  Not run: a real stick.
+
+### What the whole file first built
+
+Built 2026-11-26 as far as it can be before the backup tool (open question
+19, approved that day by the user, the recommendation; 547cec4):
+
+- **bko-holt:** `stick_write`, where the machine's older copies would go
+  (not even `body` fits beside them), now tries the whole file with them
+  gone first: `Whole { warnings, remove_old: true, text }`.  Then `body`
+  (`WithoutLayout` with `remove_old`), then `RemoveOld`.  `Whole` gained
+  `remove_old` and `text` (empty without the removal).  A file over
+  `SYSTEM_MAX` is never written whole.
+- **Defaults chosen:** the words for `Whole` with `remove_old` say why the
+  whole file and `body` didn't fit beside the copies, which copies are
+  removed, and that the stick keeps the layout (`stick.rs`'s
+  `stick_write`).
+- **Tested:** `write_time_stick_write`: the exact edge with both copies
+  (10 MiB fits once 10 MiB + 4096 are freed, 10 MiB + 1 is `body`), the
+  same edge in free room with one copy (4096 free is the whole file, 4095
+  `body`), `body` beside the copies still before the whole file without
+  them, and a `system_too_big` never whole.  The gate as above.
+- **Waits on the backup tool:** calling `stick_write`, and for `Whole`
+  with `remove_old`, removing the older copies (the folder stays), fsync,
+  then writing the whole file as "How it writes" says.
+- **Spec problems:** the approved order keeps `body` beside the older
+  copies before the whole file without them.  Then the stick gets no
+  layout though the whole file would fit, only to keep a
+  system.prev.json nothing reads.  New: open question 24.
+
 ## Decisions
 
 - **J1. How bko-rescue finds bko-holt's protocol.**  `bko-holt --version
@@ -3595,7 +3716,7 @@ for oq14"; stick-config.md's step 2 now says each):
     old reports off.  Or leave them, and say in the Report screen's words
     that reports take the stick's room until removed.
 18. **Why a stick holds no layout, as data** (from open question 16's
-    review; answered: approved 2026-11-26 by the user, the recommendation; not built yet).  bko-rescue sees only bko-holt's `no_layout` code, after
+    review; answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26, 547cec4 and "holt-json, stick-config, rescue-tui: open questions 18 and 19 built": "What why a stick holds no layout built").  bko-rescue sees only bko-holt's `no_layout` code, after
     the password and the snapshot are chosen.  It can't tell
     `stick_full`, where room helps, from `system_too_big`, which no stick
     takes, or from a system.json with no `layout` at all.  So its
@@ -3607,7 +3728,7 @@ for oq14"; stick-config.md's step 2 now says each):
     screen, before the password, with advice for that code alone.  Or
     keep today's conditional words.
 19. **The whole file once the older copies go** (from open question 16's
-    review; answered: approved 2026-11-26 by the user, the recommendation; not built yet).  When even `body` doesn't fit beside the machine's older
+    review; answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26 as far as it can be before the backup tool, 547cec4 and "holt-json, stick-config, rescue-tui: open questions 18 and 19 built": "What the whole file first built").  When even `body` doesn't fit beside the machine's older
     copies, `stick_write` removes them and writes `body`.  If the whole
     file would fit once they are gone, writing it keeps the layout on the
     stick, and nothing more is lost: the copies go either way.
@@ -3677,3 +3798,18 @@ for oq14"; stick-config.md's step 2 now says each):
     mounts in a 0700 directory in RAM where they exist, undone at the end
     and at the next start, and no system.json in the snapshot on OpenBSD
     and Haiku (their restores use the stick's copy).
+24. **The whole file before `body` beside the older copies** (from open
+    question 19's build; not answered).  `stick_write` tries, in order:
+    the whole file beside the older copies, `body` beside them, the whole
+    file once they are gone, `body` once they are gone, then nothing.
+    Take free 1 MiB, an old system.json of 10 MiB and a new one of 10
+    MiB: `body` fits beside the old copy, so the stick gets no layout,
+    though the whole file fits once the old copy goes.  The old copy
+    becomes `system.prev.json`, which nothing reads at restore time, so
+    keeping it gains nothing.  The next backup then has `body` and that
+    prev to free, and it can take two backups to get the whole file back.
+    *Recommended:* once the whole file is refused beside the older
+    copies, try it with them gone before `body` beside them (restore
+    fidelity first); `body` beside them only when even that fails.  Or
+    keep today's order (open question 19's, as approved): the older
+    copies stay whenever `body` fits beside them.

@@ -123,10 +123,16 @@ for b in bko-holt rustic-bko; do
         die "the layer has no $b"
     config_bins+=(--config-bin "$work/$b")
 done
+# The dump schemas the image's bko-holt load reads, in its own words, for the
+# marker's dump_schemas.  It runs here: an image is built on a host of its
+# architecture (arm64's on Bigfoot).
+chmod 755 "$work/bko-holt"
+"$work/bko-holt" --version --json >"$work/holt-api.json" ||
+    die "the layer's bko-holt can't run here (--version --json)"
 # The marker, stick.json and config.img; see marker.py.
 image_id=$(python3 "$(dirname "$0")/marker.py" --platform "$PLATFORM" --base-os ubuntu \
     --base-release "$ubuntu" --kernel "$kernel" --config-part "$CONFIG_PART" \
-    --config-mib "$CONFIG_MIB" "${config_bins[@]}" \
+    --config-mib "$CONFIG_MIB" "${config_bins[@]}" --holt-api "$work/holt-api.json" \
     --zfs-version "$zfs" --zfs-features "$work/zfs-features" "$work") || die "marker.py failed"
 
 entry() {   # entry TITLE EXTRA_KERNEL_ARGS

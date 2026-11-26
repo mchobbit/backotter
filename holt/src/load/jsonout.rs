@@ -233,6 +233,7 @@ pub fn api_doc() -> String {
     let platform = Obj::new().set("os", std::env::consts::OS).set("arch", std::env::consts::ARCH);
     let v = header("bko-holt-api")
         .set("documents", docs)
+        .set("dump_schemas", super::layout::DUMP_SCHEMAS.to_vec())
         .set("features", FEATURES.to_vec())
         .set("platform", platform)
         .set("run_dir", super::RUN_DIR)
@@ -1141,6 +1142,11 @@ mod tests {
         // plan stops before its first plan (J2).
         assert_eq!(v.get("documents").and_then(Value::as_object).map(|o| o.len()), Some(DOCUMENTS.len()));
         assert!(v.get_arr("features").unwrap().iter().any(|f| f.as_str() == Some("no_commit_env")));
+        // The dump schemas load reads, which marker.py copies into the
+        // stick's marker (open question 11).
+        let dumps: Vec<u64> = v.get_arr("dump_schemas").unwrap().iter().filter_map(Value::as_u64).collect();
+        assert_eq!(dumps, crate::load::layout::DUMP_SCHEMAS);
+        assert_eq!(dumps, [crate::load::layout::SCHEMA]);
         assert_eq!(v.str_at(&["platform", "os"]), Some(std::env::consts::OS));
         assert_eq!(v.str_at(&["platform", "arch"]), Some(std::env::consts::ARCH));
         assert_eq!(v.get_str("run_dir"), Some(super::super::RUN_DIR));

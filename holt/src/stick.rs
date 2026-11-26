@@ -65,6 +65,11 @@ arguments or an OUT that isn't a new file in a private directory.
 /// The system.json schemas this bko-holt reads.
 pub const SYSTEM_SCHEMAS: &[u64] = &[1];
 
+/// The dump schemas an image's bko-holt reads when its marker names none:
+/// images built before markers carried `dump_schemas` (2026-11-26), whose
+/// bko-holt reads dump schema 1 only (holt-json.md's open question 11).
+pub const DUMP_SCHEMAS_UNNAMED: &[u64] = &[1];
+
 /// The most machine directories listed; a stick with more says so.
 pub const MACHINES_MAX: usize = 64;
 
@@ -205,7 +210,7 @@ fn without_copy_values(args: &[String]) -> Vec<String> {
 }
 
 /// What the image's marker (`/.disk/backotter.json`) says of the config
-/// partition, and which system.json schemas the image reads.
+/// partition, and which system.json and dump schemas the image reads.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Marker {
     pub image_id: String,
@@ -216,6 +221,18 @@ pub struct Marker {
     pub label: String,
     pub fat_serial: String,
     pub system_schemas: Vec<u64>,
+    /// The dump schemas the image's bko-holt load reads, as the image build
+    /// took them from its `bko-holt --version --json`; None in a marker
+    /// from before they were recorded (see `dump_schemas_read`).
+    pub dump_schemas: Option<Vec<u64>>,
+}
+
+impl Marker {
+    /// The dump schemas the image's bko-holt load reads: the marker's, or
+    /// DUMP_SCHEMAS_UNNAMED for a marker that names none.
+    pub fn dump_schemas_read(&self) -> &[u64] {
+        self.dump_schemas.as_deref().unwrap_or(DUMP_SCHEMAS_UNNAMED)
+    }
 }
 
 /// Where the marker is: on the medium casper mounted (Linux), in /boot
@@ -247,6 +264,7 @@ pub fn parse_marker(text: &str) -> Result<Marker, String> {
         label: c.get_str("label").ok_or("config_partition.label is missing")?.to_string(),
         fat_serial: c.get_str("fat_serial").ok_or("config_partition.fat_serial is missing")?.to_string(),
         system_schemas: v.get_arr("system_schemas").map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default(),
+        dump_schemas: v.get_arr("dump_schemas").map(|a| a.iter().filter_map(Value::as_u64).collect()),
     })
 }
 
@@ -451,7 +469,7 @@ fn read(sys: &Sys, fam: Option<Family>, d: &mut Doc) -> Result<(), NotOk> {
     let m = parse_marker(&text).map_err(|e| not_ok("damaged", format!("{mpath}, the image's marker: {e}")))?;
     d.partition = Some(m.number);
     d.label = Some(m.label.clone());
-    d.image = Obj::new().set("image_id", m.image_id.as_str()).set("platform", m.platform.clone()).set("built", m.built.clone()).set("system_schemas", m.system_schemas.clone()).build();
+    d.image = Obj::new().set("image_id", m.image_id.as_str()).set("platform", m.platform.clone()).set("built", m.built.clone()).set("system_schemas", m.system_schemas.clone()).set("dump_schemas", m.dump_schemas.clone()).build();
     if !sys.privileged {
         return Err(not_ok("unreadable", "the config partition is read off the stick's device: run bko-holt stick as root"));
     }
@@ -662,6 +680,42 @@ fn fields(o: Obj, state: &str, why: Option<String>, v: Option<&Value>, m: &Marke
         .set("time", time)
         .set(HINT_KEY, hint)
         .build()
+}
+
+/// A warning of the write-time check, stick-config.md's "Is this stick good
+/// enough?": the backup tool still writes system.json, and says TEXT.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StickWarning {
+    /// `system_schema_unread` or `dump_schema_unread`.
+    pub code: &'static str,
+    pub text: String,
+}
+
+/// The schema half of the write-time check, for the backup tool before it
+/// writes SYSTEM (a `backotter-system` document) to the stick whose marker
+/// is M: SYSTEM's schema must be in the marker's `system_schemas`, and its
+/// `layout`'s (the dump's) schema in the marker's `dump_schemas`
+/// (holt-json.md's open question 11), or that stick's restore refuses them.
+/// A SYSTEM with no `layout` has no dump to check.  The backup tool isn't
+/// built: this is the check it calls, here where the marker is read.
+pub fn schema_warnings(m: &Marker, system: &Value) -> Vec<StickWarning> {
+    let list = |l: &[u64]| if l.is_empty() { "none".to_string() } else { l.iter().map(u64::to_string).collect::<Vec<_>>().join(", ") };
+    let mut w = Vec::new();
+    let schema = system.get_u64("schema");
+    if !schema.is_some_and(|s| m.system_schemas.contains(&s)) {
+        let is = schema.map_or("has no schema".to_string(), |s| format!("is schema {s}"));
+        w.push(StickWarning { code: "system_schema_unread", text: format!("this stick's image reads system.json schema {}, and this machine's system.json {is}: the stick can't restore it; write a newer image to the stick", list(&m.system_schemas)) });
+    }
+    if let Some(layout) = system.get(LAYOUT_KEY) {
+        let read = m.dump_schemas_read();
+        let is = layout.get_u64("schema");
+        if !is.is_some_and(|s| read.contains(&s)) {
+            let is = is.map_or("has no schema".to_string(), |s| format!("is dump schema {s}"));
+            let from = if m.dump_schemas.is_none() { " (its marker is from before images named them)" } else { "" };
+            w.push(StickWarning { code: "dump_schema_unread", text: format!("this stick's image reads dump schema {}{from}, and this machine's layout {is}: the stick's restore would refuse it (layout_refused); write a newer image to the stick", list(read)) });
+        }
+    }
+    w
 }
 
 fn schemas_text(m: &Marker) -> String {
@@ -902,7 +956,7 @@ pub mod sample {
     /// 32768 sectors (16 MiB) with serial 3F2A-9C71.
     pub fn marker(n: u32) -> String {
         format!(
-            "{{\n  \"format\": \"backotter-image\",\n  \"schema\": 1,\n  \"image_id\": \"{IMAGE_ID}\",\n  \"built\": \"2026-11-20T10:00:00Z\",\n  \"platform\": \"linux\",\n  \"system_schemas\": [1],\n  \"config_partition\": {{\"number\": {n}, \"sectors\": 32768, \"label\": \"BACKOTTER\", \"fat_serial\": \"3F2A-9C71\"}}\n}}\n"
+            "{{\n  \"format\": \"backotter-image\",\n  \"schema\": 1,\n  \"image_id\": \"{IMAGE_ID}\",\n  \"built\": \"2026-11-20T10:00:00Z\",\n  \"platform\": \"linux\",\n  \"system_schemas\": [1],\n  \"dump_schemas\": [1],\n  \"config_partition\": {{\"number\": {n}, \"sectors\": 32768, \"label\": \"BACKOTTER\", \"fat_serial\": \"3F2A-9C71\"}}\n}}\n"
         )
     }
 
@@ -1218,10 +1272,48 @@ mod tests {
     }
 
     #[test]
+    fn write_time_schema_check() {
+        let m = parse_marker(&marker(3)).unwrap();
+        let sys = |extra: &str| crate::json::parse(&system(LOVELACE, "lovelace", "4c4c4544-0000", extra)).unwrap();
+        let codes = |m: &Marker, v: &Value| schema_warnings(m, v).iter().map(|w| w.code).collect::<Vec<_>>();
+        // Readable, with a layout and without one (no dump to check).
+        assert!(schema_warnings(&m, &sys(", \"layout\": {\"format\": \"bko-holt\", \"schema\": 1}")).is_empty());
+        assert!(schema_warnings(&m, &sys("")).is_empty());
+        // A dump schema the stick's bko-holt doesn't read: a warning, named.
+        let w = schema_warnings(&m, &sys(", \"layout\": {\"format\": \"bko-holt\", \"schema\": 2}"));
+        assert_eq!(w.len(), 1);
+        assert_eq!(w[0].code, "dump_schema_unread");
+        assert_eq!(w[0].text, "this stick's image reads dump schema 1, and this machine's layout is dump schema 2: the stick's restore would refuse it (layout_refused); write a newer image to the stick");
+        assert_eq!(codes(&m, &sys(", \"layout\": {\"format\": \"bko-holt\"}")), ["dump_schema_unread"]);
+        assert!(schema_warnings(&m, &sys(", \"layout\": {\"schema\": \"1\"}"))[0].text.contains("layout has no schema"));
+        // A newer stick that reads both.
+        let both = parse_marker(&marker(3).replace("\"dump_schemas\": [1]", "\"dump_schemas\": [1, 2]")).unwrap();
+        assert!(schema_warnings(&both, &sys(", \"layout\": {\"schema\": 2}")).is_empty());
+        // A marker from before dump_schemas reads dump schema 1, and says so.
+        let old = parse_marker(&marker(3).replace("  \"dump_schemas\": [1],\n", "")).unwrap();
+        assert!(schema_warnings(&old, &sys(", \"layout\": {\"schema\": 1}")).is_empty());
+        let w = schema_warnings(&old, &sys(", \"layout\": {\"schema\": 2}"));
+        assert_eq!(w[0].text, "this stick's image reads dump schema 1 (its marker is from before images named them), and this machine's layout is dump schema 2: the stick's restore would refuse it (layout_refused); write a newer image to the stick");
+        // system.json's own schema, against system_schemas, as before; both warn at once.
+        let v2 = crate::json::parse(&system(LOVELACE, "lovelace", "4c4c4544-0000", ", \"layout\": {\"schema\": 2}").replacen("\"schema\": 1", "\"schema\": 2", 1)).unwrap();
+        let w = schema_warnings(&m, &v2);
+        assert_eq!(w.iter().map(|w| w.code).collect::<Vec<_>>(), ["system_schema_unread", "dump_schema_unread"]);
+        assert_eq!(w[0].text, "this stick's image reads system.json schema 1, and this machine's system.json is schema 2: the stick can't restore it; write a newer image to the stick");
+        let none = parse_marker(&marker(3).replace("\"system_schemas\": [1]", "\"system_schemas\": []")).unwrap();
+        assert!(schema_warnings(&none, &sys(""))[0].text.starts_with("this stick's image reads system.json schema none,"));
+    }
+
+    #[test]
     fn markers() {
         let m = parse_marker(&marker(4)).unwrap();
         assert_eq!((m.number, m.sectors, m.label.as_str(), m.fat_serial.as_str()), (4, 32768, "BACKOTTER", "3F2A-9C71"));
         assert_eq!(m.system_schemas, [1]);
+        assert_eq!(m.dump_schemas.as_deref(), Some(&[1u64][..]));
+        // A marker from before dump_schemas: its image reads dump schema 1.
+        let old = parse_marker(&marker(4).replace("  \"dump_schemas\": [1],\n", "")).unwrap();
+        assert_eq!(old.dump_schemas, None);
+        assert_eq!(old.dump_schemas_read(), [1]);
+        assert_eq!(parse_marker(&marker(4).replace("\"dump_schemas\": [1]", "\"dump_schemas\": [1, 2]")).unwrap().dump_schemas_read(), [1, 2]);
         assert!(parse_marker("{}").unwrap_err().contains("backotter-image"));
         let e = crate::json::parse("{").unwrap_err();
         assert_eq!(parse_marker("{").unwrap_err(), format!("not JSON ({} at byte {})", e.message, e.offset));

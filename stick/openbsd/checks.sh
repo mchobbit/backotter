@@ -19,5 +19,6 @@ check root-ssh-refused 'test -x /tmp/askpass && pgrep -x sshd >/dev/null || { ec
 check restic-bko 'restic-bko version'
 check rustic-bko 'rustic-bko --version'
 check bko-holt 'bko-holt --version | grep "^bko-holt [0-9]"'
+check dump-schemas 'd() { tr -d " \011\012\015" | sed -n "s/.*\"dump_schemas\":\(\[[0-9,]*]\).*/\1/p"; }; m=$(d </.disk/backotter.json); h=$(bko-holt --version --json | d); echo "marker ${m:-none}, bko-holt ${h:-none}"; test -n "$m" && test "$m" = "$h"'
 check marker 'grep -q "\"platform\": \"openbsd\"" /.disk/backotter.json && sed -E -n "s/.*\"(image_id|release|kernel)\": \"([^\"]*)\".*/\2/p" /.disk/backotter.json | tr "\n" " "'
 check memory 'top -b -d 1 | sed -n "s/^Memory: //p"'

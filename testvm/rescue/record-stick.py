@@ -156,11 +156,14 @@ def write(path, data, mode=None):
         os.chmod(path, mode)
 
 
-def make_stick(work, machines, here, damage):
-    """A Linux tree under WORK booted from a stick holding MACHINES."""
+def make_stick(work, machines, here, damage, api):
+    """A Linux tree under WORK booted from a stick holding MACHINES; API is
+    the bko-holt's `--version --json`, for the marker's dump_schemas."""
     img_dir = os.path.join(work, "img")
+    write(os.path.join(work, "holt-api.json"), api)
     run(sys.executable, MARKER, "--platform", "linux", "--base-os", "ubuntu", "--base-release", "26.04.1",
-        "--kernel", "7.0.0-30-generic", "--config-part", str(CONFIG_PART), "--config-mib", str(CONFIG_MIB), img_dir)
+        "--kernel", "7.0.0-30-generic", "--config-part", str(CONFIG_PART), "--config-mib", str(CONFIG_MIB),
+        "--holt-api", os.path.join(work, "holt-api.json"), img_dir)
     img = os.path.join(img_dir, "config.img")
     for mid, body, how in machines:
         d = os.path.join(work, "m", mid)
@@ -238,7 +241,7 @@ def main(argv):
             shutil.rmtree(dest)
         os.makedirs(dest)
         with tempfile.TemporaryDirectory(prefix="bko-stick-") as work:
-            tree, marker = make_stick(work, machines, here, damage)
+            tree, marker = make_stick(work, machines, here, damage, version)
             call(dest, "01-version", ["--version", "--json"], version, 0)
             p = subprocess.run([holt, "stick", "--json", "--sysroot", tree], stdout=subprocess.PIPE, stdin=subprocess.DEVNULL)
             doc = json.loads(p.stdout)

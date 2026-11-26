@@ -187,9 +187,13 @@ if [[ -n $zfs ]]; then
     ssh_vm "cat $rdir/in/zfs-features" >"$work/zfs-features"
     zfs_args=(--zfs-version "$zfs" --zfs-features "$work/zfs-features")
 fi
+# The dump schemas the image's bko-holt load reads, in its own words (run in
+# the VM, its system), for the marker's dump_schemas.
+ssh_vm "cd $rdir && ./in/bko-holt --version --json" >"$work/holt-api.json" ||
+    die "bko-holt --version --json failed in $BUILD_VM"
 image_id=$(python3 "$here/marker.py" --platform "$PLATFORM" --base-os "$BASE_OS" \
     --base-release "$BASE_RELEASE" --kernel "$kernel" --config-part "$CONFIG_PART" \
-    "${zfs_args[@]}" "$work/marker") || die "marker.py failed"
+    --holt-api "$work/holt-api.json" "${zfs_args[@]}" "$work/marker") || die "marker.py failed"
 tar -C "$work/marker" -cf - backotter.json config.img | ssh_vm "cd $rdir/in && tar -xf -"
 
 echo "Assembling the image in $BUILD_VM"

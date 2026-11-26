@@ -8,6 +8,11 @@ use crate::json::Value;
 /// the rename (bko-laydump 0.1).
 pub const FORMATS: [&str; 2] = [crate::report::FORMAT, crate::report::FORMAT_OLD];
 pub const SCHEMA: u64 = 1;
+/// Every dump schema `load` reads: the api document's `dump_schemas`, which
+/// an image build copies into the stick's marker, so the backup tool can
+/// warn when a stick can't read a machine's dump (holt-json.md's open
+/// question 11).
+pub const DUMP_SCHEMAS: &[u64] = &[SCHEMA];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableKind {
@@ -181,7 +186,7 @@ impl Layout {
             return Err(format!("not a bko-holt dump (format {format:?}, want {:?})", FORMATS[0]));
         }
         match v.get("schema").and_then(Value::as_u64) {
-            Some(SCHEMA) => {}
+            Some(s) if DUMP_SCHEMAS.contains(&s) => {}
             other => return Err(format!("schema {other:?} isn't one this bko-holt knows (it reads schema {SCHEMA})")),
         }
         let id = v.at(&["os", "id"]).and_then(Value::as_str).unwrap_or("");

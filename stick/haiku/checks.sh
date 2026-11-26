@@ -75,6 +75,7 @@ check tools 'for c in mkfs mount unmount diskimage makebootable writembr copyatt
 check filesystems 'cd /boot/system/add-ons/kernel/file_systems && for fs in bfs fat exfat ext2 btrfs ntfs; do test -e $fs || { echo no $fs; exit 1; }; done; ls | tr "\n" " "'
 check binaries 'rustic-bko --version | grep backotter && ! command -v restic-bko >/dev/null'
 check bko-holt 'bko-holt --version | grep "^bko-holt [0-9]"'
+check dump-schemas 'd() { tr -d " \011\012\015" | sed -n "s/.*\"dump_schemas\":\(\[[0-9,]*]\).*/\1/p"; }; m=$(d </boot/.disk/backotter.json); h=$(bko-holt --version --json | d); echo "marker ${m:-none}, bko-holt ${h:-none}"; test -n "$m" && test "$m" = "$h"'
 check network 'i=0; until a=$(ifconfig | awk "\$1 == \"inet\" && \$2 == \"addr:\" && \$3 !~ /^127\./ { sub(\",\", \"\", \$3); print \$3 }"); test -n "$a"; do i=$((i + 1)); test $i -lt 30 || exit 1; sleep 1; done; echo $a'
 check console-screen 'bash /tmp/bko-checks.sh console-screen'
 check console-serial 'ps | grep -q "^/bin/python3 /boot/system/non-packaged/lib/backotter/on-serial" && echo "on-serial.py bridges pc_serial0 and $(tty)"'

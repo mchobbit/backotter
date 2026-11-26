@@ -107,6 +107,8 @@ fn version_json_is_the_api_document() {
         }
         assert!(v.get_arr("features").unwrap().iter().any(|f| f.as_str() == Some("no_commit_env")));
         assert!(v.get_arr("features").unwrap().iter().any(|f| f.as_str() == Some("stick_copy")));
+        // What an image build copies into the stick's marker (open question 11).
+        assert_eq!(v.get_arr("dump_schemas").map(|a| a.iter().filter_map(|x| x.as_u64()).collect::<Vec<_>>()), Some(bko_holt::load::layout::DUMP_SCHEMAS.to_vec()));
         assert!(v.str_at(&["platform", "os"]).is_some() && v.str_at(&["platform", "arch"]).is_some());
         assert!(v.get_str("run_dir").unwrap().ends_with("/bko-holt"));
     }

@@ -338,7 +338,9 @@ def fake_inputs(tmp, arch):
     for p in (f"{base}.squashfs", f"{base}.manifest", f"{base}.size", "vmlinuz", "initrd"):
         wr(os.path.join(slim, p), f"slim {p}\n")
     tree = os.path.join(tmp, "layer-tree")
-    wr(os.path.join(tree, "usr/local/bin/bko-holt"), "#!/bin/sh\n", 0o755)
+    # make-img.sh runs it for the marker's dump_schemas.
+    wr(os.path.join(tree, "usr/local/bin/bko-holt"),
+       "#!/bin/sh\necho '{\"format\":\"bko-holt-api\",\"schema\":1,\"version\":\"0.3.0\",\"dump_schemas\":[1]}'\n", 0o755)
     wr(os.path.join(tree, "usr/local/bin/rustic-bko"), "#!/bin/sh\n", 0o755)
     wr(os.path.join(tree, "usr/share/zfs/compatibility.d/openzfs-2.4"), "# features\nasync_destroy\nzilsaxattr\n")
     os.makedirs(layer)

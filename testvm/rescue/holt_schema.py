@@ -221,7 +221,9 @@ CODED = Obj({"code": STR, "text": STR})
 
 ERROR = header("bko-holt-error", exit=INT, code=Enum(*ERROR_CODES), text=STR)
 
-API = header("bko-holt-api", documents=Obj(values=List(INT)), features=List(STR),
+# dump_schemas: Opt, as recordings from before 2026-11-26 (holt-json.md's open
+# question 11) don't carry it; the marker's is null when it names none.
+API = header("bko-holt-api", documents=Obj(values=List(INT)), dump_schemas=Opt(List(INT)), features=List(STR),
              platform=Obj({"os": STR, "arch": STR}), run_dir=STR, no_commit=BOOL)
 
 DISK = {"node": STR, "path": STR, "by_id": S_, "size_bytes": INT, "model": S_, "serial": S_, "wwid": S_,
@@ -288,7 +290,8 @@ STICK = header(
     "bko-holt-stick",
     boot_disk=Or(NULL, Obj({"node": STR, "found_by": Enum("cdrom_mount", "root_mount", "boot_mount", "marker_scan")})),
     config=Obj({"state": Enum(*CONFIG_STATES), "partition": I_, "label": S_, "why": S_, "dev": S_}),
-    image=Or(NULL, Obj({"image_id": STR, "platform": S_, "built": S_, "system_schemas": List(INT)})),
+    image=Or(NULL, Obj({"image_id": STR, "platform": S_, "built": S_, "system_schemas": List(INT),
+                            "dump_schemas": Opt(Or(NULL, List(INT)))})),
     stick=Or(NULL, Obj({"stick_id": S_, "name": S_})),
     here=Obj({"dmi_uuid": S_}),
     machines=List(MACHINE), notes=List(CODED))

@@ -381,39 +381,86 @@ What the backup tool must do (not built: it comes with the backup tool):
    mount point comes back.
 3. Read them back from the new snapshot with `bko-holt luks-headers
    LAYOUT DIR --repo REPO --password-file FILE --snapshot ID` (DIR a new
-   private directory): exit 0 means the snapshot holds every header the
-   layout names, each its size and SHA-256.  Anything else is a failed
-   backup of that machine: the restore couldn't keep the disks' keys.
-   Then wipe D and DIR (each file zeroed, then removed).
-4. Only then write system.json (with that `layout`) into the backup and to
-   the stick, as below.
+   private directory; LAYOUT the snapshot's own, read back by
+   `snapshot-layout`, "Which copy wins" step 3): exit 0 means the snapshot
+   holds every header the layout names, each its size and SHA-256.
+   Anything else is a failed backup of that machine: the restore couldn't
+   keep the disks' keys.  Then wipe D and DIR (each file zeroed, then
+   removed).
+4. Only then write system.json (with that `layout`) to the stick, as
+   below.  The backup's own copy went in the snapshot with the headers
+   ("Which copy wins", step 1).
 
 At the restore, bko-rescue fetches them once the repository's password is
 in and the snapshot chosen, before the first plan: `bko-holt luks-headers`
 into `h/` in its session's directory (0700, each file 0600), then every
 `load` gets `--luks-header-dir` that directory.  Each file is checked
-against the layout's size and SHA-256.  The stick's layout is the newest
-backup's, so an older snapshot whose headers differ is refused
-(`header_mismatch`) until "Which copy wins" below is built (holt-json.md's
-open question 15).  load's restore leaves `/.bko-holt/luks-headers` and its
+against the layout's size and SHA-256.  The layout is the snapshot's own
+("Which copy wins" step 2, built: holt-json.md's open question 15), so an
+older snapshot's headers are its own.  Only a snapshot from before the
+backup tool kept its system.json uses the stick's copy, and its headers
+may then differ (`header_mismatch`).  load's restore leaves `/.bko-holt/luks-headers` and its
 files out of the tree (and `/.bko-holt`, with no raw volume under it), so
 the headers never land on the restored disks.  A layout that kept headers needs a bko-rescue and a
 bko-holt from 2026-11-26 or later: an older bko-holt's `stick --copy`
 refuses it (`layout_refused`).  So every image's marker.py refuses a
-bko-holt whose api `features` lack `luks_headers` (3100b25 or later).
+bko-holt whose api `features` lack `luks_headers` (3100b25 or later), or
+`snapshot_layout` (134286f or later: it reads each snapshot's own layout
+and leaves its system.json out of the restore).
 
 ### Which copy wins
 
 The backup tool writes `system.json` into the backup itself first, and only
 then to the stick.  So the stick's copy is never newer than the newest backup.
+It is often older: the stick gets a copy only from the backups made while it
+was plugged in.
+
+Where the backup keeps it (approved 2026-11-26 by the user, holt-json.md's
+open question 15): in every snapshot, at `/.bko-holt/system.json`, beside
+the kept headers' `/.bko-holt/luks-headers` (`snaplayout::SYSTEM_PATH` in
+bko-holt).  With a `SNAPSHOT:SUBPATH` backup, under SUBPATH.  It is the
+same document as the stick's copy, always with its `layout` (never
+`layout_left_out`: the backup has no stick's room to fit).
+
+What the backup tool must do (not built: it comes with the backup tool):
+
+1. Write the machine's system.json, with this backup's `sequence` and the
+   dump it just made as `layout`, into the backup's staging root, at
+   `S/.bko-holt/system.json` (open question 14's staging root in RAM, for
+   every machine now, not only one that kept headers).  Nothing is written
+   to the system's disks.
+2. Back up S, so the file is in the same snapshot as the system's files
+   and the headers: the layout, the headers and the files are from one
+   moment.
+3. Read it back from the new snapshot with `bko-holt snapshot-layout OUT
+   --repo REPO --password-file FILE --snapshot ID --install-id ID --json`
+   (OUT a new private file): exit 0 means the snapshot holds this
+   machine's layout, one load takes.  Anything else is a failed backup of
+   that machine.  Then the headers' read-back ("LUKS2 headers in the
+   backup", step 3) against that OUT.
+4. Only then write system.json to the stick (below, "How it writes").
+
+load's restore leaves `/.bko-holt/system.json` out of every tree, and
+`/.bko-holt` when no raw volume is under it (built, 134286f), so the
+record never lands on the restored disks.  An image built before that
+doesn't (holt-json.md's open question 21).
+
 At restore time:
 
 1. Read the stick's copy and use its `backup` section to find the repository.
 2. If the repository is reachable and its `repository_id` matches, use the
    `system.json` stored with the backup being restored (the newest one, unless
-   the user picks another).
+   the user picks another).  Built (holt-json.md's open question 15,
+   "bko-holt-snapshot-layout"): once the password is in and the snapshot
+   chosen, bko-rescue runs `bko-holt snapshot-layout` on that snapshot,
+   the newest too, with the chosen machine's install ID.  bko-holt checks
+   the file as `stick --copy` checks the stick's and writes its `layout`
+   for load; bko-rescue then fetches the headers from the same snapshot
+   against it.  A snapshot from before the backup tool kept the file
+   (`no_system_json`) uses the stick's copy, as below.
 3. If not, restore from the stick's copy, and say how old it is (`written`,
-   `sequence`).
+   `sequence`).  A kept header then may be another backup's: the fetch is
+   `header_mismatch`, and bko-rescue says to choose the newest backup.
 
 ## Finding the stick at backup time
 
@@ -691,9 +738,16 @@ feature means the stick can't import the pool at all.
   luks-headers` (`src/luksfetch.rs`, also the backup tool's read-back),
   `stick --copy`'s `luks_headers` count, load's restore leaving the
   headers out of the tree, and bko-rescue's fetch before the first plan.
+- "Which copy wins" step 2 on the restore side (holt-json.md's open
+  question 15): `bko-holt snapshot-layout` (`src/snaplayout.rs`, also the
+  backup tool's read-back), load's restore leaving `/.bko-holt/system.json`
+  out of every tree, and bko-rescue asking the chosen snapshot for its own
+  layout, then its headers, before the first plan; the stick's copy only
+  for a snapshot without one.
 - Not built: the backup tool's stick module (and so no system.json carries a
   `layout` yet), its keeping of the LUKS2 headers in the snapshot (steps
-  1 to 4 above), its call of `stick_write` (with `Room.reports` filled
+  1 to 4 above), its staging and read-back of each snapshot's
+  system.json ("Which copy wins", steps 1 to 4), its call of `stick_write` (with `Room.reports` filled
   from `backotter/reports`) and the write or removal it answers, the rest of the write-time check (ZFS features, kernel,
   bcachefs), and `backotter stick repair`.  They come with the backup
   tool.

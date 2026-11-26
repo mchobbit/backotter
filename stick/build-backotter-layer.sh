@@ -427,6 +427,10 @@ in_root bko-holt --version --json >"$OUT/$LAYER.holt-api.json" &&
 # bko-holt without that feature too, this only sooner.
 grep -q '"features":\[[^]]*"luks_headers"' "$OUT/$LAYER.holt-api.json" ||
     die "the layer's bko-holt lists no luks_headers in its features: refresh holt-bin (img-refresh-holt.sh) to a bko-holt at or after 3100b25"
+# And it reads a snapshot's own layout, and leaves system.json out of the
+# restore (open question 15).
+grep -q '"features":\[[^]]*"snapshot_layout"' "$OUT/$LAYER.holt-api.json" ||
+    die "the layer's bko-holt lists no snapshot_layout in its features: refresh holt-bin (img-refresh-holt.sh) to a bko-holt at or after 134286f"
 rm -f "$root/usr/sbin/policy-rc.d"
 # With tries, as after the module build: the merged root, like the build
 # root's /dev, can be busy for a moment once the chroots are done, and a

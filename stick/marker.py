@@ -45,10 +45,17 @@ CONFIG_MIB = 256
 CONFIG_LABEL = "BACKOTTER"
 SYSTEM_SCHEMAS = [1]            # system.json schemas the stick can read
 DUMP_SCHEMAS_UNNAMED = [1]      # what a bko-holt that names no dump_schemas reads
-# What the image's bko-holt must list in its api document's features:
+# What the image's bko-holt must list in its api document's features, each
+# with what an image without it couldn't do and the first commit with it:
 # luks_headers, so a machine whose dump kept LUKS2 headers can be restored
-# (holt-json.md's open question 12; an older stick --copy refuses it).
-REQUIRED_FEATURES = ("luks_headers",)
+# (holt-json.md's open question 12; an older stick --copy refuses it);
+# snapshot_layout, so a backup is restored from its own layout and its
+# restore leaves the backup tool's system.json out (open question 15).
+REQUIRED_FEATURES = {
+    "luks_headers": ("restore a machine whose dump kept LUKS2 headers (holt-json.md's open question 12)", "3100b25"),
+    "snapshot_layout": ("restore a backup from its own layout, nor leave its system.json out of the restored "
+                        "disks (holt-json.md's open question 15)", "134286f"),
+}
 PLATFORMS = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos", "haiku")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -68,7 +75,7 @@ def dump_schemas(path: str, unnamed_ok: bool = False) -> list[int]:
     `--version --json` document (bko-holt-api, holt-json.md).  A bko-holt
     from before dump_schemas is refused, since its image would fail the boot
     check dump-schemas, and one whose features lack REQUIRED_FEATURES (from
-    before 3100b25), unless UNNAMED_OK (record-stick.py's recordings): then
+    before 3100b25 or 134286f), unless UNNAMED_OK (record-stick.py's recordings): then
     one with no dump_schemas reads DUMP_SCHEMAS_UNNAMED."""
     try:
         with open(path) as f:
@@ -91,9 +98,10 @@ def dump_schemas(path: str, unnamed_ok: bool = False) -> list[int]:
     have = doc.get("features")
     missing = [f for f in REQUIRED_FEATURES if not (isinstance(have, list) and f in have)]
     if missing and not unnamed_ok:
-        die(f"--holt-api {path}: bko-holt {doc.get('version')} lists no {', '.join(missing)} in its features, "
-            "so its image couldn't restore a machine whose dump kept LUKS2 headers (holt-json.md's open "
-            "question 12): refresh holt-bin (img-refresh-holt.sh) to a bko-holt at or after 3100b25")
+        f = missing[0]
+        what, since = REQUIRED_FEATURES[f]
+        die(f"--holt-api {path}: bko-holt {doc.get('version')} lists no {f} in its features, "
+            f"so its image couldn't {what}: refresh holt-bin (img-refresh-holt.sh) to a bko-holt at or after {since}")
     return s
 
 

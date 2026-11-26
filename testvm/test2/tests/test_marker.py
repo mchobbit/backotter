@@ -33,7 +33,7 @@ def wr(path, data, mode=None):
 def api(**over):
     """A bko-holt-api document, as `bko-holt --version --json` prints it."""
     doc = {"format": "bko-holt-api", "schema": 1, "version": "0.3.0", "generated": "2026-11-26T10:00:00Z",
-           "dry_run": False, "documents": {"plan": [1]}, "dump_schemas": [1], "features": ["stick", "luks_headers"]}
+           "dry_run": False, "documents": {"plan": [1]}, "dump_schemas": [1], "features": ["stick", "luks_headers", "snapshot_layout"]}
     doc.update(over)
     return json.dumps(doc, separators=(",", ":"))
 
@@ -121,6 +121,18 @@ class Marker(unittest.TestCase):
                 self.assertFalse(os.path.exists(os.path.join(self.tmp, "out", "backotter.json")))
                 r, m = self.run_marker(json.dumps(doc), "--holt-api-unnamed-ok")
                 self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_bko_holt_that_cant_read_a_snapshots_layout(self):
+        """features without snapshot_layout (a bko-holt from before
+        134286f): its image would restore a backup from the stick's layout
+        and bring its system.json back (open question 15)."""
+        doc = json.loads(api())
+        doc["features"] = ["stick", "luks_headers"]
+        r, m = self.run_marker(json.dumps(doc))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("lists no snapshot_layout in its features", r.stderr)
+        self.assertIn("134286f", r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "out", "backotter.json")))
 
     def test_config_partition_is_256_mib(self):
         # Every image's since open question 13: the marker says so, and

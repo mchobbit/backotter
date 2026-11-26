@@ -102,6 +102,22 @@ call's DIR and its headers (test bytes of each row's size, never a real
 header) and writes the document with that DIR; it watches them as key
 files.  recorded.txt says what and when.
 
+`snapshot-layout` is recorded by `../record-snaplayout.py` from a real
+bko-holt and a real rustic-bko (holt-json.md's open question 15): four
+backups of lovelace, each a staging root backed up with `--as-path /`:
+one from before (no system.json), an older and a newest one holding
+system.json at `/.bko-holt/system.json` with uc24-fde's dump, each with
+its own LUKS2 headers (ubuntu-data-enc's differ), and one with no header.
+`02-older` and `04-newest` are each snapshot's own layout (`out`, the
+same JSON as its system.json's `layout`), `03-older-headers` the older
+one's headers fetched against `02-older`'s layout, `05-before`
+`no_system_json`, `06-other-machine` `system_refused`, `07-wrong-password`
+`system_fetch_failed`; 02 to 06 match only the right password.  It also
+restored the older backup with load's glob file and the last with load's
+two `--glob` arguments: no header, no system.json and no `.bko-holt` came
+back (recorded.txt).  `luks-headers`' recorded.txt is from before open
+question 15, with three globs; record-luks.py now writes load's four.
+
 The recovery calls (`stick-three`, `stick-this-computer`): `good` (exit 0,
 OUT written), `unknown` (word 9 `ribbx`, suggest ribbon), `checksum` (two
 words swapped), `count` (11 words), `short` (word 11 `tha`: thank,
@@ -153,6 +169,7 @@ only, and checks a copy by its exit, schema, version, install ID and
 | `app-lovelace` | hand-written: lovelace's Samsung and WD Red; here a Crucial 1 TB (much bigger), the WD Red (the same disk), a Kingston 480 GB with photos (4.3 % smaller: the offer), the stick |
 | `app-lovelace-dry` | the same, its api `no_commit` true |
 | `app-lovelace-luks` | app-lovelace, its layout keeping the 2 LUKS2 headers luks-headers' `02-fetch` returns and the copy counting them (hand-made), luks-headers' recorded `02-fetch` (any snapshot) as `04-luks-headers`, and `--luks-header-dir *` in every load: the fetch before the first plan |
+| `app-lovelace-luks-older` | app-lovelace-luks, its api document snapshot-layout's (it lists `snapshot_layout`), and snapshot-layout's recorded `02-older` (any snapshot, `out` app-lovelace-luks' layout) as `05-snapshot-layout`: Disks asks the chosen backup for its own layout, then its headers; `03-copy` is never asked |
 | `app-lovelace-small` | hand-written: a WDC 320 GB (38.7 % smaller: the user decides) and a Transcend 64 GB (the data doesn't fit) |
 | `app-rec-restore` | built from rec-debian13-stack: a fresh status, then the Restore's one `--through close --commit` run, its stream the recorded stages' under one start and end, the copy's progress a second apart: Done |
 | `app-rec-dry` | the same with app-dry's api, its run the recorded dry run (05-dry) as it is: the dry run's Done |

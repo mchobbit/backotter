@@ -431,7 +431,7 @@ Unchanged, plus one under `--json` only:
 
 ```json
 {"format": "bko-holt-api", "schema": 1, "version": "0.3.0",
- "documents": {"plan": [1], "status": [1], "events": [1], "stick": [1], "recovery": [1], "stick_copy": [1], "luks_headers": [1], "error": [1]},
+ "documents": {"plan": [1], "status": [1], "events": [1], "stick": [1], "recovery": [1], "stick_copy": [1], "luks_headers": [1], "snapshot_layout": [1], "error": [1]},
  "dump_schemas": [1],
  "features": ["no_commit_env", "stop", "progress", "candidates", "sizes",
               "open_stage", "fit_per_disk"],
@@ -512,7 +512,9 @@ refusals, exit 1: `config_not_ok`, `no_such_machine`, `two_machines`,
 `machine_not_ok`, `no_layout`, `layout_refused` (the copy's own check)
 and `copy_failed` ("bko-holt-stick-copy"), and `luks-headers`' refusals,
 exit 1: `header_fetch_failed`, `header_mismatch`, and the layout's and
-`copy_failed` ("bko-holt-luks-headers").  `text` is the line text mode prints on stderr, without the
+`copy_failed` ("bko-holt-luks-headers"), and `snapshot-layout`'s, exit 1:
+`no_system_json`, `system_fetch_failed`, `system_refused`, `no_layout`,
+`layout_refused` and `copy_failed` ("bko-holt-snapshot-layout").  `text` is the line text mode prints on stderr, without the
 usage that follows it.  A reader following an events file must take a
 first line with `format` `bko-holt-error` as the whole stream and show its
 `text` (the demo fails it today as "an event with no \"event\"").
@@ -1047,10 +1049,10 @@ DIR for `load LAYOUT --luks-header-dir DIR` (`src/luksfetch.rs`).
   Qubes's `/.bko-holt/raw`), FILE the name dump gave it.  The backup tool
   puts them there (stick-config.md, "LUKS2 headers in the backup"); the
   repository is encrypted.  load's restore leaves that directory out of
-  the tree (`!/.bko-holt/luks-headers/**`, `!/.bko-holt/luks-headers`, and
-  `!/.bko-holt` when no raw volume is under it, in its glob file, whenever
-  the layout kept a header): key material never lands on the restored
-  disks, nor the backup tool's directories.
+  the tree (`!/.bko-holt/luks-headers/**`, `!/.bko-holt/luks-headers`,
+  `!/.bko-holt/system.json`, and `!/.bko-holt` when no raw volume is under
+  it, in its glob file, whenever the layout kept a header): key material
+  never lands on the restored disks, nor the backup tool's directories.
 - How: for each header, the archiver's `dump` of that one file, read-only
   toward the repository and every disk: `rustic-bko --repository REPO
   --password-file FILE --no-progress dump SNAPSHOT:/.bko-holt/luks-headers/FILE`
@@ -1062,8 +1064,9 @@ DIR for `load LAYOUT --luks-header-dir DIR` (`src/luksfetch.rs`).
   after.  An allocation that fails is `header_fetch_failed`, not an abort.
 - The check, each file before it is kept (`luksfetch::check_bytes`, the
   shared check): the dump's `bytes`, then its `sha256`.  A header that
-  isn't the dump's (another snapshot's: the stick's layout is the newest
-  backup's) is `header_mismatch`; one the archiver couldn't read (no such
+  isn't the dump's (another snapshot's: a layout that isn't the
+  snapshot's own, such as the stick's copy for a backup that holds none,
+  open question 15) is `header_mismatch`; one the archiver couldn't read (no such
   file, a wrong password, the repository not there) is
   `header_fetch_failed`, with the last line the archiver said (a URL's
   password redacted).
@@ -1087,6 +1090,67 @@ DIR for `load LAYOUT --luks-header-dir DIR` (`src/luksfetch.rs`).
 - The backup tool runs the same command on the snapshot it just made, as
   its read-back: the headers that snapshot holds are the ones its layout
   names.
+
+### `bko-holt-snapshot-layout` (open question 15)
+
+`bko-holt snapshot-layout OUT --repo REPO --password-file FILE [--snapshot
+ID] [--install-id ID] [--archiver PROGRAM] --json`: the disk layout the
+snapshot's own system.json carries, read from the backup and written to OUT
+for `load` (`src/snaplayout.rs`; stick-config.md's "Which copy wins", step
+2).
+
+```json
+{"format": "bko-holt-snapshot-layout", "schema": 1, "version": "0.2.6", "generated": "…", "dry_run": false,
+ "snapshot": "3be04d2a", "from": "3be04d2a:/.bko-holt/system.json",
+ "install_id": "0b7e…", "sequence": 40, "written": "2026-11-20T02:00:03Z",
+ "out": "/run/bko-rescue/s-1-0/layout.json", "bytes": 88170,
+ "sha256": "…", "system_sha256": "…", "luks_headers": 2}
+```
+
+- Where it is: in every snapshot the backup tool makes, at
+  `/.bko-holt/system.json` (`snaplayout::SYSTEM_PATH`, beside the kept
+  headers' `/.bko-holt/luks-headers`), the same envelope as the stick's
+  copy and always with its `layout` (stick-config.md, "Which copy wins").
+  A `SNAPSHOT:SUBPATH` snapshot puts SUBPATH first, as `luks-headers`
+  does.
+- How: the archiver's `dump` of that one file, read-only toward the
+  repository and every disk, as `luks-headers` reads a header (the same
+  `luksfetch::Fetch` and `run_dump`).  At most
+  `SNAPSHOT_SYSTEM_MAX` (`LAYOUT_MAX` and `SYSTEM_MAX`, 1088 MiB) and one
+  more byte are read: the backup's copy has no stick to fit, so it may be
+  bigger than a stick's.
+- The check, as `stick --copy` checks the stick's: a
+  `backotter-system` document, of a schema in `SYSTEM_SCHEMAS`, its
+  `machine.install_id` a UUID and, with `--install-id`, that machine's
+  (case aside); its `layout` an object `Layout::from_json` takes, and its
+  kept headers a list `luksfetch::entries` takes.  No `.sha256`: the
+  repository authenticates what it holds.  `luks_headers` counts the kept
+  headers; bko-rescue then fetches them from the same snapshot.
+- What OUT holds: that `layout`, printed as dump prints it, at most
+  `LAYOUT_MAX`.  OUT is checked first as `stick --copy`'s is
+  (`recoverycmd::out_unsafe`), written `O_CREAT|O_EXCL`, 0600, synced.
+  `bytes` and `sha256` are OUT's, `system_sha256` the system.json's.
+  `sequence` and `written` are system.json's, null when absent.
+- Refusals, exit 1, nothing left in OUT: `no_system_json` (the snapshot
+  holds no system.json: a backup from before the backup tool kept one; told
+  only by the archiver's own words for a path a snapshot doesn't hold,
+  rustic-bko's "Node `.bko-holt` not found in tree." or the same for
+  `system.json`, restic-bko's `path "…" not found in snapshot`, as both
+  said them 2026-11-26), `system_fetch_failed` (every other failure of the
+  archiver: a wrong password, a repository or snapshot not there, a
+  SUBPATH not there), `system_refused` (not JSON, not backotter-system,
+  an unknown schema, no or a bad install ID, another machine's, too big),
+  `no_layout`, `layout_refused`, `copy_failed`.  A caller may fall back
+  to the stick's copy for `no_system_json` only.
+- Arguments as `luks-headers`': under `--json` the password file is
+  required and checked as load checks key files; a `--repo` with a
+  password in it, an `--install-id` that isn't a UUID (not echoed): exit
+  2, `bad_args`.  Without `--json` it is the same, one line on stdout, and
+  the archiver may ask for the password.  It writes no disk: allowed under
+  `BKO_HOLT_NO_COMMIT`.  `RLIMIT_CORE` is 0.
+- The layout names hosts, disks and paths as a dump does; no secret is in
+  it.  bko-rescue keeps OUT in the session's 0700 directory, as it keeps
+  the stick's copy.
 
 ### `bko-holt-recovery` (J21, RT10p)
 
@@ -2657,7 +2721,9 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     Nothing reads it at restore time, so it can't be planned onto disks.
   - The error code stays `no_layout`; the words carry the reason.
   - The words say "bko-rescue can't do yet" for the fetch from the backup
-    (open question 15).  They change when that is built.
+    (open question 15).  They change when that is built.  (Built in
+    134286f: bko-holt's `no_layout` words stay; bko-rescue's say a newer
+    backup holds the layout when the snapshot was asked and holds none.)
 - **Tested:** `stick.rs`'s `write_time_stick_write` (each answer and its
   words, `body` without `layout` and with `layout_left_out`, the backup's
   location kept, the edge where `body` just fits or doesn't, a new machine
@@ -2713,7 +2779,7 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
 - **Waits on the backup tool:** calling `stick_write`, writing `body` and
   its `.sha256`, the removals of `RemoveOld` and of `remove_old`, and the
   schema check of what it writes.  bko-rescue's fetch of the layout from
-  the backup is open question 15's.
+  the backup is open question 15's (built since, 134286f).
 - **Spec problems:**
   - `stick --json` doesn't say a machine has no layout, so bko-rescue says
     it only on Disks, after the password and the snapshot.  A `layout`
@@ -2848,6 +2914,112 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     11 OK on the Mac.  No holt code changed, so no holt gate; the header
     test in the BSD, illumos and Haiku guests wasn't rerun (no C fact
     changed).
+
+### What the snapshot's own layout built
+
+Built 2026-11-26 as far as it can be before the backup tool (open question
+15, approved that day by the user, the recommendation; 134286f):
+
+- **Where it is:** every snapshot the backup tool makes holds the
+  machine's system.json at `/.bko-holt/system.json`
+  (`snaplayout::SYSTEM_PATH`), beside `/.bko-holt/luks-headers`, staged
+  with the headers in open question 14's staging root.  stick-config.md
+  says what the backup tool must do ("Which copy wins").
+- **bko-holt:** `bko-holt snapshot-layout OUT --repo REPO --password-file
+  FILE [--snapshot ID] [--install-id ID] [--archiver PROGRAM] --json`
+  (`src/snaplayout.rs`, "bko-holt-snapshot-layout").  Chosen over
+  extending `luks-headers` (`--layout-from-snapshot`): one command, one
+  file, one document, as `stick --copy` writes one; the headers' fetch
+  stays its own call, against the layout it writes.  It reuses
+  `luksfetch`'s `Fetch` (new `argv_path`) and `run_dump` (now
+  `pub(crate)`; `DumpFailed::Fetch` keeps the archiver's own line apart,
+  for `says_missing`).  The api document lists `snapshot_layout` in
+  `documents` and `features`; three new error codes: `no_system_json`,
+  `system_fetch_failed`, `system_refused`.
+- **load:** the restore leaves `/.bko-holt/system.json` out of every
+  tree, and `/.bko-holt` when no raw volume is under it (a glob leaves
+  out the one path it names, so the file needs its own).  With nothing
+  else left out they are two `--glob` arguments, so no glob file is
+  written and no command is added; else they are lines of the glob file,
+  after the rest (uc24-fde's now four lines).  The glob file's comment
+  names "the backup tool's own files".  A snapshot without them matches
+  nothing.  record-snaplayout.py checked both forms with rustic-bko
+  0.12.0+backotter.4: only `etc` and `etc/hostname` came back.
+- **bko-rescue:** `layout.rs`'s `layout_file` asks the chosen snapshot
+  first, every snapshot, newest included, under a gauge ("Reading this
+  backup's layout", `SNAP_MS` 300 s), with the chosen machine's install
+  ID (none for a typed address).  It takes the document only from exit
+  0, of the api's version, the snapshot asked, that machine, and `bytes`
+  the file's size.  Then `header_dir` fetches the headers from the same
+  snapshot against that layout.  `no_system_json` alone falls back to
+  the stick's copy, as before; every other failure is a problem screen
+  ("this backup's layout couldn't be read": Try again, Back, Report), never
+  the fallback.  The layout is per snapshot now: `forget_disks` (another
+  snapshot or machine) wipes it with the headers.  A `header_mismatch`
+  on the stick's copy says so and to choose the newest backup; on the
+  snapshot's own it says to try again or report.  A stick with no layout
+  for a backup that holds none says a newer backup holds it.
+- **Defaults chosen** (each in one place):
+  - Every snapshot is asked, the newest too (`layout.rs`'s module doc).
+    The approved text asked only for an older one; but the stick's copy is
+    the newest backup the stick was plugged in for, which is often older
+    than the newest backup, so only the snapshot's own is surely its
+    layout (restore fidelity first).
+  - A bko-holt whose api `documents` lacks `snapshot_layout` isn't asked
+    (`mod.rs`'s `api`): the stick's copy, as before.  So every recorded
+    scenario from an older bko-holt is unchanged.  marker.py refuses such
+    a bko-holt in an image, so a stick never ships one.
+  - `--install-id` is optional (`snaplayout.rs`'s `Ask`): a typed address
+    has no machine on the stick, and its snapshot's own layout is still
+    the backup's.
+  - No `.sha256` in the snapshot: the repository authenticates its files.
+  - The cap is `LAYOUT_MAX` plus `SYSTEM_MAX` (`SNAPSHOT_SYSTEM_MAX`,
+    1088 MiB): the backup's copy has no stick to fit.
+  - "No such file" is told only by the archivers' recorded words
+    (`says_missing`); words it doesn't know are `system_fetch_failed`, so
+    a changed archiver stops on a problem screen, never on the wrong
+    layout.
+- **Recorded:** `record-snaplayout.py` on cinqcent, a bko-holt built
+  from this tree and rustic-bko 0.12.0+backotter.4, four backups of
+  lovelace staged with `--as-path /`: the `snapshot-layout` scenario
+  (the older and the newest snapshot's own layouts, the older one's
+  headers fetched against it, a backup from before, another machine, a
+  wrong password; recorded.txt).  The newest layout against the older
+  snapshot is still `header_mismatch`, as before.
+- **Tested:** holt's gate on cinqcent (holt-test.sh: cargo-test 0,
+  golden-plans 0 with 110 plans of 98 dumps, 0 differ, 0 break an
+  invariant after the re-bless, redact-corpus 0).  New tests:
+  `snaplayout.rs`'s five (the archivers' words, the layout written, a
+  snapshot without one told apart, the checks as the stick's, a SUBPATH),
+  the goldens `snapshot-layout-json/ok` and `no-system-json`, and
+  `json_cli`'s `snapshot_layout_writes_the_snapshots_own_layout`.
+  bko-rescue on czerny (Rust 1.85.1): cargo build without warnings, cargo
+  test 301 + 15 passed (new: `an_older_backup_plans_from_its_own_layout_and_headers`,
+  `a_backup_without_its_own_layout_uses_the_sticks`,
+  `a_snapshot_layout_that_cant_be_had_stops_on_disks`), abi/check.sh ok
+  (54 facts, 10 symbols), pty-test.py, demo-test.py and app-test.py 0
+  failed (new: `test_disks_older_backup`), holt_schema.py over the
+  scenarios, holt's fixtures and corpus 535 checked, 0 problems.
+- **Goldens re-blessed on purpose:** every plan's restore gains the two
+  `--glob` arguments, or its glob file `!/.bko-holt/system.json` (and
+  `!/.bko-holt` where it wasn't yet) and the comment's words; with them
+  each plan's hash.  Nothing else changed in them (checked line by line).
+- **Waits on the backup tool:** staging `/.bko-holt/system.json` in every
+  snapshot (open question 14's staging root, for every machine), and its
+  read-back: `snapshot-layout` on the snapshot it just made, with its
+  install ID, as `luks-headers` is its headers' read-back.
+- **Spec problems:**
+  - stick-config.md's order said system.json goes into the backup "first"
+    and, in "LUKS2 headers in the backup", only after the read-back
+    (step 4).  It goes in the snapshot with the rest; only the stick's
+    copy waits for the read-backs.  stick-config.md now says so.
+  - An image built before 134286f restores system.json onto the target
+    (open question 21).
+  - Pre-existing, found here: restic-bko takes neither `--repository` nor
+    `--no-progress` (it has `--repo` and `--quiet`), so every restic-bko
+    argv holt builds (load's restore, `luks-headers`, `snapshot-layout`)
+    fails at once.  Not fixed: rustic-bko is the default and what
+    bko-rescue runs.
 
 ## Decisions
 
@@ -3122,9 +3294,12 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     each backup (not on a read-only root).  Either way load leaves
     `/.bko-holt/luks-headers` and a `/.bko-holt` with no raw volume under
     it out of the restore (built), so a bare mount point that rode along
-    never comes back.
+    never comes back.  Open question 15 puts the machine's system.json in
+    the same staging, at `S/.bko-holt/system.json`, for every machine, so
+    the staging root is every backup's, not only one that kept headers;
+    load leaves that file out of every restore (built, 134286f).
 15. **An older snapshot of a machine that kept headers** (from open
-    question 12's review; answered: approved 2026-11-26 by the user, the recommendation; not built yet).  The stick's layout is the
+    question 12's review; answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26 as far as it can be before the backup tool, 134286f and "holt-json, stick-config, rescue-tui: open question 15 built": "What the snapshot's own layout built").  The stick's layout is the
     newest backup's ("Which copy wins" isn't built), and each fetched
     header is checked against it.  Once a header changes (a keyslot
     added, a passphrase changed, an Ubuntu Core reseal), every older
@@ -3205,3 +3380,15 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     reports off.  A pair from the future then stops the removal until it
     is copied off.  Or keep today's build: the new pair always stays, the
     others go by stamp.
+21. **A stick whose bko-holt restores system.json** (from open question
+    15's build).  load leaves `/.bko-holt/system.json` out of every
+    restore since 134286f, but an image built before it doesn't: restoring
+    a backup the backup tool made (every snapshot holds the file) onto
+    such a stick brings back `/.bko-holt/system.json` and `/.bko-holt` on
+    the restored root.  marker.py now refuses a bko-holt without
+    `snapshot_layout`, so new images are safe; the backup tool can't tell
+    an old stick, as the marker names no features.  *Recommended:* the
+    marker gets `holt_features` (the image's api `features`), and the
+    backup tool's write-time check warns when a stick's lacks
+    `snapshot_layout`, as it does for `dump_schemas`.  Or nothing: the
+    files are small and hold no secret, and judge-like checks see them.

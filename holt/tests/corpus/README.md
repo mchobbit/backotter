@@ -480,9 +480,13 @@ mount the four roots at `/mnt/bko-target/run/mnt` (no `/`: Ubuntu Core's
 root is the base snap); uc24-fde's put both headers back with
 `luksHeaderRestore` and open them with `--key-file` (no luksFormat, no
 luksAddKey), and its restore leaves the backup's copies of the headers out
-of the tree (`!/.bko-holt/luks-headers/**`, the directory itself and
-`/.bko-holt`, re-blessed 2026-11-26 for holt-json.md's open question 12
-and again for its review fixes).  At boot they regenerate nothing: the check of modeenv against
+of the tree (`!/.bko-holt/luks-headers/**`, the directory itself,
+`/.bko-holt/system.json` and `/.bko-holt`, re-blessed 2026-11-26 for
+holt-json.md's open question 12, again for its review fixes, and for open
+question 15).  Since open question 15 every plan's restore leaves
+`/.bko-holt/system.json` and `/.bko-holt` out (two `--glob` arguments, or
+lines of its glob file): each snapshot the backup tool makes holds the
+machine's system.json there.  At boot they regenerate nothing: the check of modeenv against
 the restored trees, `bko-holt snapcore-boot-areas`, the log and the atimes;
 no grub-install, update-grub, chroot or NVRAM entry.  The kept headers' key
 files and header files are the golden plans' own (common/mod.rs, "The

@@ -1917,7 +1917,8 @@ The stick still finds the backup; it can't restore the disks.
   `NO_LAYOUT_WHY` and `NO_LAYOUT_TODO`.
 - The title is as it was, so app-plain's golden didn't change.
 - Not done: the first screen doesn't say it (`stick --json` has no field
-  for it); the fetch from the backup is open question 15's.
+  for it); the fetch from the backup is open question 15's (built since:
+  "What a snapshot's own layout changed").
 
 ## What bug reports on the stick changed
 
@@ -1955,6 +1956,59 @@ leaves the restore logs their room.
   i64::MAX (a negative one cast) as none free, and reads no room on a
   32-bit build (its fields are 4 bytes there).
 - Not done: no image carries this bko-rescue yet.
+
+## What a snapshot's own layout changed
+
+2026-11-26, holt-json.md's open question 15 (approved that day with its
+recommendation; 134286f): each snapshot holds the machine's system.json,
+and Disks plans from the chosen snapshot's own layout.
+
+- On Disks, before the headers and the first plan, `layout_file` runs
+  `bko-holt snapshot-layout OUT --repo URL --password-file FILE --snapshot
+  ID [--install-id ID] --json` (`HoltCmd::SnapshotLayout`) under a gauge
+  ("Reading this backup's layout", `SNAP_MS` 300 s), OUT the session's
+  `layout.json`, the install ID the chosen machine's (none for a typed
+  address).  Every snapshot is asked, the newest too: the stick's copy is
+  the newest backup it was plugged in for, often older.
+- It takes the document only from exit 0, `bko-holt-snapshot-layout` of
+  the api's version, the snapshot asked, that machine, `bytes` OUT's
+  size; then `luks_headers` is the count, and `header_dir` fetches the
+  headers from the same snapshot against that layout.  Anything else
+  wipes OUT and shows "this backup's layout couldn't be read" (Try again,
+  Back, Report), with bko-holt's words.
+- `no_system_json` (a backup from before the backup tool kept one) falls
+  back to `stick --copy`, as before; nothing else does.  A bko-holt whose
+  api `documents` lacks `snapshot_layout` isn't asked (`App::snapshot_layouts`).
+- The layout is per snapshot: `layout_for` is the snapshot it was found
+  for and `layout_own` whether it is that snapshot's.  `forget_disks`
+  (another snapshot or machine) wipes it with the headers, and the next
+  Disks finds it again.
+- Words: a `header_mismatch` on the stick's copy says this backup holds no
+  layout of its own and to choose the newest backup
+  (`HEADERS_MISMATCH_STICK_TODO`); other header failures say to try again
+  or report.  A stick without a layout for a backup that holds none says
+  a newer backup holds it (`NO_LAYOUT_IN_BACKUP_WHY`, `_TODO`,
+  `LAYOUT_NONE_TYPED_IN_BACKUP`); from a bko-holt that can't be asked,
+  the words are as before.
+- **Fixtures:** `record-snaplayout.py` records `snapshot-layout` from a
+  real bko-holt and rustic-bko (holt-json.md's "What the snapshot's own
+  layout built").  `make-disk-fixtures.py`'s `app-lovelace-luks-older` is
+  app-lovelace-luks with that scenario's api document and its `02-older`
+  (any snapshot) as `05-snapshot-layout`.  fake-bko-holt writes its `out`
+  to OUT, doesn't watch it (the session's layout), and writes the
+  document with this call's OUT, snapshot, `from`, `bytes` and `sha256`.
+  The Rust tests' fake answers it from `Fake::snaplayout`, and panics on
+  a call from a bko-holt whose api doesn't list it.
+- **Tested** on czerny (Rust 1.85.1): cargo build without warnings,
+  cargo test 301 + 15 passed (the older backup's own layout, then its
+  headers, then the plan, never `stick --copy`, and the newest asked again
+  after Back; `no_system_json` falling back, with the mismatch words; a
+  refusal and a document that isn't as it says stopping on Disks with
+  nothing left), abi/check.sh ok (54 facts, 10 symbols), pty-test.py,
+  demo-test.py and app-test.py 0 failed (`test_disks_older_backup`:
+  the layout and the headers from the backup chosen, its install ID, every
+  load reading that layout, gone with the session), holt_schema.py 535
+  checked, 0 problems.  No screen golden changed.
 
 ## The app on top (later)
 

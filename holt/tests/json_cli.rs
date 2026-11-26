@@ -5,8 +5,8 @@
 //! that write a file where they're told, and text mode left as it was.
 
 use bko_holt::json::{self, Value};
-use bko_holt::testutil::Tree;
-use std::io::Write;
+use bko_holt::testutil::{TempDir, Tree};
+use std::io::Seek;
 use std::process::{Command, Output, Stdio};
 
 fn exe() -> String {
@@ -14,26 +14,39 @@ fn exe() -> String {
 }
 
 /// bko-holt ARGS with ENV added and BKO_HOLT_NO_COMMIT removed unless ENV
-/// sets it; STDIN piped in when given, else none.  A load run names
-/// --sysroot (or asks for the help), as load_cli.rs's do: without it, load
-/// records RUN_DIR/last-load.json on the test host.
+/// sets it; STDIN on its standard input when given, else none.  A load run
+/// names --sysroot (or asks for the help), as load_cli.rs's do: without
+/// it, load records RUN_DIR/last-load.json on the test host.
 fn run(args: &[&str], env: &[(&str, &str)], stdin: Option<&str>) -> Output {
+    run_in(args, env, stdin).0
+}
+
+/// As run, and how many bytes of STDIN the program read.  STDIN is a file
+/// written before the program starts, not a pipe written after: a refusal
+/// that exits before reading it then races nothing (a pipe's write met a
+/// broken pipe or not, by timing), and the file's offset, which the
+/// program's descriptor shares, says how far it read.
+fn run_in(args: &[&str], env: &[(&str, &str)], stdin: Option<&str>) -> (Output, u64) {
     assert!(args.first() != Some(&"load") || args.iter().any(|a| matches!(*a, "--sysroot" | "-h" | "--help")), "{args:?}: give --sysroot");
     let mut c = Command::new(exe());
     c.args(args).env_remove("BKO_HOLT_NO_COMMIT").stdout(Stdio::piped()).stderr(Stdio::piped());
     for (k, v) in env {
         c.env(k, v);
     }
-    c.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
-    let mut child = c.spawn().unwrap();
-    if let Some(s) = stdin {
-        // A refusal may exit before it reads its standard input: a broken
-        // pipe then is the program's answer, not the test's failure.
-        if let Err(e) = child.stdin.take().unwrap().write_all(s.as_bytes()) {
-            assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "{e}");
-        }
-    }
-    child.wait_with_output().unwrap()
+    let input = stdin.map(|s| {
+        let d = TempDir::new("json-cli-stdin");
+        let p = d.path().join("stdin");
+        std::fs::write(&p, s).unwrap();
+        let f = std::fs::File::open(&p).unwrap();
+        (d, f)
+    });
+    c.stdin(match &input {
+        Some((_, f)) => Stdio::from(f.try_clone().unwrap()),
+        None => Stdio::null(),
+    });
+    let o = c.spawn().unwrap().wait_with_output().unwrap();
+    let read = input.map_or(0, |(_d, mut f)| f.stream_position().unwrap());
+    (o, read)
 }
 
 fn out(o: &Output) -> String {
@@ -373,8 +386,9 @@ fn no_commit_writes_only_new_files() {
     // recovery-key-file: a file that is there (a device too) is refused
     // before the key is read.
     for o_path in [old.as_str(), "/dev/null"] {
-        let o = run(&["recovery-key-file", o_path], &dry, Some(key));
+        let (o, read) = run_in(&["recovery-key-file", o_path], &dry, Some(key));
         assert_eq!(o.status.code(), Some(2), "{o_path}: {}", err(&o));
+        assert_eq!(read, 0, "{o_path}");
         assert_eq!(
             err(&o),
             format!("bko-holt recovery-key-file: {o_path}: BKO_HOLT_NO_COMMIT is set (a dry run), so only a new file is written, and this one is there already\n")
@@ -382,8 +396,9 @@ fn no_commit_writes_only_new_files() {
     }
     assert_eq!(std::fs::read_to_string(&old).unwrap(), "keep me");
     let new = t.p("/new.key").to_string_lossy().into_owned();
-    let o = run(&["recovery-key-file", &new], &dry, Some(key));
+    let (o, read) = run_in(&["recovery-key-file", &new], &dry, Some(key));
     assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert_eq!(read, key.len() as u64);
     assert_eq!(std::fs::read(&new).unwrap().len(), 16);
     // Without the lock, as today: the old file is written over.
     let o = run(&["recovery-key-file", &old], &[], Some(key));
@@ -529,8 +544,10 @@ fn recovery_words_is_a_document() {
     std::fs::create_dir(&k).unwrap();
     std::fs::set_permissions(&k, std::fs::Permissions::from_mode(0o700)).unwrap();
     let pw = k.join("0").to_string_lossy().into_owned();
-    let o = run(&["recovery-words", &pw, "--json"], &[("BKO_HOLT_NO_COMMIT", "1")], Some(&format!("{}\n", words.to_uppercase())));
+    let typed = format!("{}\n", words.to_uppercase());
+    let (o, read) = run_in(&["recovery-words", &pw, "--json"], &[("BKO_HOLT_NO_COMMIT", "1")], Some(&typed));
     assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert_eq!(read, typed.len() as u64);
     assert!(err(&o).is_empty());
     let v = doc(&o);
     assert_eq!((v.get_str("format"), v.get_bool("ok"), v.get_bool("written"), v.get_bool("dry_run")), (Some("bko-holt-recovery"), Some(true), Some(true), Some(true)));
@@ -538,7 +555,9 @@ fn recovery_words_is_a_document() {
     assert_eq!(std::fs::read_to_string(&pw).unwrap(), words);
     assert_eq!(std::fs::metadata(&pw).unwrap().permissions().mode() & 0o777, 0o600);
     // The same OUT again: refused before a word is read.
-    let v = assert_error(&run(&["recovery-words", &pw, "--json"], &[], Some(words)), 2, "out_unsafe");
+    let (o, read) = run_in(&["recovery-words", &pw, "--json"], &[], Some(words));
+    assert_eq!(read, 0);
+    let v = assert_error(&o, 2, "out_unsafe");
     assert!(v.get_str("text").unwrap().contains("there already"));
     // Wrong words: exit 1, nothing written.
     let pw1 = k.join("1").to_string_lossy().into_owned();
@@ -549,17 +568,22 @@ fn recovery_words_is_a_document() {
     assert!(!std::path::Path::new(&pw1).exists());
     // A directory others may enter, more than 1 KiB, no --json, a word as OUT.
     std::fs::set_permissions(&k, std::fs::Permissions::from_mode(0o755)).unwrap();
-    assert_error(&run(&["recovery-words", &pw1, "--json"], &[], Some(words)), 2, "out_unsafe");
+    let (o, read) = run_in(&["recovery-words", &pw1, "--json"], &[], Some(words));
+    assert_eq!(read, 0);
+    assert_error(&o, 2, "out_unsafe");
     std::fs::set_permissions(&k, std::fs::Permissions::from_mode(0o700)).unwrap();
-    assert_error(&run(&["recovery-words", &pw1, "--json"], &[], Some(&"a ".repeat(600))), 2, "bad_args");
-    let o = run(&["recovery-words", &pw1], &[], Some(words));
-    assert_eq!(o.status.code(), Some(2));
+    let (o, read) = run_in(&["recovery-words", &pw1, "--json"], &[], Some(&"a ".repeat(600)));
+    assert_eq!(read, bko_holt::recoverycmd::STDIN_MAX as u64 + 1);
+    assert_error(&o, 2, "bad_args");
+    let (o, read) = run_in(&["recovery-words", &pw1], &[], Some(words));
+    assert_eq!((o.status.code(), read), (Some(2), 0));
     assert!(out(&o).is_empty() && err(&o).contains("say --json"));
     let o = run(&["recovery-words", "legal", "winner", "--json"], &[], None);
     let v = assert_error(&o, 2, "bad_args");
     assert!(!v.get_str("text").unwrap().contains("legal") && !err(&o).contains("legal"));
     // One word in OUT's place: refused as OUT, the word not echoed.
-    let o = run(&["recovery-words", "legal", "--json"], &[], Some(words));
+    let (o, read) = run_in(&["recovery-words", "legal", "--json"], &[], Some(words));
+    assert_eq!(read, 0);
     let v = assert_error(&o, 2, "out_unsafe");
     assert!(v.get_str("text").unwrap().contains("absolute"));
     assert!(!out(&o).contains("legal") && !err(&o).contains("legal"), "{}", err(&o));

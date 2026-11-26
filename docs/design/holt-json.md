@@ -2863,7 +2863,7 @@ recommendation):
     is.  Or a smaller cap for `layout`, with ESP images left out of the
     stick's copy.
 14. **How the backup tool puts the headers in the snapshot** (from open
-    question 12's review; not answered).  stick-config.md's step 2 needs
+    question 12's review; answered: approved 2026-11-26 by the user, the recommendation; not built yet).  stick-config.md's step 2 needs
     `/.bko-holt/luks-headers` in the tree the backup reads.  A mount point
     made on the system's root stays on the live system (and in every
     later backup) unless it is removed again, and can't be made on a
@@ -2883,7 +2883,7 @@ recommendation):
     it out of the restore (built), so a bare mount point that rode along
     never comes back.
 15. **An older snapshot of a machine that kept headers** (from open
-    question 12's review; not answered).  The stick's layout is the
+    question 12's review; answered: approved 2026-11-26 by the user, the recommendation; not built yet).  The stick's layout is the
     newest backup's ("Which copy wins" isn't built), and each fetched
     header is checked against it.  Once a header changes (a keyslot
     added, a passphrase changed, an Ubuntu Core reseal), every older
@@ -2897,7 +2897,7 @@ recommendation):
     the same snapshot.  Or keep the refusal (today's): its help says to
     choose the newest backup.
 16. **What the stick holds after a refused write** (from open question
-    13's review; not answered).  `room_check` refuses a system.json over
+    13's review; answered: approved 2026-11-26 by the user, the recommendation; not built yet).  `room_check` refuses a system.json over
     `SYSTEM_MAX` (`system_too_big`) or one the partition can't take
     (`stick_full`; the approved text said "warns", see "What room on the
     partition built"), and the tool then writes nothing to the stick.  A
@@ -2917,8 +2917,8 @@ recommendation):
     say so.  Or keep today's build: the old copy stays, and the words say
     plainly that the stick's copy is from `written` and older than the
     backup.
-17. **Bug reports on the stick** (from open question 13's review; not
-    answered).  bko-rescue saves `backotter/reports/bko-report-*.txt`
+17. **Bug reports on the stick** (from open question 13's review;
+    answered: approved 2026-11-26 by the user, the recommendation; not built yet).  bko-rescue saves `backotter/reports/bko-report-*.txt`
     (and an `-UNREDACTED` copy, read up to 64 MiB) on the config
     partition, and nothing removes them.  `room_check` keeps 22 MiB for
     each machine's restore logs, but reports saved later eat that same

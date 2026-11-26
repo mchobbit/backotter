@@ -1888,7 +1888,7 @@ stick-config.md's "Room on the partition").
 - Bug reports saved to the stick (`backotter/reports`, with their
   `-UNREDACTED` twins) are never removed, and take room the logs need.
   `room_check` can't see reports saved after the backup.  holt-json.md's
-  open question 17 (not answered) asks whether bko-rescue keeps only the
+  open question 17 (approved 2026-11-26 by the user, the recommendation; not built yet) asks whether bko-rescue keeps only the
   newest.
 
 ## The app on top (later)

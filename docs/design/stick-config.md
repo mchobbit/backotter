@@ -362,7 +362,7 @@ What the backup tool must do (not built: it comes with the backup tool):
    reads them.  However it stages them, the backup tool writes nothing to
    the system's disks: no mount point is made, or left, on the backed-up
    root, and a read-only root (Ubuntu Core's base snap) works.  How it
-   stages them is holt-json.md's open question 14 (*recommended*: a
+   stages them is holt-json.md's open question 14 (approved 2026-11-26: a
    staging root in RAM in a private mount namespace, D bind-mounted at
    `S/.bko-holt/luks-headers`, S backed up with `--as-path /`).  load's
    restore leaves `/.bko-holt/luks-headers`, its files, and `/.bko-holt`
@@ -463,7 +463,8 @@ backup tool calls `room_check(marker, len, room)` in bko-holt's
   succeeds.  The approved text said the tool warns when the partition
   can't hold the file; it refuses, since that write would fail anyway.
   What the stick then holds for the machine is holt-json.md's open
-  question 16.
+  question 16 (approved 2026-11-26: on a refusal it writes the machine's
+  system.json without `layout`, and says so).
 - It warns `stick_room_short` when, once written, the partition can't
   also hold the machine's 22 MiB of logs (less what its logs take now,
   plus a cluster for `restore-logs/` when it isn't there).  The tool
@@ -476,7 +477,8 @@ backup tool calls `room_check(marker, len, room)` in bko-holt's
   reports can go).  On an older image's smaller partition they say to
   write a newer image, by its size (256 MiB), not its date.
 - bko-rescue's bug reports (`backotter/reports`) take room from the same
-  partition and are never removed: holt-json.md's open question 17.
+  partition and are never removed yet: holt-json.md's open question 17 (approved
+  2026-11-26: keep the 5 newest, refuse a save that leaves under 22 MiB).
 
 ## Finding the config at boot
 

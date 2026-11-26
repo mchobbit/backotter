@@ -73,6 +73,7 @@ the backup location by hand.
 /backotter/machines/<install-id>/system.prev.json
 /backotter/machines/<install-id>/system.prev.json.sha256
 /backotter/machines/<install-id>/restore-logs/<timestamp>.log
+/backotter/reports/bko-report-<date-time>.txt  bko-rescue's bug reports (and -UNREDACTED)
 /backotter/bin/{bko-holt,rustic-bko}     Linux image only
 /backotter/realworld/<date-time>/...     Linux image only; bko-realworld-1a's logs
 /backotter/authorized_keys               Linux image only; optional, see below
@@ -445,23 +446,37 @@ backup tool calls `room_check(marker, len, room)` in bko-holt's
 
 - `len` is the new system.json's size in bytes.
 - `room` is what the mounted partition says: `free` (statvfs `f_bavail`
-  times `f_frsize`), `cluster` (`f_frsize`), the sizes of this machine's
-  `system.json` and `system.prev.json` (None where one is missing), and
-  the size of each file in its `restore-logs/`.  A `system.json.new` left
-  by a write that failed is removed first.
+  times `f_frsize`), `cluster` (`f_frsize`), whether this machine's folder
+  is there (`folder`), the sizes of its `system.json` and
+  `system.prev.json` (None where one is missing), whether
+  `system.prev.json.sha256` is there (`prev_sum`), the size of each file
+  in its `restore-logs/` (None when that folder isn't there), and whether
+  other machines have folders on the stick (`others`).  A
+  `system.json.new` left by a write that failed is removed first.
 - It refuses `system_too_big`, a system.json over `SYSTEM_MAX`: a stick's
   bko-holt wouldn't read it.  It refuses `stick_full` when the file and
-  its `.sha256` don't fit: step 2 writes the new file while the old two
-  stand, and frees the old `system.prev.json` only after.  On a refusal the
-  tool writes nothing to the stick (the backup has its copy, written
-  first), says the refusal's words, and the backup itself still succeeds.
+  its `.sha256` don't fit: step 2 makes the machine's folder if it isn't
+  there, writes the new file while the old two stand, and frees the old
+  `system.prev.json` (and its `.sha256`, if there) only after.  On a
+  refusal the tool writes nothing to the stick (the backup has its copy,
+  written first), says the refusal's words, and the backup itself still
+  succeeds.  The approved text said the tool warns when the partition
+  can't hold the file; it refuses, since that write would fail anyway.
+  What the stick then holds for the machine is holt-json.md's open
+  question 16.
 - It warns `stick_room_short` when, once written, the partition can't
-  also hold the machine's 22 MiB of logs (less what its logs take now).
-  The tool writes, and says the warning's words, as for "Is this stick good
+  also hold the machine's 22 MiB of logs (less what its logs take now,
+  plus a cluster for `restore-logs/` when it isn't there).  The tool
+  writes, and says the warning's words, as for "Is this stick good
   enough?".
-- Each file is counted in whole clusters, each `.sha256` as one.  The
-  words name an older image's smaller partition and say to write a newer
-  image.
+- Each file and folder is counted in whole clusters, each `.sha256` as
+  one.  The words round the room down and the need up to 0.1 MiB, so the
+  two never print equal.  They say to remove other machines' folders only
+  when there are some; else to free room on the partition (old bug
+  reports can go).  On an older image's smaller partition they say to
+  write a newer image, by its size (256 MiB), not its date.
+- bko-rescue's bug reports (`backotter/reports`) take room from the same
+  partition and are never removed: holt-json.md's open question 17.
 
 ## Finding the config at boot
 

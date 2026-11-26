@@ -39,7 +39,8 @@ import uuid
 
 # Every image's, since 2026-11-26 (holt-json.md's open question 13): a
 # system.json up to stick.rs's SYSTEM_MAX (64 MiB), the one before it, and
-# each machine's 20 MiB of restore logs.  Still FAT16, which reaches 2 GiB.
+# each machine's 22 MiB of restore logs (the 10 kept and the one being
+# written).  Still FAT16, which reaches 2 GiB.
 CONFIG_MIB = 256
 CONFIG_LABEL = "BACKOTTER"
 SYSTEM_SCHEMAS = [1]            # system.json schemas the stick can read

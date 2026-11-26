@@ -229,10 +229,13 @@ impl<'a> Volume<'a> {
         self.data_start + u64::from(c - 2) * self.cluster_bytes
     }
 
+    /// Each run of adjacent clusters is one read, up to RUN_MAX bytes: on a
+    /// BSD's or illumos' raw device, with no readahead, a 64 MiB
+    /// system.json read a cluster at a time is 16384 USB reads.
     fn read_chain(&self, first: u32, max_clusters: u64) -> Result<Vec<u8>, String> {
         let mut out = Vec::new();
-        for c in self.chain(first, max_clusters)? {
-            let b = self.src.read_exact_at(self.cluster_offset(c), self.cluster_bytes as usize).ok_or_else(|| format!("cluster {c} can't be read"))?;
+        for (c, n) in runs(&self.chain(first, max_clusters)?, (RUN_MAX as u64 / self.cluster_bytes).max(1) as u32) {
+            let b = self.src.read_exact_at(self.cluster_offset(c), n as usize * self.cluster_bytes as usize).ok_or_else(|| format!("cluster {c} can't be read"))?;
             out.extend_from_slice(&b);
         }
         Ok(out)
@@ -330,6 +333,22 @@ impl<'a> Volume<'a> {
         b.truncate(size as usize);
         Ok(b)
     }
+}
+
+/// The most read_chain reads at once.
+const RUN_MAX: usize = 1 << 20;
+
+/// CHAIN as runs of adjacent clusters (the first, how many), each at most
+/// MAX long.
+fn runs(chain: &[u32], max: u32) -> Vec<(u32, u32)> {
+    let mut out: Vec<(u32, u32)> = Vec::new();
+    for &c in chain {
+        match out.last_mut() {
+            Some((s, n)) if *n < max && u64::from(*s) + u64::from(*n) == u64::from(c) => *n += 1,
+            _ => out.push((c, 1)),
+        }
+    }
+    out
 }
 
 /// A FAT boot sector B's volume serial and label, from its extended boot
@@ -654,6 +673,34 @@ mod tests {
         assert!(v.find("README.txt/x").unwrap().is_none());
         // Over the caller's limit: refused, unread.
         assert!(v.read_file(&f, 9_999).unwrap_err().contains("more than 9999"));
+    }
+
+    #[test]
+    fn adjacent_clusters_are_read_at_once() {
+        assert_eq!(runs(&[5, 6, 7, 9, 10, 3], 8), [(5, 3), (9, 2), (3, 1)]);
+        assert_eq!(runs(&[2, 3, 4, 5, 6], 2), [(2, 2), (4, 2), (6, 1)]);
+        assert_eq!(runs(&[7], 1), [(7, 1)]);
+        assert_eq!(runs(&[], 4), []);
+        // A file's clusters in a row: one read for them all, the same bytes.
+        struct Count<'a>(&'a MemSource, std::cell::Cell<usize>);
+        impl ByteSource for Count<'_> {
+            fn size(&self) -> u64 {
+                self.0.size()
+            }
+            fn read_at(&self, offset: u64, len: usize) -> Vec<u8> {
+                self.1.set(self.1.get() + 1);
+                self.0.read_at(offset, len)
+            }
+        }
+        let mem = MemSource(img());
+        let src = Count(&mem, std::cell::Cell::new(0));
+        let v = Volume::open(&src).unwrap();
+        let f = v.find("backotter/machines/0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90/system.json").unwrap().unwrap();
+        assert!(10_000u64.div_ceil(v.cluster_bytes) > 1);
+        let before = src.1.get();
+        let b = v.read_file(&f, 1 << 20).unwrap();
+        assert_eq!(src.1.get() - before, 1);
+        assert!(b.len() == 10_000 && b.iter().enumerate().all(|(i, &x)| x == (i % 251) as u8));
     }
 
     #[test]

@@ -2543,6 +2543,10 @@ recommendation):
   - A refusal leaves the stick as it was and the backup still succeeds
     (its own system.json is written first); a warning is written through,
     as the schema warnings are.
+  - A system.json the partition can't take is refused (`stick_full`),
+    where the approved text said "warns": that write would fail anyway,
+    and refusing first keeps the old copy whole.  This changes the
+    approved behaviour; what the stick then holds is open question 16.
   - `SYSTEM_MAX` is this bko-holt's.  The marker doesn't say what an
     image's bko-holt reads; they are the same today.
   - `CONFIG_BYTES` (256 MiB) only decides whether the words say to write a
@@ -2563,15 +2567,43 @@ recommendation):
   the BSDs, illumos and Haiku), and its boot tests should show the marker's
   `sectors` 524288 and pass config-partition and config-rw.  Images in
   use keep 32 MiB, and `room_check` names that in its words.  The backup
-  tool's call of `room_check` isn't built.
+  tool's call of `room_check` isn't built.  The image round should also
+  check that OpenBSD boots from its moved root, that each build VM has
+  room for the bigger config.img and image.img (FreeBSD's running builder
+  most), that a RAM-root image reads a system.json near 64 MiB, and how
+  long `stick --json` takes on one BSD image with a full 256 MiB
+  partition (bko-rescue gives it `HOLT_MS`, 60 s).
+- **Review fixes** ("holt, stick: review fixes for oq13"):
+  - `Room` gained `folder`, `prev_sum`, `others`, and `logs` is None when
+    `restore-logs/` isn't there.  A new machine's folder and its first
+    `restore-logs/` each count a cluster; the old prev's `.sha256` is
+    freed only when it is there.  A check that passed could otherwise
+    leave a system.json with no `.sha256` (`checksum_missing`).
+  - `stick_full`'s words give the room the failing step has: the free
+    room while the old two stand, or the room once the oldest goes.
+  - Sizes print to 0.1 MiB, room rounded down and need up, so "64.0 MiB,
+    over the 64.0 MiB" can't happen.
+  - The words say to write a newer image by its size (256 MiB), not by
+    a date, and to remove other machines' folders only when there are
+    some.
+  - fatfs reads a run of adjacent clusters at once (up to 1 MiB), not a
+    cluster at a time: on a BSD's or illumos' raw device a 64 MiB
+    system.json was 16384 reads.  `stick --json` reads every machine's
+    file, so this matters most there.  Not timed on an image yet.
+  - Tested: `write_time_room_check` (folders, `prev_sum`, a first
+    `restore-logs/`, each refusal's words, the rounding, `others`),
+    fatfs's `adjacent_clusters_are_read_at_once`; the holt gate on
+    cinqcent (cargo test 975 passed, 0 failed, 4 ignored; 110 golden
+    plans, 0 differ; redact-corpus passed); test_marker.py 11 OK.
 - **Spec problems:**
   - "warns when the partition can't hold it and its machine's 20 MiB of
     logs" is short by one log at the moment bko-rescue writes the
     eleventh; built as 22 MiB (above).
   - `SYSTEM_MAX` isn't in the marker, so a later bko-holt that reads less
     (or more) than an image's can't be told from the marker alone.
-  - `stick --json` still reads every machine's system.json: up to 256 MiB
-    in all now, bounded by the partition.
+  - `stick --json` still reads every machine's system.json, one at a
+    time: up to 256 MiB in all now, bounded by the partition, against
+    bko-rescue's 60 s `HOLT_MS` (fatfs now reads them in 1 MiB runs).
   - bko-rescue keeps a log as `.log` where there is no gzip, uncapped by
     `LOG_GZ_MAX` (up to 32 MiB): the 22 MiB don't cover it.  Every image
     has gzip.
@@ -2820,7 +2852,7 @@ recommendation):
     Or the stick carries them beside system.json, each with its
     `.sha256`, and `stick --copy` copies them too (they fill a 32 MiB
     partition fast).
-13. **Room on the config partition** (answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26, "stick, holt: open question 13 built": "What room on the partition built").  A
+13. **Room on the config partition** (answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26, "stick, holt: open question 13 built" and "holt, stick: review fixes for oq13": "What room on the partition built").  A
     system.json is read up to 64 MiB (`stick.rs`'s `SYSTEM_MAX`), a dump
     may be up to 1 GiB (`LAYOUT_MAX`), the BSD images' config partition
     is 32 MiB, and each machine's restore logs may take 20 MiB.  A large
@@ -2864,3 +2896,36 @@ recommendation):
     (checked as `stick --copy` checks the stick's) and its headers from
     the same snapshot.  Or keep the refusal (today's): its help says to
     choose the newest backup.
+16. **What the stick holds after a refused write** (from open question
+    13's review; not answered).  `room_check` refuses a system.json over
+    `SYSTEM_MAX` (`system_too_big`) or one the partition can't take
+    (`stick_full`; the approved text said "warns", see "What room on the
+    partition built"), and the tool then writes nothing to the stick.  A
+    new machine so gets no folder: its stick has no repository location
+    and no layout, so the user must type the location, and even then
+    there is no layout to restore.  A machine with an older copy keeps
+    its older layout: a later restore of the newest snapshot plans it
+    onto the old disks ("Which copy wins" step 2 isn't built), and only
+    `written` says so.  That runs against restore fidelity first.
+    *Recommended:* keep the refusal, and on it write the machine's
+    system.json without `layout` (a few KiB; stick-config.md already
+    allows one), so the stick still finds the backup and never plans
+    onto an old layout; the backup's words say plainly that this stick
+    can't restore the machine's disks until the layout comes from the
+    backup (open question 15's step 2).  If even that doesn't fit, remove
+    the machine's old system.json and system.prev.json from the stick and
+    say so.  Or keep today's build: the old copy stays, and the words say
+    plainly that the stick's copy is from `written` and older than the
+    backup.
+17. **Bug reports on the stick** (from open question 13's review; not
+    answered).  bko-rescue saves `backotter/reports/bko-report-*.txt`
+    (and an `-UNREDACTED` copy, read up to 64 MiB) on the config
+    partition, and nothing removes them.  `room_check` keeps 22 MiB for
+    each machine's restore logs, but reports saved later eat that same
+    room with no warning, and a restore's log then stays in RAM.
+    *Recommended:* bko-rescue keeps the 5 newest reports (each with its
+    `-UNREDACTED` twin) and removes older ones after it writes a new one,
+    as it does the logs; and before it saves one, it refuses when the
+    save would leave the partition less than 22 MiB free, saying to copy
+    old reports off.  Or leave them, and say in the Report screen's words
+    that reports take the stick's room until removed.

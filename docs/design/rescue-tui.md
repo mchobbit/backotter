@@ -1885,6 +1885,11 @@ stick-config.md's "Room on the partition").
 - Where there is no gzip, the log is kept as `.log`, not capped at
   `LOG_GZ_MAX` (up to `LOG_READ_MAX`, 32 MiB), so `room_check`'s room is
   short for it.  Every image has gzip; left as it is.
+- Bug reports saved to the stick (`backotter/reports`, with their
+  `-UNREDACTED` twins) are never removed, and take room the logs need.
+  `room_check` can't see reports saved after the backup.  holt-json.md's
+  open question 17 (not answered) asks whether bko-rescue keeps only the
+  newest.
 
 ## The app on top (later)
 

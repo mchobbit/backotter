@@ -745,12 +745,22 @@ pub struct Room {
     pub free: u64,
     /// The cluster, statvfs's `f_frsize`: each file takes whole clusters.
     pub cluster: u64,
+    /// Whether `backotter/machines/<install-id>/` is there.  The first
+    /// write makes it, and a folder takes a cluster.
+    pub folder: bool,
     /// The machine's system.json and system.prev.json now, each its size in
     /// bytes, or None when it isn't there.
     pub current: Option<u64>,
     pub prev: Option<u64>,
-    /// The size of each file in the machine's `restore-logs/` now.
-    pub logs: Vec<u64>,
+    /// Whether `system.prev.json.sha256` is there: it goes with the old
+    /// prev.
+    pub prev_sum: bool,
+    /// The machine's `restore-logs/`: None when the folder isn't there
+    /// (bko-rescue's first log makes it), else the size of each file in it.
+    pub logs: Option<Vec<u64>>,
+    /// Whether other machines have folders on the stick: the words say to
+    /// remove them only then.
+    pub others: bool,
 }
 
 /// Why the backup tool doesn't write system.json to the stick at all.
@@ -761,6 +771,15 @@ pub struct StickRefusal {
     pub text: String,
 }
 
+/// N bytes in MiB to a tenth, rounded down (UP false) or up: a need is
+/// rounded up and room down, so the two never print equal.
+fn mib_tenths(n: u128, up: bool) -> String {
+    let t = n * 10;
+    let d = 1u128 << 20;
+    let t = if up { t.div_ceil(d) } else { t / d };
+    format!("{}.{} MiB", t / 10, t % 10)
+}
+
 /// The room half of the write-time check (holt-json.md's open question
 /// 13), for the backup tool before it writes a system.json of SYSTEM_LEN
 /// bytes to the stick whose marker is M, its config partition as R says.
@@ -769,40 +788,50 @@ pub struct StickRefusal {
 /// take: the write itself would fail.  It warns (`stick_room_short`) when,
 /// once it is written, the partition can't also hold the machine's restore
 /// logs: LOGS_KEPT of LOG_MAX, plus the one being written, less what its
-/// logs take now.  The write follows the steps of "How it writes": the new
-/// file is written while the old two stand, then system.json becomes
-/// system.prev.json (freeing the old one), then the new `.sha256` is
-/// written (each `.sha256` taken as one cluster).  The backup tool isn't
-/// built: this is the check it calls, beside `schema_warnings`.
+/// logs take now.  The write follows the steps of "How it writes": the
+/// machine's folder is made if it isn't there, the new file is written
+/// while the old two stand, then system.json becomes system.prev.json
+/// (freeing the old one and its `.sha256`), then the new `.sha256` is
+/// written.  Each file and folder takes whole clusters, each `.sha256`
+/// one.  The backup tool isn't built: this is the check it calls, beside
+/// `schema_warnings`.
 pub fn room_check(m: &Marker, system_len: u64, r: &Room) -> Result<Vec<StickWarning>, StickRefusal> {
-    let mib = |n: u128| format!("{:.1} MiB", n as f64 / (1u64 << 20) as f64);
     let image = if u128::from(m.sectors) * 512 < u128::from(CONFIG_BYTES) {
-        format!(", or write it with an image from 2026-11-26 or later (its config partition is {}, theirs 256 MiB)", mib(u128::from(m.sectors) * 512))
+        format!(", or write a newer image to it (this one's config partition is {}, a newer one's 256 MiB)", mib_tenths(u128::from(m.sectors) * 512, false))
     } else {
         String::new()
     };
+    let remedy = if r.others { "Remove other machines' folders from the stick" } else { "Free room on the stick's config partition (old bug reports in backotter/reports can go)" };
     if system_len > SYSTEM_MAX {
-        return Err(StickRefusal { code: "system_too_big", text: format!("this machine's system.json is {}, over the {} a stick's bko-holt reads: it isn't written to the stick (the backup keeps its copy)", mib(system_len.into()), mib(SYSTEM_MAX.into())) });
+        return Err(StickRefusal { code: "system_too_big", text: format!("this machine's system.json is {}, over the {} a stick's bko-holt reads: it isn't written to the stick (the backup keeps its copy)", mib_tenths(system_len.into(), true), mib_tenths(SYSTEM_MAX.into(), false)) });
     }
     let cl = u128::from(r.cluster.max(1));
     let up = |n: u64| u128::from(n).div_ceil(cl) * cl;
     let free = u128::from(r.free);
-    let new = up(system_len);
+    let dir = if r.folder { 0 } else { cl };
+    let new = dir + up(system_len);
     let sum = cl;
     // system.json becomes system.prev.json: the old one and its .sha256 go.
     let freed = match (r.current, r.prev) {
-        (Some(_), Some(p)) => up(p) + sum,
+        (Some(_), Some(p)) => up(p) + if r.prev_sum { sum } else { 0 },
         _ => 0,
     };
-    if free < new || free + freed < new + sum {
-        return Err(StickRefusal { code: "stick_full", text: format!("this machine's system.json needs {} and the stick's config partition has {} free: nothing is written, and the stick keeps the copy it had. Remove other machines' folders from the stick{image}", mib(new + sum), mib(free + freed)) });
+    let full = |text: String| Err(StickRefusal { code: "stick_full", text: format!("{text}: nothing is written, and the stick keeps the copy it had. {remedy}{image}") });
+    if free < new {
+        return full(format!("this machine's system.json needs {} while the stick still holds its two older copies, and the stick's config partition has {} free", mib_tenths(new, true), mib_tenths(free, false)));
+    }
+    if free + freed < new + sum {
+        return full(format!("this machine's system.json and its checksum need {}, and the stick's config partition has {} once its oldest copy goes", mib_tenths(new + sum, true), mib_tenths(free + freed, false)));
     }
     let after = free + freed - new - sum;
-    let logs: u128 = r.logs.iter().map(|&l| up(l)).sum();
-    let need = (u128::from(LOGS_KEPT) + 1) * up(LOG_MAX);
+    let (logs, logs_dir) = match &r.logs {
+        Some(l) => (l.iter().map(|&n| up(n)).sum::<u128>(), 0),
+        None => (0, cl),
+    };
+    let need = (u128::from(LOGS_KEPT) + 1) * up(LOG_MAX) + logs_dir;
     let mut w = Vec::new();
     if after + logs < need {
-        w.push(StickWarning { code: "stick_room_short", text: format!("once this machine's system.json is written, the stick's config partition has {} free, and its restore logs may need {}: a restore may not keep its log on the stick. Remove other machines' folders from the stick{image}", mib(after), mib(need - logs)) });
+        w.push(StickWarning { code: "stick_room_short", text: format!("once this machine's system.json is written, the stick's config partition has {} free, and its restore logs may need {}: a restore may not keep its log on the stick. {remedy}{image}", mib_tenths(after, false), mib_tenths(need - logs, true)) });
     }
     Ok(w)
 }
@@ -1415,53 +1444,84 @@ mod tests {
     fn write_time_room_check() {
         const MIB: u64 = 1 << 20;
         let big = parse_marker(&marker(3).replace("\"sectors\": 32768", "\"sectors\": 524288")).unwrap();
-        let small = parse_marker(&marker(3)).unwrap();
-        let room = |free: u64, current: Option<u64>, prev: Option<u64>, logs: Vec<u64>| Room { free, cluster: 4096, current, prev, logs };
+        // An older BSD, illumos or Haiku image's: 32 MiB.
+        let small = parse_marker(&marker(3).replace("\"sectors\": 32768", "\"sectors\": 65536")).unwrap();
+        // The machine's folder is there when anything of it is; each .sha256 with its file.
+        let room = |free: u64, current: Option<u64>, prev: Option<u64>, logs: Option<Vec<u64>>| Room {
+            free,
+            cluster: 4096,
+            folder: current.is_some() || prev.is_some() || logs.is_some(),
+            current,
+            prev,
+            prev_sum: prev.is_some(),
+            logs,
+            others: true,
+        };
         let codes = |r: Result<Vec<StickWarning>, StickRefusal>| match r {
             Ok(w) => w.iter().map(|w| w.code).collect::<Vec<_>>().join(","),
             Err(e) => format!("refused {}", e.code),
         };
         // A new stick with room: nothing to say.
-        assert_eq!(room_check(&big, 3 * MIB, &room(250 * MIB, None, None, vec![])), Ok(vec![]));
-        // SYSTEM_MAX is read; a byte more isn't, whatever the room.
-        assert_eq!(codes(room_check(&big, SYSTEM_MAX, &room(250 * MIB, None, None, vec![]))), "");
-        assert_eq!(codes(room_check(&big, SYSTEM_MAX + 1, &room(250 * MIB, None, None, vec![]))), "refused system_too_big");
-        let e = room_check(&big, SYSTEM_MAX + MIB, &room(250 * MIB, None, None, vec![])).unwrap_err();
+        assert_eq!(room_check(&big, 3 * MIB, &room(250 * MIB, None, None, None)), Ok(vec![]));
+        // SYSTEM_MAX is read; a byte more isn't, whatever the room, and its
+        // size is rounded up, so it never prints as the limit.
+        assert_eq!(codes(room_check(&big, SYSTEM_MAX, &room(250 * MIB, None, None, None))), "");
+        let e = room_check(&big, SYSTEM_MAX + 1, &room(250 * MIB, None, None, None)).unwrap_err();
         assert_eq!(e.code, "system_too_big");
-        assert_eq!(e.text, "this machine's system.json is 65.0 MiB, over the 64.0 MiB a stick's bko-holt reads: it isn't written to the stick (the backup keeps its copy)");
-        // No room for the file and its .sha256: refused, and an older image's
-        // smaller partition named.
-        let e = room_check(&small, 2 * MIB, &room(MIB, None, None, vec![])).unwrap_err();
+        assert_eq!(e.text, "this machine's system.json is 64.1 MiB, over the 64.0 MiB a stick's bko-holt reads: it isn't written to the stick (the backup keeps its copy)");
+        // No room for the file: refused, and an older image's smaller
+        // partition named.  A new machine's folder takes a cluster too.
+        let e = room_check(&small, 2 * MIB, &room(MIB, None, None, None)).unwrap_err();
         assert_eq!(e.code, "stick_full");
-        assert_eq!(e.text, "this machine's system.json needs 2.0 MiB and the stick's config partition has 1.0 MiB free: nothing is written, and the stick keeps the copy it had. Remove other machines' folders from the stick, or write it with an image from 2026-11-26 or later (its config partition is 16.0 MiB, theirs 256 MiB)");
-        assert!(!room_check(&big, 2 * MIB, &room(MIB, None, None, vec![])).unwrap_err().text.contains("image"));
+        assert_eq!(e.text, "this machine's system.json needs 2.1 MiB while the stick still holds its two older copies, and the stick's config partition has 1.0 MiB free: nothing is written, and the stick keeps the copy it had. Remove other machines' folders from the stick, or write a newer image to it (this one's config partition is 32.0 MiB, a newer one's 256 MiB)");
+        assert!(!room_check(&big, 2 * MIB, &room(MIB, None, None, None)).unwrap_err().text.contains("image"));
+        // The only machine on the stick: no other folders to remove.
+        let alone = Room { others: false, ..room(MIB, None, None, None) };
+        assert!(room_check(&big, 2 * MIB, &alone).unwrap_err().text.ends_with("Free room on the stick's config partition (old bug reports in backotter/reports can go)"));
         // The new file is written while the old two stand: the old prev's
-        // room comes too late for it.
+        // room comes too late for it, and the words give the room it has then.
         let (cur, prev) = (Some(5 * MIB), Some(5 * MIB));
-        assert_eq!(codes(room_check(&big, 5 * MIB, &room(5 * MIB - 1, cur, prev, vec![]))), "refused stick_full");
+        let e = room_check(&big, 5 * MIB, &room(5 * MIB - 1, cur, prev, Some(vec![]))).unwrap_err();
+        assert_eq!(e.code, "stick_full");
+        assert!(e.text.starts_with("this machine's system.json needs 5.0 MiB while the stick still holds its two older copies, and the stick's config partition has 4.9 MiB free: "), "{}", e.text);
         // Its .sha256 comes after the old prev is gone: 5 MiB free is enough, then.
         let need = 22 * MIB;
-        assert_eq!(codes(room_check(&big, 5 * MIB, &room(5 * MIB, cur, prev, vec![]))), "stick_room_short");
+        assert_eq!(codes(room_check(&big, 5 * MIB, &room(5 * MIB, cur, prev, Some(vec![])))), "stick_room_short");
         // Without a current system.json, the old prev isn't replaced, so frees nothing.
-        assert_eq!(codes(room_check(&big, 5 * MIB, &room(5 * MIB, None, prev, vec![]))), "refused stick_full");
-        // Each file takes whole clusters: one byte takes 4 KiB, and its .sha256 another.
-        assert_eq!(codes(room_check(&big, 1, &room(8191, None, None, vec![]))), "refused stick_full");
-        assert_eq!(codes(room_check(&big, 1, &room(8192, None, None, vec![]))), "stick_room_short");
-        // The logs: 11 of 2 MiB (the 10 kept and the one being written), less what is there.
+        let e = room_check(&big, 5 * MIB, &room(5 * MIB, None, prev, Some(vec![]))).unwrap_err();
+        assert_eq!(e.code, "stick_full");
+        assert!(e.text.starts_with("this machine's system.json and its checksum need 5.1 MiB, and the stick's config partition has 5.0 MiB once its oldest copy goes: "), "{}", e.text);
+        // The old prev's .sha256 frees its cluster only when it is there.
+        let r = room(4096, Some(4096), Some(0), Some(vec![]));
+        assert_eq!(codes(room_check(&big, 4096, &r)), "stick_room_short");
+        assert_eq!(codes(room_check(&big, 4096, &Room { prev_sum: false, ..r })), "refused stick_full");
+        // Each file takes whole clusters: one byte takes 4 KiB, its .sha256
+        // another, and a new machine's folder a third.
+        assert_eq!(codes(room_check(&big, 1, &room(12287, None, None, None))), "refused stick_full");
+        assert_eq!(codes(room_check(&big, 1, &room(12288, None, None, None))), "stick_room_short");
+        assert_eq!(codes(room_check(&big, 1, &room(8192, None, None, Some(vec![])))), "stick_room_short");
+        // The logs: 11 of 2 MiB (the 10 kept and the one being written), less
+        // what is there.  The words round room down and need up.
         let free = |logs_room: u64| 4 * MIB + 4096 + logs_room;
-        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(need), None, None, vec![]))), "");
-        let w = room_check(&big, 4 * MIB, &room(free(need - 4096), None, None, vec![])).unwrap();
+        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(need), None, None, Some(vec![])))), "");
+        let w = room_check(&big, 4 * MIB, &room(free(need - 4096), None, None, Some(vec![]))).unwrap();
         assert_eq!(w[0].code, "stick_room_short");
-        assert_eq!(w[0].text, "once this machine's system.json is written, the stick's config partition has 22.0 MiB free, and its restore logs may need 22.0 MiB: a restore may not keep its log on the stick. Remove other machines' folders from the stick");
+        assert_eq!(w[0].text, "once this machine's system.json is written, the stick's config partition has 21.9 MiB free, and its restore logs may need 22.0 MiB: a restore may not keep its log on the stick. Remove other machines' folders from the stick");
+        // No restore-logs/ yet: the first log makes it, a cluster more.
+        let first = |logs_room: u64| free(logs_room) + 4096;
+        assert_eq!(codes(room_check(&big, 4 * MIB, &room(first(need + 4096), None, None, None))), "");
+        assert_eq!(codes(room_check(&big, 4 * MIB, &room(first(need), None, None, None))), "stick_room_short");
         let ten = vec![2 * MIB; 10];
-        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(2 * MIB), None, None, ten.clone()))), "");
-        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(2 * MIB - 4096), None, None, ten))), "stick_room_short");
+        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(2 * MIB), None, None, Some(ten.clone())))), "");
+        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(2 * MIB - 4096), None, None, Some(ten)))), "stick_room_short");
         // Logs take whole clusters too: ten of one byte take 40 KiB.
-        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(22 * MIB - 10 * 4096), None, None, vec![1; 10]))), "");
-        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(22 * MIB - 10 * 4096 - 1), None, None, vec![1; 10]))), "stick_room_short");
-        // A cluster of 0 (no statvfs) counts bytes.
-        assert_eq!(codes(room_check(&big, 10, &Room { free: 11, cluster: 0, current: None, prev: None, logs: vec![] })), "stick_room_short");
-        assert_eq!(codes(room_check(&big, 10, &Room { free: 10, cluster: 0, current: None, prev: None, logs: vec![] })), "refused stick_full");
+        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(22 * MIB - 10 * 4096), None, None, Some(vec![1; 10])))), "");
+        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(22 * MIB - 10 * 4096 - 1), None, None, Some(vec![1; 10])))), "stick_room_short");
+        // A cluster of 0 (no statvfs) counts bytes, a folder as one.
+        let bytes = Room { free: 11, cluster: 0, folder: true, current: None, prev: None, prev_sum: false, logs: Some(vec![]), others: true };
+        assert_eq!(codes(room_check(&big, 10, &bytes)), "stick_room_short");
+        assert_eq!(codes(room_check(&big, 10, &Room { free: 10, ..bytes.clone() })), "refused stick_full");
+        assert_eq!(codes(room_check(&big, 10, &Room { folder: false, ..bytes })), "refused stick_full");
     }
 
     #[test]

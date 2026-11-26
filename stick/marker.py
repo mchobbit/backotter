@@ -55,9 +55,12 @@ def write_json(path: str, doc: dict) -> None:
         f.write("\n")
 
 
-def dump_schemas(path: str) -> list[int]:
+def dump_schemas(path: str, unnamed_ok: bool = False) -> list[int]:
     """The dump schemas bko-holt load reads, from PATH: that bko-holt's
-    `--version --json` document (bko-holt-api, holt-json.md)."""
+    `--version --json` document (bko-holt-api, holt-json.md).  A bko-holt
+    from before dump_schemas is refused, since its image would fail the boot
+    check dump-schemas, unless UNNAMED_OK (record-stick.py's recordings):
+    then it reads DUMP_SCHEMAS_UNNAMED."""
     try:
         with open(path) as f:
             doc = json.load(f)
@@ -66,6 +69,10 @@ def dump_schemas(path: str) -> list[int]:
     if not isinstance(doc, dict) or doc.get("format") != "bko-holt-api":
         die(f"--holt-api {path}: not a bko-holt-api document (a bko-holt from before RT10?)")
     if "dump_schemas" not in doc:
+        if not unnamed_ok:
+            die(f"--holt-api {path}: bko-holt {doc.get('version')} names no dump_schemas (it predates them), "
+                "and its image would fail the boot check dump-schemas: refresh holt-bin (img-refresh-holt.sh) "
+                "to a bko-holt at or after ae051fb")
         print(f"marker: bko-holt {doc.get('version')} names no dump_schemas (it predates them): "
               f"it reads dump schema {DUMP_SCHEMAS_UNNAMED[0]} only", file=sys.stderr)
         return list(DUMP_SCHEMAS_UNNAMED)
@@ -88,6 +95,9 @@ def main() -> int:
                     help="a program to put in the config partition's backotter/bin/")
     ap.add_argument("--holt-api", required=True, metavar="FILE",
                     help="the image's `bko-holt --version --json`, for the marker's dump_schemas")
+    ap.add_argument("--holt-api-unnamed-ok", action="store_true",
+                    help="take a bko-holt from before dump_schemas as reading dump schema 1 (recordings only; "
+                         "an image build refuses it)")
     ap.add_argument("--zfs-version")
     ap.add_argument("--zfs-features")
     ap.add_argument("out_dir")
@@ -97,7 +107,7 @@ def main() -> int:
     for c in ("mkfs.vfat", "mmd", "mcopy"):
         if not shutil.which(c, path=os.environ.get("PATH", "") + ":/usr/sbin:/sbin"):
             die(f"missing {c}")
-    dumps = dump_schemas(a.holt_api)
+    dumps = dump_schemas(a.holt_api, a.holt_api_unnamed_ok)
     os.makedirs(a.out_dir, exist_ok=True)
     config_sectors = a.config_mib * 2048
 

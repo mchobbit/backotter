@@ -28,6 +28,15 @@ for i = 2, #arg do
 end
 print(table.concat(out, " "))
 EOF
+cat >/tmp/bko-ds.sh <<'EOF'
+# The marker's dump_schemas against bko-holt's; none on both sides only for
+# an image from before markers named them (holt-json.md, oq11).
+f=/.disk/backotter.json
+d() { tr -d " \011\012\015" | sed -n 's/.*"dump_schemas":\(\[[0-9,]*]\).*/\1/p'; }
+m=$(d <$f); h=$(/usr/local/bin/bko-holt --version --json | d)
+echo "marker ${m:-none}, bko-holt ${h:-none}"
+test "$m" = "$h" && { test -n "$m" || ! grep -q dump_schemas $f; }
+EOF
 cat >/tmp/bko-ssh.sh <<'EOF'
 pw=$(awk '/^Password: / { print $2 }' /var/run/backotter/remote-access)
 printf '#!/bin/sh\necho %s\n' "$pw" >/tmp/bko-askpass
@@ -46,7 +55,7 @@ check tools 'for c in gpart zpool zfs newfs newfs_msdos fsck_ffs fsck_msdosfs gr
 check restic-bko '/usr/local/bin/restic-bko version'
 check rustic-bko '/usr/local/bin/rustic-bko --version'
 check bko-holt '/usr/local/bin/bko-holt --version | grep "^bko-holt [0-9]"'
-check dump-schemas 'd() { tr -d " \011\012\015" | sed -n "s/.*\"dump_schemas\":\(\[[0-9,]*]\).*/\1/p"; }; m=$(d </.disk/backotter.json); h=$(/usr/local/bin/bko-holt --version --json | d); echo "marker ${m:-none}, bko-holt ${h:-none}"; test -n "$m" && test "$m" = "$h"'
+check dump-schemas 'sh /tmp/bko-ds.sh'
 check zfs-no-autoimport 'test "$(sysrc -n zfs_enable)" = NO && ! kldstat -q -n zfs.ko && echo "zfs_enable is NO, zfs.ko not loaded"'
 check geli-module 'geli load || { echo "geli load failed"; exit 1; }; kldstat -q -m g_eli || { echo "geli load ran, no g_eli module"; exit 1; }; echo "geli load: g_eli loaded"'
 check network 'for i in $(seq 30); do a=$(ifconfig -a inet | awk "\$1 == \"inet\" && \$2 !~ /^127\\./ { print \$2 }"); test -n "$a" && break; sleep 1; done; test -n "$a" && echo "$a," $(grep "^nameserver" /etc/resolv.conf)'

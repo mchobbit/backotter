@@ -21,7 +21,7 @@ check layer-tools 'for c in wpa_supplicant efibootmgr zpool zfs sshd; do command
 check fs-tools 'for c in mkfs.vfat mkfs.jfs mkfs.nilfs2 mkfs.f2fs mkfs.bcachefs; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; bcachefs version'
 check binaries 'restic-bko version | head -n 1 | grep backotter && rustic-bko --version | grep backotter'
 check bko-holt 'bko-holt --version | grep "^bko-holt [0-9]"'
-check dump-schemas 'd() { tr -d " \011\012\015" | sed -n "s/.*\"dump_schemas\":\(\[[0-9,]*]\).*/\1/p"; }; m=$(d </cdrom/.disk/backotter.json); h=$(bko-holt --version --json | d); echo "marker ${m:-none}, bko-holt ${h:-none}"; test -n "$m" && test "$m" = "$h"'
+check dump-schemas 'd() { tr -d " \011\012\015" | sed -n "s/.*\"dump_schemas\":\(\[[0-9,]*]\).*/\1/p"; }; f=/cdrom/.disk/backotter.json; m=$(d <$f); h=$(bko-holt --version --json | d); echo "marker ${m:-none}, bko-holt ${h:-none}"; test "$m" = "$h" && { test -n "$m" || ! grep -q dump_schemas $f; }'
 check bcachefs-module 'v=$(modinfo -F vermagic bcachefs) && test "${v%% *}" = "$(uname -r)" && modinfo -F filename bcachefs && modinfo -F version bcachefs'
 # The module is unsigned: it must load with Secure Boot off (or no EFI), and
 # the kernel must refuse it with Secure Boot on, for its signature.

@@ -696,7 +696,8 @@ pub struct StickWarning {
 /// is M: SYSTEM's schema must be in the marker's `system_schemas`, and its
 /// `layout`'s (the dump's) schema in the marker's `dump_schemas`
 /// (holt-json.md's open question 11), or that stick's restore refuses them.
-/// A SYSTEM with no `layout` has no dump to check.  The backup tool isn't
+/// A SYSTEM with no `layout`, or one that isn't an object, has no dump to
+/// check.  Only the schema is checked, not the dump's `format`.  The backup tool isn't
 /// built: this is the check it calls, here where the marker is read.
 pub fn schema_warnings(m: &Marker, system: &Value) -> Vec<StickWarning> {
     let list = |l: &[u64]| if l.is_empty() { "none".to_string() } else { l.iter().map(u64::to_string).collect::<Vec<_>>().join(", ") };
@@ -706,7 +707,9 @@ pub fn schema_warnings(m: &Marker, system: &Value) -> Vec<StickWarning> {
         let is = schema.map_or("has no schema".to_string(), |s| format!("is schema {s}"));
         w.push(StickWarning { code: "system_schema_unread", text: format!("this stick's image reads system.json schema {}, and this machine's system.json {is}: the stick can't restore it; write a newer image to the stick", list(&m.system_schemas)) });
     }
-    if let Some(layout) = system.get(LAYOUT_KEY) {
+    // Only an object is a dump, as for stick --copy: a `layout` that isn't
+    // one is copy's no_layout, not a schema this check can name.
+    if let Some(layout @ Value::Obj(_)) = system.get(LAYOUT_KEY) {
         let read = m.dump_schemas_read();
         let is = layout.get_u64("schema");
         if !is.is_some_and(|s| read.contains(&s)) {
@@ -1090,6 +1093,22 @@ mod tests {
     }
 
     #[test]
+    fn an_old_marker_names_no_dump_schemas() {
+        // Every stick built before 2026-11-26: image.dump_schemas is null,
+        // never made up as [1] or [] (holt-json.md's stick --json).
+        let t = linux_tree(&config(three()), None);
+        t.file("/cdrom/.disk/backotter.json", marker(3).replace("  \"dump_schemas\": [1],\n", ""));
+        let (v, code) = doc(&t);
+        assert_eq!(code, 0, "{}", v.pretty());
+        assert!(v.at(&["image", "dump_schemas"]).is_some_and(Value::is_null), "{}", v.pretty());
+        assert_eq!(v.at(&["image", "system_schemas"]).and_then(Value::as_array).map(Vec::len), Some(1));
+        // A new one names its list.
+        let (v, _) = doc(&linux_tree(&config(three()), None));
+        let l: Vec<u64> = v.at(&["image", "dump_schemas"]).and_then(Value::as_array).unwrap().iter().filter_map(Value::as_u64).collect();
+        assert_eq!(l, [1]);
+    }
+
+    #[test]
     fn a_machine_that_fails_its_checks_is_listed_with_why() {
         let good = system(LOVELACE, "lovelace", "", "");
         let edited = good.replace("lovelace\"", "lovelace2\"");
@@ -1279,6 +1298,9 @@ mod tests {
         // Readable, with a layout and without one (no dump to check).
         assert!(schema_warnings(&m, &sys(", \"layout\": {\"format\": \"bko-holt\", \"schema\": 1}")).is_empty());
         assert!(schema_warnings(&m, &sys("")).is_empty());
+        // A layout that isn't an object is no dump (stick --copy's no_layout), not a schema to name.
+        assert!(schema_warnings(&m, &sys(", \"layout\": null")).is_empty());
+        assert!(schema_warnings(&m, &sys(", \"layout\": \"x\"")).is_empty());
         // A dump schema the stick's bko-holt doesn't read: a warning, named.
         let w = schema_warnings(&m, &sys(", \"layout\": {\"format\": \"bko-holt\", \"schema\": 2}"));
         assert_eq!(w.len(), 1);

@@ -9,6 +9,7 @@ Linux's xorriso, mksquashfs and bash 4 (it runs on Bigfoot and the farm hosts, a
 skipped elsewhere).  No VM."""
 
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -314,7 +315,17 @@ def wr(path, data, mode=0o644):
     os.chmod(path, mode)
 
 
-def fake_inputs(tmp, arch):
+def holt_api(arch):
+    """The api document of an ARCH bko-holt, as `--version --json` prints it."""
+    m = {"amd64": "x86_64", "arm64": "aarch64"}[arch]
+    return ('{"format":"bko-holt-api","schema":1,"version":"0.3.0","dump_schemas":[1],'
+            '"platform":{"os":"linux","arch":"%s"}}' % m)
+
+
+def fake_inputs(tmp, arch, holt_runs=True, api_file=None):
+    """API_FILE: the layer's holt-api.json, as build-backotter-layer.sh
+    writes it (None: a layer from before it).  HOLT_RUNS=False: the layer's
+    bko-holt can't run on this host (an arm64 layer on an amd64 host)."""
     """A stock ISO with the files make-img.sh reads and drops, and slim and layer
     directories as slim-base-layer.sh and build-backotter-layer.sh would leave them."""
     iso = os.path.join(tmp, "iso")
@@ -338,9 +349,9 @@ def fake_inputs(tmp, arch):
     for p in (f"{base}.squashfs", f"{base}.manifest", f"{base}.size", "vmlinuz", "initrd"):
         wr(os.path.join(slim, p), f"slim {p}\n")
     tree = os.path.join(tmp, "layer-tree")
-    # make-img.sh runs it for the marker's dump_schemas.
+    # make-img.sh runs it for the marker's dump_schemas when the layer has no holt-api.json.
     wr(os.path.join(tree, "usr/local/bin/bko-holt"),
-       "#!/bin/sh\necho '{\"format\":\"bko-holt-api\",\"schema\":1,\"version\":\"0.3.0\",\"dump_schemas\":[1]}'\n", 0o755)
+       ("#!/bin/sh\necho '%s'\n" % holt_api(arch)) if holt_runs else "#!/nonexistent/aarch64-only\n", 0o755)
     wr(os.path.join(tree, "usr/local/bin/rustic-bko"), "#!/bin/sh\n", 0o755)
     wr(os.path.join(tree, "usr/share/zfs/compatibility.d/openzfs-2.4"), "# features\nasync_destroy\nzilsaxattr\n")
     os.makedirs(layer)
@@ -349,6 +360,8 @@ def fake_inputs(tmp, arch):
     wr(os.path.join(layer, f"{base}.backotter.manifest"),
        f"linux-image-7.0.0-43-generic:{arch}\t7.0.0-43.43\nzfsutils-linux\t2.4.1-1ubuntu5\n")
     wr(os.path.join(layer, f"{base}.backotter.size"), "1234\n")
+    if api_file is not None:
+        wr(os.path.join(layer, f"{base}.backotter.holt-api.json"), api_file + "\n")
     # The config partition's FAT tools: stand-ins (marker.py only runs them).
     stubs = os.path.join(tmp, "stubs")
     for c in ("mkfs.vfat", "mmd", "mcopy"):
@@ -367,21 +380,28 @@ def bash_major():
 @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("xorriso") and shutil.which("mksquashfs")
                      and bash_major() >= 4, "needs Linux's xorriso, mksquashfs and bash 4")
 class MakeImgMenu(unittest.TestCase):
-    def build(self, arch, *opts):
+    def make(self, arch, *opts, **inputs):
         tmp = tempfile.mkdtemp(prefix=f"a4-img-{arch}-")
         self.addCleanup(shutil.rmtree, tmp)
-        iso, slim, layer, stubs = fake_inputs(tmp, arch)
+        iso, slim, layer, stubs = fake_inputs(tmp, arch, **inputs)
         out = os.path.join(tmp, "out")
         os.mkdir(out)
         env = dict(os.environ, PATH=stubs + ":" + os.environ["PATH"])
         r = subprocess.run(["bash", MAKE_IMG, *opts, iso, slim, layer, out], capture_output=True, text=True,
                            env=env)
+        return tmp, out, r
+
+    def build(self, arch, *opts, **inputs):
+        tmp, out, r = self.make(arch, *opts, **inputs)
         self.assertEqual(r.returncode, 0, r.stderr)
         (img,) = os.listdir(out)
         got = os.path.join(tmp, "got")
         subprocess.run(["xorriso", "-osirrox", "on", "-indev", os.path.join(out, img),
                         "-extract", "/boot/grub/grub.cfg", got + "-grub.cfg",
-                        "-extract", "/md5sum.txt", got + "-md5sum.txt"], check=True, capture_output=True)
+                        "-extract", "/md5sum.txt", got + "-md5sum.txt",
+                        "-extract", "/.disk/backotter.json", got + "-marker.json"], check=True, capture_output=True)
+        with open(got + "-marker.json") as f:
+            self.marker = json.load(f)
         r = subprocess.run(["xorriso", "-indev", os.path.join(out, img), "-report_el_torito", "as_mkisofs"],
                            capture_output=True, text=True)
         self.layout = r.stdout
@@ -408,3 +428,25 @@ class MakeImgMenu(unittest.TestCase):
         self.assertNotIn("grub_platform", grub)
         # The ISO 9660 tree again at partition 1's start, so casper mounts that, not the stick.
         self.assertIn("-partition_offset 16", self.layout)
+
+    def test_arm64_on_another_host(self):
+        # The layer's holt-api.json, from its chroot: its bko-holt isn't run
+        # here, so an amd64 host (Chopin) makes the arm64 image (review of oq11).
+        api = holt_api("arm64").replace('"dump_schemas":[1]', '"dump_schemas":[1,2]')
+        img, grub, md5 = self.build("arm64", "--test", holt_runs=False, api_file=api)
+        self.assertEqual(self.marker["dump_schemas"], [1, 2])
+        self.assertEqual(grub, menu("arm64", 3, 2))
+
+    def test_a_layer_from_before_holt_api_json(self):
+        # Its bko-holt runs here when it can, as before ...
+        self.build("amd64")
+        self.assertEqual(self.marker["dump_schemas"], [1])
+        # ... and when it can't, the build stops at once and says what to do.
+        _, _, r = self.make("arm64", holt_runs=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("has no ubuntu-server-minimal.backotter.holt-api.json and the layer's bko-holt can't run here", r.stderr)
+
+    def test_a_layer_of_another_arch(self):
+        _, _, r = self.make("arm64", holt_runs=False, api_file=holt_api("amd64"))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("isn't an arm64 bko-holt's (want platform.arch aarch64)", r.stderr)

@@ -2235,22 +2235,42 @@ Built 2026-11-26 (open question 11, approved that day by the user):
   built: this is the check it must call before each write, and it still
   writes after a warning (stick-config.md, "Is this stick good enough?").
   It has no command of its own; one comes with the backup tool if that
-  isn't Rust.
+  isn't Rust.  Only a `layout` that is an object is a dump here (as for
+  `stick --copy`, whose `no_layout` covers the rest), and only its
+  `schema` is checked, not its `format`: load's `FORMATS` check refuses
+  a foreign format at the restore (`layout_refused`).
 - `marker.py --holt-api FILE` (required): the image's own `bko-holt
-  --version --json`.  `make-img.sh` runs the layer's bko-holt on the
-  build host (an image is built on a host of its architecture);
-  `make-img-bsd.sh` runs `in/bko-holt` in the build VM.
+  --version --json`.  It refuses one with no `dump_schemas` (a bko-holt
+  from before them), since that image would fail the boot check
+  `dump-schemas`: refresh holt-bin first.  `--holt-api-unnamed-ok` takes
+  it as reading dump schema 1; only `record-stick.py` passes it, for
+  recordings of an older bko-holt.
+- `build-backotter-layer.sh` runs the layer's bko-holt in its chroot
+  (on a host of the layer's architecture) and writes
+  `ubuntu-server-minimal.backotter.holt-api.json` beside the layer; it
+  stops if that names no `dump_schemas`.  `make-img.sh` reads that file
+  and runs nothing of the layer, so an arm64 image can still be made on
+  an amd64 host (Chopin, as A4 did: Bigfoot has no mtools).  It checks
+  the file's `platform.arch` is the image's.  A layer from before the file:
+  make-img.sh runs its bko-holt, which needs a host of its architecture,
+  and otherwise says to rebuild the layer.  `make-img-bsd.sh` runs
+  `in/bko-holt` in the build VM, before the long assemble step.
   `record-stick.py` passes the bko-holt it records.
 - Each platform's `checks.sh` has `dump-schemas`: the marker's list
-  equals the running bko-holt's.
+  equals the running bko-holt's.  None on both sides passes only when the
+  marker has no `dump_schemas` key: an image from before ae051fb, whose
+  marker and bko-holt name none.  So the images in use today still pass
+  ImgTest2All.  Linux, NetBSD and OpenBSD type it as one line;
+  FreeBSD (`/tmp/bko-ds.sh`), DragonFly, illumos and Haiku (an arm of
+  `/tmp/bko-checks.sh`) run it from a helper, so no typed line grows.
 - **Defaults chosen** (each in one place): a marker or a bko-holt that
   names no dump schemas reads dump schema 1 only
   (`DUMP_SCHEMAS_UNNAMED` in `stick.rs` and `marker.py`; every bko-holt
-  before this read only schema 1).  `marker.py` then writes `[1]` and says
-  so on standard error, rather than refuse an image built with an older
-  holt-bin.  `dump_schemas` in the api document and the marker is a
+  before this read only schema 1).  An image build refuses such a
+  bko-holt (above).  `dump_schemas` in the api document and the marker is a
   list, like `system_schemas`.  The warning codes and words are
-  `schema_warnings`'s.
+  `schema_warnings`'s.  The boot check passes none on both sides (an
+  old image), and nothing else that differs.
 - **Tested:** `stick.rs`'s unit tests (the marker's field, old markers,
   every warning and its words), the `stick-json` goldens re-blessed for
   the one new member, `jsonout.rs`'s and `tests/json_cli.rs`'s api
@@ -2264,7 +2284,20 @@ Built 2026-11-26 (open question 11, approved that day by the user):
   holt-bin with this bko-holt (img-refresh-holt.sh) so the marker's
   `dump_schemas` comes from bko-holt itself, and its boot tests then run
   `dump-schemas` on every platform.  Images built before it have no
-  `dump_schemas`; the check reads them as `[1]`.
+  `dump_schemas`: `schema_warnings` reads them as `[1]`, and the boot
+  check passes them as "marker none, bko-holt none".  The Linux layers
+  must be rebuilt with this build-backotter-layer.sh (it writes the
+  holt-api.json that make-img.sh reads); an arm64 layer's holt-api.json
+  goes to the image host with its other inputs.
+- **Review fixes** (2026-11-26, "holt, stick: review fixes for oq11"):
+  make-img.sh no longer runs the layer's bko-holt (the layer's
+  holt-api.json instead, above), so the arm64 image builds where A4
+  built it; the boot check passes the images in use today; marker.py
+  refuses a bko-holt with no `dump_schemas` at once, not at the boot
+  test; the long check lines moved into helpers; a non-object `layout`
+  gets no dump warning; load's refusal lists `DUMP_SCHEMAS`; a test ties
+  dump's `SCHEMA` to `DUMP_SCHEMAS`; and a unit test pins
+  `image.dump_schemas` as null for an old marker.
 - **Spec problem:** `marker.py`'s `system_schemas` is still its own
   constant, not bko-holt's `stick.rs` `SYSTEM_SCHEMAS`.  The api document
   could carry both; left as it is.
@@ -2492,7 +2525,7 @@ Built 2026-11-26 (open question 11, approved that day by the user):
     the record and have `stick --copy` build a dump from them (a second
     format to keep in step with dump).  Until it is answered,
     stick-config.md says `layout` is the record and the two are unused.
-11. **The dump's schema and the stick's age** (answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26, ae051fb and this docs commit: "What the marker's dump_schemas built").
+11. **The dump's schema and the stick's age** (answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26, ae051fb, e9ef07b and "holt, stick: review fixes for oq11": "What the marker's dump_schemas built").
     The marker's `system_schemas` covers system.json's envelope only.  A
     backup machine whose bko-holt writes dump schema 2 passes the
     write-time check, and an old stick's `stick --copy` then refuses the

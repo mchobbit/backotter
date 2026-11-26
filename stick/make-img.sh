@@ -124,11 +124,22 @@ for b in bko-holt rustic-bko; do
     config_bins+=(--config-bin "$work/$b")
 done
 # The dump schemas the image's bko-holt load reads, in its own words, for the
-# marker's dump_schemas.  It runs here: an image is built on a host of its
-# architecture (arm64's on Bigfoot).
-chmod 755 "$work/bko-holt"
-"$work/bko-holt" --version --json >"$work/holt-api.json" ||
-    die "the layer's bko-holt can't run here (--version --json)"
+# marker's dump_schemas: the layer's $LAYER.holt-api.json, which
+# build-backotter-layer.sh wrote by running that bko-holt in the layer's
+# chroot.  So nothing of the layer runs here, and an arm64 image can be made
+# on an amd64 host (Chopin, as A4 did: Bigfoot has no mtools).  A layer from
+# before that file: its bko-holt is run here, which needs a host of its
+# architecture.
+if [[ -f $LAYER_DIR/$LAYER.holt-api.json ]]; then
+    cp "$LAYER_DIR/$LAYER.holt-api.json" "$work/holt-api.json"
+else
+    chmod 755 "$work/bko-holt"
+    "$work/bko-holt" --version --json >"$work/holt-api.json" 2>/dev/null ||
+        die "$LAYER_DIR has no $LAYER.holt-api.json and the layer's bko-holt can't run here: rebuild the layer (build-backotter-layer.sh writes that file), or build on a host of its architecture"
+fi
+case $arch in amd64) holt_arch=x86_64 ;; arm64) holt_arch=aarch64 ;; esac
+grep -q "\"arch\":\"$holt_arch\"" "$work/holt-api.json" ||
+    die "the layer's holt-api.json isn't an $arch bko-holt's (want platform.arch $holt_arch): a layer of another architecture?"
 # The marker, stick.json and config.img; see marker.py.
 image_id=$(python3 "$(dirname "$0")/marker.py" --platform "$PLATFORM" --base-os ubuntu \
     --base-release "$ubuntu" --kernel "$kernel" --config-part "$CONFIG_PART" \

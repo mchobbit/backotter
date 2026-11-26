@@ -65,6 +65,13 @@ marker)
   test "$(stat -c %a $f)" = 444 || { echo "$f isn't read-only"; exit 1; }
   test "$(field platform)" = haiku && grep -q '^  "zfs": null,$' $f || { echo "platform or zfs wrong"; exit 1; }
   echo "$(field image_id) haiku $(field release), no zfs" ;;
+dump-schemas)
+  # The marker's dump_schemas against bko-holt's; none on both sides only
+  # for an image from before markers named them (holt-json.md, oq11).
+  d() { tr -d " \011\012\015" | sed -n 's/.*"dump_schemas":\(\[[0-9,]*]\).*/\1/p'; }
+  m=$(d <$f); h=$(bko-holt --version --json | d)
+  echo "marker ${m:-none}, bko-holt ${h:-none}"
+  test "$m" = "$h" && { test -n "$m" || ! grep -q dump_schemas $f; } || exit 1 ;;
 esac
 EOF
 check kernel 'bash /tmp/bko-checks.sh kernel'
@@ -75,7 +82,7 @@ check tools 'for c in mkfs mount unmount diskimage makebootable writembr copyatt
 check filesystems 'cd /boot/system/add-ons/kernel/file_systems && for fs in bfs fat exfat ext2 btrfs ntfs; do test -e $fs || { echo no $fs; exit 1; }; done; ls | tr "\n" " "'
 check binaries 'rustic-bko --version | grep backotter && ! command -v restic-bko >/dev/null'
 check bko-holt 'bko-holt --version | grep "^bko-holt [0-9]"'
-check dump-schemas 'd() { tr -d " \011\012\015" | sed -n "s/.*\"dump_schemas\":\(\[[0-9,]*]\).*/\1/p"; }; m=$(d </boot/.disk/backotter.json); h=$(bko-holt --version --json | d); echo "marker ${m:-none}, bko-holt ${h:-none}"; test -n "$m" && test "$m" = "$h"'
+check dump-schemas 'bash /tmp/bko-checks.sh dump-schemas'
 check network 'i=0; until a=$(ifconfig | awk "\$1 == \"inet\" && \$2 == \"addr:\" && \$3 !~ /^127\./ { sub(\",\", \"\", \$3); print \$3 }"); test -n "$a"; do i=$((i + 1)); test $i -lt 30 || exit 1; sleep 1; done; echo $a'
 check console-screen 'bash /tmp/bko-checks.sh console-screen'
 check console-serial 'ps | grep -q "^/bin/python3 /boot/system/non-packaged/lib/backotter/on-serial" && echo "on-serial.py bridges pc_serial0 and $(tty)"'

@@ -14,6 +14,12 @@ pub const SCHEMA: u64 = 1;
 /// question 11).
 pub const DUMP_SCHEMAS: &[u64] = &[SCHEMA];
 
+/// DUMP_SCHEMAS in words: "schema 1", or "schemas 1, 2".
+fn schemas_read() -> String {
+    let l: Vec<String> = DUMP_SCHEMAS.iter().map(u64::to_string).collect();
+    format!("schema{} {}", if l.len() == 1 { "" } else { "s" }, l.join(", "))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableKind {
     Gpt,
@@ -187,7 +193,7 @@ impl Layout {
         }
         match v.get("schema").and_then(Value::as_u64) {
             Some(s) if DUMP_SCHEMAS.contains(&s) => {}
-            other => return Err(format!("schema {other:?} isn't one this bko-holt knows (it reads schema {SCHEMA})")),
+            other => return Err(format!("schema {other:?} isn't one this bko-holt knows (it reads {})", schemas_read())),
         }
         let id = v.at(&["os", "id"]).and_then(Value::as_str).unwrap_or("");
         let ver = v.at(&["os", "version_id"]).and_then(Value::as_str).unwrap_or("");
@@ -595,6 +601,16 @@ pub mod sample {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_schema_dump_writes_is_one_load_reads() {
+        // Bumping report's SCHEMA alone would write dumps that this
+        // bko-holt's load, and its image's marker, refuse.
+        assert!(DUMP_SCHEMAS.contains(&u64::from(crate::report::SCHEMA)));
+        assert_eq!(schemas_read(), "schema 1");
+        let e = Layout::from_json(crate::json::parse(&sample::bios_mbr().replacen("\"schema\": 1", "\"schema\": 9", 1)).unwrap()).err().unwrap();
+        assert_eq!(e, "schema Some(9) isn't one this bko-holt knows (it reads schema 1)");
+    }
 
     #[test]
     fn device_walk_order() {

@@ -137,9 +137,14 @@ system.  It's read-only, so it describes the image, not the stick:
   `layout`) the image's bko-holt load reads.  The image build takes it from
   that bko-holt itself: `marker.py --holt-api` reads its `bko-holt --version
   --json`.  A marker without it is from before 2026-11-26, and its image
-  reads dump schema 1 only; so does a bko-holt whose api document has none
-  (`marker.py` then writes `[1]` and says so).  Each image's boot test
-  checks the marker's list against its bko-holt's (`dump-schemas`).
+  reads dump schema 1 only; so does a bko-holt whose api document has none.
+  An image build refuses such a bko-holt (its image would fail the boot
+  test): refresh holt-bin first.  A Linux image takes the api document from
+  the layer build, which runs the layer's bko-holt in its chroot
+  (`ubuntu-server-minimal.backotter.holt-api.json`); the other platforms run
+  theirs in the build VM.  Each image's boot test checks the marker's list
+  against its bko-holt's (`dump-schemas`); none on both sides passes only
+  for a marker with no `dump_schemas` (an image from before them).
 - `config_partition` describes the config partition as built: its number, size,
   FAT label, and FAT volume serial (random per build, in the form `blkid`
   shows). A stick that was repartitioned or reformatted afterwards no longer
@@ -444,7 +449,9 @@ compares `system.json`'s `requirements` with the marker:
   question 11, built 2026-11-26).  A marker with no `dump_schemas` counts as
   `[1]`.  The check is `schema_warnings(marker, system)` in bko-holt's
   `src/stick.rs` (codes `system_schema_unread` and `dump_schema_unread`,
-  each with its words): the backup tool calls it before each write;
+  each with its words): the backup tool calls it before each write.  A
+  `layout` that isn't an object gets no dump warning, and the dump's
+  `format` isn't checked here (the restore refuses a foreign one);
 - for kernel modules, the backup tool can't check the stick's module list from
   the marker alone; schema 1 only warns when the machine runs a newer kernel
   series than the stick (say 7.2 against 7.0);

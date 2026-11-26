@@ -35,6 +35,13 @@ marker)
   test "$(stat -f %Lp $f)" = 444 || { echo "$f isn't read-only"; exit 1; }
   test "$(field platform)" = dragonfly && grep -q '^  "zfs": null,$' $f || { echo "platform or zfs wrong"; exit 1; }
   echo "$(field image_id) dragonfly $(field release), no zfs" ;;
+dump-schemas)
+  # The marker's dump_schemas against bko-holt's; none on both sides only
+  # for an image from before markers named them (holt-json.md, oq11).
+  d() { tr -d " \011\012\015" | sed -n 's/.*"dump_schemas":\(\[[0-9,]*]\).*/\1/p'; }
+  m=$(d <$f); h=$(bko-holt --version --json | d)
+  echo "marker ${m:-none}, bko-holt ${h:-none}"
+  test "$m" = "$h" && { test -n "$m" || ! grep -q dump_schemas $f; } || exit 1 ;;
 esac
 EOF
 check kernel 'sh /tmp/bko-checks.sh kernel'
@@ -47,7 +54,7 @@ check pfi-gone 'test ! -e /etc/rc.d/pfi'
 check tools 'for c in fdisk disklabel64 gpt newfs newfs_hammer2 hammer2 newfs_msdos mount_msdos cryptsetup lvm dmsetup camcontrol cpdup ssh; do command -v $c >/dev/null || { echo no $c; exit 1; }; done; echo all present'
 check binaries 'restic-bko version | head -n 1 | grep backotter && rustic-bko --version | grep backotter'
 check bko-holt 'bko-holt --version | grep "^bko-holt [0-9]"'
-check dump-schemas 'd() { tr -d " \011\012\015" | sed -n "s/.*\"dump_schemas\":\(\[[0-9,]*]\).*/\1/p"; }; m=$(d </.disk/backotter.json); h=$(bko-holt --version --json | d); echo "marker ${m:-none}, bko-holt ${h:-none}"; test -n "$m" && test "$m" = "$h"'
+check dump-schemas 'sh /tmp/bko-checks.sh dump-schemas'
 check network 'i=0; until a=$(ifconfig -a | awk "\$1 == \"inet\" && \$2 !~ /^127\./ { print \$2 }"); test -n "$a"; do i=$((i + 1)); test $i -lt 30 || exit 1; sleep 1; done; echo $a'
 check console-screen 'ps -axo tt,command | awk "\$1 == \"v0\" && /backotter\/console/" | grep . && grep -q "^ttyv0.*getty bko.Pc" /etc/ttys'
 check console-serial 'ps -axo tt,command | awk "\$1 == \"d0\" && /backotter\/console/" | grep . && grep -q "^ttyd0.*getty bko.9600" /etc/ttys'

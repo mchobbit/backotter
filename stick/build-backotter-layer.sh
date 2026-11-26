@@ -27,6 +27,10 @@
 #   ubuntu-server-minimal.backotter.squashfs   the layer
 #   ubuntu-server-minimal.backotter.manifest   package list of base + layer
 #   ubuntu-server-minimal.backotter.size       unpacked size of the layer
+#   ubuntu-server-minimal.backotter.holt-api.json   the layer's `bko-holt
+#       --version --json`, run in the chroot, for the marker's dump_schemas
+#       (make-img.sh then runs no binary of the layer, so an arm64 image can
+#       be made on an amd64 host)
 #   report.txt
 #
 # The layer is the upper directory of an overlay mounted on SLIM_DIR/rootfs,
@@ -413,6 +417,12 @@ log "  $rustic_v"
 log "  $holt_v"
 
 in_root dpkg-query -W -f '${binary:Package}\t${Version}\n' >"$OUT/$LAYER.manifest"
+# The dump schemas the layer's bko-holt load reads, in its own words, for the
+# marker's dump_schemas (holt-json.md's open question 11).  Run here, on a
+# host of the layer's architecture, so make-img.sh needn't run it.
+in_root bko-holt --version --json >"$OUT/$LAYER.holt-api.json" &&
+    grep -q '"dump_schemas":\[' "$OUT/$LAYER.holt-api.json" ||
+    die "the layer's bko-holt names no dump_schemas in --version --json: refresh holt-bin (img-refresh-holt.sh) to a bko-holt at or after ae051fb"
 rm -f "$root/usr/sbin/policy-rc.d"
 # With tries, as after the module build: the merged root, like the build
 # root's /dev, can be busy for a moment once the chroots are done, and a

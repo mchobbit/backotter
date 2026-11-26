@@ -76,6 +76,13 @@ idmap)
     { echo "no ephemeral ID: $m"; exit 1; }
   x=$(ldd /usr/lib/amd64/libidmap.so.1 2>&1 | grep -i -e 'not found' -e fatal)
   test -z "$x" || { echo "amd64 libidmap: $x"; exit 1; }; echo "online, $m" ;;
+dump-schemas)
+  # The marker's dump_schemas against bko-holt's; none on both sides only
+  # for an image from before markers named them (holt-json.md, oq11).
+  d() { tr -d " \011\012\015" | sed -n 's/.*"dump_schemas":\(\[[0-9,]*]\).*/\1/p'; }
+  m=$(d <$f); h=$(bko-holt --version --json | d)
+  echo "marker ${m:-none}, bko-holt ${h:-none}"
+  test "$m" = "$h" && { test -n "$m" || ! grep -q dump_schemas $f; } || exit 1 ;;
 esac
 EOF
 check kernel 'sh /tmp/bko-checks.sh kernel'
@@ -87,7 +94,7 @@ check installer-gone 'test ! -e /.initialboot && test ! -d /kayak && grep -q "^r
 check tools 'sh /tmp/bko-checks.sh tools'
 check binaries 'restic-bko version | head -n 1 | grep backotter && rustic-bko --version | grep backotter'
 check bko-holt 'bko-holt --version | grep "^bko-holt [0-9]"'
-check dump-schemas 'd() { tr -d " \011\012\015" | sed -n "s/.*\"dump_schemas\":\(\[[0-9,]*]\).*/\1/p"; }; m=$(d </.disk/backotter.json); h=$(bko-holt --version --json | d); echo "marker ${m:-none}, bko-holt ${h:-none}"; test -n "$m" && test "$m" = "$h"'
+check dump-schemas 'sh /tmp/bko-checks.sh dump-schemas'
 check network 'i=0; until a=$(ifconfig -a | awk "\$1 == \"inet\" && \$2 !~ /^127\./ { print \$2 }"); test -n "$a"; do i=$((i + 1)); test $i -lt 60 || exit 1; sleep 1; done; echo $a'
 check console-screen 'sh /tmp/bko-checks.sh console system/console-login:default console'
 check console-serial 'sh /tmp/bko-checks.sh console application/backotter/console:serial term/a'

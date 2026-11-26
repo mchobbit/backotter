@@ -17,8 +17,10 @@ The stick: no rescuer has one, so one is made here, a disk image on a loop
 device (DIR/stick.img, its partitions read by the kernel): partition 1 a
 FAT holding the image's marker in .disk/ and mounted at /cdrom read-only,
 as casper mounts the stick's medium; partition 3 the config partition
---stick-dir holds, as `stick/marker.py --config-part 3` made it (its
-backotter.json and config.img: no rescuer has mtools), with the machine's
+--stick-dir holds, as `stick/marker.py --config-part 3 --holt-api FILE`
+made it (FILE: the rescuer's `bko-holt --version --json`, for the marker's
+dump_schemas; its backotter.json and config.img: no rescuer has mtools),
+with the machine's
 system.json put on it: the share's layout.json as its `layout`, the
 share's repository and the backup's hostname.  Every bko-holt call is the
 real one's: `stick --json` finds that stick as on a real one, and `stick

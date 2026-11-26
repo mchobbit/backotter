@@ -61,7 +61,8 @@ ssh HOST 'cd ~/backotter-work/rescue-build/rescue &&
 `testvm/rescue/real-dry-run.py` runs the whole flow as a dry run against a
 real bko-holt and rustic-bko inside a HoltTest rescuer kept up by
 `ht1-debug.sh GUEST again partition`, on a real stick image it makes from
-`stick/marker.py`'s config partition (`--stick-dir`), and checks nothing
+`stick/marker.py`'s config partition (`--stick-dir`; marker.py needs
+`--holt-api FILE`, that bko-holt's `--version --json`), and checks nothing
 was written (its docstring says how).
 
 (`testvm/rescue` is for the pty tests and the app's fixtures;

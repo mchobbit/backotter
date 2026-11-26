@@ -158,12 +158,13 @@ def write(path, data, mode=None):
 
 def make_stick(work, machines, here, damage, api):
     """A Linux tree under WORK booted from a stick holding MACHINES; API is
-    the bko-holt's `--version --json`, for the marker's dump_schemas."""
+    the bko-holt's `--version --json`, for the marker's dump_schemas (one
+    from before them reads dump schema 1: --holt-api-unnamed-ok)."""
     img_dir = os.path.join(work, "img")
     write(os.path.join(work, "holt-api.json"), api)
     run(sys.executable, MARKER, "--platform", "linux", "--base-os", "ubuntu", "--base-release", "26.04.1",
         "--kernel", "7.0.0-30-generic", "--config-part", str(CONFIG_PART), "--config-mib", str(CONFIG_MIB),
-        "--holt-api", os.path.join(work, "holt-api.json"), img_dir)
+        "--holt-api", os.path.join(work, "holt-api.json"), "--holt-api-unnamed-ok", img_dir)
     img = os.path.join(img_dir, "config.img")
     for mid, body, how in machines:
         d = os.path.join(work, "m", mid)

@@ -721,7 +721,10 @@ Nothing is promoted into bko-bin or holt-bin. Bigfoot's
     binary, so its inputs (checked by sha256 at both ends) went to Chopin's
     `/bkoscratch/a4-scratch`, the images came back, and that directory was
     deleted. No batch was running. With `apt install mtools` on Bigfoot,
-    the whole build would run there.
+    the whole build would run there.  (Since holt-json.md's open question
+    11, the layer build also writes `ubuntu-server-minimal.backotter.holt-api.json`
+    from the chroot's bko-holt, for the marker's `dump_schemas`. It goes to
+    Chopin with the other inputs, and make-img.sh still runs no arm64 binary.)
 - **The image.** `backotter-live-linux-dev.20261116.1552b54.dirty-arm64.img`,
   in Bigfoot's `~/backotter-work/a4-scratch/images/out/`:
   1,420,623,872 bytes, sha256

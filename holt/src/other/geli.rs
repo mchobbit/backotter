@@ -1046,7 +1046,7 @@ mod tests {
     }
 
     /// What `geli list` printed on the freebsd15-geli guest (geli.md, G1).
-    pub const GUEST_LIST: &str = "Geom name: vtbd0p3.eli\nState: ACTIVE\nEncryptionAlgorithm: AES-XTS\nKeyLength: 256\nCrypto: accelerated software\nVersion: 7\nUsedKey: 0\nFlags: BOOT, GELIBOOT, AUTORESIZE\nKeysAllocated: 4\nKeysTotal: 4\nProviders:\n1. Name: vtbd0p3.eli\n   Mediasize: 14757654528 (14G)\n   Sectorsize: 4096\n   Mode: r1w1e1\nConsumers:\n1. Name: vtbd0p3\n   Mediasize: 14757658624 (14G)\n   Sectorsize: 512\n   Mode: r1w1e1\n";
+    pub(super) const GUEST_LIST: &str = "Geom name: vtbd0p3.eli\nState: ACTIVE\nEncryptionAlgorithm: AES-XTS\nKeyLength: 256\nCrypto: accelerated software\nVersion: 7\nUsedKey: 0\nFlags: BOOT, GELIBOOT, AUTORESIZE\nKeysAllocated: 4\nKeysTotal: 4\nProviders:\n1. Name: vtbd0p3.eli\n   Mediasize: 14757654528 (14G)\n   Sectorsize: 4096\n   Mode: r1w1e1\nConsumers:\n1. Name: vtbd0p3\n   Mediasize: 14757658624 (14G)\n   Sectorsize: 512\n   Mode: r1w1e1\n";
 
     #[test]
     fn geli_list() {
@@ -1158,25 +1158,15 @@ mod tests {
                 ],
             },
         );
-        let mut sector = crate::probe::geli::sample::sector(
-            7,
-            0x282,
-            22,
-            256,
-            0,
-            6103 * 512,
-            4096,
-            1,
-            3031038,
-            0,
-        );
+        let mut sector =
+            probe::geli::sample::sector(7, 0x282, 22, 256, 0, 6103 * 512, 4096, 1, 3031038, 0);
         for (i, b) in sector[47..].iter_mut().enumerate() {
             *b = b"SECRETKEY"[i % 9];
         }
         img[8150 * 512..8151 * 512].copy_from_slice(&sector);
         let t = crate::testutil::Tree::new("geli-dump");
         t.file("/dev/vtbd0", &img)
-            .file("/dev/vtbd0p3.eli", crate::probe::ufs::sample::image(""))
+            .file("/dev/vtbd0p3.eli", probe::ufs::sample::image(""))
             .dir("/.snap");
         t.file("/etc/fstab", "# Device\tMountpoint\tFStype\tOptions\tDump\tPass#\n/dev/vtbd0p3.eli\t/\tufs\trw\t1\t1\n/dev/vtbd0p2.eli\tnone\tswap\tsw\t0\t0\n/dev/gpt/efiboot0\t/boot/efi\tmsdosfs\trw\t2\t2\n");
         t.file(
@@ -1329,10 +1319,7 @@ mod tests {
                 "vdev_children": 1, "vdev_tree": {"type": "disk", "id": 0, "guid": 1, "path": "/dev/vtbd0p3.eli", "whole_disk": 1, "ashift": 12}}"#,
         )
         .unwrap();
-        t.file(
-            "/dev/vtbd0p3.eli",
-            crate::probe::zfs::pack::vdev(2 << 20, &cfg),
-        );
+        t.file("/dev/vtbd0p3.eli", probe::zfs::pack::vdev(2 << 20, &cfg));
         let r = r.with(
             "diskinfo /dev/vtbd0p3.eli",
             "/dev/vtbd0p3.eli\t4096\t2097152\t512\n",
@@ -2075,10 +2062,7 @@ mod tests {
                 .contains(&("/dev/vtbd1p3.eli".to_string(), "ufs".to_string(), None))
         );
         // The onetime swap: nothing made for it, nothing said.
-        let all: Vec<String> = crate::load::Stage::WRITING
-            .iter()
-            .flat_map(|s| stage(&b, *s))
-            .collect();
+        let all: Vec<String> = Stage::WRITING.iter().flat_map(|s| stage(&b, *s)).collect();
         assert!(!all.iter().any(|x| x.contains("vtbd1p2")), "{all:?}");
         assert!(
             !b.notes.iter().any(|n| n.contains("vtbd0p2")),
@@ -2198,7 +2182,7 @@ mod tests {
                 "latest:/mnt/src",
             ],
         );
-        let r: Vec<&crate::load::commands::Cmd> = b
+        let r: Vec<&Cmd> = b
             .stage(Stage::Restore)
             .iter()
             .filter(|c| !c.is_note())

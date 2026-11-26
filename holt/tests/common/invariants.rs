@@ -11,11 +11,11 @@ use bko_holt::bytes::ByteSource;
 use bko_holt::json::Value;
 
 /// Where load's mount stage builds the restored tree (load::DEFAULT_TARGET).
-pub const TARGET: &str = "/mnt/bko-target";
+pub(crate) const TARGET: &str = "/mnt/bko-target";
 
 /// What the invariants found: violations, and what they left out on purpose.
 #[derive(Debug, Default, Clone, PartialEq)]
-pub struct Check {
+pub(crate) struct Check {
     pub violations: Vec<String>,
     pub skipped: Vec<String>,
     /// What each invariant looked at, for the log.
@@ -26,13 +26,13 @@ pub struct Check {
 
 /// One command of a stage, with its here-document's lines.
 #[derive(Debug, Clone)]
-pub struct Step {
+pub(crate) struct Step {
     pub cmd: String,
     pub body: Vec<String>,
 }
 
 impl Step {
-    pub fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         std::iter::once(self.cmd.clone())
             .chain(self.body.iter().cloned())
             .collect::<Vec<_>>()
@@ -41,14 +41,14 @@ impl Step {
 }
 
 /// The plan's sections by name (super::sections).
-pub struct Sections<'a>(pub Vec<(String, Vec<&'a str>)>);
+pub(crate) struct Sections<'a>(pub Vec<(String, Vec<&'a str>)>);
 
 impl<'a> Sections<'a> {
-    pub fn of(text: &'a str) -> Sections<'a> {
+    pub(crate) fn of(text: &'a str) -> Sections<'a> {
         Sections(super::sections(text))
     }
 
-    pub fn lines(&self, name: &str) -> Vec<&'a str> {
+    pub(crate) fn lines(&self, name: &str) -> Vec<&'a str> {
         self.0
             .iter()
             .filter(|(n, _)| n == name)
@@ -58,7 +58,7 @@ impl<'a> Sections<'a> {
 
     /// A stage's commands: its lines less the header, comments outside a
     /// here-document, and blank lines.
-    pub fn steps(&self, stage: &str) -> Vec<Step> {
+    pub(crate) fn steps(&self, stage: &str) -> Vec<Step> {
         let mut out: Vec<Step> = Vec::new();
         let mut in_doc: Option<String> = None;
         for l in self.lines(stage).into_iter().skip(1) {
@@ -89,7 +89,7 @@ impl<'a> Sections<'a> {
 
     /// The header's list under TITLE ("# Problems", "# Notes:"): its
     /// "#   - " lines.
-    pub fn list(&self, title: &str) -> Vec<String> {
+    pub(crate) fn list(&self, title: &str) -> Vec<String> {
         let head = self.lines("header");
         let Some(i) = head.iter().position(|l| l.starts_with(title)) else {
             return vec![];
@@ -105,7 +105,7 @@ impl<'a> Sections<'a> {
 
 /// A command line's words, as sh reads them (lex), split at `;`, `(` and
 /// `)` too: good enough to find paths and names in it.
-pub fn words(s: &str) -> Vec<String> {
+pub(crate) fn words(s: &str) -> Vec<String> {
     lex(s, &[';', '(', ')'])
         .into_iter()
         .flatten()
@@ -117,7 +117,7 @@ pub fn words(s: &str) -> Vec<String> {
 /// One shell word: its text with its quotes and backslashes undone, and
 /// whether an unquoted `<` or `>` is in it (a redirection).
 #[derive(Debug, Clone, PartialEq)]
-pub struct Word {
+pub(crate) struct Word {
     pub text: String,
     pub redirect: bool,
 }
@@ -129,7 +129,7 @@ pub struct Word {
 /// shell_quote reads back as what it quoted: `'/mnt/my data'` is one word,
 /// and `'\''` is a closing quote, a quote and an opening one.  A quote that
 /// never closes runs to the end.
-pub fn lex(s: &str, seps: &[char]) -> Vec<Option<Word>> {
+pub(crate) fn lex(s: &str, seps: &[char]) -> Vec<Option<Word>> {
     fn word(cur: &mut Option<Word>) -> &mut Word {
         cur.get_or_insert_with(|| Word {
             text: String::new(),
@@ -195,13 +195,13 @@ pub fn lex(s: &str, seps: &[char]) -> Vec<Option<Word>> {
 }
 
 /// A program's name: a word's last path part (/sbin/mount is mount).
-pub fn prog(w: &str) -> &str {
+pub(crate) fn prog(w: &str) -> &str {
     w.rsplit('/').next().unwrap_or(w)
 }
 
 /// Shell words that open or close a compound command, or run the command
 /// after them, without being a command themselves.
-pub const LEADERS: [&str; 18] = [
+pub(crate) const LEADERS: [&str; 18] = [
     "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "esac", "!", "{", "}", "(",
     ")", "exec", "time", "command",
 ];
@@ -215,7 +215,7 @@ pub const LEADERS: [&str; 18] = [
 /// SCRIPT's own commands.  A `[VAR=value...] sh -c 'SCRIPT' NAME ARG...`
 /// whose SCRIPT runs `"$@"` (load's wrapper of a command, as the restore's
 /// on FreeBSD's msdosfs ESP) runs ARG... as a command too.
-pub fn commands(line: &str) -> Vec<Vec<String>> {
+pub(crate) fn commands(line: &str) -> Vec<Vec<String>> {
     let t = line.trim();
     let mut bare = t;
     while let Some((w, rest)) = bare.split_once(' ') {
@@ -333,7 +333,7 @@ fn script_commands(script: &str) -> Vec<Vec<String>> {
 
 /// Whether STEP mounts something onto PATH: a `mount` (or mount_*, or
 /// Redox's redoxfs) whose last operand is PATH.
-pub fn mounts_at(s: &Step, path: &str) -> bool {
+pub(crate) fn mounts_at(s: &Step, path: &str) -> bool {
     commands(&s.cmd).iter().any(|c| {
         let p = prog(&c[0]);
         (p == "mount" || p.starts_with("mount_") || p == "redoxfs")
@@ -343,7 +343,7 @@ pub fn mounts_at(s: &Step, path: &str) -> bool {
 }
 
 /// The datasets STEP mounts with `zfs mount DATASET`.
-pub fn zfs_mounted(s: &Step) -> Vec<String> {
+pub(crate) fn zfs_mounted(s: &Step) -> Vec<String> {
     commands(&s.cmd)
         .into_iter()
         .filter(|c| c.len() >= 3 && prog(&c[0]) == "zfs" && c[1] == "mount")
@@ -353,7 +353,7 @@ pub fn zfs_mounted(s: &Step) -> Vec<String> {
 
 /// Whether STEP restores the repository into PATH: `rustic-bko ... restore
 /// ... PATH`.
-pub fn restores_into(s: &Step, path: &str) -> bool {
+pub(crate) fn restores_into(s: &Step, path: &str) -> bool {
     commands(&s.cmd).iter().any(|c| {
         prog(&c[0]) == "rustic-bko"
             && c.iter().skip(1).any(|w| w == "restore")
@@ -363,7 +363,7 @@ pub fn restores_into(s: &Step, path: &str) -> bool {
 
 /// Some(rooted) when STEP is a `zpool create` or `zpool import` of POOL;
 /// rooted when it roots the pool at the target (-R, altroot=).
-pub fn zpool_makes(s: &Step, pool: &str) -> Option<bool> {
+pub(crate) fn zpool_makes(s: &Step, pool: &str) -> Option<bool> {
     commands(&s.cmd)
         .into_iter()
         .find(|c| {
@@ -378,11 +378,11 @@ pub fn zpool_makes(s: &Step, pool: &str) -> Option<bool> {
         })
 }
 
-pub fn str_at<'a>(v: &'a Value, k: &str) -> Option<&'a str> {
+pub(crate) fn str_at<'a>(v: &'a Value, k: &str) -> Option<&'a str> {
     v.get(k).and_then(Value::as_str)
 }
 
-pub fn arr<'a>(v: &'a Value, path: &[&str]) -> &'a [Value] {
+pub(crate) fn arr<'a>(v: &'a Value, path: &[&str]) -> &'a [Value] {
     v.at(path)
         .and_then(Value::as_array)
         .map(Vec::as_slice)
@@ -392,7 +392,7 @@ pub fn arr<'a>(v: &'a Value, path: &[&str]) -> &'a [Value] {
 // ---- the invariants ----
 
 /// The ZFS datasets the dump lists: (name, mountpoint).
-pub fn datasets(dump: &Value) -> Vec<(String, String)> {
+pub(crate) fn datasets(dump: &Value) -> Vec<(String, String)> {
     arr(dump, &["storage", "zfs", "tools", "datasets"])
         .iter()
         .filter_map(|d| {
@@ -406,16 +406,16 @@ pub fn datasets(dump: &Value) -> Vec<(String, String)> {
 
 /// Whether a pool-making step (zpool create or import) of POOL roots it at
 /// the target.
-pub fn pool_rooted(assemble: &[Step], pool: &str) -> bool {
+pub(crate) fn pool_rooted(assemble: &[Step], pool: &str) -> bool {
     assemble.iter().any(|s| zpool_makes(s, pool) == Some(true))
 }
 
-pub fn root_mounted(dump: &Value, sec: &Sections) -> Option<String> {
+pub(crate) fn root_mounted(dump: &Value, sec: &Sections<'_>) -> Option<String> {
     root_mounted_by(dump, sec).err()
 }
 
 /// How the mount stage mounts / ("mount", "zfs mount"), or the violation.
-pub fn root_mounted_by(dump: &Value, sec: &Sections) -> Result<&'static str, String> {
+pub(crate) fn root_mounted_by(dump: &Value, sec: &Sections<'_>) -> Result<&'static str, String> {
     let mount = sec.steps("mount");
     // A mount, or redoxfs, onto the target itself.
     if mount.iter().any(|s| mounts_at(s, TARGET)) {
@@ -452,7 +452,7 @@ pub fn root_mounted_by(dump: &Value, sec: &Sections) -> Result<&'static str, Str
     ))
 }
 
-pub const PSEUDO: [&str; 30] = [
+pub(crate) const PSEUDO: [&str; 30] = [
     "proc",
     "procfs",
     "sysfs",
@@ -484,7 +484,7 @@ pub const PSEUDO: [&str; 30] = [
     "overlay",
     "swap",
 ];
-pub const NETWORK: [&str; 9] = [
+pub(crate) const NETWORK: [&str; 9] = [
     "nfs",
     "nfs4",
     "cifs",
@@ -495,13 +495,13 @@ pub const NETWORK: [&str; 9] = [
     "9p",
     "virtiofs",
 ];
-pub const BIND: [&str; 2] = ["nullfs", "lofs"];
+pub(crate) const BIND: [&str; 2] = ["nullfs", "lofs"];
 
 /// fstab's octal escapes (\040 for a space), undone as mounts::unescape
 /// undoes them: one past \377 isn't a byte, and stays as it is written.
 /// The fstab invariant doesn't use it: the dump's `file` is decoded already
 /// (mounts::parse_fstab).
-pub fn unescape(s: &str) -> String {
+pub(crate) fn unescape(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
@@ -526,7 +526,10 @@ pub fn unescape(s: &str) -> String {
 }
 
 /// The fstab invariant: violations, skipped entries, entries checked.
-pub fn fstab_planned_n(dump: &Value, sec: &Sections) -> (Vec<String>, Vec<String>, usize) {
+pub(crate) fn fstab_planned_n(
+    dump: &Value,
+    sec: &Sections<'_>,
+) -> (Vec<String>, Vec<String>, usize) {
     let (mut bad, mut skipped, mut n) = (Vec::new(), Vec::new(), 0);
     let mount = sec.steps("mount");
     let notes = sec.list("# Notes:");
@@ -604,7 +607,7 @@ pub fn fstab_planned_n(dump: &Value, sec: &Sections) -> (Vec<String>, Vec<String
     (bad, skipped, n)
 }
 
-pub fn archiver_found(sec: &Sections) -> Vec<String> {
+pub(crate) fn archiver_found(sec: &Sections<'_>) -> Vec<String> {
     let mut bad = Vec::new();
     for p in sec.list("# Problems (") {
         if p.contains("rustic-bko")
@@ -629,7 +632,7 @@ pub fn archiver_found(sec: &Sections) -> Vec<String> {
 
 /// The dumped disk DEV is, or is a partition (or BSD label partition, or
 /// illumos slice) of.
-pub fn disk_of(dump: &Value, dev: &str) -> Option<String> {
+pub(crate) fn disk_of(dump: &Value, dev: &str) -> Option<String> {
     let dev = dev.trim_start_matches("/dev/");
     for d in arr(dump, &["storage", "disks"]) {
         let name = str_at(d, "name")?;
@@ -657,7 +660,7 @@ pub fn disk_of(dump: &Value, dev: &str) -> Option<String> {
     None
 }
 
-pub fn target_of<'a>(p: &'a Planned, disk: &str) -> Option<&'a str> {
+pub(crate) fn target_of<'a>(p: &'a Planned, disk: &str) -> Option<&'a str> {
     p.maps
         .iter()
         .find(|(s, _, _)| s == disk)
@@ -667,7 +670,7 @@ pub fn target_of<'a>(p: &'a Planned, disk: &str) -> Option<&'a str> {
 /// Whether TEXT names a node of target disk TGT (Linux's /dev/sdq1, the
 /// BSDs' /dev/sdqp3 and raw /dev/rsdqc, illumos's /dev/dsk/sdqs1, Haiku's
 /// /dev/disk/sdq/0).
-pub fn names_target(text: &str, tgt: &str) -> bool {
+pub(crate) fn names_target(text: &str, tgt: &str) -> bool {
     [
         format!("/dev/{tgt}"),
         format!("/dev/r{tgt}"),
@@ -679,12 +682,12 @@ pub fn names_target(text: &str, tgt: &str) -> bool {
     .any(|f| text.contains(f.as_str()))
 }
 
-pub fn pool_disks(dump: &Value, sec: &Sections, p: &Planned) -> Vec<String> {
+pub(crate) fn pool_disks(dump: &Value, sec: &Sections<'_>, p: &Planned) -> Vec<String> {
     pool_disks_n(dump, sec, p).0
 }
 
 /// pool_disks, and how many containers it checked.
-pub fn pool_disks_n(dump: &Value, sec: &Sections, p: &Planned) -> (Vec<String>, usize) {
+pub(crate) fn pool_disks_n(dump: &Value, sec: &Sections<'_>, p: &Planned) -> (Vec<String>, usize) {
     let mut bad = Vec::new();
     let mut n = 0;
     let (assemble, format) = (sec.steps("assemble"), sec.steps("format"));
@@ -840,7 +843,7 @@ pub fn pool_disks_n(dump: &Value, sec: &Sections, p: &Planned) -> (Vec<String>, 
 }
 
 /// Writes laid over zeros: what a device holds after load::writetable's.
-pub struct Sparse<'a> {
+pub(crate) struct Sparse<'a> {
     size: u64,
     writes: &'a [(u64, Vec<u8>)],
 }
@@ -870,7 +873,7 @@ impl ByteSource for Sparse<'_> {
     }
 }
 
-pub fn mbr_signature(t: &Value) -> Option<u32> {
+pub(crate) fn mbr_signature(t: &Value) -> Option<u32> {
     match t.get("disk_signature")? {
         Value::Str(s) => u32::from_str_radix(s.trim_start_matches("0x"), 16).ok(),
         x => x.as_u64().map(|n| n as u32),
@@ -879,7 +882,7 @@ pub fn mbr_signature(t: &Value) -> Option<u32> {
 
 /// DISK's table as WRITES put it on a device of SIZE bytes, read back: the
 /// dump's IDs, or what differs.
-pub fn table_ids(disk: &Value, writes: &[(u64, Vec<u8>)], size: u64) -> Vec<String> {
+pub(crate) fn table_ids(disk: &Value, writes: &[(u64, Vec<u8>)], size: u64) -> Vec<String> {
     let name = str_at(disk, "name").unwrap_or("?");
     let t = disk.get("partition_table").cloned().unwrap_or(Value::Null);
     let ss = t
@@ -931,12 +934,16 @@ pub fn table_ids(disk: &Value, writes: &[(u64, Vec<u8>)], size: u64) -> Vec<Stri
     bad
 }
 
-pub fn disk_ids(dump: &Value, sec: &Sections, p: &Planned) -> Vec<String> {
+pub(crate) fn disk_ids(dump: &Value, sec: &Sections<'_>, p: &Planned) -> Vec<String> {
     disk_ids_n(dump, sec, p).0
 }
 
 /// disk_ids, and how many tables it checked: (sfdisk, write-table).
-pub fn disk_ids_n(dump: &Value, sec: &Sections, p: &Planned) -> (Vec<String>, (usize, usize)) {
+pub(crate) fn disk_ids_n(
+    dump: &Value,
+    sec: &Sections<'_>,
+    p: &Planned,
+) -> (Vec<String>, (usize, usize)) {
     let mut bad = Vec::new();
     let (mut nsf, mut nwt) = (0, 0);
     let part = sec.steps("partition");
@@ -1020,7 +1027,7 @@ pub fn disk_ids_n(dump: &Value, sec: &Sections, p: &Planned) -> (Vec<String>, (u
 }
 
 /// The five invariants of one plan of DUMP.
-pub fn invariants(dump: &Value, p: &Planned) -> Check {
+pub(crate) fn invariants(dump: &Value, p: &Planned) -> Check {
     let mut c = Check::default();
     if p.out.is_empty() {
         c.violations.push(format!(

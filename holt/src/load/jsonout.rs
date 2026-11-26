@@ -1721,7 +1721,7 @@ mod tests {
         )
     }
 
-    fn opts(a: &[&str]) -> crate::load::Options {
+    fn opts(a: &[&str]) -> Options {
         let mut v = vec!["l.json".to_string()];
         v.extend(a.iter().map(|s| s.to_string()));
         match parse_args(&v).unwrap() {
@@ -2432,8 +2432,8 @@ mod tests {
         // This session's record of the table: passes without --erase, and
         // the partition stage is done.
         let o = opts(&erase);
-        let lay = crate::load::layout::Layout::from_json(crate::json::parse(&l).unwrap()).unwrap();
-        let m = crate::load::target::prepare(&lay, &o, &s).mapping;
+        let lay = Layout::from_json(crate::json::parse(&l).unwrap()).unwrap();
+        let m = target::prepare(&lay, &o, &s).mapping;
         let (path, text) = &m.records[0];
         t.file(path, text.as_str());
         let (code, v, _) = plan(&l, &a, &s);

@@ -17,19 +17,19 @@ use crate::zfs_be::{BootEnv, Rule};
 
 /// The middleware's config database and TrueNAS's GRUB helper: both there
 /// on a TrueNAS system.
-pub const MARKS: [&str; 2] = ["/data/freenas-v1.db", "/usr/local/bin/truenas-grub.py"];
+pub(crate) const MARKS: [&str; 2] = ["/data/freenas-v1.db", "/usr/local/bin/truenas-grub.py"];
 /// The product version (`25.10.8`).
-pub const VERSION: &str = "/etc/version";
-pub const KERNEL_PROP: &str = "truenas:kernel_version";
-pub const KEEP_PROP: &str = "zectl:keep";
+pub(crate) const VERSION: &str = "/etc/version";
+pub(crate) const KERNEL_PROP: &str = "truenas:kernel_version";
+pub(crate) const KEEP_PROP: &str = "zectl:keep";
 
 /// Whether the running system is TrueNAS.
-pub fn detect(sys: &Sys) -> bool {
+pub(crate) fn detect(sys: &Sys) -> bool {
     MARKS.iter().all(|f| sys.exists(f))
 }
 
 /// os.product: "TrueNAS 25.10.8".
-pub fn product(sys: &Sys) -> Option<String> {
+pub(crate) fn product(sys: &Sys) -> Option<String> {
     let v = sys.read_trim(VERSION)?;
     let v = v.lines().next().unwrap_or("").trim().to_string();
     (!v.is_empty()).then(|| format!("TrueNAS {v}"))
@@ -38,13 +38,13 @@ pub fn product(sys: &Sys) -> Option<String> {
 /// One ESP of a boot-pool disk: its partition, and what a read of it found
 /// (Value::Null when it couldn't be read).  boot.truenas's esps list has
 /// its disk, volume ID and label.
-pub struct Esp {
+pub(crate) struct Esp {
     pub device: String,
     pub contents: Value,
 }
 
 /// boot.truenas, and its ESPs for boot.esps.
-pub struct TrueNas {
+pub(crate) struct TrueNas {
     pub json: Value,
     pub esps: Vec<Esp>,
 }
@@ -107,7 +107,7 @@ fn be_version(sys: &Sys, be: &BootEnv) -> Option<String> {
 /// of the dump's tools, `tools`) and the ESPs of its boot-pool disks
 /// (`esps`: device, disk, volume ID, label), each read through
 /// `read_esp` (device -> contents; crate::boot's private read-only mount).
-pub fn read(
+pub(crate) fn read(
     sys: &Sys,
     tools: &Value,
     bes: &[BootEnv],
@@ -187,7 +187,7 @@ pub fn read(
 }
 
 /// BOOT (the dump's boot section) with boot.truenas in it.
-pub fn add_to_boot(boot: Value, t: Option<&TrueNas>) -> Value {
+pub(crate) fn add_to_boot(boot: Value, t: Option<&TrueNas>) -> Value {
     let (Some(t), Value::Obj(mut o)) = (t, boot.clone()) else {
         return boot;
     };

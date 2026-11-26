@@ -6,37 +6,37 @@ use crate::json::{Obj, Value};
 use crate::sys::Sys;
 
 /// LILO's configuration, as liloconfig writes it.
-pub const LILO_CONF: &str = "/etc/lilo.conf";
+pub(crate) const LILO_CONF: &str = "/etc/lilo.conf";
 /// mkinitrd's configuration, when the owner wrote one (`mkinitrd -F`).
-pub const MKINITRD_CONF: &str = "/etc/mkinitrd.conf";
+pub(crate) const MKINITRD_CONF: &str = "/etc/mkinitrd.conf";
 /// mkinitrd's source tree (its -s default), which `mkinitrd -c` builds.
-pub const INITRD_TREE: &str = "/boot/initrd-tree";
+pub(crate) const INITRD_TREE: &str = "/boot/initrd-tree";
 /// The command mkinitrd last ran as (its `$0 $*`), kept in its tree.
-pub const MKINITRD_COMMAND_LINE: &str = "/boot/initrd-tree/command_line";
+pub(crate) const MKINITRD_COMMAND_LINE: &str = "/boot/initrd-tree/command_line";
 /// mkinitrd's image when nothing names another.
-pub const MKINITRD_OUTPUT: &str = "/boot/initrd.gz";
+pub(crate) const MKINITRD_OUTPUT: &str = "/boot/initrd.gz";
 /// -current's initrd maker (mkinitrd's package since 1.4.11-58 or so):
 /// runs setup.01.mkinitrd, which makes /boot/initrd-VERSION.img.
-pub const GENINITRD: &str = "/usr/sbin/geninitrd";
+pub(crate) const GENINITRD: &str = "/usr/sbin/geninitrd";
 /// geninitrd's settings (GENERATOR, KERNEL, the symlinks, ...).
-pub const GENINITRD_DEFAULT: &str = "/etc/default/geninitrd";
+pub(crate) const GENINITRD_DEFAULT: &str = "/etc/default/geninitrd";
 /// The script geninitrd runs unless GENINITRD_OVERRIDE_SCRIPT names another.
-pub const GENINITRD_SETUP: &str = "/var/lib/pkgtools/setup/setup.01.mkinitrd";
+pub(crate) const GENINITRD_SETUP: &str = "/var/lib/pkgtools/setup/setup.01.mkinitrd";
 /// mkinitrd's command generator, which prints a mkinitrd command for the
 /// running system's root and storage drivers.
-pub const MKINITRD_GENERATOR: &str = "/usr/share/mkinitrd/mkinitrd_command_generator.sh";
+pub(crate) const MKINITRD_GENERATOR: &str = "/usr/share/mkinitrd/mkinitrd_command_generator.sh";
 /// ELILO's EFI binary as the elilo package installs it, which eliloconfig
 /// copies to the ESP's EFI/Slackware/elilo.efi.
-pub const ELILO_EFI: &str = "/boot/elilo-x86_64.efi";
+pub(crate) const ELILO_EFI: &str = "/boot/elilo-x86_64.efi";
 
 /// A lilo.conf item: its key, and its value if it has one.
-pub type LiloItem = (String, Option<String>);
+pub(crate) type LiloItem = (String, Option<String>);
 
 /// lilo.conf(5)'s items, which ELILO's elilo.conf shares: `key`, or
 /// `key=value` with or without spaces around the `=`, a value in double
 /// quotes when it has spaces, several on a line (`disk = /dev/vda
 /// bios=0x80`), and `#` to the end of the line a comment.
-pub fn lilo_items(text: &str) -> Vec<LiloItem> {
+pub(crate) fn lilo_items(text: &str) -> Vec<LiloItem> {
     let mut out = Vec::new();
     for line in text.lines() {
         // (word, whether it's the `=` between a key and its value)
@@ -108,14 +108,14 @@ pub fn lilo_items(text: &str) -> Vec<LiloItem> {
 /// A lilo.conf (or elilo.conf) in its sections: the global items, then
 /// each `image=` (or LILO's `other=`) with the items after it.
 #[derive(Debug, Default, Clone, PartialEq)]
-pub struct LiloConf {
+pub(crate) struct LiloConf {
     pub global: Vec<LiloItem>,
     /// (image or other, its path, its items)
     pub sections: Vec<(String, String, Vec<LiloItem>)>,
 }
 
 impl LiloConf {
-    pub fn parse(text: &str) -> LiloConf {
+    pub(crate) fn parse(text: &str) -> LiloConf {
         let mut c = LiloConf::default();
         for (k, v) in lilo_items(text) {
             match (k.as_str(), v) {
@@ -131,7 +131,7 @@ impl LiloConf {
 }
 
 /// The last value `key` has among `items`.
-pub fn lilo_get<'a>(items: &'a [LiloItem], key: &str) -> Option<&'a str> {
+pub(crate) fn lilo_get<'a>(items: &'a [LiloItem], key: &str) -> Option<&'a str> {
     items
         .iter()
         .rev()
@@ -200,7 +200,7 @@ fn lilo_conf_json(
 /// boot.lilo: /etc/lilo.conf parsed (lilo_conf_json), each image with
 /// whether its file exists, and whether the map file lilo writes
 /// (/boot/map unless map= says) is there.  None without a lilo.conf.
-pub fn lilo_json(sys: &Sys) -> Option<Value> {
+pub(crate) fn lilo_json(sys: &Sys) -> Option<Value> {
     let c = LiloConf::parse(&sys.read(LILO_CONF)?);
     let map = lilo_get(&c.global, "map")
         .unwrap_or("/boot/map")
@@ -244,7 +244,7 @@ fn same_file(sys: &Sys, path: &str, candidates: &[(String, u64)]) -> Option<Stri
 }
 
 /// An elilo.conf on a mounted ESP.
-pub struct EliloConf {
+pub(crate) struct EliloConf {
     pub device: String,
     pub mount: String,
     /// Its directory on the ESP (EFI/Slackware, EFI/BOOT).
@@ -258,7 +258,7 @@ pub struct EliloConf {
 impl EliloConf {
     /// A path elilo.conf names, as a path on the ESP: relative to its own
     /// directory, or from the ESP's root when it starts with / or \.
-    pub fn on_esp(&self, p: &str) -> String {
+    pub(crate) fn on_esp(&self, p: &str) -> String {
         if p.starts_with(['/', '\\']) {
             p.trim_start_matches(['/', '\\']).replace('\\', "/")
         } else {
@@ -270,7 +270,7 @@ impl EliloConf {
 /// Every EFI/*/elilo.conf (or elilo-x86_64.conf) on the mounted ESPs:
 /// ELILO reads the one in the directory it was loaded from, whatever its
 /// own file's name (so EFI/BOOT/BOOTX64.EFI reads EFI/BOOT/elilo.conf).
-pub fn elilo_confs(sys: &Sys, esps: &[(String, String)]) -> Vec<EliloConf> {
+pub(crate) fn elilo_confs(sys: &Sys, esps: &[(String, String)]) -> Vec<EliloConf> {
     let mut out = Vec::new();
     for (dev, mnt) in esps {
         let Some(efi) = sys
@@ -314,7 +314,7 @@ pub fn elilo_confs(sys: &Sys, esps: &[(String, String)]) -> Vec<EliloConf> {
 /// copy; for each image, its file on the ESP and the /boot kernel it is a
 /// byte copy of (same_as: what the machine really boots), and the same for
 /// its initrd.  None when there is none.
-pub fn elilo_json(sys: &Sys, esps: &[(String, String)]) -> Option<Value> {
+pub(crate) fn elilo_json(sys: &Sys, esps: &[(String, String)]) -> Option<Value> {
     let confs = elilo_confs(sys, esps);
     if confs.is_empty() {
         return None;
@@ -388,7 +388,7 @@ fn executable(sys: &Sys, abs: &str) -> bool {
 /// generic), or vmlinuz-VERSION (-current's, its flavor the vmlinuz-FLAVOR
 /// link to it: vmlinuz-generic, else ""), not the links to them (vmlinuz,
 /// vmlinuz-huge).
-pub fn slackware_kernels(sys: &Sys) -> Vec<(String, String, String)> {
+pub(crate) fn slackware_kernels(sys: &Sys) -> Vec<(String, String, String)> {
     let digit = |s: &str| s.starts_with(|c: char| c.is_ascii_digit());
     let links: Vec<(String, String)> = sys
         .list("/boot")
@@ -429,7 +429,7 @@ pub fn slackware_kernels(sys: &Sys) -> Vec<(String, String, String)> {
 /// scripts that are on (rc_enabled: executable /etc/rc.d/rc.*); the
 /// kernels (slackware_kernels), each with its flavor, version and whether
 /// /lib/modules has it; and the /boot links that name the kernel.
-pub fn slackware_json(sys: &Sys, packages: &[Package]) -> Option<Value> {
+pub(crate) fn slackware_json(sys: &Sys, packages: &[Package]) -> Option<Value> {
     if !is_slackware(sys) {
         return None;
     }
@@ -667,7 +667,7 @@ pub(super) fn slackware_initramfs(
 /// Whether a kernel version is one geninitrd would name an image after
 /// and a restore can give a shell: digits first, then letters, digits and
 /// `.`, `_`, `+`, `-`.
-pub fn kernel_version_word(v: &str) -> bool {
+pub(crate) fn kernel_version_word(v: &str) -> bool {
     v.starts_with(|c: char| c.is_ascii_digit())
         && v.chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'))
@@ -859,7 +859,7 @@ fn geninitrd_json(sys: &Sys, why: &mut Vec<String>) -> Option<Value> {
 /// (ext4, xfs and btrfs are modules there) and changes nothing on the huge
 /// one.  The source's other modules (jbd2, mbcache, libcrc32c the old type
 /// needed) stay, as the source listed them.
-pub fn mkinitrd_replay(
+pub(crate) fn mkinitrd_replay(
     command_line: &str,
     kernels: &[String],
     output: &str,

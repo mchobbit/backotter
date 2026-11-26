@@ -374,7 +374,7 @@ pub(crate) fn read<'a>(given: &'a Layout, opts: &Options, sys: &Sys) -> Reading<
     // ABRoot, the present root's abimage.abr (its raw etc is the image's).
     // On Ubuntu Core, ubuntu-data's modeenv (it has no `/` of its own).
     let restored = tree_up
-        && match crate::other::Family::of_layout(&layout.v) {
+        && match Family::of_layout(&layout.v) {
             None if crate::load::ostree::of(&layout.v).is_none()
                 && crate::load::abroot::of(&layout.v).is_none()
                 && crate::load::snapcore::of(&layout.v).is_none() =>
@@ -419,7 +419,7 @@ pub(crate) fn read<'a>(given: &'a Layout, opts: &Options, sys: &Sys) -> Reading<
     }
     // Sculpt's boot stage has nothing to do: its boot areas came back with
     // the partition table.
-    if crate::other::Family::of_layout(&layout.v) == Some(crate::other::Family::Genode) {
+    if Family::of_layout(&layout.v) == Some(Family::Genode) {
         out.push((Stage::Boot, State::Nothing, String::new()));
     } else {
         out.push((
@@ -648,7 +648,7 @@ pub fn json_run(layout: &Layout, opts: &Options, sys: &Sys) -> (u8, String, Stri
 /// one is no Go on.
 fn temporary_keys(
     opts: &Options,
-    r: &Reading,
+    r: &Reading<'_>,
     sys: &Sys,
     lost_matters: bool,
 ) -> (Vec<Value>, Vec<String>) {

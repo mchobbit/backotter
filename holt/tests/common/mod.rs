@@ -19,7 +19,7 @@
 
 #![allow(dead_code)]
 
-pub mod invariants;
+pub(crate) mod invariants;
 
 use bko_holt::json::{self, Value};
 use bko_holt::load::{Parsed, parse_args, run};
@@ -27,23 +27,23 @@ use bko_holt::sys::{FakeRunner, Sys};
 use bko_holt::testutil::Tree;
 
 /// The fake archiver's answer to `--version`.
-pub const RUSTIC_VERSION: &str = "rustic 0.11.4+backotter.4\n";
+pub(crate) const RUSTIC_VERSION: &str = "rustic 0.11.4+backotter.4\n";
 /// The repository every golden plan restores from.
-pub const REPO: &str = "/srv/bko-repo";
+pub(crate) const REPO: &str = "/srv/bko-repo";
 /// Where a golden plan's --key-file keys are (a ZFS passphrase root's).
-pub const KEYS: &str = "/srv/bko-keys";
+pub(crate) const KEYS: &str = "/srv/bko-keys";
 /// Where a golden plan's kept LUKS2 headers are (--luks-header-dir), as the
 /// plan names it.
-pub const HEADERS: &str = "/srv/bko-luks-headers";
+pub(crate) const HEADERS: &str = "/srv/bko-luks-headers";
 /// The layout's name in the plan's first line and its "To run it" line.
-pub const LAYOUT: &str = "layout.json";
+pub(crate) const LAYOUT: &str = "layout.json";
 /// The +bigger variant's targets: this much bigger than the source's disks.
-pub const BIGGER: u64 = 1 << 30;
+pub(crate) const BIGGER: u64 = 1 << 30;
 
 /// One plan: load's exit status, standard output and standard error, and
 /// the disk mapping it ran with (source disk, target, target bytes).
 #[derive(Debug, Clone, PartialEq)]
-pub struct Planned {
+pub(crate) struct Planned {
     pub code: u8,
     pub out: String,
     pub err: String,
@@ -54,7 +54,7 @@ pub struct Planned {
 /// Like load's Layout::from_json, and unlike check_plan, it leaves out RAM
 /// disks and ZFS volumes: a --map for one is only a Problem ("the layout has
 /// no disk ram0"), and alpine324 has 16 of them.
-pub fn dumped_disks(v: &Value) -> Vec<(String, u64, u32)> {
+pub(crate) fn dumped_disks(v: &Value) -> Vec<(String, u64, u32)> {
     let mut out = Vec::new();
     for d in v
         .at(&["storage", "disks"])
@@ -89,7 +89,7 @@ pub fn dumped_disks(v: &Value) -> Vec<(String, u64, u32)> {
 }
 
 /// Plans LAYOUT_TEXT onto blank targets GROW bytes bigger than its disks.
-pub fn plan(layout_text: &str, grow: u64) -> Result<Planned, String> {
+pub(crate) fn plan(layout_text: &str, grow: u64) -> Result<Planned, String> {
     plan_onto(layout_text, &|_, size| size + grow, &[])
 }
 
@@ -97,7 +97,7 @@ pub fn plan(layout_text: &str, grow: u64) -> Result<Planned, String> {
 /// with EXTRA arguments after load's own (BackShot2's tier 0: a drifted
 /// layout, its case's targets and load options).  The targets are
 /// sdq, sdr, ... (sd_target).
-pub fn plan_onto(
+pub(crate) fn plan_onto(
     layout_text: &str,
     size_of: &dyn Fn(&str, u64) -> u64,
     extra: &[String],
@@ -106,7 +106,7 @@ pub fn plan_onto(
 }
 
 /// The I-th dumped disk's target in golden plans: sdq, sdr, ..., sdz.
-pub fn sd_target(i: usize, _disk: &str) -> Result<String, String> {
+pub(crate) fn sd_target(i: usize, _disk: &str) -> Result<String, String> {
     if i >= 10 {
         return Err(format!("{} disks: the targets sdq..sdz hold 10", i + 1));
     }
@@ -119,7 +119,7 @@ pub fn sd_target(i: usize, _disk: &str) -> Result<String, String> {
 /// Slackware check judges a target by its name's driver class and place.
 /// A vd target's device number is virtio_blk's (major 253), any other's
 /// sd's (major 8); load reads neither's major.
-pub fn plan_onto_named(
+pub(crate) fn plan_onto_named(
     layout_text: &str,
     size_of: &dyn Fn(&str, u64) -> u64,
     extra: &[String],
@@ -359,7 +359,7 @@ pub fn plan_onto_named(
 
 /// SHA-256 of DATA in lower-case hex (FIPS 180-4).  Here, not holt's
 /// bytes::sha256_hex, which is newer than 3671e96 (the replay of #16).
-pub fn sha256_hex(data: &[u8]) -> String {
+pub(crate) fn sha256_hex(data: &[u8]) -> String {
     const K: [u32; 64] = [
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
         0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
@@ -432,7 +432,7 @@ pub fn sha256_hex(data: &[u8]) -> String {
 
 /// Writes TEXT to PATH whole or not at all: a `.NAME.part` beside it, then a
 /// rename, so a killed run leaves the old file or the new one, never half.
-pub fn write_atomic(path: &std::path::Path, text: &[u8]) -> Result<(), String> {
+pub(crate) fn write_atomic(path: &std::path::Path, text: &[u8]) -> Result<(), String> {
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -443,11 +443,11 @@ pub fn write_atomic(path: &std::path::Path, text: &[u8]) -> Result<(), String> {
 }
 
 /// The marker of golden_plans.rs's own lines after load's output.
-pub const GOLDEN_MARK: &str = "# golden_plans.rs:";
+pub(crate) const GOLDEN_MARK: &str = "# golden_plans.rs:";
 
 /// A plan as plan.txt holds it: load's standard output as it is, then the
 /// exit status and standard error.
-pub fn golden_text(p: &Planned) -> String {
+pub(crate) fn golden_text(p: &Planned) -> String {
     let mut s = p.out.clone();
     if !s.is_empty() && !s.ends_with('\n') {
         s.push('\n');
@@ -464,7 +464,7 @@ pub fn golden_text(p: &Planned) -> String {
 }
 
 /// load's stages, in the order plans print them.
-pub const STAGES: [&str; 7] = [
+pub(crate) const STAGES: [&str; 7] = [
     "partition",
     "assemble",
     "format",
@@ -475,7 +475,7 @@ pub const STAGES: [&str; 7] = [
 ];
 
 /// The name in a stage header line, `# ---- STAGE ----`.
-pub fn stage_header(line: &str) -> Option<&str> {
+pub(crate) fn stage_header(line: &str) -> Option<&str> {
     let name = line.strip_prefix("# ---- ")?.strip_suffix(" ----")?;
     (!name.is_empty()
         && name
@@ -490,7 +490,7 @@ pub fn stage_header(line: &str) -> Option<&str> {
 /// starts "# Nothing was written" (plan.rs's last line) or is
 /// golden_text's own, to the end.  testvm/test2/t2lib/plandiff.py splits the
 /// same way.
-pub fn sections(text: &str) -> Vec<(String, Vec<&str>)> {
+pub(crate) fn sections(text: &str) -> Vec<(String, Vec<&str>)> {
     let lines: Vec<&str> = text.lines().collect();
     let last_stage = lines.iter().rposition(|l| stage_header(l).is_some());
     let from = last_stage.map(|i| i + 1).unwrap_or(0);
@@ -512,7 +512,7 @@ pub fn sections(text: &str) -> Vec<(String, Vec<&str>)> {
 /// The sections whose lines differ between OLD and NEW (one only in either
 /// counts), in the order: header, the stages as STAGES orders them, any
 /// other stage by first appearance, trailer.
-pub fn stages_changed(old: &str, new: &str) -> Vec<String> {
+pub(crate) fn stages_changed(old: &str, new: &str) -> Vec<String> {
     let (a, b) = (sections(old), sections(new));
     let mut names: Vec<String> = vec!["header".into()];
     names.extend(STAGES.iter().map(|s| s.to_string()));
@@ -534,7 +534,7 @@ pub fn stages_changed(old: &str, new: &str) -> Vec<String> {
 
 /// How many lines a line diff of OLD and NEW removes and adds (the longest
 /// common subsequence kept).
-pub fn lines_changed(old: &str, new: &str) -> usize {
+pub(crate) fn lines_changed(old: &str, new: &str) -> usize {
     let a: Vec<&str> = old.lines().collect();
     let b: Vec<&str> = new.lines().collect();
     let pre = a.iter().zip(&b).take_while(|(x, y)| x == y).count();

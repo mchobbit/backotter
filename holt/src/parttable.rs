@@ -769,7 +769,7 @@ pub mod build {
 
     /// Writes protective MBR, primary and backup GPT into `img` (whose size
     /// sets the disk's size) with `ss`-byte sectors and 128 entries.
-    pub fn write_gpt(img: &mut [u8], ss: usize, spec: &GptSpec) {
+    pub fn write_gpt(img: &mut [u8], ss: usize, spec: &GptSpec<'_>) {
         let total = (img.len() / ss) as u64;
         let mut pm = vec![0u8; 512];
         mbr_entry(

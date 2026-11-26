@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn external_log_device() {
-        let c = external_log(&MemSource(super::sample::log_record(0xa0))).unwrap();
+        let c = external_log(&MemSource(sample::log_record(0xa0))).unwrap();
         assert_eq!(c.kind, "xfs_external_log");
         assert_eq!(c.usage, "other");
         assert_eq!(c.uuid, None);
@@ -356,10 +356,10 @@ mod tests {
         // Not on a filesystem, an empty device, or a header with no UUID.
         assert!(external_log(&MemSource(image("x"))).is_none());
         assert!(external_log(&MemSource(vec![0u8; 4096])).is_none());
-        let mut bad = super::sample::log_record(0);
+        let mut bad = sample::log_record(0);
         bad[1024 + 304..1024 + 320].fill(0);
         assert!(external_log(&MemSource(bad)).is_none());
-        let mut bad = super::sample::log_record(1);
+        let mut bad = sample::log_record(1);
         bad[1024 + 8..1024 + 12].copy_from_slice(&7u32.to_be_bytes());
         assert!(external_log(&MemSource(bad)).is_none());
     }

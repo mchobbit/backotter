@@ -1209,9 +1209,9 @@ mod tests {
         let b = commands::build(
             &l,
             &opts(&["--map", "vda=vdb"]),
-            &target::Mapping {
+            &Mapping {
                 pairs: vec![("vda".into(), "vdb".into())],
-                ..target::Mapping::default()
+                ..Mapping::default()
             },
         );
         let create = b

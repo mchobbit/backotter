@@ -2499,7 +2499,7 @@ mod tests {
         let dup = vm
             .problems
             .iter()
-            .find(|p| p.code == crate::load::codes::ProblemCode::DuplicateVg)
+            .find(|p| p.code == ProblemCode::DuplicateVg)
             .unwrap();
         assert_eq!(
             (dup.str_field("vg"), dup.str_field("dev")),
@@ -2604,7 +2604,7 @@ mod tests {
         assert!(m.notes.iter().any(|n| n == "--erase /dev/vdb: volume group vg0 deactivated (dm-0 (vg0-root), dm-1 (vg0-swap)) before it's wiped"), "{:?}", m.notes);
         let b = super::super::commands::build(&layout(), &o, &m);
         let text: String = b
-            .stage(super::super::Stage::Partition)
+            .stage(Stage::Partition)
             .iter()
             .map(|c| c.shell())
             .collect();
@@ -2654,7 +2654,7 @@ mod tests {
         let mut s = vec![0u8; 512];
         s[440..444].copy_from_slice(&0x1f2e_3d4cu32.to_le_bytes());
         for &(slot, start, n) in parts {
-            crate::parttable::build::mbr_entry(&mut s, slot, 0, 0x83, start, n);
+            parttable::build::mbr_entry(&mut s, slot, 0, 0x83, start, n);
         }
         s
     }
@@ -2720,7 +2720,7 @@ mod tests {
             );
             let b = super::super::commands::build(&l, &opts(a), &m);
             let text: String = b
-                .stage(super::super::Stage::Partition)
+                .stage(Stage::Partition)
                 .iter()
                 .map(|c| c.shell())
                 .collect();

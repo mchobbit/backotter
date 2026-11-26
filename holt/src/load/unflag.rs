@@ -234,19 +234,19 @@ mod sys {
     #[cfg(target_env = "musl")]
     pub type IoctlReq = c_int;
     #[cfg(not(target_env = "musl"))]
-    pub type IoctlReq = std::os::raw::c_ulong;
+    pub(super) type IoctlReq = std::os::raw::c_ulong;
 
     /// _IOR('f', 1, long) and _IOW('f', 2, long); on musl the same 32 bits
     /// as an int (GETFLAGS negative), which the ABI sign-extends as an int.
-    const SIZE: usize = std::mem::size_of::<c_long>();
-    pub const GETFLAGS: IoctlReq = super::ioc_f(2, 1, SIZE) as IoctlReq;
-    pub const SETFLAGS: IoctlReq = super::ioc_f(1, 2, SIZE) as IoctlReq;
+    const SIZE: usize = size_of::<c_long>();
+    pub(super) const GETFLAGS: IoctlReq = super::ioc_f(2, 1, SIZE) as IoctlReq;
+    pub(super) const SETFLAGS: IoctlReq = super::ioc_f(1, 2, SIZE) as IoctlReq;
 
     // SAFETY: ioctl(2) is variadic and returns int in every Linux libc, and
     // this prototype is each libc's exactly: the request an int on musl and
     // an unsigned long on glibc (IoctlReq).
     unsafe extern "C" {
-        pub fn ioctl(fd: c_int, request: IoctlReq, ...) -> c_int;
+        pub(super) fn ioctl(fd: c_int, request: IoctlReq, ...) -> c_int;
     }
 }
 

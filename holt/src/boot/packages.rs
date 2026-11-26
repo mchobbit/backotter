@@ -9,7 +9,7 @@ use crate::sys::Sys;
 /// fields' order is the sort order (name, then version, then arch), as the
 /// parsers sort their lists.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Package {
+pub(crate) struct Package {
     pub name: String,
     pub version: String,
     /// The architecture it's built for; "" where the database has none.
@@ -17,7 +17,7 @@ pub struct Package {
 }
 
 impl Package {
-    pub fn new(
+    pub(crate) fn new(
         name: impl Into<String>,
         version: impl Into<String>,
         arch: impl Into<String>,
@@ -31,17 +31,17 @@ impl Package {
 }
 
 /// The package NAME among PACKAGES, when it is installed.
-pub fn find_package<'a>(packages: &'a [Package], name: &str) -> Option<&'a Package> {
+pub(crate) fn find_package<'a>(packages: &'a [Package], name: &str) -> Option<&'a Package> {
     packages.iter().find(|p| p.name == name)
 }
 
 /// Whether the package NAME is installed.
-pub fn has_package(packages: &[Package], name: &str) -> bool {
+pub(crate) fn has_package(packages: &[Package], name: &str) -> bool {
     find_package(packages, name).is_some()
 }
 
 /// Installed packages from /var/lib/dpkg/status.
-pub fn parse_dpkg_status(text: &str) -> Vec<Package> {
+pub(crate) fn parse_dpkg_status(text: &str) -> Vec<Package> {
     let mut out = Vec::new();
     for stanza in text.split("\n\n") {
         let (mut name, mut ver, mut arch, mut installed) = (None, None, None, false);
@@ -65,7 +65,7 @@ pub fn parse_dpkg_status(text: &str) -> Vec<Package> {
 
 /// Installed packages from pacman's local database (Arch): each
 /// /var/lib/pacman/local/NAME-VERSION/desc holds %NAME%, %VERSION%, %ARCH%.
-pub fn pacman_packages(sys: &Sys) -> Vec<Package> {
+pub(crate) fn pacman_packages(sys: &Sys) -> Vec<Package> {
     let mut out = Vec::new();
     for d in sys.list("/var/lib/pacman/local") {
         let Some(t) = sys.read(&format!("/var/lib/pacman/local/{d}/desc")) else {
@@ -86,7 +86,7 @@ pub fn pacman_packages(sys: &Sys) -> Vec<Package> {
 
 /// Installed packages from apk's database (Alpine): blocks of `K:value`
 /// lines, P the name, V the version, A the architecture.
-pub fn parse_apk_installed(text: &str) -> Vec<Package> {
+pub(crate) fn parse_apk_installed(text: &str) -> Vec<Package> {
     let mut out = Vec::new();
     for block in text.split("\n\n") {
         let f = |k: &str| {
@@ -105,7 +105,7 @@ pub fn parse_apk_installed(text: &str) -> Vec<Package> {
 
 /// Installed packages from rpm (Fedora): its database is SQLite, so rpm
 /// itself reads it.
-pub fn rpm_packages(sys: &Sys) -> Vec<Package> {
+pub(crate) fn rpm_packages(sys: &Sys) -> Vec<Package> {
     let Some(t) = sys.run(
         "rpm",
         &["-qa", "--qf", "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n"],
@@ -126,7 +126,7 @@ pub fn rpm_packages(sys: &Sys) -> Vec<Package> {
 /// Installed packages from xbps's database (Void): a property list whose
 /// top-level dict has a dict per package, with `pkgver` ("NAME-VERSION_REV")
 /// and `architecture`.
-pub fn parse_xbps_pkgdb(text: &str) -> Vec<Package> {
+pub(crate) fn parse_xbps_pkgdb(text: &str) -> Vec<Package> {
     let mut out = Vec::new();
     let mut depth = 0usize;
     let (mut name, mut key) = (String::new(), String::new());
@@ -175,13 +175,13 @@ pub fn parse_xbps_pkgdb(text: &str) -> Vec<Package> {
 }
 
 /// eopkg's database (Solus): a directory a package.
-pub const EOPKG_PACKAGES: &str = "/var/lib/eopkg/package";
+pub(crate) const EOPKG_PACKAGES: &str = "/var/lib/eopkg/package";
 
 /// An eopkg database directory's name, NAME-VERSION-RELEASE, split into the
 /// name (which may hold dashes) and VERSION-RELEASE (VERSION holds none,
 /// RELEASE is digits), as testvm/update/pkgset.sh lists it:
 /// clr-boot-manager-3.6.0-39 is (clr-boot-manager, 3.6.0-39).
-pub fn split_eopkg(dir: &str) -> Option<(&str, &str)> {
+pub(crate) fn split_eopkg(dir: &str) -> Option<(&str, &str)> {
     let r = dir.rfind('-')?;
     let v = dir[..r].rfind('-')?;
     let (name, ver, rel) = (&dir[..v], &dir[v + 1..r], &dir[r + 1..]);
@@ -212,7 +212,7 @@ fn xml_text<'a>(xml: &'a str, after: &str, tag: &str) -> Option<&'a str> {
 /// <Name> is the <Source>'s, which a subpackage doesn't share) when the
 /// directory's name starts with it, the version the rest of the directory's
 /// name (split_eopkg, as vm-update lists it), the arch <Architecture>.
-pub fn eopkg_packages(sys: &Sys) -> Vec<Package> {
+pub(crate) fn eopkg_packages(sys: &Sys) -> Vec<Package> {
     let mut out = Vec::new();
     for d in sys.list(EOPKG_PACKAGES) {
         if d.starts_with('.') {
@@ -241,7 +241,7 @@ pub fn eopkg_packages(sys: &Sys) -> Vec<Package> {
 }
 
 /// Whether this is Gentoo: baselayout's /etc/gentoo-release.
-pub fn is_gentoo(sys: &Sys) -> bool {
+pub(crate) fn is_gentoo(sys: &Sys) -> bool {
     sys.exists("/etc/gentoo-release")
 }
 
@@ -249,7 +249,7 @@ pub fn is_gentoo(sys: &Sys) -> bool {
 /// then any of `_alpha`, `_beta`, `_pre`, `_rc` and `_p`, each with an
 /// optional number ("1.0.4", "2.03.39", "1.2.3b_p20250101", "9999").
 /// Read from the end, as the suffixes come last.
-pub fn is_portage_version(v: &str) -> bool {
+pub(crate) fn is_portage_version(v: &str) -> bool {
     let mut core = v;
     while let Some(i) = core.rfind('_') {
         let word = core[i + 1..].trim_end_matches(|c: char| c.is_ascii_digit());
@@ -271,7 +271,7 @@ pub fn is_portage_version(v: &str) -> bool {
 /// package's name and its version with any `-rN` revision ("grub",
 /// "2.16-r1").  The name can hold dashes and digits; the version is what
 /// follows its last dash once a revision is set aside.
-pub fn split_pf(pf: &str) -> Option<(&str, &str)> {
+pub(crate) fn split_pf(pf: &str) -> Option<(&str, &str)> {
     let base = match pf.rfind("-r") {
         Some(i) if i + 2 < pf.len() && pf[i + 2..].bytes().all(|c| c.is_ascii_digit()) => &pf[..i],
         _ => pf,
@@ -286,7 +286,7 @@ pub fn split_pf(pf: &str) -> Option<(&str, &str)> {
 /// architecture).  Names are bare, without the category, as everywhere
 /// here (docs/design/gentoo.md, decision 4).  A merge under way
 /// (`-MERGING-PF`) isn't installed yet.
-pub fn portage_packages(sys: &Sys) -> Vec<Package> {
+pub(crate) fn portage_packages(sys: &Sys) -> Vec<Package> {
     let mut out = Vec::new();
     for cat in sys.list("/var/db/pkg") {
         let cdir = format!("/var/db/pkg/{cat}");
@@ -314,13 +314,13 @@ pub fn portage_packages(sys: &Sys) -> Vec<Package> {
 }
 
 /// Whether this is Slackware: aaa_base's /etc/slackware-version.
-pub fn is_slackware(sys: &Sys) -> bool {
+pub(crate) fn is_slackware(sys: &Sys) -> bool {
     sys.is_file("/etc/slackware-version")
 }
 
 /// pkgtools' database (Slackware): installpkg's ADM_DIR, where
 /// /var/log/packages is a link to it since 15.0 (a directory before).
-pub fn pkgtools_dir(sys: &Sys) -> Option<&'static str> {
+pub(crate) fn pkgtools_dir(sys: &Sys) -> Option<&'static str> {
     ["/var/lib/pkgtools/packages", "/var/log/packages"]
         .into_iter()
         .find(|d| sys.is_dir(d))
@@ -332,7 +332,7 @@ pub fn pkgtools_dir(sys: &Sys) -> Option<&'static str> {
 /// revision, and as testvm/update/pkgset.sh lists it: a rebuild is a new
 /// version), and the arch: kernel-huge-5.15.161-x86_64-1 is (kernel-huge,
 /// 5.15.161-1, x86_64).
-pub fn split_pkgtools(file: &str) -> Option<(&str, String, &str)> {
+pub(crate) fn split_pkgtools(file: &str) -> Option<(&str, String, &str)> {
     let mut it = file.rsplitn(4, '-');
     let (build, arch, ver, name) = (it.next()?, it.next()?, it.next()?, it.next()?);
     (!name.is_empty() && !ver.is_empty() && !arch.is_empty() && !build.is_empty())
@@ -341,7 +341,7 @@ pub fn split_pkgtools(file: &str) -> Option<(&str, String, &str)> {
 
 /// Installed packages from pkgtools' database (Slackware): a file a
 /// package, named NAME-VERSION-ARCH-BUILD (split_pkgtools).
-pub fn pkgtools_packages(sys: &Sys) -> Vec<Package> {
+pub(crate) fn pkgtools_packages(sys: &Sys) -> Vec<Package> {
     let Some(dir) = pkgtools_dir(sys) else {
         return Vec::new();
     };
@@ -357,7 +357,7 @@ pub fn pkgtools_packages(sys: &Sys) -> Vec<Package> {
 
 /// The installed packages, from whichever package manager the system has.
 /// Portage first: a Gentoo can have dpkg or rpm emerged as tools.
-pub fn installed_packages(sys: &Sys) -> Vec<Package> {
+pub(crate) fn installed_packages(sys: &Sys) -> Vec<Package> {
     if is_gentoo(sys) {
         return portage_packages(sys);
     }
@@ -400,7 +400,7 @@ pub fn installed_packages(sys: &Sys) -> Vec<Package> {
 }
 
 /// The packages that make up the storage and boot stack.
-pub const PACKAGES: &[&str] = &[
+pub(crate) const PACKAGES: &[&str] = &[
     "grub-pc",
     "grub-pc-bin",
     "grub-efi-amd64",
@@ -604,7 +604,7 @@ pub const PACKAGES: &[&str] = &[
 
 /// debconf answers from /var/cache/debconf/config.dat whose names start with
 /// one of `prefixes`.
-pub fn parse_debconf(text: &str, prefixes: &[&str]) -> Vec<(String, String)> {
+pub(crate) fn parse_debconf(text: &str, prefixes: &[&str]) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for rec in text.split("\n\n") {
         let mut name = None;

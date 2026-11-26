@@ -9,14 +9,14 @@ use crate::sys::Sys;
 // --- Package databases (boot/packages.rs) ---------------------------------------
 
 mod packages;
-pub use packages::*;
+pub(crate) use packages::*;
 
 // --- Shell-ish text -------------------------------------------------------------
 
 /// Splits one line into words the way sh would for plain quoting: '...',
 /// "..." (with \\ \" \$ escapes), and backslash escapes outside quotes.
 /// Words glued to quotes ('a'\''b') come out as one word.
-pub fn shell_words(line: &str) -> Vec<String> {
+pub(crate) fn shell_words(line: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut cur = String::new();
     let mut in_word = false;
@@ -74,7 +74,7 @@ pub fn shell_words(line: &str) -> Vec<String> {
 /// KEY=value assignments from a shell file like /etc/default/grub, values
 /// unquoted; later assignments win.  Command substitutions are kept as
 /// written.
-pub fn parse_shell_assignments(text: &str) -> Vec<(String, String)> {
+pub(crate) fn parse_shell_assignments(text: &str) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     for line in text.lines() {
         let line = line.trim();
@@ -110,7 +110,7 @@ fn pairs_obj(pairs: &[(String, String)]) -> Value {
 // --- GRUB -------------------------------------------------------------------------
 
 #[derive(Debug, Default, Clone, PartialEq)]
-pub struct GrubCfg {
+pub(crate) struct GrubCfg {
     /// Titles, submenu entries as "Submenu>Entry".
     pub entries: Vec<String>,
     pub search_uuids: Vec<String>,
@@ -125,7 +125,7 @@ pub struct GrubCfg {
     pub lang: Option<String>,
 }
 
-pub fn parse_grub_cfg(text: &str) -> GrubCfg {
+pub(crate) fn parse_grub_cfg(text: &str) -> GrubCfg {
     let mut g = GrubCfg::default();
     // Open blocks: Some(title) for submenus, None for other braces.
     let mut stack: Vec<Option<String>> = Vec::new();
@@ -218,7 +218,7 @@ pub fn parse_grub_cfg(text: &str) -> GrubCfg {
 
 /// grub-editenv's block: "# GRUB Environment Block" then key=value lines,
 /// padded with '#'.
-pub fn parse_grubenv(text: &str) -> Vec<(String, String)> {
+pub(crate) fn parse_grubenv(text: &str) -> Vec<(String, String)> {
     text.lines()
         .filter(|l| !l.starts_with('#'))
         .filter_map(|l| {
@@ -313,7 +313,7 @@ fn grub_json(sys: &Sys) -> Value {
 /// load's plan checks a read-only system's entries against
 /// (load/transactional.rs).  Not those at its top: a /boot that is the ESP
 /// keeps every kernel there, and boot.kernels lists them.
-pub fn esp_inventory(sys: &Sys, mount: &str) -> Value {
+pub(crate) fn esp_inventory(sys: &Sys, mount: &str) -> Value {
     let mut files: Vec<(String, u64)> = Vec::new();
     fn walk(sys: &Sys, base: &str, rel: &str, depth: usize, out: &mut Vec<(String, u64)>) {
         if depth > 4 || out.len() >= 500 {
@@ -455,7 +455,7 @@ fn byte_copy_of<'a>(
 /// ["/intel-ucode.img", "/initramfs-linux.img"].  An entry with one initrd
 /// line has no `initrds`.  load's ESP check reads both
 /// (load/transactional.rs, bls_problems).
-pub fn systemd_boot_json(sys: &Sys, mount: &str) -> Option<Value> {
+pub(crate) fn systemd_boot_json(sys: &Sys, mount: &str) -> Option<Value> {
     let conf = sys.read(&format!("{mount}/loader/loader.conf"));
     let entries_dir = format!("{mount}/loader/entries");
     let entry_files: Vec<String> = sys
@@ -520,14 +520,14 @@ pub fn systemd_boot_json(sys: &Sys, mount: &str) -> Option<Value> {
 // --- Proxmox VE's proxmox-boot-tool ------------------------------------------------
 
 /// proxmox-boot-tool's list of the ESPs it keeps, one vfat volume ID a line.
-pub const PROXMOX_BOOT_UUIDS: &str = "/etc/kernel/proxmox-boot-uuids";
+pub(crate) const PROXMOX_BOOT_UUIDS: &str = "/etc/kernel/proxmox-boot-uuids";
 /// Where dump mounts each of those ESPs, read-only, while it reads it.
-pub const UNMOUNTED_ESP_MOUNTS: &str = crate::sys::RUN_DIR;
+pub(crate) const UNMOUNTED_ESP_MOUNTS: &str = crate::sys::RUN_DIR;
 
 /// One ESP proxmox-boot-tool keeps: its volume ID, the partition it is
 /// (None: nothing has that ID), and what a read of it found (`mode` is
 /// proxmox-boot-tool's: "systemd-boot", "grub-efi" or "grub-bios").
-pub struct ProxmoxEsp {
+pub(crate) struct ProxmoxEsp {
     pub uuid: String,
     pub device: Option<String>,
     pub mode: Option<&'static str>,
@@ -538,13 +538,13 @@ pub struct ProxmoxEsp {
 }
 
 /// boot.proxmox_boot, and its ESPs for boot.esps.
-pub struct ProxmoxBoot {
+pub(crate) struct ProxmoxBoot {
     pub json: Value,
     pub esps: Vec<ProxmoxEsp>,
 }
 
 /// "Proxmox VE 9.2" from pve-manager's version (9.2.3), when it is installed.
-pub fn proxmox_product(packages: &[Package]) -> Option<String> {
+pub(crate) fn proxmox_product(packages: &[Package]) -> Option<String> {
     let v = &find_package(packages, "pve-manager")?.version;
     let nums: Vec<&str> = v
         .split(|c: char| !c.is_ascii_digit())
@@ -588,7 +588,7 @@ fn proxmox_mode(sys: &Sys, mount: &str, contents: &Value) -> Option<&'static str
 /// TrueNAS's), as their own tools mount them only while they work.  None
 /// when it can't be mounted, said with WHO (how the warnings name the ESP)
 /// and WHAT (what the dump then lacks).
-pub fn read_unmounted_esp<R>(
+pub(crate) fn read_unmounted_esp<R>(
     sys: &Sys,
     who: &str,
     dev: &str,
@@ -623,7 +623,7 @@ pub fn read_unmounted_esp<R>(
 /// (as proxmox-boot-tool itself mounts them); one already mounted
 /// (`mounted`, device and mount point) is read where it is.  None when the
 /// list or proxmox-kernel-helper isn't there.
-pub fn proxmox_boot_json(
+pub(crate) fn proxmox_boot_json(
     sys: &Sys,
     packages: &[Package],
     resolve: &dyn Fn(&str) -> Option<String>,
@@ -752,7 +752,7 @@ fn kernel_obj(
         .build()
 }
 
-pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
+pub(crate) fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
     let mut versions: Vec<String> = Vec::new();
     let files = sys.list("/boot");
     // Gentoo's installkernel keeps the kernel's files it replaced as
@@ -877,7 +877,7 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
 }
 
 /// /proc/cmdline split into words, with the storage-related ones picked out.
-pub fn cmdline_json(cmdline: &str) -> Value {
+pub(crate) fn cmdline_json(cmdline: &str) -> Value {
     let words = shell_words(cmdline);
     let mut picked = Obj::new();
     for w in &words {
@@ -918,7 +918,8 @@ pub fn cmdline_json(cmdline: &str) -> Value {
 
 /// installkernel's configuration on Gentoo: the first of these that
 /// exists, as installkernel itself reads them.
-pub const INSTALL_CONF: &[&str] = &["/etc/kernel/install.conf", "/usr/lib/kernel/install.conf"];
+pub(crate) const INSTALL_CONF: &[&str] =
+    &["/etc/kernel/install.conf", "/usr/lib/kernel/install.conf"];
 
 /// Gentoo's initramfs generator is the owner's choice, not the
 /// distribution's (docs/design/gentoo.md): installkernel's install.conf
@@ -1110,7 +1111,7 @@ fn initramfs_json_esps(
 }
 
 /// booster's configuration file.
-pub const BOOSTER_YAML: &str = "/etc/booster.yaml";
+pub(crate) const BOOSTER_YAML: &str = "/etc/booster.yaml";
 
 /// The keys of /etc/booster.yaml that decide what booster puts in an image,
 /// each null when the file (or the key) is absent: universal (all modules,
@@ -1145,7 +1146,7 @@ fn booster_json(sys: &Sys) -> Value {
 /// indented lines, list items and comments skipped, a trailing ` #`
 /// comment dropped, a quoted value unquoted.  A key with no value on its
 /// line (a nested map) is left out.
-pub fn parse_flat_yaml(text: &str) -> Vec<(String, String)> {
+pub(crate) fn parse_flat_yaml(text: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for line in text.lines() {
         if line.starts_with([' ', '\t', '#', '-']) {
@@ -1174,7 +1175,7 @@ pub fn parse_flat_yaml(text: &str) -> Vec<(String, String)> {
 // --- Which loader ------------------------------------------------------------------
 
 /// What the report already knows that decides the loader.
-pub struct Evidence<'a> {
+pub(crate) struct Evidence<'a> {
     pub uefi: bool,
     /// The file of the entry the firmware booted (BootCurrent).
     pub current_file: Option<String>,
@@ -1195,13 +1196,13 @@ pub struct Evidence<'a> {
 
 /// The loader on x86_64 (crate::arch::X86_64's names), for the tests.
 #[cfg(test)]
-pub fn detect_loader(e: &Evidence) -> Value {
+pub(crate) fn detect_loader(e: &Evidence<'_>) -> Value {
     detect_loader_on(e, &crate::arch::X86_64)
 }
 
 /// The loader, from E, on a machine whose boot files have N's names
 /// (crate::arch: grubx64.efi or grubaa64.efi, and so on).
-pub fn detect_loader_on(e: &Evidence, n: &crate::arch::Names) -> Value {
+pub(crate) fn detect_loader_on(e: &Evidence<'_>, n: &crate::arch::Names) -> Value {
     let has = |p: &str| has_package(e.packages, p);
     let mut why: Vec<String> = Vec::new();
     let mut name: Option<&str> = None;
@@ -1416,22 +1417,22 @@ pub fn detect_loader_on(e: &Evidence, n: &crate::arch::Names) -> Value {
 }
 
 /// clr-boot-manager's package (Solus, docs/design/solus.md).
-pub const CBM: &str = "clr-boot-manager";
+pub(crate) const CBM: &str = "clr-boot-manager";
 /// clr-boot-manager's shim on the ESP (shim-signed's shimx64.efi, renamed).
-pub const CBM_SHIM: &str = "EFI/com.solus-project/bootloaderx64.efi";
+pub(crate) const CBM_SHIM: &str = "EFI/com.solus-project/bootloaderx64.efi";
 /// The systemd-boot it copies beside its shim, by the name shim loads.
-pub const CBM_SD_BOOT: &str = "EFI/com.solus-project/grubx64.efi";
+pub(crate) const CBM_SD_BOOT: &str = "EFI/com.solus-project/grubx64.efi";
 /// The NVRAM entry clr-boot-manager makes for its shim.
-pub const CBM_ENTRY: &str = "Solus Linux Bootloader";
+pub(crate) const CBM_ENTRY: &str = "Solus Linux Bootloader";
 /// The start of a Solus kernel package's prebuilt initrd's name.
-pub const SOLUS_INITRD: &str = "initrd-com.solus-project.";
+pub(crate) const SOLUS_INITRD: &str = "initrd-com.solus-project.";
 /// The start of a Solus kernel's name in its package's directory.
-pub const SOLUS_KERNEL: &str = "com.solus-project.";
+pub(crate) const SOLUS_KERNEL: &str = "com.solus-project.";
 
 /// A Solus kernel's file name, com.solus-project.FLAVOUR.VER-REL, as
 /// `uname -r` says it: VER-REL.FLAVOUR (com.solus-project.current.7.3.4-373
 /// is 7.3.4-373.current).
-pub fn solus_kernel_version(file: &str) -> Option<String> {
+pub(crate) fn solus_kernel_version(file: &str) -> Option<String> {
     let (flavour, vr) = file.strip_prefix(SOLUS_KERNEL)?.split_once('.')?;
     let (ver, rel) = vr.rsplit_once('-')?;
     (!flavour.is_empty()
@@ -1447,7 +1448,10 @@ pub fn solus_kernel_version(file: &str) -> Option<String> {
 /// initrd-com.solus-project.FLAVOUR.VER-REL and config-VER-REL.FLAVOUR
 /// beside it, `dir` saying where; and the default-FLAVOUR links (the
 /// kernel each flavour boots by default), as (link, target).
-pub fn solus_kernels(sys: &Sys, running: Option<&str>) -> (Vec<Value>, Vec<(String, String)>) {
+pub(crate) fn solus_kernels(
+    sys: &Sys,
+    running: Option<&str>,
+) -> (Vec<Value>, Vec<(String, String)>) {
     let Some(dir) = ["/usr/lib64/kernel", "/usr/lib/kernel"]
         .into_iter()
         .find(|d| sys.is_dir(d))
@@ -1528,7 +1532,7 @@ fn with_solus_kernels(
 /// environments boot.zfsbootmenu lists when a mounted ESP holds a
 /// ZFSBootMenu image (crate::zfsbootmenu).
 #[allow(clippy::too_many_arguments)]
-pub fn boot_json(
+pub(crate) fn boot_json(
     sys: &Sys,
     packages: &[Package],
     esps: &[(String, String)],
@@ -1715,13 +1719,13 @@ pub fn boot_json(
 /// AnduinOS's Machine Owner Key: anduinos-secureboot-toolkit makes it at
 /// install and signs AnduinOS's GRUB with it (MOK.priv beside it stays
 /// root's alone).
-pub const ANDUINOS_MOK: &str = "/var/lib/shim-signed/mok/MOK.der";
+pub(crate) const ANDUINOS_MOK: &str = "/var/lib/shim-signed/mok/MOK.der";
 
 /// boot.loader.mok: on AnduinOS's own GRUB (anduinos-grub installed and
 /// its MOK certificate there), the certificate and its SHA-256 fingerprint
 /// (of the DER file, as `openssl x509 -fingerprint -sha256` prints it), so
 /// a restore can say which key the firmware must hold.  None otherwise.
-pub fn mok_json(sys: &Sys, packages: &[Package]) -> Option<Value> {
+pub(crate) fn mok_json(sys: &Sys, packages: &[Package]) -> Option<Value> {
     if !has_package(packages, "anduinos-grub") {
         return None;
     }
@@ -1736,11 +1740,11 @@ pub fn mok_json(sys: &Sys, packages: &[Package]) -> Option<Value> {
 
 /// rEFInd's kernel options file, which it reads beside the kernels it
 /// finds (/boot here): each line a quoted title and the quoted options.
-pub const REFIND_LINUX_CONF: &str = "/boot/refind_linux.conf";
+pub(crate) const REFIND_LINUX_CONF: &str = "/boot/refind_linux.conf";
 
 /// boot.refind: refind_linux.conf's path and its lines, each {title,
 /// options}; None when there is no such file.
-pub fn refind_json(sys: &Sys) -> Option<Value> {
+pub(crate) fn refind_json(sys: &Sys) -> Option<Value> {
     let text = sys.read(REFIND_LINUX_CONF)?;
     let lines: Vec<Value> = text
         .lines()
@@ -1771,7 +1775,7 @@ pub fn refind_json(sys: &Sys) -> Option<Value> {
 // --- Slackware: LILO, ELILO, mkinitrd, rc.d (boot/slackware.rs) -------------------
 
 mod slackware;
-pub use slackware::*;
+pub(crate) use slackware::*;
 
 #[cfg(test)]
 mod tests {
@@ -3134,7 +3138,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             }
         }
         let p = &pk(&["clr-boot-manager", "shim-signed", "dracut"]);
-        let check = |e: &Evidence, why: &str| {
+        let check = |e: &Evidence<'_>, why: &str| {
             let v = detect_loader(e);
             assert_eq!(
                 v.get("name").and_then(Value::as_str),

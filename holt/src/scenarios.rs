@@ -9360,7 +9360,7 @@ fn slackware15_uefi_guest() {
     // in the source's words and order (-k where it was), the system's
     // ld.so.cache and the tree's /dev kept around it, the image packed
     // again from the source's /dev, then copied to the ESP.
-    let r = crate::load::RUN_DIR;
+    let r = RUN_DIR;
     let t = slackware15_uefi();
     t.file(
         "/boot/initrd-tree/command_line",
@@ -10190,12 +10190,12 @@ fn slackware_current_thinkpad() {
 /// Every scenario's dump, by name, for tests that must hold over all of
 /// them (load's fit.rs).  Each tree is built, dumped and dropped before the
 /// next: held all at once they were ~3.5 GiB of tmpfs.
-pub fn dumps() -> Vec<(&'static str, Value)> {
+pub(crate) fn dumps() -> Vec<(&'static str, Value)> {
     DUMPS.iter().map(|(n, f)| (*n, f())).collect()
 }
 
 /// One scenario's dump by its name in `dumps`, built alone.
-pub fn dump(name: &str) -> Value {
+pub(crate) fn dump(name: &str) -> Value {
     let (_, f) = DUMPS
         .iter()
         .find(|(n, _)| *n == name)
@@ -11765,7 +11765,7 @@ fn truenas_mirror_guest() {
         (
             p[0].code,
             p[0].str_field("disk"),
-            p[0].field("pool").map(crate::json::Value::is_null)
+            p[0].field("pool").map(Value::is_null)
         ),
         (
             crate::load::codes::ProblemCode::PoolLeftOut,
@@ -12270,7 +12270,7 @@ fn zfsbootmenu_guest() {
     );
     let (_, b) = zbm_plan(false, &[], with_data(&[1, 2, 0xff]));
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    let f = format!("{}/efi-optional-data-0000", crate::load::RUN_DIR);
+    let f = format!("{}/efi-optional-data-0000", RUN_DIR);
     assert!(
         bt.contains(&format!("sh -c 'printf '\\''\\001\\002\\377'\\'' > {f}'\n")),
         "{bt}"

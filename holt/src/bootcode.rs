@@ -56,7 +56,7 @@ impl From<BootKind> for Value {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct BootCode {
+pub(crate) struct BootCode {
     pub kind: BootKind,
     /// GRUB 2: the LBA boot.img loads core.img's first sector from.
     pub grub_core_lba: Option<u64>,
@@ -67,7 +67,7 @@ pub struct BootCode {
 }
 
 /// Identifies the code in the first 440 bytes of a boot sector.
-pub fn identify(sector: &[u8]) -> BootCode {
+pub(crate) fn identify(sector: &[u8]) -> BootCode {
     let code = sub(sector, 0, 440);
     let first_bytes = hex(sub(code, 0, 16));
     let none = |kind| BootCode {
@@ -119,7 +119,7 @@ pub fn identify(sector: &[u8]) -> BootCode {
 
 /// Whether the sector at `lba` looks like GRUB 2's diskboot.img, the first
 /// sector of core.img.
-pub fn grub_core_present(src: &dyn ByteSource, lba: u64, ss: u64) -> bool {
+pub(crate) fn grub_core_present(src: &dyn ByteSource, lba: u64, ss: u64) -> bool {
     lba.checked_mul(ss)
         .map(|o| src.read_at(o, 512))
         .is_some_and(|s| contains(&s, b"loading") && contains(&s, b"Geom"))
@@ -128,7 +128,7 @@ pub fn grub_core_present(src: &dyn ByteSource, lba: u64, ss: u64) -> bool {
 impl BootCode {
     /// JSON for a disk's boot code; `gap` is the room before the first
     /// partition, in sectors, where GRUB embeds core.img on MBR disks.
-    pub fn to_json(
+    pub(crate) fn to_json(
         &self,
         src: Option<&dyn ByteSource>,
         ss: u64,
@@ -178,7 +178,7 @@ impl BootCode {
 /// onto a partition, or a chainloaded setup).  None unless it's GRUB or
 /// syslinux: everything else's first sector is filesystem data or a FAT/NTFS
 /// boot stub.
-pub fn partition_boot_code(src: &dyn ByteSource) -> Option<&'static str> {
+pub(crate) fn partition_boot_code(src: &dyn ByteSource) -> Option<&'static str> {
     let s = src.read_at(0, 512);
     match identify(&s).kind {
         k @ (BootKind::Grub2 | BootKind::GrubLegacy | BootKind::Syslinux) => Some(k.as_str()),
@@ -187,10 +187,10 @@ pub fn partition_boot_code(src: &dyn ByteSource) -> Option<&'static str> {
 }
 
 #[cfg(test)]
-pub mod samples {
+pub(crate) mod samples {
     /// A sector shaped like GRUB 2's boot.img: jump to 0x65, kernel sector
     /// at 0x5c, boot drive at 0x64, and its message strings.
-    pub fn grub2_boot_img(core_lba: u64) -> Vec<u8> {
+    pub(crate) fn grub2_boot_img(core_lba: u64) -> Vec<u8> {
         let mut s = vec![0u8; 512];
         s[0] = 0xeb;
         s[1] = 0x63;
@@ -209,7 +209,7 @@ pub mod samples {
 
     /// The start of LILO 24.2's first stage as Slackware 15.0's /sbin/lilo
     /// writes it to the MBR: cli, jmp, size, "LILO", version 24.2.
-    pub fn lilo_first_stage() -> Vec<u8> {
+    pub(crate) fn lilo_first_stage() -> Vec<u8> {
         let mut s = vec![0u8; 512];
         s[..16].copy_from_slice(&[
             0xfa, 0xeb, 0x31, 0x13, 0, 0, b'L', b'I', b'L', b'O', 0x18, 0x02, 0x10, 0, 0x01, 0,
@@ -220,7 +220,7 @@ pub mod samples {
         s
     }
 
-    pub fn grub2_diskboot_img() -> Vec<u8> {
+    pub(crate) fn grub2_diskboot_img() -> Vec<u8> {
         let mut s = vec![0u8; 512];
         s[0] = 0x52;
         let msg = b"loading\0.\0\r\n\0Geom\0Read\0 Error\0";

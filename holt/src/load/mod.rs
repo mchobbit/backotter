@@ -378,7 +378,7 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
     let mut o = Options::new("");
     let mut schema: Option<String> = None;
     let mut it = args.iter();
-    let value = |it: &mut std::slice::Iter<String>, flag: &str| {
+    let value = |it: &mut std::slice::Iter<'_, String>, flag: &str| {
         debug_assert!(
             VALUE_FLAGS.contains(&flag),
             "{flag} takes a value: add it to VALUE_FLAGS"

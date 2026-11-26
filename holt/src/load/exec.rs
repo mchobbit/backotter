@@ -643,7 +643,7 @@ fn run_with(
     opts: &Options,
     sys: &Sys,
     stages: &[Stage],
-    step: Runner,
+    step: Runner<'_>,
 ) -> (u8, String, String) {
     let never = || false;
     run_core(
@@ -662,7 +662,7 @@ fn run_core(
     opts: &Options,
     sys: &Sys,
     stages: &[Stage],
-    step: Step,
+    step: Step<'_>,
     ev: &mut Events<'_>,
 ) -> (u8, String, String) {
     let t0 = Instant::now();
@@ -1599,7 +1599,7 @@ mod tests {
     #[test]
     fn write_file_keeps_a_target_files_mode() {
         use std::os::unix::fs::PermissionsExt;
-        let t = crate::testutil::Tree::new("load-exec-write-mode");
+        let t = Tree::new("load-exec-write-mode");
         let f = t.root().join("etc/kernel/proxmox-boot-uuids");
         t.file("/etc/kernel/proxmox-boot-uuids", "OLD\n");
         std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
@@ -1658,7 +1658,7 @@ mod tests {
     /// system's own file.
     #[test]
     fn write_file_refuses_a_target_symlink() {
-        let t = crate::testutil::Tree::new("load-exec-write-symlink");
+        let t = Tree::new("load-exec-write-symlink");
         let host = t.root().join("host");
         t.file("/host/file", "HOST\n");
         std::fs::create_dir_all(t.root().join("etc")).unwrap();
@@ -1736,7 +1736,7 @@ mod tests {
     #[test]
     fn run_cmd_reads_back() {
         use crate::sys::FakeRunner;
-        let t = crate::testutil::Tree::new("load-exec-readback");
+        let t = Tree::new("load-exec-readback");
         let img = crate::probe::ext::sample::image(0x0004, 0x0002 | 0x0040, 0x0001, "root");
         t.file("/dev/vdb1", &img);
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
@@ -1845,8 +1845,8 @@ mod tests {
     }
 
     /// The test's rescue system: every tool the stages run, and TABLE on vdb.
-    fn rescue(name: &str, table: &[u8]) -> crate::testutil::Tree {
-        let t = crate::testutil::Tree::new(name);
+    fn rescue(name: &str, table: &[u8]) -> Tree {
+        let t = Tree::new(name);
         t.disk("vdb", "253:16", table, 512)
             .file("/sys/block/vdb/size", "33554432\n");
         t.file("/proc/self/mountinfo", "")
@@ -1883,7 +1883,7 @@ mod tests {
     #[test]
     fn a_password_is_not_logged() {
         use crate::sys::FakeRunner;
-        let t = crate::testutil::Tree::new("load-exec-log-password");
+        let t = Tree::new("load-exec-log-password");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         let path = t
             .p("/mnt/bko-target/etc/lilo.conf.bko-holt")
@@ -2043,7 +2043,7 @@ mod tests {
     /// session (its table and this session's record), the tree mounted with
     /// a restored Debian in it, a private password file, and SYS's archiver
     /// answering as BackOtter's.
-    fn restored(name: &str, archiver: &str) -> (crate::testutil::Tree, Sys, String) {
+    fn restored(name: &str, archiver: &str) -> (Tree, Sys, String) {
         use crate::load::layout::sample;
         use crate::sys::FakeRunner;
         use std::os::unix::fs::PermissionsExt;
@@ -2130,7 +2130,7 @@ mod tests {
     /// so under --json its row is partly and it runs again.
     #[test]
     fn a_failed_copy_leaves_no_complete_mark() {
-        let t0 = crate::testutil::Tree::new("load-exec-archiver");
+        let t0 = Tree::new("load-exec-archiver");
         // The archiver: a script that fails as rustic-bko would, here at a
         // real path the run can start, and at the same path in the tree,
         // where plan looks for it.
@@ -2202,7 +2202,7 @@ mod tests {
     type Marks = (Option<String>, Option<String>, bool);
 
     /// The marks as a step finds them in T.
-    fn marks(t: &crate::testutil::Tree) -> Marks {
+    fn marks(t: &Tree) -> Marks {
         let read = |m: String| std::fs::read_to_string(t.p(&m)).ok();
         (
             read(status::restore_started_marker()),
@@ -2215,7 +2215,7 @@ mod tests {
     /// step's command line and the marks as it ran, and fails the steps
     /// FAIL picks.  Its exit, standard error, and what it saw.
     fn restore_with(
-        t: &crate::testutil::Tree,
+        t: &Tree,
         s: &Sys,
         lay: &Layout,
         json: bool,
@@ -2235,7 +2235,7 @@ mod tests {
         if json {
             a.push("--json");
         }
-        let seen = std::cell::RefCell::new(Vec::new());
+        let seen = RefCell::new(Vec::new());
         let step = |c: &Cmd, _: &mut Option<std::fs::File>, _: &Sys| {
             let line = c.shell();
             let before: Vec<String> = seen
@@ -2352,7 +2352,7 @@ mod tests {
             if json {
                 a.push("--json");
             }
-            let ran = std::cell::Cell::new(0);
+            let ran = Cell::new(0);
             let step = |_: &Cmd, _: &mut Option<std::fs::File>, _: &Sys| {
                 ran.set(ran.get() + 1);
                 Ok(Vec::new())
@@ -2383,7 +2383,7 @@ mod tests {
         a: &[&str],
         s: &Sys,
         stages: &[Stage],
-        step: Step,
+        step: Step<'_>,
         stop: &dyn Fn() -> bool,
     ) -> (u8, Vec<Value>, String) {
         let lines = RefCell::new(Vec::new());

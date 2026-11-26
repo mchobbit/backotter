@@ -436,10 +436,7 @@ const _: () = assert!(10 * (ESP_IMAGE_MAX as u64) * 3 / 2 < crate::LAYOUT_MAX);
 /// write back as they were.  At most ESP_IMAGE_MAX of them.
 pub fn esp_image(disk: &dyn ByteSource, f: &Found, mounted_at: &[String], extra: &mut Obj) {
     let ty = f.field("type").unwrap_or("").to_ascii_lowercase();
-    if !mounted_at.is_empty()
-        || !(ty == crate::parttable::ESP || ty == "0xef")
-        || f.size > (4 << 30)
-    {
+    if !mounted_at.is_empty() || !(ty == parttable::ESP || ty == "0xef") || f.size > (4 << 30) {
         return;
     }
     let src = OffsetSource {
@@ -581,7 +578,7 @@ mod tests {
             disk_guid: "11111111-2222-3333-4444-555555555555",
             parts: vec![
                 (
-                    crate::parttable::ESP,
+                    parttable::ESP,
                     "aaaaaaaa-0000-0000-0000-000000000001",
                     40,
                     1000,
@@ -589,7 +586,7 @@ mod tests {
                     "esp",
                 ),
                 (
-                    crate::parttable::ESP,
+                    parttable::ESP,
                     "aaaaaaaa-0000-0000-0000-000000000002",
                     huge,
                     huge + 10,
@@ -597,7 +594,7 @@ mod tests {
                     "far",
                 ),
                 (
-                    crate::parttable::ESP,
+                    parttable::ESP,
                     "aaaaaaaa-0000-0000-0000-000000000003",
                     0,
                     u64::MAX,

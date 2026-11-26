@@ -8,19 +8,19 @@ use crate::bytes::{guid, hex, le16, le32, le64, sub, u8_at, utf16le};
 use crate::json::{Obj, Value};
 use crate::sys::Sys;
 
-pub const GLOBAL: &str = "8be4df61-93ca-11d2-aa0d-00e098032b8c";
-pub const LOADER: &str = "4a67b082-0a4c-41cf-b6c7-440b29bb8c4f";
-pub const SHIM: &str = "605dab50-e046-4300-abb6-3dd810dd8b23";
+pub(crate) const GLOBAL: &str = "8be4df61-93ca-11d2-aa0d-00e098032b8c";
+pub(crate) const LOADER: &str = "4a67b082-0a4c-41cf-b6c7-440b29bb8c4f";
+pub(crate) const SHIM: &str = "605dab50-e046-4300-abb6-3dd810dd8b23";
 const EFIVARS: &str = "/sys/firmware/efi/efivars";
 
 /// A variable's data (without its 4-byte attributes).
-pub fn var(sys: &Sys, name: &str, vendor: &str) -> Option<Vec<u8>> {
+pub(crate) fn var(sys: &Sys, name: &str, vendor: &str) -> Option<Vec<u8>> {
     let b = sys.read_bytes(&format!("{EFIVARS}/{name}-{vendor}"))?;
     (b.len() >= 4).then(|| b[4..].to_vec())
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Node {
+pub(crate) enum Node {
     Pci {
         device: u8,
         function: u8,
@@ -77,7 +77,7 @@ pub enum Node {
 }
 
 impl Node {
-    pub fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         match self {
             Node::Pci { device, function } => format!("Pci(0x{device:x},0x{function:x})"),
             Node::Acpi {
@@ -139,7 +139,7 @@ impl Node {
 
 /// The device paths in a load option's FilePathList (usually one; some
 /// firmware writes a vendor path before the real one).
-pub fn parse_device_paths(b: &[u8]) -> Vec<Vec<Node>> {
+pub(crate) fn parse_device_paths(b: &[u8]) -> Vec<Vec<Node>> {
     let mut paths = Vec::new();
     let mut cur = Vec::new();
     let mut i = 0;
@@ -230,14 +230,14 @@ pub fn parse_device_paths(b: &[u8]) -> Vec<Vec<Node>> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct LoadOption {
+pub(crate) struct LoadOption {
     pub attributes: u32,
     pub description: String,
     pub paths: Vec<Vec<Node>>,
     pub optional_data: usize,
 }
 
-pub fn parse_load_option(b: &[u8]) -> Option<LoadOption> {
+pub(crate) fn parse_load_option(b: &[u8]) -> Option<LoadOption> {
     if b.len() < 6 {
         return None;
     }
@@ -267,13 +267,13 @@ pub fn parse_load_option(b: &[u8]) -> Option<LoadOption> {
 }
 
 impl LoadOption {
-    pub fn hard_drive(&self) -> Option<&Node> {
+    pub(crate) fn hard_drive(&self) -> Option<&Node> {
         self.paths
             .iter()
             .flatten()
             .find(|n| matches!(n, Node::HardDrive { .. }))
     }
-    pub fn file(&self) -> Option<&str> {
+    pub(crate) fn file(&self) -> Option<&str> {
         self.paths.iter().flatten().find_map(|n| {
             if let Node::File(p) = n {
                 Some(p.as_str())
@@ -282,7 +282,7 @@ impl LoadOption {
             }
         })
     }
-    pub fn text(&self) -> Vec<String> {
+    pub(crate) fn text(&self) -> Vec<String> {
         self.paths
             .iter()
             .map(|p| p.iter().map(Node::text).collect::<Vec<_>>().join("/"))
@@ -301,11 +301,11 @@ fn var_u8(sys: &Sys, name: &str) -> Option<u8> {
     var(sys, name, GLOBAL).and_then(|b| b.first().copied())
 }
 
-pub fn is_uefi(sys: &Sys) -> bool {
+pub(crate) fn is_uefi(sys: &Sys) -> bool {
     sys.is_dir("/sys/firmware/efi")
 }
 
-pub fn firmware_json(sys: &Sys) -> Value {
+pub(crate) fn firmware_json(sys: &Sys) -> Value {
     if !is_uefi(sys) {
         return Obj::new().set("mode", "bios").build();
     }
@@ -335,7 +335,7 @@ pub fn firmware_json(sys: &Sys) -> Value {
 }
 
 /// The boot manager's entries and the loader's own variables.
-pub fn boot_json(sys: &Sys, partuuid_to_dev: &dyn Fn(&str) -> Option<String>) -> Value {
+pub(crate) fn boot_json(sys: &Sys, partuuid_to_dev: &dyn Fn(&str) -> Option<String>) -> Value {
     if !is_uefi(sys) {
         return Value::Null;
     }
@@ -460,21 +460,21 @@ pub fn boot_json(sys: &Sys, partuuid_to_dev: &dyn Fn(&str) -> Option<String>) ->
 }
 
 #[cfg(test)]
-pub mod real {
+pub(crate) mod real {
     /// Chopin's actual variables (Debian 13, MoreFine S500+ firmware), with
     /// the 4-byte attribute prefix as efivarfs shows it.
-    pub fn unhex(s: &str) -> Vec<u8> {
+    pub(crate) fn unhex(s: &str) -> Vec<u8> {
         let h: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
         (0..h.len() / 2)
             .map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap())
             .collect()
     }
-    pub const BOOT0000_WINDOWS: &str = "07000000 0900 0000 8c00 5700 6900 6e00 6400 6f00 7700 7300 2000 4200 6f00 6f00 7400 2000 4d00 6100 6e00 6100 6700 6500 7200 0000 0104 1400 e775 e299 a075 374b a2e6 c538 5e6c 00cb 7fff 0400 0401 2a00 0100 0000 0008 0000 0000 0000 0020 0800 0000 0000 8ec2 fcd4 1039 7648 86f2 564a 396c 6a27 0202 0404 4600 5c00 4500 4600 4900 5c00 4d00 6900 6300 7200 6f00 7300 6f00 6600 7400 5c00 4200 6f00 6f00 7400 5c00 6200 6f00 6f00 7400 6d00 6700 6600 7700 2e00 6500 6600 6900 0000 7fff 0400";
-    pub const BOOT0001_SHIM: &str = "07000000 0100 0000 6200 6400 6500 6200 6900 6100 6e00 0000 0401 2a00 0100 0000 0008 0000 0000 0000 0000 1000 0000 0000 ed04 5f0b 31e7 c64a 933e 83ff 2565 7722 0202 0404 3400 5c00 4500 4600 4900 5c00 4400 4500 4200 4900 4100 4e00 5c00 5300 4800 4900 4d00 5800 3600 3400 2e00 4500 4600 4900 0000 7fff 0400";
-    pub const BOOT0002_GRUB: &str = "07000000 0100 0000 6200 6400 6500 6200 6900 6100 6e00 0000 0401 2a00 0100 0000 0008 0000 0000 0000 0000 1000 0000 0000 ed04 5f0b 31e7 c64a 933e 83ff 2565 7722 0202 0404 3400 5c00 4500 4600 4900 5c00 4400 4500 4200 4900 4100 4e00 5c00 4700 5200 5500 4200 5800 3600 3400 2e00 4500 4600 4900 0000 7fff 0400 0000 424f";
-    pub const BOOT0003_BBS: &str = "07000000 0100 0000 0d00 5500 4500 4600 4900 3a00 4300 4400 2f00 4400 5600 4400 2000 4400 7200 6900 7600 6500 0000 0501 0900 8100 0000 007f ff04 00";
-    pub const LOADER_INFO: &str = "06000000 4700 5200 5500 4200 2000 3200 2e00 3100 3200 2d00 3900 2b00 6400 6500 6200 3100 3300 7500 3200 0000";
-    pub const LOADER_PARTUUID: &str = "06000000 3000 6200 3500 6600 3000 3400 6500 6400 2d00 6500 3700 3300 3100 2d00 3400 6100 6300 3600 2d00 3900 3300 3300 6500 2d00 3800 3300 6600 6600 3200 3500 3600 3500 3700 3700 3200 3200 0000";
+    pub(crate) const BOOT0000_WINDOWS: &str = "07000000 0900 0000 8c00 5700 6900 6e00 6400 6f00 7700 7300 2000 4200 6f00 6f00 7400 2000 4d00 6100 6e00 6100 6700 6500 7200 0000 0104 1400 e775 e299 a075 374b a2e6 c538 5e6c 00cb 7fff 0400 0401 2a00 0100 0000 0008 0000 0000 0000 0020 0800 0000 0000 8ec2 fcd4 1039 7648 86f2 564a 396c 6a27 0202 0404 4600 5c00 4500 4600 4900 5c00 4d00 6900 6300 7200 6f00 7300 6f00 6600 7400 5c00 4200 6f00 6f00 7400 5c00 6200 6f00 6f00 7400 6d00 6700 6600 7700 2e00 6500 6600 6900 0000 7fff 0400";
+    pub(crate) const BOOT0001_SHIM: &str = "07000000 0100 0000 6200 6400 6500 6200 6900 6100 6e00 0000 0401 2a00 0100 0000 0008 0000 0000 0000 0000 1000 0000 0000 ed04 5f0b 31e7 c64a 933e 83ff 2565 7722 0202 0404 3400 5c00 4500 4600 4900 5c00 4400 4500 4200 4900 4100 4e00 5c00 5300 4800 4900 4d00 5800 3600 3400 2e00 4500 4600 4900 0000 7fff 0400";
+    pub(crate) const BOOT0002_GRUB: &str = "07000000 0100 0000 6200 6400 6500 6200 6900 6100 6e00 0000 0401 2a00 0100 0000 0008 0000 0000 0000 0000 1000 0000 0000 ed04 5f0b 31e7 c64a 933e 83ff 2565 7722 0202 0404 3400 5c00 4500 4600 4900 5c00 4400 4500 4200 4900 4100 4e00 5c00 4700 5200 5500 4200 5800 3600 3400 2e00 4500 4600 4900 0000 7fff 0400 0000 424f";
+    pub(crate) const BOOT0003_BBS: &str = "07000000 0100 0000 0d00 5500 4500 4600 4900 3a00 4300 4400 2f00 4400 5600 4400 2000 4400 7200 6900 7600 6500 0000 0501 0900 8100 0000 007f ff04 00";
+    pub(crate) const LOADER_INFO: &str = "06000000 4700 5200 5500 4200 2000 3200 2e00 3100 3200 2d00 3900 2b00 6400 6500 6200 3100 3300 7500 3200 0000";
+    pub(crate) const LOADER_PARTUUID: &str = "06000000 3000 6200 3500 6600 3000 3400 6500 6400 2d00 6500 3700 3300 3100 2d00 3400 6100 6300 3600 2d00 3900 3300 3300 6500 2d00 3800 3300 6600 6600 3200 3500 3600 3500 3700 3700 3200 3200 0000";
 }
 
 #[cfg(test)]

@@ -21,14 +21,14 @@ use crate::json::Value;
 use crate::sys::Sys;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Arch {
+pub(crate) enum Arch {
     X86_64,
     Aarch64,
 }
 
 /// One architecture's names.
 #[derive(Debug)]
-pub struct Names {
+pub(crate) struct Names {
     /// Which it is: the tests hold the names to Arch::parse with it.
     #[cfg(test)]
     pub arch: Arch,
@@ -71,7 +71,7 @@ pub struct Names {
 
 /// x86_64: the names bko-holt has always used (grub-efi-arm64 is in its
 /// UEFI GRUB list as it was before A3).
-pub const X86_64: Names = Names {
+pub(crate) const X86_64: Names = Names {
     #[cfg(test)]
     arch: Arch::X86_64,
     machine: "x86_64",
@@ -108,7 +108,7 @@ pub const X86_64: Names = Names {
 /// ARM64 (aarch64): Debian's and Ubuntu's grub-efi-arm64(-signed) and
 /// shim-signed, Fedora's grub2-efi-aa64 and shim-aa64, Chimera's and Void's
 /// grub-arm64-efi.
-pub const AARCH64: Names = Names {
+pub(crate) const AARCH64: Names = Names {
     #[cfg(test)]
     arch: Arch::Aarch64,
     machine: "aarch64",
@@ -135,12 +135,12 @@ pub const AARCH64: Names = Names {
 };
 
 /// Every row, for what lists them all.
-pub const ALL: [&Names; 2] = [&X86_64, &AARCH64];
+pub(crate) const ALL: [&Names; 2] = [&X86_64, &AARCH64];
 
 impl Arch {
     /// From `uname -m`'s name (the BSDs' amd64 and arm64; illumos's i86pc,
     /// which is 64-bit only), or Debian's.
-    pub fn parse(name: &str) -> Option<Arch> {
+    pub(crate) fn parse(name: &str) -> Option<Arch> {
         match name.trim() {
             "x86_64" | "amd64" | "i86pc" => Some(Arch::X86_64),
             "aarch64" | "arm64" => Some(Arch::Aarch64),
@@ -148,7 +148,7 @@ impl Arch {
         }
     }
 
-    pub fn names(self) -> &'static Names {
+    pub(crate) fn names(self) -> &'static Names {
         match self {
             Arch::X86_64 => &X86_64,
             Arch::Aarch64 => &AARCH64,
@@ -159,7 +159,7 @@ impl Arch {
 impl Names {
     /// The fallback path as a UEFI device path's file names it, upper case
     /// (`\EFI\BOOT\BOOTX64.EFI`).
-    pub fn fallback_dp(&self) -> String {
+    pub(crate) fn fallback_dp(&self) -> String {
         format!(
             "\\{}",
             self.fallback.replace('/', "\\").to_ascii_uppercase()
@@ -171,7 +171,7 @@ impl Names {
 /// /proc/sys/kernel/arch, else `uname -m`.  A fake system (a tree other
 /// than /) that has neither is x86_64, as every one before A3; the running
 /// system, this binary's own architecture.
-pub fn machine(sys: &Sys) -> String {
+pub(crate) fn machine(sys: &Sys) -> String {
     sys.read_trim("/proc/sys/kernel/arch")
         .filter(|m| !m.is_empty())
         .or_else(|| {
@@ -190,14 +190,14 @@ pub fn machine(sys: &Sys) -> String {
 }
 
 /// The names for the machine SYS runs on (x86_64's when it is neither).
-pub fn names_of(sys: &Sys) -> &'static Names {
+pub(crate) fn names_of(sys: &Sys) -> &'static Names {
     Arch::parse(&machine(sys)).unwrap_or(Arch::X86_64).names()
 }
 
 /// UEFI's name for the firmware of a MACHINE whose
 /// /sys/firmware/efi/fw_platform_size is PLATFORM_SIZE: an x86_64 kernel
 /// on 32-bit firmware (mixed mode) has ia32's.
-pub fn efi_arch(machine: &str, platform_size: Option<u64>) -> Option<&'static str> {
+pub(crate) fn efi_arch(machine: &str, platform_size: Option<u64>) -> Option<&'static str> {
     match (Arch::parse(machine), platform_size) {
         (Some(Arch::X86_64), Some(32)) => Some("ia32"),
         (Some(a), _) => Some(a.names().efi),
@@ -207,7 +207,7 @@ pub fn efi_arch(machine: &str, platform_size: Option<u64>) -> Option<&'static st
 
 /// The machine a dump V is of: its `os.machine`, else (a dump made before
 /// A3) `os.architecture`, else x86_64.
-pub fn dump_machine(v: &Value) -> String {
+pub(crate) fn dump_machine(v: &Value) -> String {
     let at = |k: &str| {
         v.at(&["os", k])
             .and_then(Value::as_str)
@@ -222,7 +222,7 @@ pub fn dump_machine(v: &Value) -> String {
 
 /// The names for the machine a dump V is of (x86_64's for one load
 /// refuses, which never gets as far as the names).
-pub fn names_of_dump(v: &Value) -> &'static Names {
+pub(crate) fn names_of_dump(v: &Value) -> &'static Names {
     Arch::parse(&dump_machine(v))
         .unwrap_or(Arch::X86_64)
         .names()
@@ -231,7 +231,7 @@ pub fn names_of_dump(v: &Value) -> &'static Names {
 /// Whether `load` may restore the dump V from the rescue system SYS: the
 /// same architecture, one load knows, and on ARM64 a source that booted by
 /// UEFI.  The message names both machines.
-pub fn check_load(v: &Value, sys: &Sys) -> Result<(), String> {
+pub(crate) fn check_load(v: &Value, sys: &Sys) -> Result<(), String> {
     let (dm, rm) = (dump_machine(v), machine(sys));
     let known = ALL
         .iter()

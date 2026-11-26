@@ -54,7 +54,7 @@ impl Udev {
 
 /// /run/udev/data/bMAJ:MIN: "E:KEY=VALUE" properties and "S:link" symlinks
 /// (relative to /dev).
-pub fn parse_udev(text: &str) -> Udev {
+pub(crate) fn parse_udev(text: &str) -> Udev {
     let mut u = Udev::default();
     for line in text.lines() {
         if let Some(e) = line.strip_prefix("E:") {
@@ -239,7 +239,7 @@ fn read_dev(sys: &Sys, sysfs: &str, name: &str, kind: Kind, parent: Option<&str>
 /// Every block device the kernel has, whole devices then their partitions,
 /// in natural name order.  Empty devices (unused loop devices, empty CD
 /// drives) are left out.
-pub fn scan(sys: &Sys) -> Vec<BlockDev> {
+pub(crate) fn scan(sys: &Sys) -> Vec<BlockDev> {
     let mut out = Vec::new();
     for name in sys.list("/sys/block") {
         let sysfs = format!("/sys/block/{name}");
@@ -268,7 +268,7 @@ pub fn scan(sys: &Sys) -> Vec<BlockDev> {
 
 /// Splits a device-mapper name the way LVM builds it: "vg-lv" with dashes
 /// inside each name doubled.
-pub fn split_lvm_dm_name(dm: &str) -> Option<(String, String)> {
+pub(crate) fn split_lvm_dm_name(dm: &str) -> Option<(String, String)> {
     let mut vg = String::new();
     let b: Vec<char> = dm.chars().collect();
     let mut i = 0;

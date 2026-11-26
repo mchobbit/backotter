@@ -342,7 +342,7 @@ pub fn report(
                     );
                 }
                 if let Some(t) = sys.run("dumpfs", &["-m", &dev]) {
-                    extra.put("newfs", super::freebsd::newfs_of(&t, &dev));
+                    extra.put("newfs", newfs_of(&t, &dev));
                 }
                 if let Some(t) = sys.run("tunefs", &["-p", &dev]) {
                     let mut o = Obj::new();
@@ -598,23 +598,19 @@ mod tests {
         use crate::bytes::MemSource;
         // As mkimg -s bsd lays out FreeBSD's rescue image: "a" 16 sectors in.
         let mut img = bsd_slice(400, 0, &[(0, 16, 384)]);
-        let ufs = crate::probe::ufs::sample::image("BACKOTTER-0123abcd");
+        let ufs = probe::ufs::sample::image("BACKOTTER-0123abcd");
         img[16 * 512..16 * 512 + ufs.len()].copy_from_slice(&ufs);
         let src = MemSource(img);
         assert_eq!(bsdlabel_parts(&src), vec![('a', 8192, 384 * 512)]);
         // The slice's own probe doesn't see that UFS; the partition's does.
-        assert!(
-            crate::probe::probe_all(&src)
-                .iter()
-                .all(|c| c.kind != "ufs")
-        );
+        assert!(probe::probe_all(&src).iter().all(|c| c.kind != "ufs"));
         let a = OffsetSource {
             inner: &src,
             start: 8192,
             len: 384 * 512,
         };
         assert_eq!(
-            crate::probe::probe_all(&a)
+            probe::probe_all(&a)
                 .first()
                 .and_then(|c| c.label.clone())
                 .as_deref(),

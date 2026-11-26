@@ -33,23 +33,23 @@ use crate::report::{BackupSource, MountHint};
 
 /// Where a backup mounts the inactive BEs, and load the restored ones
 /// (under its target).
-pub const BE_DIR: &str = "/run/bko-be";
+pub(crate) const BE_DIR: &str = "/run/bko-be";
 /// TrueNAS's boot pool: its name is fixed (its GRUB script names it).
-pub const TRUENAS_POOL: &str = "boot-pool";
+pub(crate) const TRUENAS_POOL: &str = "boot-pool";
 /// ZFSBootMenu's user property: `off` hides a BE from its menu, `on`
 /// shows a legacy-mountpoint one.
-pub const ZBM_ACTIVE: &str = "org.zfsbootmenu:active";
+pub(crate) const ZBM_ACTIVE: &str = "org.zfsbootmenu:active";
 
 /// Which rule found a BE.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Rule {
+pub(crate) enum Rule {
     ZfsBootMenu,
     TrueNas,
 }
 
 /// A descendant filesystem of a BE.
 #[derive(Debug, Clone, PartialEq)]
-pub struct BeDataset {
+pub(crate) struct BeDataset {
     pub dataset: String,
     /// Its mountpoint property as the dump has it (`/usr`, `legacy`).
     pub mountpoint: String,
@@ -60,14 +60,14 @@ pub struct BeDataset {
 }
 
 impl BeDataset {
-    pub fn legacy(&self) -> bool {
+    pub(crate) fn legacy(&self) -> bool {
         self.mountpoint == "legacy"
     }
 }
 
 /// One boot environment.
 #[derive(Debug, Clone, PartialEq)]
-pub struct BootEnv {
+pub(crate) struct BootEnv {
     pub pool: String,
     /// The dataset's last component (`25.10.6`, `void-2026`).
     pub name: String,
@@ -89,17 +89,17 @@ pub struct BootEnv {
 
 impl BootEnv {
     /// Not the booted one: not mounted, and on TrueNAS not the bootfs.
-    pub fn inactive(&self) -> bool {
+    pub(crate) fn inactive(&self) -> bool {
         let booted = self.mounted || (self.rule == Rule::TrueNas && self.bootfs);
         !booted
     }
 
-    pub fn legacy(&self) -> bool {
+    pub(crate) fn legacy(&self) -> bool {
         self.mountpoint == "legacy"
     }
 
     /// Whether DS is the BE's root or one of its descendants.
-    pub fn holds(&self, ds: &str) -> bool {
+    pub(crate) fn holds(&self, ds: &str) -> bool {
         ds == self.dataset || ds.starts_with(&format!("{}/", self.dataset))
     }
 }
@@ -108,7 +108,7 @@ impl BootEnv {
 /// wants `zfsutil` for a dataset whose mountpoint isn't `legacy` (the
 /// children's `/usr`, ZFSBootMenu's `/`), and refuses it for a legacy one
 /// (TrueNAS's roots).
-pub fn ro_options(legacy: bool) -> String {
+pub(crate) fn ro_options(legacy: bool) -> String {
     if legacy {
         "ro,nodev,nosuid,noexec".to_string()
     } else {
@@ -117,7 +117,7 @@ pub fn ro_options(legacy: bool) -> String {
 }
 
 /// The note each inactive BE's backup sources carry.
-pub fn note(name: &str) -> String {
+pub(crate) fn note(name: &str) -> String {
     format!("ZFS boot environment {name} (not booted): a backup mounts it read-only here")
 }
 
@@ -143,7 +143,7 @@ fn prop(by_name: &[(String, &Value)], ds: &str, k: &str) -> Option<String> {
 /// Every BE of the dump's `storage.zfs.tools` (`tools`), the booted ones
 /// too, by pool then dataset name.  `.inactive()` tells the ones a backup
 /// mounts itself.
-pub fn list(tools: &Value) -> Vec<BootEnv> {
+pub(crate) fn list(tools: &Value) -> Vec<BootEnv> {
     let datasets: Vec<&Value> = tools
         .get("datasets")
         .and_then(Value::as_array)
@@ -264,7 +264,7 @@ pub fn list(tools: &Value) -> Vec<BootEnv> {
 
 /// The inactive BEs of `tools` (list, less the booted ones).
 #[cfg(test)]
-pub fn inactive(tools: &Value) -> Vec<BootEnv> {
+pub(crate) fn inactive(tools: &Value) -> Vec<BootEnv> {
     list(tools).into_iter().filter(BootEnv::inactive).collect()
 }
 
@@ -272,7 +272,7 @@ pub fn inactive(tools: &Value) -> Vec<BootEnv> {
 /// bootfs's dataset, the mounted one's).  Its bootfs gets no backup source
 /// (it isn't inactive), and load would mount it as `/` with the running
 /// system's files: the dump warns and load refuses it.
-pub fn bootfs_not_booted(bes: &[BootEnv]) -> Vec<(String, String)> {
+pub(crate) fn bootfs_not_booted(bes: &[BootEnv]) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for b in bes
         .iter()
@@ -294,7 +294,7 @@ pub fn bootfs_not_booted(bes: &[BootEnv]) -> Vec<(String, String)> {
 /// mount.zfs (`zfsutil`) under its /run; elsewhere (FreeBSD's bectl,
 /// illumos' beadm) the inactive BEs come back empty as before
 /// (docs/design/openindiana.md, decision 3), and nothing is listed.
-pub fn dump_sources(
+pub(crate) fn dump_sources(
     fam: Option<crate::other::Family>,
     tools: &Value,
 ) -> (Vec<BootEnv>, Vec<BackupSource>, Vec<String>) {
@@ -309,7 +309,7 @@ pub fn dump_sources(
 /// storage.backup_sources' entries for BES's inactive BEs that can be read,
 /// parents first, and a warning for each that can't (its key wasn't
 /// loaded), and for a TrueNAS bootfs that isn't the booted BE.
-pub fn backup_sources(bes: &[BootEnv]) -> (Vec<BackupSource>, Vec<String>) {
+pub(crate) fn backup_sources(bes: &[BootEnv]) -> (Vec<BackupSource>, Vec<String>) {
     let mut out = Vec::new();
     let mut warnings = Vec::new();
     for (bootfs, booted) in bootfs_not_booted(bes) {

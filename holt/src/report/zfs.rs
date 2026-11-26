@@ -411,7 +411,7 @@ pub fn parse_zpool_status_text(text: &str, pool: &str) -> Option<Value> {
     Some(out.build())
 }
 
-pub(super) fn zfs_json(sys: &Sys, ctx: &Ctx) -> Value {
+pub(super) fn zfs_json(sys: &Sys, ctx: &Ctx<'_>) -> Value {
     let members: Vec<(String, &Content)> = ctx
         .devs
         .iter()

@@ -21,22 +21,22 @@ use crate::json::{Obj, Value};
 use crate::sys::Sys;
 
 /// transactional-update's own state: snapshot numbers, kept across runs.
-pub const TU_STATE: &str = "/var/lib/misc/transactional-update.state";
+pub(crate) const TU_STATE: &str = "/var/lib/misc/transactional-update.state";
 /// health-checker's state on GRUB: the last good slot, by btrfs subvolume
 /// ID (LAST_WORKING_BTRFS_ID, what its rollback sets as the default) and
 /// by path (LAST_WORKING_SNAPSHOT).
-pub const HC_STATE: &str = "/var/lib/misc/health-check.state";
+pub(crate) const HC_STATE: &str = "/var/lib/misc/health-check.state";
 /// health-checker's own test for the BLS path (systemd-boot with
 /// sdbootutil's per-snapshot entries) over GRUB's.
-pub const BLS_ENTRIES: &str = "/boot/efi/loader/entries";
-pub const TOOLS: [&str; 2] = ["/usr/sbin/tukit", "/usr/sbin/transactional-update"];
+pub(crate) const BLS_ENTRIES: &str = "/boot/efi/loader/entries";
+pub(crate) const TOOLS: [&str; 2] = ["/usr/sbin/tukit", "/usr/sbin/transactional-update"];
 /// fde-tools' and sdbootutil's settings on an encrypted system (Aeon): the
 /// PCRs the TPM2 key is sealed to (FDE_SEAL_PCR_LIST), recorded as
 /// boot.transactional.fde_seal_pcr_list when the file is there.
-pub const FDE_TOOLS: &str = "/etc/sysconfig/fde-tools";
+pub(crate) const FDE_TOOLS: &str = "/etc/sysconfig/fde-tools";
 
 /// fstab's options make the mount read-only: `ro`, or `ro=vfs` / `ro=fs`.
-pub fn ro_in_fstab(options: &str) -> bool {
+pub(crate) fn ro_in_fstab(options: &str) -> bool {
     options
         .split(',')
         .any(|o| o == "ro" || o.starts_with("ro="))
@@ -44,7 +44,7 @@ pub fn ro_in_fstab(options: &str) -> bool {
 
 /// KEY=VALUE lines of a shell-sourced state file, quotes taken off, in
 /// order; anything else (comments, blank lines) left out.
-pub fn parse_state(text: &str) -> Vec<(String, String)> {
+pub(crate) fn parse_state(text: &str) -> Vec<(String, String)> {
     text.lines()
         .filter_map(|l| {
             let l = l.trim();
@@ -80,7 +80,7 @@ fn slot(path: &str, id: Option<u64>) -> Value {
 
 /// boot.transactional for this system, or None when it isn't one.  FSTAB
 /// and BTRFS are the dump's storage.fstab and storage.btrfs.
-pub fn read(sys: &Sys, fstab: &Value, btrfs: &Value) -> Option<Value> {
+pub(crate) fn read(sys: &Sys, fstab: &Value, btrfs: &Value) -> Option<Value> {
     let root = fstab
         .as_array()?
         .iter()
@@ -210,7 +210,7 @@ pub fn read(sys: &Sys, fstab: &Value, btrfs: &Value) -> Option<Value> {
 }
 
 /// BOOT (the dump's boot section) with boot.transactional in it.
-pub fn add_to_boot(boot: Value, t: Option<Value>) -> Value {
+pub(crate) fn add_to_boot(boot: Value, t: Option<Value>) -> Value {
     match (t, boot) {
         (Some(t), Value::Obj(mut o)) => {
             o.push(("transactional".into(), t));

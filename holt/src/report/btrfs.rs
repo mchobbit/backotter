@@ -31,7 +31,7 @@ pub(crate) fn btrfs_allocation(sys: &Sys, uuid: &str) -> Option<Value> {
 /// a mount of dump's own was there (ABRoot's future root,
 /// crate::abroot::Dump::btrfs_profiles), for a filesystem sysfs no longer
 /// shows.
-pub(super) fn btrfs_json(sys: &Sys, ctx: &Ctx, known: &[(String, Value)]) -> Value {
+pub(super) fn btrfs_json(sys: &Sys, ctx: &Ctx<'_>, known: &[(String, Value)]) -> Value {
     let mut fss: BTreeMap<String, Vec<&Dev>> = BTreeMap::new();
     for d in ctx.devs {
         if d.fs_type().as_deref() == Some("btrfs") {

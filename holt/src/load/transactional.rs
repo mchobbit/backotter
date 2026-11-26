@@ -1235,7 +1235,7 @@ mod tests {
         // The slot's immutable and append-only entries lose those flags
         // before rm -rf and the restore, the child's once it's made
         // (load/unflag.rs); the restore gives back the backup's.
-        let exe = crate::load::shell_quote(&std::env::current_exe().unwrap().to_string_lossy());
+        let exe = shell_quote(&std::env::current_exe().unwrap().to_string_lossy());
         assert!(r.contains(&format!("btrfs subvolume snapshot {t}/@/.snapshots/2/snapshot \"$d\" && {exe} clear-restricting-flags \"$d\" && rm -rf")), "{r}");
         let unflag = pos(
             &r,
@@ -1380,7 +1380,7 @@ mod tests {
         );
         let r = text(b.stage(Stage::Restore));
         assert!(r.contains("!/.snapshots/2/snapshot/**\n!/.snapshots/1/snapshot/**\n!/.snapshots/3/snapshot/**\n"), "{r}");
-        let exe = crate::load::shell_quote(&std::env::current_exe().unwrap().to_string_lossy());
+        let exe = shell_quote(&std::env::current_exe().unwrap().to_string_lossy());
         let three = pos(
             &r,
             &format!(

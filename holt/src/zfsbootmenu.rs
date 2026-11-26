@@ -41,12 +41,12 @@ use crate::zfs_be::{BootEnv, Rule};
 use std::io::{Read, Seek, SeekFrom};
 
 /// ZFSBootMenu's per-BE kernel command line (user property).
-pub const COMMANDLINE: &str = "org.zfsbootmenu:commandline";
+pub(crate) const COMMANDLINE: &str = "org.zfsbootmenu:commandline";
 
 /// One section of a PE image: its name, where its bytes are in the file
 /// and how many there are (the smaller of its virtual and raw sizes).
 #[derive(Debug, Clone, PartialEq)]
-pub struct Section {
+pub(crate) struct Section {
     pub name: String,
     pub offset: u64,
     pub size: u64,
@@ -62,7 +62,7 @@ fn le32(b: &[u8], at: usize) -> Option<u32> {
 
 /// The section table of a PE image from its first bytes (`head`, which
 /// must reach the end of the table): None when it isn't one.
-pub fn pe_sections(head: &[u8]) -> Option<Vec<Section>> {
+pub(crate) fn pe_sections(head: &[u8]) -> Option<Vec<Section>> {
     if head.get(0..2)? != b"MZ" {
         return None;
     }
@@ -98,7 +98,7 @@ pub fn pe_sections(head: &[u8]) -> Option<Vec<Section>> {
 
 /// What a unified kernel image's sections say.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Uki {
+pub(crate) struct Uki {
     /// `.osrel`, as KEY=value pairs.
     pub osrel: Vec<(String, String)>,
     /// `.cmdline`, trimmed.
@@ -118,7 +118,7 @@ impl Uki {
     }
 
     /// Whether its .osrel says ZFSBootMenu.
-    pub fn names_zbm(&self) -> bool {
+    pub(crate) fn names_zbm(&self) -> bool {
         ["NAME", "ID", "PRETTY_NAME"].iter().any(|k| {
             self.osrel(k)
                 .is_some_and(|v| v.to_ascii_lowercase().contains("zfsbootmenu"))
@@ -126,14 +126,14 @@ impl Uki {
     }
 
     /// Its .osrel's PRETTY_NAME, or NAME.
-    pub fn osrel_name(&self) -> Option<String> {
+    pub(crate) fn osrel_name(&self) -> Option<String> {
         self.osrel("PRETTY_NAME")
             .or_else(|| self.osrel("NAME"))
             .map(str::to_string)
     }
 
     /// ZFSBootMenu's version, when its .osrel is ZFSBootMenu's own.
-    pub fn version(&self) -> Option<String> {
+    pub(crate) fn version(&self) -> Option<String> {
         self.names_zbm()
             .then(|| {
                 self.osrel("VERSION")
@@ -160,7 +160,7 @@ fn text(b: &[u8]) -> String {
 
 /// A unified kernel image's sections (`.linux` and `.initrd` both there),
 /// read from the file at ABS: None for anything else.
-pub fn read_uki(sys: &Sys, abs: &str) -> Option<Uki> {
+pub(crate) fn read_uki(sys: &Sys, abs: &str) -> Option<Uki> {
     let mut f = std::fs::File::open(sys.p(abs)).ok()?;
     let mut head = read_at(&mut f, 0, 4096)?;
     let pe = le32(&head, 0x3c)? as u64;
@@ -218,7 +218,7 @@ pub fn read_uki(sys: &Sys, abs: &str) -> Option<Uki> {
 
 /// One ZFSBootMenu image on a mounted ESP.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Image {
+pub(crate) struct Image {
     pub esp_device: String,
     pub esp_mount: String,
     /// Its path on the ESP, as esp_inventory lists it (`EFI/ZBM/VMLINUZ.EFI`).
@@ -230,7 +230,7 @@ pub struct Image {
 }
 
 impl Image {
-    pub fn json(&self) -> Value {
+    pub(crate) fn json(&self) -> Value {
         Obj::new()
             .set("esp_device", self.esp_device.as_str())
             .set("esp_mount", self.esp_mount.as_str())
@@ -281,7 +281,11 @@ fn zbm_why(path: &str, uki: &Uki, root_is_be: bool) -> Option<String> {
 /// The ZFSBootMenu images on the mounted ESPs (device, mount point,
 /// esp_inventory's contents), in the ESPs' order and their files'.
 /// ROOT_IS_BE: the running / is a ZFS boot environment.
-pub fn find_images(sys: &Sys, esps: &[(String, String, Value)], root_is_be: bool) -> Vec<Image> {
+pub(crate) fn find_images(
+    sys: &Sys,
+    esps: &[(String, String, Value)],
+    root_is_be: bool,
+) -> Vec<Image> {
     let mut out: Vec<Image> = Vec::new();
     for (dev, mnt, inv) in esps {
         let files: Vec<&Value> = inv
@@ -428,13 +432,13 @@ fn user_prop(tools: &Value, ds: &str, k: &str) -> Option<(String, String)> {
 }
 
 /// Whether the running / is a ZFS boot environment (ZFSBootMenu's rule).
-pub fn root_is_be(bes: &[BootEnv]) -> bool {
+pub(crate) fn root_is_be(bes: &[BootEnv]) -> bool {
     bes.iter().any(|b| b.rule == Rule::ZfsBootMenu && b.mounted)
 }
 
 /// boot.zfsbootmenu: the images, the pools holding BEs (with their
 /// bootfs), and the BEs (crate::zfs_be::list of the dump's `tools`).
-pub fn json(sys: &Sys, images: &[Image], tools: &Value) -> Value {
+pub(crate) fn json(sys: &Sys, images: &[Image], tools: &Value) -> Value {
     let bes: Vec<BootEnv> = crate::zfs_be::list(tools)
         .into_iter()
         .filter(|b| b.rule == Rule::ZfsBootMenu)
@@ -505,12 +509,12 @@ pub fn json(sys: &Sys, images: &[Image], tools: &Value) -> Value {
 
 /// Test helpers: a tiny unified kernel image.
 #[cfg(test)]
-pub mod sample {
+pub(crate) mod sample {
     /// A PE image with systemd-stub's sections: `.sdmagic`, `.osrel`
     /// (OSREL), `.cmdline` (CMDLINE), `.initrd` and a `.linux` whose
     /// bzImage header gives KERNEL as its version.  `uki` false leaves out
     /// `.linux` and `.initrd` (a plain EFI program).
-    pub fn uki(osrel: &str, cmdline: &str, kernel: &str, uki: bool) -> Vec<u8> {
+    pub(crate) fn uki(osrel: &str, cmdline: &str, kernel: &str, uki: bool) -> Vec<u8> {
         let mut linux = vec![0u8; 0x400];
         linux[0x202..0x206].copy_from_slice(b"HdrS");
         linux[0x20e..0x210].copy_from_slice(&0x100u16.to_le_bytes());
@@ -557,10 +561,10 @@ pub mod sample {
     /// The v3.1.0 release EFI's .osrel and .cmdline (Void's os-release, as
     /// the release is built in a Void container), with zbm-kcl's serial
     /// console added as the void-zbm guest has it.
-    pub const RELEASE_OSREL: &str = "NAME=\"Void\"\nID=\"void\"\nPRETTY_NAME=\"Void Linux\"\nHOME_URL=\"https://voidlinux.org/\"\nDOCUMENTATION_URL=\"https://docs.voidlinux.org/\"\nLOGO=\"void-logo\"\nANSI_COLOR=\"0;38;2;71;128;97\"\n\nDISTRIB_ID=\"void\"\n";
-    pub const RELEASE_CMDLINE: &str =
+    pub(crate) const RELEASE_OSREL: &str = "NAME=\"Void\"\nID=\"void\"\nPRETTY_NAME=\"Void Linux\"\nHOME_URL=\"https://voidlinux.org/\"\nDOCUMENTATION_URL=\"https://docs.voidlinux.org/\"\nLOGO=\"void-logo\"\nANSI_COLOR=\"0;38;2;71;128;97\"\n\nDISTRIB_ID=\"void\"\n";
+    pub(crate) const RELEASE_CMDLINE: &str =
         "quiet loglevel=0 nomodeset console=ttyS0,115200n8 zbm.timeout=5";
-    pub const RELEASE_KERNEL: &str = "6.12.63_1";
+    pub(crate) const RELEASE_KERNEL: &str = "6.12.63_1";
 }
 
 #[cfg(test)]

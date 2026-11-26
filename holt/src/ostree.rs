@@ -15,13 +15,13 @@ use crate::sys::Sys;
 
 /// The physical root of a running ostree system when fstab and mountinfo
 /// don't say otherwise.
-pub const SYSROOT: &str = "/sysroot";
+pub(crate) const SYSROOT: &str = "/sysroot";
 
 /// Whether this is a running ostree system, by ostree's own markers (not
 /// by os-release: Silverblue and Kinoite say `fedora`): the file
 /// ostree-prepare-root leaves, `/` as a composefs overlay, or an `ostree=`
 /// on the kernel command line.
-pub fn detect(sys: &Sys, mounts: &[Mount]) -> bool {
+pub(crate) fn detect(sys: &Sys, mounts: &[Mount]) -> bool {
     sys.exists("/run/ostree-booted")
         || mounts
             .iter()
@@ -32,7 +32,7 @@ pub fn detect(sys: &Sys, mounts: &[Mount]) -> bool {
 }
 
 /// The `ostree=` word of a kernel command line.
-pub fn karg(cmdline: &str) -> Option<String> {
+pub(crate) fn karg(cmdline: &str) -> Option<String> {
     crate::boot::shell_words(cmdline)
         .into_iter()
         .find_map(|w| w.strip_prefix("ostree=").map(str::to_string))
@@ -40,7 +40,7 @@ pub fn karg(cmdline: &str) -> Option<String> {
 
 /// A GLib key file (ostree's repository config, prepare-root.conf, an
 /// .origin): (section, key, value), comments and blank lines left out.
-pub fn parse_ini(text: &str) -> Vec<(String, String, String)> {
+pub(crate) fn parse_ini(text: &str) -> Vec<(String, String, String)> {
     let mut out = Vec::new();
     let mut section = String::new();
     for line in text.lines() {
@@ -70,7 +70,7 @@ fn ini_get<'a>(ini: &'a [(String, String, String)], section: &str, key: &str) ->
 /// an absolute link target taken from BASE's top as well: where an
 /// `ostree=` path or a `boot.N` link leads in the physical root.  None when
 /// it leads nowhere that exists, or loops.
-pub fn resolve(sys: &Sys, base: &str, path: &str) -> Option<String> {
+pub(crate) fn resolve(sys: &Sys, base: &str, path: &str) -> Option<String> {
     let base = base.trim_end_matches('/');
     let mut todo: std::collections::VecDeque<String> = path
         .split('/')
@@ -118,7 +118,7 @@ pub fn resolve(sys: &Sys, base: &str, path: &str) -> Option<String> {
 }
 
 /// A deployment directory's name, CSUM.SERIAL.
-pub fn parse_deployment(name: &str) -> Option<(String, u32)> {
+pub(crate) fn parse_deployment(name: &str) -> Option<(String, u32)> {
     let (c, n) = name.rsplit_once('.')?;
     (c.len() >= 32 && c.bytes().all(|b| b.is_ascii_hexdigit())).then_some(())?;
     Some((c.to_string(), n.parse().ok()?))
@@ -147,7 +147,7 @@ fn bls_kv(text: &str) -> Vec<(String, String)> {
 
 /// boot.ostree, for the running system whose physical root is mounted at
 /// PHYS (/sysroot).
-pub fn json(sys: &Sys, phys: &str) -> Value {
+pub(crate) fn json(sys: &Sys, phys: &str) -> Value {
     let phys = phys.trim_end_matches('/');
     let cmdline_karg = sys.read("/proc/cmdline").and_then(|c| karg(&c));
     let booted_path = cmdline_karg.as_deref().and_then(|k| resolve(sys, phys, k));

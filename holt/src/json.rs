@@ -672,7 +672,7 @@ impl Parser<'_> {
         if self.s.get(self.i) == Some(&b'-') {
             self.i += 1;
         }
-        let digits = |p: &mut Parser| {
+        let digits = |p: &mut Parser<'_>| {
             let s = p.i;
             while let Some(b'0'..=b'9') = p.s.get(p.i) {
                 p.i += 1;

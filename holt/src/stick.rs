@@ -775,7 +775,7 @@ fn read(sys: &Sys, fam: Option<Family>, d: &mut Doc) -> Result<(), NotOk> {
 }
 
 /// Whether VOL is the partition the image made: its volume serial and label.
-fn check_identity(vol: &Volume, m: &Marker) -> Result<(), String> {
+fn check_identity(vol: &Volume<'_>, m: &Marker) -> Result<(), String> {
     let serial = vol.serial_text();
     if !serial
         .as_deref()
@@ -807,7 +807,7 @@ fn check_identity(vol: &Volume, m: &Marker) -> Result<(), String> {
 }
 
 /// stick.json, the note on settings.toml, and every machine.
-fn read_config(vol: &Volume, m: &Marker, d: &mut Doc) -> Result<(), NotOk> {
+fn read_config(vol: &Volume<'_>, m: &Marker, d: &mut Doc) -> Result<(), NotOk> {
     let damaged = |e: String| not_ok("damaged", e);
     let dir = vol
         .find(DIR)
@@ -898,7 +898,7 @@ fn read_config(vol: &Volume, m: &Marker, d: &mut Doc) -> Result<(), NotOk> {
 
 /// One machine's entry, from its directory E, and the system.json bytes it
 /// was judged by, when they could be read.
-fn machine(vol: &Volume, e: &Entry, m: &Marker) -> (Value, Option<Vec<u8>>) {
+fn machine(vol: &Volume<'_>, e: &Entry, m: &Marker) -> (Value, Option<Vec<u8>>) {
     let id = e.name.as_str();
     let path = format!("{MACHINES}/{id}/system.json");
     let o = Obj::new().set("install_id", id).set("path", path.as_str());
@@ -928,7 +928,7 @@ fn machine(vol: &Volume, e: &Entry, m: &Marker) -> (Value, Option<Vec<u8>>) {
 /// The row of machine ID, whose system.json at PATH is BODY and whose
 /// .sha256 is SUM.
 fn judge(
-    vol: &Volume,
+    vol: &Volume<'_>,
     o: Obj,
     id: &str,
     path: &str,

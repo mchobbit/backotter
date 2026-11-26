@@ -61,7 +61,7 @@ struct Wedge<'a> {
 fn wedge_names(d: &Disk) -> Vec<Wedge<'_>> {
     let mut parts: Vec<&crate::load::layout::Part> = d.parts.iter().collect();
     parts.sort_by_key(|p| p.number);
-    let mut out: Vec<Wedge> = Vec::new();
+    let mut out: Vec<Wedge<'_>> = Vec::new();
     for part in parts {
         let guid = part
             .uuid
@@ -189,12 +189,7 @@ pub fn wedge_clashes(
 
 /// The node of the disklabel partition `src` of source disk `d` on target
 /// disk `t` (NetBSD, OpenBSD: /dev/ld1a, /dev/sd1a).
-pub fn label_node(
-    layout: &crate::load::layout::Layout,
-    d: &Disk,
-    t: &str,
-    src: &str,
-) -> Option<String> {
+pub fn label_node(layout: &Layout, d: &Disk, t: &str, src: &str) -> Option<String> {
     let v = layout.device(&d.name)?;
     let p = v
         .get("label_partitions")?

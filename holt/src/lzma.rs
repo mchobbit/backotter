@@ -134,7 +134,7 @@ impl Len {
         }
     }
 
-    fn decode(&mut self, rc: &mut Range, pos_state: usize) -> Result<usize, String> {
+    fn decode(&mut self, rc: &mut Range<'_>, pos_state: usize) -> Result<usize, String> {
         if rc.bit(&mut self.choice)? == 0 {
             return Ok(rc.tree(&mut self.low[pos_state], 3)? as usize);
         }

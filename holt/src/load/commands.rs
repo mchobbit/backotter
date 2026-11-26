@@ -403,7 +403,7 @@ pub fn part_path(disk: &str, n: u32) -> String {
 
 /// The node of partition `n` of target disk `t`, for source disk `d`: the
 /// Linux kernel's name, or on another system its own (crate::other).
-pub fn part_node(layout: &Layout, d: &crate::load::layout::Disk, t: &str, n: u32) -> String {
+pub fn part_node(layout: &Layout, d: &Disk, t: &str, n: u32) -> String {
     match crate::other::Family::of_layout(&layout.v) {
         Some(fam) => crate::other::load::part_node(fam, d, t, n),
         None => part_path(t, n),
@@ -695,7 +695,7 @@ impl Builder<'_> {
     /// made it on (under), else its slaves' (md members, device-mapper).
     /// Exact names, never a prefix.
     pub(crate) fn disks_under(&self, src: &str) -> Vec<String> {
-        fn walk(b: &Builder, src: &str, depth: usize, out: &mut Vec<String>) {
+        fn walk(b: &Builder<'_>, src: &str, depth: usize, out: &mut Vec<String>) {
             let mut add = |d: &str| {
                 if !out.iter().any(|x| x == d) {
                     out.push(d.to_string());
@@ -1274,7 +1274,7 @@ pub fn md_layout_name(level: &str, n: u64) -> Option<String> {
 
 /// The devices a pool's vdev tree names, and its `zpool create` vdev words.
 fn vdev_words(
-    names: &Names,
+    names: &Names<'_>,
     tree: &Value,
     class: &str,
     words: &mut Vec<String>,
@@ -1315,7 +1315,7 @@ fn vdev_words(
 }
 
 fn leaf(
-    names: &Names,
+    names: &Names<'_>,
     v: &Value,
     name: &str,
     words: &mut Vec<String>,
@@ -2999,7 +2999,7 @@ impl Builder<'_> {
             Some(n) => {
                 let create = a
                     .iter()
-                    .map(|w| crate::load::shell_quote(w))
+                    .map(|w| shell_quote(w))
                     .collect::<Vec<_>>()
                     .join(" ");
                 let p = "/sys/module/zfs/parameters/zfs_vdev_min_auto_ashift";
@@ -7776,8 +7776,8 @@ impl Builder<'_> {
             return Vec::new();
         }
         let kind = match disk.table.as_ref().map(|t| &t.kind) {
-            Some(super::layout::TableKind::Gpt) => "gpt",
-            Some(super::layout::TableKind::Mbr) => "msdos",
+            Some(TableKind::Gpt) => "gpt",
+            Some(TableKind::Mbr) => "msdos",
             None => return Vec::new(),
         };
         let esp = format!(
@@ -7839,8 +7839,8 @@ impl Builder<'_> {
             .iter()
             .find_map(|d| d.parts.iter().find(|p| p.name == dev).map(|p| (d, p)))?;
         let kind = match disk.table.as_ref().map(|t| &t.kind) {
-            Some(super::layout::TableKind::Gpt) => "gpt",
-            Some(super::layout::TableKind::Mbr) => "msdos",
+            Some(TableKind::Gpt) => "gpt",
+            Some(TableKind::Mbr) => "msdos",
             None => return None,
         };
         let at = format!("{kind}{}", part.number);
@@ -14720,10 +14720,7 @@ mod tests {
         );
 
         let hostile = "/mnt/new d'isk\"$HOME`id`\nz";
-        let l = Layout::from_json(
-            crate::json::parse(&crate::load::layout::sample::bios_mbr()).unwrap(),
-        )
-        .unwrap();
+        let l = Layout::from_json(crate::json::parse(&sample::bios_mbr()).unwrap()).unwrap();
         let Ok(crate::load::Parsed::Run(o)) =
             crate::load::parse_args(&["l.json".into(), "--target".into(), hostile.into()])
         else {
@@ -14732,7 +14729,7 @@ mod tests {
         let b = build(
             &l,
             &o,
-            &crate::load::target::Mapping {
+            &Mapping {
                 pairs: vec![("vda".into(), "vdb".into())],
                 ..Default::default()
             },

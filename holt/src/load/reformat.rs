@@ -774,7 +774,7 @@ struct Folds {
 /// directory of this one, so each must be under it.
 fn fold_mounts(
     v: &Value,
-    n: &Named,
+    n: &Named<'_>,
     mount: &str,
     to: &str,
     what: &str,
@@ -1536,12 +1536,7 @@ mod tests {
                 n.str_field("from"),
                 n.str_field("to")
             ),
-            (
-                crate::load::codes::NoteCode::Reformat,
-                Some("/"),
-                Some("btrfs"),
-                Some("xfs")
-            )
+            (NoteCode::Reformat, Some("/"), Some("btrfs"), Some("xfs"))
         );
         let edited = apply(
             v.clone(),

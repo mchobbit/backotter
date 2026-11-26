@@ -473,7 +473,7 @@ fn versions(sys: &Sys) -> (String, Vec<String>) {
     let mut s = format!("bko-holt      {}\n", env!("CARGO_PKG_VERSION"));
     let mut notes = Vec::new();
     for (prog, arg) in [("restic-bko", "version"), ("rustic-bko", "--version")] {
-        let v = match crate::load::plan::find(sys, prog) {
+        let v = match load::plan::find(sys, prog) {
             Some(exe) => sys
                 .run_file(&exe, &[arg])
                 .map(|o| format!("{} ({exe})", o.trim()))
@@ -1350,7 +1350,7 @@ mod tests {
 
     #[test]
     fn the_sample_layouts_plan_the_same_redacted() {
-        check_plan(&crate::load::layout::sample::bios_mbr()).unwrap();
+        check_plan(&load::layout::sample::bios_mbr()).unwrap();
     }
 
     /// A rescue system that ran `load` on a layout and failed: the bundle
@@ -1440,7 +1440,7 @@ mod tests {
             .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
         t.disk("vdb", "253:16", &[], 512)
             .file("/sys/block/vdb/size", "33554432\n");
-        let layout = crate::load::layout::sample::bios_mbr().replace("\"deb13\"", "\"alice-pc\"");
+        let layout = load::layout::sample::bios_mbr().replace("\"deb13\"", "\"alice-pc\"");
         t.file("/srv/alice/layout.json", &layout);
         t.file("/.disk/backotter.json", r#"{"format": "backotter-image", "schema": 1, "image_id": "6f1c2c1e-5b0e-4a51-9d8e-2a3c8f4e7b10", "built": "2026-10-29T17:12:39Z", "platform": "linux", "base": {"os": "ubuntu", "release": "26.04.1"}, "kernel": "7.0.0-30-generic", "zfs": {"version": "2.4.0", "features": ["a", "b"]}}"#);
         let last = Obj::new()
@@ -1528,10 +1528,7 @@ mod tests {
             .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
         t.disk("vdb", "253:16", &[], 512)
             .file("/sys/block/vdb/size", "33554432\n");
-        t.file(
-            "/home/bob/layout.json",
-            crate::load::layout::sample::bios_mbr(),
-        );
+        t.file("/home/bob/layout.json", load::layout::sample::bios_mbr());
         let last = Obj::new()
             .set("cwd", "/home/bob")
             .set(
@@ -1620,10 +1617,7 @@ mod tests {
             .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
         t.disk("vdb", "253:16", &[], 512)
             .file("/sys/block/vdb/size", "33554432\n");
-        t.file(
-            "/srv/alice/layout.json",
-            crate::load::layout::sample::bios_mbr(),
-        );
+        t.file("/srv/alice/layout.json", load::layout::sample::bios_mbr());
         // A --json writing run, recorded as load records one.
         let last = Obj::new()
             .set("cwd", "/srv/alice")
@@ -1994,7 +1988,7 @@ mod tests {
             .file("/sys/block/vdb/size", "33554432\n");
         t.file("/sys/block/vdb/device/model", "QEMU HARDDISK\n")
             .file("/sys/block/vdb/device/serial", "ALICE-SER-77\n");
-        let layout = crate::load::layout::sample::bios_mbr()
+        let layout = load::layout::sample::bios_mbr()
             .replace("\"deb13\"", "\"alice-pc\"")
             .replacen(
                 "\"model\": null, \"serial\": null",
@@ -2052,7 +2046,7 @@ mod tests {
             .file("/sys/block/vdb/size", "33554432\n");
         t.file(
             "/usr/home/carol/layout.json",
-            crate::load::layout::sample::bios_mbr(),
+            load::layout::sample::bios_mbr(),
         );
         let last = Obj::new()
             .set("cwd", "/usr/home/carol")

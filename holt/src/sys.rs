@@ -1263,7 +1263,7 @@ mod tests {
     /// compares files of any size.
     #[test]
     fn read_cap_warns_and_same_bytes() {
-        let t = crate::testutil::Tree::new("sys-read-cap");
+        let t = Tree::new("sys-read-cap");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         let big = t.root().join("big");
         std::fs::File::create(&big)

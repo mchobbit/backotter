@@ -22,24 +22,24 @@ use crate::sys::{RUN_DIR, RoMountWords, Sys, safe_name};
 
 /// abroot.json: the image's, then /etc's, merged (viper's MergeInConfig:
 /// a key in the later file wins).
-pub const CONFIGS: [&str; 2] = ["/usr/share/abroot/abroot.json", "/etc/abroot/abroot.json"];
+pub(crate) const CONFIGS: [&str; 2] = ["/usr/share/abroot/abroot.json", "/etc/abroot/abroot.json"];
 /// The master GRUB config on `vos-boot`, installed once and swapped with
 /// grub.cfg.future by each upgrade.
-pub const GRUB_CFG: &str = "/boot/grub/grub.cfg";
-pub const KARGS: &str = "/etc/abroot/kargs";
+pub(crate) const GRUB_CFG: &str = "/boot/grub/grub.cfg";
+pub(crate) const KARGS: &str = "/etc/abroot/kargs";
 /// There while `abroot upgrade` (or `abroot pkg`) runs.
-pub const LOCK: &str = "/run/abroot/operation.lock";
+pub(crate) const LOCK: &str = "/run/abroot/operation.lock";
 /// Where ABRoot mounts `init` and the future root itself, and where the
 /// backup tree has them.
-pub const INIT_AT: &str = "/boot/init";
-pub const FUTURE_AT: &str = "/part-future";
+pub(crate) const INIT_AT: &str = "/boot/init";
+pub(crate) const FUTURE_AT: &str = "/part-future";
 /// The options of dump's read-only mounts of a filesystem of type TY, and
 /// of those backup_sources asks a backup to make: `ro` alone still replays
 /// a dirty ext4 journal or a btrfs log tree (a write to the source disk
 /// after an unclean shutdown), so ext3/ext4 get `noload` and btrfs
 /// `rescue=nologreplay` (the bare `nologreplay` is its deprecated alias;
 /// both need `ro`; Linux 5.9 and later).  Other types: plain ro.
-pub fn ro_options(ty: &str) -> String {
+pub(crate) fn ro_options(ty: &str) -> String {
     let extra = match ty {
         "ext4" | "ext3" => "noload,",
         "btrfs" => "rescue=nologreplay,",
@@ -49,7 +49,7 @@ pub fn ro_options(ty: &str) -> String {
 }
 
 /// The merged abroot.json, keys as written, the later file's last.
-pub struct Config {
+pub(crate) struct Config {
     keys: Vec<(String, Value)>,
     pub files: Vec<&'static str>,
 }
@@ -58,7 +58,7 @@ impl Config {
     /// A key's value: viper matches keys whatever their case, and the last
     /// one read wins (the installer's /etc copy repeats the image's keys,
     /// `thinProvisioning: false` first and `true` after).
-    pub fn get(&self, key: &str) -> Option<&Value> {
+    pub(crate) fn get(&self, key: &str) -> Option<&Value> {
         self.keys
             .iter()
             .rev()
@@ -67,7 +67,7 @@ impl Config {
     }
 
     /// A string key, None when missing or empty.
-    pub fn str(&self, key: &str) -> Option<String> {
+    pub(crate) fn str(&self, key: &str) -> Option<String> {
         self.get(key)
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
@@ -75,7 +75,7 @@ impl Config {
     }
 
     /// thinProvisioning, as viper's GetBool reads it.
-    pub fn thin(&self) -> bool {
+    pub(crate) fn thin(&self) -> bool {
         match self.get("thinProvisioning") {
             Some(Value::Bool(b)) => *b,
             Some(Value::Str(s)) => matches!(s.to_ascii_lowercase().as_str(), "true" | "1" | "t"),
@@ -86,7 +86,7 @@ impl Config {
 
 /// abroot.json on the running root, when there is one: the marker of an
 /// ABRoot system (os-release says `vanilla`, but ABRoot is what matters).
-pub fn config(sys: &Sys) -> Option<Config> {
+pub(crate) fn config(sys: &Sys) -> Option<Config> {
     let mut keys = Vec::new();
     let mut files = Vec::new();
     for f in CONFIGS {
@@ -105,7 +105,7 @@ pub fn config(sys: &Sys) -> Option<Config> {
 /// A filesystem the dump found, with its label: ABRoot's way of finding
 /// its roots, `init` and /var.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Fs {
+pub(crate) struct Fs {
     /// The kernel name (dm-4).
     pub dev: String,
     pub label: String,
@@ -118,7 +118,7 @@ pub struct Fs {
 
 impl Fs {
     /// The node to mount it by.
-    pub fn node(&self) -> String {
+    pub(crate) fn node(&self) -> String {
         match &self.dm_name {
             Some(n) => format!("/dev/mapper/{n}"),
             None => format!("/dev/{}", self.dev),
@@ -138,7 +138,7 @@ impl Fs {
 
 /// One menuentry of the master grub.cfg.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct Entry {
+pub(crate) struct Entry {
     pub title: String,
     pub class: Option<String>,
     /// Its `set root=` (`(lvm/vos--root-init)`).
@@ -150,7 +150,7 @@ pub struct Entry {
 impl Entry {
     /// The root label the entry leads to: the first directory of its
     /// configfile, in `init`.
-    pub fn label(&self) -> Option<String> {
+    pub(crate) fn label(&self) -> Option<String> {
         let p = self.configfile.as_deref()?;
         let p = strip_device(p).trim_start_matches('/');
         let (dir, rest) = p.split_once('/')?;
@@ -159,7 +159,7 @@ impl Entry {
 }
 
 /// A GRUB path without its `(device)` prefix.
-pub fn strip_device(p: &str) -> &str {
+pub(crate) fn strip_device(p: &str) -> &str {
     match p.strip_prefix('(').and_then(|r| r.split_once(')')) {
         Some((_, rest)) => rest,
         None => p,
@@ -171,7 +171,7 @@ fn unquote(s: &str) -> String {
 }
 
 /// The master grub.cfg: its `set default=` (the first) and its menuentries.
-pub fn parse_master(text: &str) -> (Option<String>, Vec<Entry>) {
+pub(crate) fn parse_master(text: &str) -> (Option<String>, Vec<Entry>) {
     let mut default = None;
     let mut entries: Vec<Entry> = Vec::new();
     let mut inside = false;
@@ -239,7 +239,7 @@ pub fn parse_master(text: &str) -> (Option<String>, Vec<Entry>) {
 /// whose 00_header can `search --fs-uuid` for its font first; the
 /// installer's names `(lvm/vos--root-init)` and has no search).
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct RootCfg {
+pub(crate) struct RootCfg {
     pub linux: Option<String>,
     pub kernel: Option<String>,
     pub initrd: Option<String>,
@@ -247,7 +247,7 @@ pub struct RootCfg {
     pub search_uuid: Option<String>,
 }
 
-pub fn parse_abroot_cfg(text: &str, label: &str) -> RootCfg {
+pub(crate) fn parse_abroot_cfg(text: &str, label: &str) -> RootCfg {
     let mut c = RootCfg::default();
     let mut search: Option<String> = None;
     let prefix = format!("/{label}/");
@@ -290,7 +290,7 @@ pub fn parse_abroot_cfg(text: &str, label: &str) -> RootCfg {
 }
 
 /// boot.abroot and what goes with it in the rest of the dump.
-pub struct Dump {
+pub(crate) struct Dump {
     pub json: Value,
     /// The entries storage.backup_sources gets: `/boot/init` and
     /// `/part-future`, unless something already mounts them there.
@@ -408,7 +408,7 @@ fn root_state(sys: &Sys, base: &str) -> (Value, bool) {
 
 /// boot.abroot for a running ABRoot system.  FSS are the filesystems the
 /// dump found, with their labels and mounts.
-pub fn read(sys: &Sys, cfg: &Config, fss: &[Fs]) -> Dump {
+pub(crate) fn read(sys: &Sys, cfg: &Config, fss: &[Fs]) -> Dump {
     let by_label =
         |l: &Option<String>| l.as_deref().and_then(|l| fss.iter().find(|f| f.label == l));
     let (la, lb) = (cfg.str("partLabelA"), cfg.str("partLabelB"));
@@ -622,7 +622,7 @@ pub fn read(sys: &Sys, cfg: &Config, fss: &[Fs]) -> Dump {
 
 /// BOOT (the dump's boot section) with boot.abroot in it and the init
 /// LV's kernels in boot.kernels.installed.
-pub fn add_to_boot(mut boot: Value, d: Option<&Dump>) -> Value {
+pub(crate) fn add_to_boot(mut boot: Value, d: Option<&Dump>) -> Value {
     let Some(d) = d else { return boot };
     if let Some(a) = boot
         .at_mut(&["kernels", "installed"])

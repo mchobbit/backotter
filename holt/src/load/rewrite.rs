@@ -395,7 +395,7 @@ pub fn grub_stub(text: &str, uuid: &str, map: impl Fn(&str, bool) -> Option<Stri
 }
 
 /// The ESPs' GRUB stubs: each EFI/*/grub.cfg on a boot directory.
-fn grub_stubs(run: &Run, layout: &Value) -> Vec<PathBuf> {
+fn grub_stubs(run: &Run<'_>, layout: &Value) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = boot_dirs(layout)
         .iter()
         .flat_map(|d| read_dir(&run.at(&format!("{d}/EFI"))))
@@ -1415,7 +1415,7 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
 LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
 /dev/sdb1 /mnt/my\\040data\\040too ext4 defaults 0 2\n"
         );
-        let e = crate::mounts::parse_fstab(&out);
+        let e = mounts::parse_fstab(&out);
         assert_eq!(
             e.iter()
                 .map(|e| (e.spec.as_str(), e.file.as_str()))

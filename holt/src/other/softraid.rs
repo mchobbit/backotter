@@ -1004,7 +1004,7 @@ mod tests {
         );
         let w = v.get("warnings").and_then(Value::as_array).unwrap();
         assert!(w.contains(&Value::from("the firmware mode (UEFI or BIOS) can't be told: dmesg isn't installed; the dump says unknown, and bko-holt load refuses it")), "{w:?}");
-        let l = crate::load::layout::Layout::from_json(v).unwrap();
+        let l = Layout::from_json(v).unwrap();
         let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()])
         else {
             unreachable!()

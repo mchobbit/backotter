@@ -20,7 +20,7 @@ use crate::sys::Sys;
 
 /// One store system, as load names and boots it.
 #[derive(Debug)]
-pub struct StoreSystem {
+pub(crate) struct StoreSystem {
     /// os-release's ID.
     pub id: &'static str,
     /// How the plan's notes and problems name it.
@@ -59,7 +59,7 @@ pub struct StoreSystem {
     pub efi_prefix_by_number: bool,
 }
 
-pub const SYSTEMS: &[StoreSystem] = &[
+pub(crate) const SYSTEMS: &[StoreSystem] = &[
     StoreSystem {
         id: "nixos",
         name: "NixOS",
@@ -102,7 +102,7 @@ pub const SYSTEMS: &[StoreSystem] = &[
 const GUIX_INITRAMFS: &str = "Guix System: each generation's kernel and initrd are store items, restored with /, where grub.cfg names them; nothing to rebuild";
 
 /// The store system os-release's ID names, if it is one.
-pub fn system(id: Option<&str>) -> Option<&'static StoreSystem> {
+pub(crate) fn system(id: Option<&str>) -> Option<&'static StoreSystem> {
     SYSTEMS.iter().find(|s| Some(s.id) == id)
 }
 
@@ -114,7 +114,7 @@ impl StoreSystem {
     /// NixOS's, kept as its golden plan has it (it sorts by what follows
     /// the first '-' of the whole path, which is in the target's own name:
     /// harmless with one GRUB).
-    pub fn bios_grub_pick(&self, t: &str) -> String {
+    pub(crate) fn bios_grub_pick(&self, t: &str) -> String {
         let (st, name) = (self.store, self.store_name);
         let qt = crate::load::shell_quote(t);
         if qt == t {
@@ -134,7 +134,7 @@ impl StoreSystem {
 /// A datum as Guile writes it, as far as Guix's manifest and boot
 /// parameters use them.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Sx {
+pub(crate) enum Sx {
     Str(String),
     Sym(String),
     Num(String),
@@ -145,13 +145,13 @@ pub enum Sx {
 }
 
 impl Sx {
-    pub fn list(&self) -> Option<&[Sx]> {
+    pub(crate) fn list(&self) -> Option<&[Sx]> {
         match self {
             Sx::List(l) => Some(l),
             _ => None,
         }
     }
-    pub fn sym(&self) -> Option<&str> {
+    pub(crate) fn sym(&self) -> Option<&str> {
         match self {
             Sx::Sym(s) => Some(s),
             _ => None,
@@ -159,7 +159,7 @@ impl Sx {
     }
     /// In a list of `(KEY VALUE...)` fields, the first field named `key`'s
     /// values.
-    pub fn field(&self, key: &str) -> Option<&[Sx]> {
+    pub(crate) fn field(&self, key: &str) -> Option<&[Sx]> {
         self.list()?.iter().find_map(|f| match f.list() {
             Some([Sx::Sym(k), rest @ ..]) if k == key => Some(rest),
             _ => None,
@@ -167,7 +167,7 @@ impl Sx {
     }
     /// The text a string, symbol or number stands for, or a
     /// `(string-append ...)` of such (older boot parameters).
-    pub fn text(&self) -> Option<String> {
+    pub(crate) fn text(&self) -> Option<String> {
         match self {
             Sx::Str(s) | Sx::Sym(s) | Sx::Num(s) => Some(s.clone()),
             Sx::List(l) if l.first().and_then(Sx::sym) == Some("string-append") => {
@@ -183,7 +183,7 @@ impl Sx {
 /// skipped; `'X` reads as (quote X); `#(...)` as a list.  A datum nested
 /// deeper than 256 (`MAX_DEPTH`) doesn't read either, so a crafted or damaged
 /// file can't overflow the stack.
-pub fn parse_sexps(text: &str) -> Vec<Sx> {
+pub(crate) fn parse_sexps(text: &str) -> Vec<Sx> {
     let mut r = Reader {
         b: text.as_bytes(),
         i: 0,
@@ -405,7 +405,7 @@ impl Reader<'_> {
 /// entries are positional, and whatever follows the path (propagated
 /// inputs, search paths, properties) is left alone.  Unknown versions are
 /// read the same way.
-pub fn parse_manifest(text: &str) -> Vec<(String, String, String, String)> {
+pub(crate) fn parse_manifest(text: &str) -> Vec<(String, String, String, String)> {
     let mut out = Vec::new();
     let Some(m) = parse_sexps(text)
         .into_iter()
@@ -426,12 +426,12 @@ pub fn parse_manifest(text: &str) -> Vec<(String, String, String, String)> {
 
 /// Whether the dump's root is a Guix System: a store, Guix's state
 /// directory, and a system profile.
-pub fn is_guix(sys: &Sys) -> bool {
+pub(crate) fn is_guix(sys: &Sys) -> bool {
     sys.is_dir("/gnu/store") && sys.is_dir("/var/guix") && sys.exists(GUIX_SYSTEM_PROFILE)
 }
 
 /// The system profile: a link to system-N-link, itself a link into the store.
-pub const GUIX_SYSTEM_PROFILE: &str = "/var/guix/profiles/system";
+pub(crate) const GUIX_SYSTEM_PROFILE: &str = "/var/guix/profiles/system";
 
 /// `abs` with every link followed under the dump's root (a link into the
 /// store is absolute, and the dump may run on another system's root).
@@ -444,7 +444,7 @@ fn resolve(sys: &Sys, abs: &str) -> Option<String> {
 /// root, never through /run).  Each with arch "": the profile has no
 /// architecture; an output other than "out" is NAME:OUTPUT, as `guix
 /// package -I` prints it.
-pub fn guix_packages(sys: &Sys) -> Vec<crate::boot::Package> {
+pub(crate) fn guix_packages(sys: &Sys) -> Vec<crate::boot::Package> {
     let Some(m) =
         resolve(sys, &format!("{GUIX_SYSTEM_PROFILE}/profile/manifest")).and_then(|p| sys.read(&p))
     else {
@@ -467,7 +467,7 @@ pub fn guix_packages(sys: &Sys) -> Vec<crate::boot::Package> {
 /// --root=, a UUID or label), `(uuid TYPE #vu8(...))`, `(file-system-label
 /// "L")`, or #f.  (kind, value): kind "uuid", "label", "device" (a path)
 /// or "name" (another string: --root='s UUID or label).
-pub fn device_of(d: &Sx) -> Option<(&'static str, String)> {
+pub(crate) fn device_of(d: &Sx) -> Option<(&'static str, String)> {
     match d {
         Sx::Str(s) => Some((
             if s.starts_with('/') { "device" } else { "name" },
@@ -543,7 +543,7 @@ fn device_json(d: Option<&Sx>) -> Value {
 /// --root=, --system= and --load= here.  Fields it lacks are
 /// null; the label is `title` here (redaction takes `label` keys for file
 /// system labels).
-pub fn parameters_json(text: &str) -> Option<Obj> {
+pub(crate) fn parameters_json(text: &str) -> Option<Obj> {
     let p = parse_sexps(text)
         .into_iter()
         .find(|d| d.list().and_then(|l| l.first()).and_then(Sx::sym) == Some("boot-parameters"))?;
@@ -589,7 +589,7 @@ fn generation_number(name: &str) -> Option<u64> {
 /// `root=`, older Guix's `--root=`; a `UUID=` or `LABEL=` before it is
 /// dropped), each once.  Comment lines (`# search --file ...` for the
 /// locales) are skipped.
-pub fn grub_cfg_searches(text: &str) -> (Vec<(String, String)>, Vec<String>) {
+pub(crate) fn grub_cfg_searches(text: &str) -> (Vec<(String, String)>, Vec<String>) {
     let mut searches: Vec<(String, String)> = Vec::new();
     let mut roots: Vec<String> = Vec::new();
     for raw in text.lines() {
@@ -638,7 +638,7 @@ pub fn grub_cfg_searches(text: &str) -> (Vec<(String, String)>, Vec<String>) {
 
 /// The root a kernel argument names: `root=R` (Guix 1.5.0) or `--root=R`
 /// (older), R without a `UUID=` or `LABEL=` prefix.
-pub fn root_arg(a: &str) -> Option<&str> {
+pub(crate) fn root_arg(a: &str) -> Option<&str> {
     let r = a
         .strip_prefix("--root=")
         .or_else(|| a.strip_prefix("root="))?;
@@ -679,7 +679,7 @@ fn core_img_part(sys: &Sys) -> Option<String> {
 /// /boot/grub/i386-pc holds the boot.img and core.img grub-install wrote
 /// there (what load's grub-bios-setup writes to the new disk), and
 /// /boot/grub/grub.cfg's searches and the roots its `linux` lines name.
-pub fn guix_json(sys: &Sys) -> Option<Value> {
+pub(crate) fn guix_json(sys: &Sys) -> Option<Value> {
     if !is_guix(sys) {
         return None;
     }

@@ -392,7 +392,7 @@ mod tests {
 
     /// A GRUB EFI image as grub-mkimage lays one out: a PE32+ with .text and
     /// mods, the module info, an ELF module and the prefix (padded to ROOM).
-    pub fn image(prefix: Option<&str>, room: usize, wide: bool) -> Vec<u8> {
+    pub(super) fn image(prefix: Option<&str>, room: usize, wide: bool) -> Vec<u8> {
         let mut b = vec![0u8; 0x400];
         b[0..2].copy_from_slice(b"MZ");
         let pe = 0x80usize;

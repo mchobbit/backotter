@@ -343,7 +343,7 @@ impl Native<'_> {
     }
 }
 
-fn nvlist(x: &mut Xdr, depth: usize) -> Result<Value, String> {
+fn nvlist(x: &mut Xdr<'_>, depth: usize) -> Result<Value, String> {
     if depth > MAX_DEPTH {
         return Err("nvlist nested too deeply".into());
     }

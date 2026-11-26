@@ -3294,7 +3294,7 @@ mod tests {
     #[test]
     fn ubuntu_core_labels_and_recovery_keys() {
         let key = "12345-00001-65535-00256-54321-00000-11111-22222";
-        let d = crate::json::parse(&format!(
+        let d = parse(&format!(
             r#"{{"os": {{"id": "ubuntu-core"}}, "storage": {{"disks": [{{"name": "vda", "partitions": [{{"name": "vda2", "partlabel": "ubuntu-seed", "content": {{"type": "vfat", "label": "ubuntu-seed"}}}}, {{"name": "vda5", "partlabel": "ubuntu-data", "content": {{"type": "crypto_LUKS", "label": "ubuntu-data-enc"}}}}]}}]}}, "note": "typed {key} at the prompt"}}"#
         ))
         .unwrap();

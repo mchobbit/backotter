@@ -192,10 +192,7 @@ mod tests {
         assert_eq!(p.len(), 1, "{p:?}");
         assert_eq!(
             (p[0].code, p[0].str_field("dev")),
-            (
-                crate::load::codes::ProblemCode::LayoutInconsistent,
-                Some("vda1")
-            )
+            (ProblemCode::LayoutInconsistent, Some("vda1"))
         );
         assert!(p[0].starts_with("vda1: the dump's ext4 is 64 MiB (67108864 bytes), bigger than vda1 itself, 28 MiB (29360128 bytes): the dump is inconsistent"), "{}", p[0]);
         // Exactly the partition, and a little smaller: nothing to say.

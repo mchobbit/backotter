@@ -940,7 +940,7 @@ mod tests {
     }
 
     /// What `reads_directories_and_files_under_long_names` reads, on V.
-    fn reads_the_tree(v: &Volume, n: usize) {
+    fn reads_the_tree(v: &Volume<'_>, n: usize) {
         assert_eq!(v.serial_text().as_deref(), Some("3F2A-9C71"));
         assert_eq!(
             (v.boot_label.as_deref(), v.dir_label().as_deref()),
@@ -1039,13 +1039,7 @@ mod tests {
             boot_ids(&src.0[..512]),
             (Some(0x3f2a_9c71), Some("BACKOTTER".to_string()))
         );
-        assert_eq!(
-            (
-                crate::bytes::le32(&src.0, 67),
-                crate::bytes::u8_at(&src.0, 66)
-            ),
-            (0x3f2a_9c71, 0x29)
-        );
+        assert_eq!((le32(&src.0, 67), u8_at(&src.0, 66)), (0x3f2a_9c71, 0x29));
     }
 
     #[test]

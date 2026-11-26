@@ -19,14 +19,14 @@ use crate::json::{Obj, Value};
 use crate::sys::Sys;
 
 /// Where Qubes keeps its qubes and their volumes.
-pub const XML: &str = "/var/lib/qubes/qubes.xml";
+pub(crate) const XML: &str = "/var/lib/qubes/qubes.xml";
 
 /// The directory of the backup's tree that holds the raw volumes' images,
 /// one per LV at RAW_DIR/VG/LV.img.
-pub const RAW_DIR: &str = "/.bko-holt/raw";
+pub(crate) const RAW_DIR: &str = "/.bko-holt/raw";
 
 /// The release os-release's ID gives Qubes.
-pub const OS_ID: &str = "qubes";
+pub(crate) const OS_ID: &str = "qubes";
 
 fn s(v: &Value, k: &str) -> Option<String> {
     v.get(k).and_then(Value::as_str).map(str::to_string)
@@ -112,7 +112,7 @@ fn attr<'a>(t: &'a Tag, k: &str) -> Option<&'a str> {
 /// LVM the volume group and thin pool) and every qube's volumes (qube,
 /// its class, volume name, pool, vid, revisions_to_keep, size, and the
 /// snap_on_start/save_on_stop flags).  Nothing else of the file.
-pub fn parse_xml(text: &str) -> Value {
+pub(crate) fn parse_xml(text: &str) -> Value {
     let mut pools = Vec::new();
     let mut volumes = Vec::new();
     let all = tags(text);
@@ -191,7 +191,7 @@ pub fn parse_xml(text: &str) -> Value {
 
 /// storage.qubes: qubes.xml read from the system's root, when it is Qubes's
 /// dom0 (os-release ID=qubes) and the file is there.
-pub fn read(sys: &Sys, os_id: Option<&str>) -> Option<Value> {
+pub(crate) fn read(sys: &Sys, os_id: Option<&str>) -> Option<Value> {
     if os_id != Some(OS_ID) {
         return None;
     }
@@ -207,7 +207,7 @@ pub fn read(sys: &Sys, os_id: Option<&str>) -> Option<Value> {
 /// The qube volume (qube, volume) LV `vg/lv` is, by its vid: the volume
 /// itself, its -snap (while the qube runs) or one of its revisions
 /// (`-TIMESTAMP-back`).
-pub fn volume_of<'a>(qubes: &'a Value, vg: &str, lv: &str) -> Option<&'a Value> {
+pub(crate) fn volume_of<'a>(qubes: &'a Value, vg: &str, lv: &str) -> Option<&'a Value> {
     qubes
         .get("volumes")
         .and_then(Value::as_array)?
@@ -256,7 +256,7 @@ const MADE: [&str; 17] = [
 ];
 
 /// The image path of VG/LV in the backup's tree.
-pub fn image_path(vg: &str, lv: &str) -> String {
+pub(crate) fn image_path(vg: &str, lv: &str) -> String {
     format!("{RAW_DIR}/{vg}/{lv}.img")
 }
 
@@ -268,7 +268,7 @@ pub fn image_path(vg: &str, lv: &str) -> String {
 /// origin of one; an LV holding a partition table; an LV holding nothing
 /// bko-holt recognises, or a type load can't make.  An unmounted
 /// filesystem load can make stays a filesystem (made empty, as before).
-pub fn raw_volumes(dm: &mut [Value], lvm: &Value, qubes: Option<&Value>) -> Vec<Value> {
+pub(crate) fn raw_volumes(dm: &mut [Value], lvm: &Value, qubes: Option<&Value>) -> Vec<Value> {
     let vgs = lvm
         .get("volume_groups")
         .and_then(Value::as_array)
@@ -404,7 +404,7 @@ pub fn raw_volumes(dm: &mut [Value], lvm: &Value, qubes: Option<&Value>) -> Vec<
 
 /// `dmsetup status` of a thin-pool target: (metadata used, metadata total)
 /// in 4 KiB blocks and (data used, data total) in the pool's chunks.
-pub fn parse_pool_status(line: &str) -> Option<((u64, u64), (u64, u64))> {
+pub(crate) fn parse_pool_status(line: &str) -> Option<((u64, u64), (u64, u64))> {
     let f: Vec<&str> = line.split_whitespace().collect();
     let at = f.iter().position(|w| *w == "thin-pool")?;
     let frac = |w: &str| -> Option<(u64, u64)> {
@@ -415,7 +415,7 @@ pub fn parse_pool_status(line: &str) -> Option<((u64, u64), (u64, u64))> {
 }
 
 /// `dmsetup status` of a thin target: its mapped sectors.
-pub fn parse_thin_status(line: &str) -> Option<u64> {
+pub(crate) fn parse_thin_status(line: &str) -> Option<u64> {
     let f: Vec<&str> = line.split_whitespace().collect();
     let at = f.iter().position(|w| *w == "thin")?;
     f.get(at + 1)?.parse().ok()
@@ -424,7 +424,7 @@ pub fn parse_thin_status(line: &str) -> Option<u64> {
 /// Adds data_used_bytes and metadata_used_bytes to each thin pool LV of
 /// storage.lvm and mapped_bytes to each thin LV, from `dmsetup status` of
 /// their device-mapper devices (the pool's -tpool layer).
-pub fn thin_usage(sys: &Sys, lvm: &mut Value, dm: &[Value]) {
+pub(crate) fn thin_usage(sys: &Sys, lvm: &mut Value, dm: &[Value]) {
     // By the LV's UUID (a pool's -tpool layer is named VG-POOL-tpool).
     let dm_name = |id: &str, layer: Option<&str>| -> Option<String> {
         dm.iter()
@@ -494,7 +494,7 @@ pub fn thin_usage(sys: &Sys, lvm: &mut Value, dm: &[Value]) {
 /// aren't active, activated read-only (activation/read_only_volume_list, so
 /// nothing about them changes) so the dump can read them; dropping the
 /// Activated lets them go again.  Only as root, and only where lvs runs.
-pub fn activate_skipped(sys: &Sys) -> Activated<'_> {
+pub(crate) fn activate_skipped(sys: &Sys) -> Activated<'_> {
     if !sys.privileged {
         return Activated {
             sys,
@@ -554,7 +554,7 @@ pub fn activate_skipped(sys: &Sys) -> Activated<'_> {
 /// panic's unwind too.  Drop it before taking sys.warnings(), so the
 /// warnings of a deactivation that fails are kept.
 #[must_use]
-pub struct Activated<'a> {
+pub(crate) struct Activated<'a> {
     sys: &'a Sys,
     lvs: Vec<String>,
 }
@@ -579,7 +579,7 @@ fn deactivate(sys: &Sys, lvs: &[String]) {
 
 /// A shell variable's value as /etc/default/grub sets it: the last
 /// assignment, quotes taken off.
-pub fn default_grub_var(text: &str, var: &str) -> Option<String> {
+pub(crate) fn default_grub_var(text: &str, var: &str) -> Option<String> {
     let mut found = None;
     for l in text.lines() {
         let l = l.trim();
@@ -599,7 +599,7 @@ pub fn default_grub_var(text: &str, var: &str) -> Option<String> {
 /// The menu entries of a grub.cfg that boot through Xen: each one's title,
 /// its multiboot2 line (the hypervisor and its arguments) and its module2
 /// lines (the dom0 kernel with its command line, the initramfs).
-pub fn xen_entries(cfg: &str) -> Vec<Value> {
+pub(crate) fn xen_entries(cfg: &str) -> Vec<Value> {
     let mut out = Vec::new();
     let mut title: Option<String> = None;
     let mut mb: Option<String> = None;
@@ -649,7 +649,7 @@ pub fn xen_entries(cfg: &str) -> Vec<Value> {
 /// the versions there (newest last), GRUB_CMDLINE_XEN_DEFAULT and
 /// GRUB_CMDLINE_LINUX from /etc/default/grub, whether GRUB's 20_linux_xen
 /// is installed, and grub.cfg's Xen entries.
-pub fn xen_json(sys: &Sys) -> Option<Value> {
+pub(crate) fn xen_json(sys: &Sys) -> Option<Value> {
     let mut gz: Vec<String> = sys
         .list("/boot")
         .into_iter()
@@ -702,7 +702,7 @@ pub fn xen_json(sys: &Sys) -> Option<Value> {
 }
 
 /// boot with `xen` added, when there is one.
-pub fn add_to_boot(boot: Value, xen: Option<Value>) -> Value {
+pub(crate) fn add_to_boot(boot: Value, xen: Option<Value>) -> Value {
     match (boot, xen) {
         (Value::Obj(mut o), Some(x)) => {
             o.retain(|(k, _)| k != "xen");
@@ -714,7 +714,7 @@ pub fn add_to_boot(boot: Value, xen: Option<Value>) -> Value {
 }
 
 /// os.product for Qubes: "Qubes OS 4.3".
-pub fn product(os_id: Option<&str>, version_id: Option<&str>) -> Option<String> {
+pub(crate) fn product(os_id: Option<&str>, version_id: Option<&str>) -> Option<String> {
     (os_id == Some(OS_ID)).then(|| format!("Qubes OS {}", version_id.unwrap_or("?")))
 }
 
@@ -722,7 +722,7 @@ pub fn product(os_id: Option<&str>, version_id: Option<&str>) -> Option<String> 
 pub(crate) mod sample {
     /// qubes.xml as Qubes 4.3.2 writes it (shortened to three qubes; its
     /// layout from the Q0/Q1 guest).
-    pub const XML: &str = r#"<?xml version='1.0' encoding='utf-8'?>
+    pub(crate) const XML: &str = r#"<?xml version='1.0' encoding='utf-8'?>
 <qubes version="3.0">
   <properties>
     <property name="default_template">fedora-44-xfce</property>
@@ -766,7 +766,7 @@ pub(crate) mod sample {
 "#;
 
     /// Qubes 4.3's grub.cfg Xen entry (the Q0 guest's, shortened).
-    pub const GRUB_CFG: &str = r#"### BEGIN /etc/grub.d/20_linux_xen ###
+    pub(crate) const GRUB_CFG: &str = r#"### BEGIN /etc/grub.d/20_linux_xen ###
 menuentry 'Qubes, with Xen hypervisor' --class qubes --class gnu-linux --class gnu --class os --class xen $menuentry_id_option 'xen-gnulinux-simple-ab' {
 	insmod part_gpt
 	echo	'Loading Xen 4.19.5 ...'
@@ -779,7 +779,7 @@ menuentry 'Qubes, with Xen hypervisor' --class qubes --class gnu-linux --class g
 ### END /etc/grub.d/20_linux_xen ###
 "#;
 
-    pub const DEFAULT_GRUB: &str = r#"GRUB_TIMEOUT=5
+    pub(crate) const DEFAULT_GRUB: &str = r#"GRUB_TIMEOUT=5
 GRUB_DISTRIBUTOR="$(sed 's, release .*$,,g' /etc/system-release)"
 GRUB_CMDLINE_LINUX="rd.luks.uuid=luks-bc000000-0000-4000-8000-000000000003 rd.lvm.lv=qubes_dom0/root rd.lvm.lv=qubes_dom0/swap plymouth.ignore-serial-consoles console=hvc0 initcall_blacklist=print_s5_reset_status_mmio"
 GRUB_CMDLINE_XEN_DEFAULT="console=none dom0_mem=min:1024M dom0_mem=max:4096M ucode=scan smt=off gnttab_max_frames=2048 gnttab_max_maptrack_frames=4096"

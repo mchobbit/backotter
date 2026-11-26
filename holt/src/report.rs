@@ -371,7 +371,7 @@ impl Ctx<'_> {
     }
 }
 
-fn partition_json(ctx: &Ctx, sys: &Sys, disk: &Dev, p: &Dev) -> Value {
+fn partition_json(ctx: &Ctx<'_>, sys: &Sys, disk: &Dev, p: &Dev) -> Value {
     let mut o = Obj::new()
         .set("name", p.b.name.as_str())
         .set("path", p.b.dev_path())
@@ -429,7 +429,7 @@ fn partition_json(ctx: &Ctx, sys: &Sys, disk: &Dev, p: &Dev) -> Value {
     o.build()
 }
 
-fn whole_json(ctx: &Ctx, sys: &Sys, d: &Dev, src: Option<&dyn ByteSource>) -> Obj {
+fn whole_json(ctx: &Ctx<'_>, sys: &Sys, d: &Dev, src: Option<&dyn ByteSource>) -> Obj {
     let b = &d.b;
     let mut o = Obj::new()
         .set("name", b.name.as_str())
@@ -529,8 +529,8 @@ fn dm_json(d: &Dev) -> Value {
         if let (true, Some(vg_uuid), Some(lv_uuid)) =
             (rest.len() >= 64, rest.get(..32), rest.get(32..64))
         {
-            o.put("vg_uuid", crate::probe::lvm::format_uuid(vg_uuid));
-            o.put("lv_uuid", crate::probe::lvm::format_uuid(lv_uuid));
+            o.put("vg_uuid", probe::lvm::format_uuid(vg_uuid));
+            o.put("lv_uuid", probe::lvm::format_uuid(lv_uuid));
             o.put_some(
                 "lv_layer",
                 rest.get(64..)
@@ -612,7 +612,7 @@ fn md_json(sys: &Sys, d: &Dev) -> Value {
         .build()
 }
 
-fn lvm_json(ctx: &Ctx) -> Value {
+fn lvm_json(ctx: &Ctx<'_>) -> Value {
     // Each VG from the PV with the newest metadata.
     let mut vgs: BTreeMap<String, (u64, Value)> = BTreeMap::new();
     let mut pv_dev: BTreeMap<String, String> = BTreeMap::new();
@@ -694,7 +694,7 @@ fn lvm_json(ctx: &Ctx) -> Value {
 /// Each XFS filesystem with an external log, and the device holding that
 /// log: by the filesystem UUID in the log's record headers, or the logdev=
 /// mount option when the log device couldn't be read.
-fn xfs_external_logs(sys: &Sys, ctx: &Ctx) -> Value {
+fn xfs_external_logs(sys: &Sys, ctx: &Ctx<'_>) -> Value {
     let mut out = Vec::new();
     for d in ctx.devs {
         let Some(c) = d.contents.first().filter(|c| c.kind == "xfs") else {
@@ -744,7 +744,7 @@ fn xfs_external_logs(sys: &Sys, ctx: &Ctx) -> Value {
 /// The ESPs of the disks that hold a vdev of TrueNAS's boot-pool (a
 /// partition of GPT type EF00 on such a disk: TrueNAS's installer makes it
 /// partition 2), as (partition, disk, volume ID, label), disk by disk.
-fn truenas_esps(ctx: &Ctx) -> Vec<(String, String, Option<String>, Option<String>)> {
+fn truenas_esps(ctx: &Ctx<'_>) -> Vec<(String, String, Option<String>, Option<String>)> {
     let mut disks: Vec<String> = Vec::new();
     for d in ctx.devs.iter().filter(|d| {
         d.b.kind == Kind::Partition
@@ -786,8 +786,8 @@ fn truenas_esps(ctx: &Ctx) -> Vec<(String, String, Option<String>, Option<String
 
 /// The stacking of devices as a tree, for a person to read: keys describe a
 /// device, values hold what sits on it.
-fn topology(ctx: &Ctx, sys: &Sys) -> Value {
-    fn describe(ctx: &Ctx, sys: &Sys, d: &Dev) -> String {
+fn topology(ctx: &Ctx<'_>, sys: &Sys) -> Value {
+    fn describe(ctx: &Ctx<'_>, sys: &Sys, d: &Dev) -> String {
         let mut s = format!(
             "{} ({}, {}",
             d.b.name,
@@ -820,7 +820,7 @@ fn topology(ctx: &Ctx, sys: &Sys) -> Value {
         }
         s
     }
-    fn node(ctx: &Ctx, sys: &Sys, d: &Dev, depth: usize) -> Value {
+    fn node(ctx: &Ctx<'_>, sys: &Sys, d: &Dev, depth: usize) -> Value {
         let mut o = Obj::new();
         if depth > 16 {
             return o.build();
@@ -876,13 +876,13 @@ fn host_json(sys: &Sys) -> Value {
         .build()
 }
 
-fn is_whole_disk(b: &blockdev::BlockDev) -> bool {
+fn is_whole_disk(b: &BlockDev) -> bool {
     matches!(b.kind, Kind::Disk | Kind::Nbd | Kind::Ram)
 }
 
 /// The pool of a ZFS volume, by udev's /dev/zvol/POOL/... link (load finds
 /// zvols the same way: commands.rs zvols_of); None for any other device.
-fn zvol_pool(b: &blockdev::BlockDev) -> Option<String> {
+fn zvol_pool(b: &BlockDev) -> Option<String> {
     b.udev.links.iter().find_map(|l| {
         l.strip_prefix("/dev/zvol/")?
             .split('/')
@@ -930,7 +930,7 @@ pub fn unknown_disk(sys: &Sys, only: &[String]) -> Option<String> {
 /// kernels, the loader or its entries.
 fn cbm_esps(
     mut boot: Value,
-    ctx: &Ctx,
+    ctx: &Ctx<'_>,
     sys: &Sys,
     packages: &[crate::boot::Package],
     fstab: &[(&mounts::FstabEntry, Option<String>)],
@@ -1069,7 +1069,7 @@ fn devices(sys: &Sys, only: &[String]) -> Vec<Dev> {
 }
 
 /// storage.swaps: /proc/swaps, with each swap partition's device.
-fn swaps_json(sys: &Sys, ctx: &Ctx) -> Vec<Value> {
+fn swaps_json(sys: &Sys, ctx: &Ctx<'_>) -> Vec<Value> {
     sys.read("/proc/swaps")
         .map(|t| mounts::parse_swaps(&t))
         .unwrap_or_default()
@@ -1096,7 +1096,7 @@ fn swaps_json(sys: &Sys, ctx: &Ctx) -> Vec<Value> {
 
 /// The mounted ESPs, as (device, mount point): vfat mounts of an ESP
 /// partition, or at /boot/efi or /efi.
-fn mounted_esps(ctx: &Ctx) -> Vec<(String, String)> {
+fn mounted_esps(ctx: &Ctx<'_>) -> Vec<(String, String)> {
     ctx.mounts
         .iter()
         .filter(|m| m.fstype == "vfat")
@@ -1719,18 +1719,15 @@ mod tests {
 
     #[test]
     fn backup_sources_fstab_tree() {
-        let mi = crate::mounts::parse_mountinfo(
+        let mi = mounts::parse_mountinfo(
             "51 1 0:42 / / ro - overlay composefs ro\n48 51 0:37 /root/ostree/deploy/default/deploy/c.1/etc /etc rw - btrfs /dev/vda3 rw,subvolid=258,subvol=/root\n52 51 0:37 /root /sysroot ro - btrfs /dev/vda3 rw,subvolid=258,subvol=/root\n53 52 0:37 /root/ostree/deploy/default/var /sysroot/ostree/deploy/default/var rw - btrfs /dev/vda3 rw,subvolid=258,subvol=/root\n125 51 0:37 /var /var rw - btrfs /dev/vda3 rw,subvolid=256,subvol=/var\n82 125 0:37 /home /var/home rw - btrfs /dev/vda3 rw,subvolid=257,subvol=/home\n120 51 253:2 / /boot rw - ext4 /dev/vda2 rw\n220 120 253:1 / /boot/efi rw - vfat /dev/vda1 rw\n300 51 253:9 / /var/mnt/usb rw - ext4 /dev/sdb1 rw\n",
         );
-        let all: Vec<&Mount> = mi
-            .iter()
-            .filter(|m| crate::mounts::is_layout_mount(m))
-            .collect();
-        let fstab = crate::mounts::parse_fstab(
+        let all: Vec<&Mount> = mi.iter().filter(|m| mounts::is_layout_mount(m)).collect();
+        let fstab = mounts::parse_fstab(
             "UUID=b / btrfs subvol=root,compress=zstd:1,ro 0 0\nUUID=x /boot ext4 defaults 1 2\nUUID=E /boot/efi vfat umask=077 0 2\nUUID=b /home btrfs subvol=home,compress=zstd:1 0 0\nUUID=b /var btrfs subvol=var,compress=zstd:1 0 0\n",
         );
         let dev = |m: &Mount| Some(m.source.trim_start_matches("/dev/").to_string());
-        let res = |e: &crate::mounts::FstabEntry| {
+        let res = |e: &mounts::FstabEntry| {
             Some(
                 match e.spec.as_str() {
                     "UUID=b" => "vda3",
@@ -1740,7 +1737,7 @@ mod tests {
                 .to_string(),
             )
         };
-        let f: Vec<(&crate::mounts::FstabEntry, Option<String>)> =
+        let f: Vec<(&mounts::FstabEntry, Option<String>)> =
             fstab.iter().map(|e| (e, res(e))).collect();
         let pairs = |v: Vec<BackupSource>| {
             v.into_iter()
@@ -1775,8 +1772,8 @@ mod tests {
             ]
         );
         // subvolid= in fstab matches too.
-        let fstab = crate::mounts::parse_fstab("UUID=b / btrfs subvolid=258 0 0\n");
-        let f: Vec<(&crate::mounts::FstabEntry, Option<String>)> =
+        let fstab = mounts::parse_fstab("UUID=b / btrfs subvolid=258 0 0\n");
+        let f: Vec<(&mounts::FstabEntry, Option<String>)> =
             fstab.iter().map(|e| (e, res(e))).collect();
         assert_eq!(
             backup_sources(&all, &dev, &f, true)[0].from.as_deref(),
@@ -1898,7 +1895,7 @@ mod tests {
             ))
             .unwrap();
             let mut img = vec![0u8; 8 << 20];
-            img[1 << 20..5 << 20].copy_from_slice(&crate::probe::zfs::pack::vdev(4 << 20, &cfg));
+            img[1 << 20..5 << 20].copy_from_slice(&probe::zfs::pack::vdev(4 << 20, &cfg));
             img
         };
         let (nvme, sda) = (label("rpool", 777), label("tank", 888));
@@ -1987,10 +1984,10 @@ mod tests {
                              {"name": "rpool/ROOT", "encryptionroot": "rpool", "keylocation": "none"}]}"#,
         )
         .unwrap();
-        let fstab_e = crate::mounts::parse_fstab(
+        let fstab_e = mounts::parse_fstab(
             "UUID=x /etc/zfs/keys ext4 defaults 0 2\nUUID=y /boot ext4 defaults 0 2\n",
         );
-        let fstab: Vec<(&crate::mounts::FstabEntry, Option<String>)> =
+        let fstab: Vec<(&mounts::FstabEntry, Option<String>)> =
             fstab_e.iter().map(|e| (e, None)).collect();
         let paths = |only: bool| {
             let mut v = all.clone();
@@ -2036,8 +2033,8 @@ mod tests {
             ]}"#,
         )
         .unwrap();
-        let edge_fstab_e = crate::mounts::parse_fstab("UUID=k /var/keys ext4 defaults 0 2\n");
-        let edge_fstab: Vec<(&crate::mounts::FstabEntry, Option<String>)> =
+        let edge_fstab_e = mounts::parse_fstab("UUID=k /var/keys ext4 defaults 0 2\n");
+        let edge_fstab: Vec<(&mounts::FstabEntry, Option<String>)> =
             edge_fstab_e.iter().map(|e| (e, None)).collect();
         not_backed_up(&mut edge, true, &edge_tools, &edge_fstab);
         let edge_paths: Vec<String> = edge.into_iter().map(|s| s.path).collect();
@@ -2063,7 +2060,7 @@ mod tests {
                 .file("/sys/block/dm-0/dm/name", name)
                 .file("/sys/block/dm-0/dm/uuid", uuid);
             let s = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), false);
-            let mut b = crate::blockdev::scan(&s);
+            let mut b = blockdev::scan(&s);
             dm_json(&Dev {
                 b: b.remove(0),
                 table: None,
@@ -2141,7 +2138,7 @@ mod tests {
                 .file("/sys/block/dm-0/dm/name", name)
                 .file("/sys/block/dm-0/dm/uuid", uuid);
             let s = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), false);
-            let mut b = crate::blockdev::scan(&s);
+            let mut b = blockdev::scan(&s);
             dm_json(&Dev {
                 b: b.remove(0),
                 table: None,

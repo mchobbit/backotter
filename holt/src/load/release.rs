@@ -6,7 +6,7 @@
 //! table, the swaps, the PVs and the imported pools; refused when any of it
 //! is mounted, swap, open, or also on a disk that isn't named with --erase.
 
-use super::target::{resolve_name, System};
+use super::target::{System, resolve_name};
 use crate::blockdev::{BlockDev, Kind};
 use crate::sys::Sys;
 
@@ -65,7 +65,10 @@ pub fn bases(all: &[BlockDev], name: &str) -> Vec<String> {
         // Match dm_name in bases() and plan() so --erase catches ZFS-on-LUKS
         // pools, active mapper swap or mounts, dm open counts, and multi-disk
         // stacks instead of closing live containers.
-        let Some(b) = all.iter().find(|b| b.name == name || b.dm_name.as_deref() == Some(name)) else {
+        let Some(b) = all
+            .iter()
+            .find(|b| b.name == name || b.dm_name.as_deref() == Some(name))
+        else {
             if !out.iter().any(|o| o == name) {
                 out.push(name.to_string());
             }
@@ -91,7 +94,13 @@ pub fn bases(all: &[BlockDev], name: &str) -> Vec<String> {
 /// DISK, its partitions, and everything stacked on them (their holders, all
 /// the way up).
 pub fn stack(all: &[BlockDev], disk: &str) -> Vec<String> {
-    let mut out: Vec<String> = std::iter::once(disk.to_string()).chain(all.iter().filter(|b| b.parent.as_deref() == Some(disk)).map(|b| b.name.clone())).collect();
+    let mut out: Vec<String> = std::iter::once(disk.to_string())
+        .chain(
+            all.iter()
+                .filter(|b| b.parent.as_deref() == Some(disk))
+                .map(|b| b.name.clone()),
+        )
+        .collect();
     let mut i = 0;
     while i < out.len() {
         if let Some(b) = all.iter().find(|b| b.name == out[i]) {
@@ -123,8 +132,24 @@ fn lvm_vg_uuid(dm_uuid: &str) -> Option<String> {
 /// `dmsetup info -c --noheadings --separator : -o name,open`: each mapping's
 /// open count.  None when dmsetup isn't there to ask.
 fn dm_open_counts(sys: &Sys) -> Option<Vec<(String, u32)>> {
-    let out = sys.run("dmsetup", &["info", "-c", "--noheadings", "--separator", ":", "-o", "name,open"])?;
-    Some(out.lines().filter_map(|l| l.trim().rsplit_once(':')).filter_map(|(n, c)| Some((n.to_string(), c.trim().parse().ok()?))).collect())
+    let out = sys.run(
+        "dmsetup",
+        &[
+            "info",
+            "-c",
+            "--noheadings",
+            "--separator",
+            ":",
+            "-o",
+            "name,open",
+        ],
+    )?;
+    Some(
+        out.lines()
+            .filter_map(|l| l.trim().rsplit_once(':'))
+            .filter_map(|(n, c)| Some((n.to_string(), c.trim().parse().ok()?)))
+            .collect(),
+    )
 }
 
 /// What each of HELD (target disks named with --erase, busy only because
@@ -138,13 +163,25 @@ pub fn plan(sys: &Sys, system: &System, held: &[String], erased: &[String]) -> R
     let mut actions: Vec<(String, Action, Vec<String>, Vec<String>)> = Vec::new();
     let mut before: Vec<(String, String)> = Vec::new();
     let mut open: Option<Option<Vec<(String, u32)>>> = None;
-    let not_erased = |names: &[String]| names.iter().filter(|d| !erased.contains(d)).cloned().collect::<Vec<_>>();
+    let not_erased = |names: &[String]| {
+        names
+            .iter()
+            .filter(|d| !erased.contains(d))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
     for disk in held {
         let mut why: Vec<String> = Vec::new();
         let mut mine: Vec<(String, Action, Vec<String>)> = Vec::new();
         let mut edges: Vec<(String, String)> = Vec::new();
         // The disk, its partitions, and everything stacked on them.
-        let mut queue: Vec<String> = std::iter::once(disk.clone()).chain(all.iter().filter(|b| b.parent.as_deref() == Some(disk.as_str())).map(|b| b.name.clone())).collect();
+        let mut queue: Vec<String> = std::iter::once(disk.clone())
+            .chain(
+                all.iter()
+                    .filter(|b| b.parent.as_deref() == Some(disk.as_str()))
+                    .map(|b| b.name.clone()),
+            )
+            .collect();
         let roots = queue.len();
         let mut i = 0;
         let mut key_of: Vec<(String, String)> = Vec::new();
@@ -163,23 +200,41 @@ pub fn plan(sys: &Sys, system: &System, held: &[String], erased: &[String]) -> R
             }
             let on_b = |x: &str| x == b.name || b.dm_name.as_deref() == Some(x);
             // Pools take no holders: each one with a vdev here is on top.
-            for p in system.pools.iter().filter(|p| p.devices.iter().any(|d| on_b(d))) {
+            for p in system
+                .pools
+                .iter()
+                .filter(|p| p.devices.iter().any(|d| on_b(d)))
+            {
                 let key = format!("pool:{}", p.name);
                 if !mine.iter().any(|(k, ..)| *k == key) {
                     let mut ok = true;
-                    for m in system.mounts.iter().filter(|m| m.fstype == "zfs" && (m.source == p.name || m.source.starts_with(&format!("{}/", p.name)))) {
-                        why.push(format!("ZFS pool {}'s dataset {} is mounted at {}", p.name, m.source, m.target));
+                    for m in system.mounts.iter().filter(|m| {
+                        m.fstype == "zfs"
+                            && (m.source == p.name || m.source.starts_with(&format!("{}/", p.name)))
+                    }) {
+                        why.push(format!(
+                            "ZFS pool {}'s dataset {} is mounted at {}",
+                            p.name, m.source, m.target
+                        ));
                         ok = false;
                     }
                     for d in &p.devices {
                         let other = not_erased(&bases(all, d));
                         if !other.is_empty() {
-                            why.push(format!("ZFS pool {} also has {d}, on {}, which isn't named with --erase", p.name, other.join(", ")));
+                            why.push(format!(
+                                "ZFS pool {} also has {d}, on {}, which isn't named with --erase",
+                                p.name,
+                                other.join(", ")
+                            ));
                             ok = false;
                         }
                     }
                     if ok {
-                        mine.push((key.clone(), Action::Pool(p.name.clone()), vec![format!("pool {}", p.name)]));
+                        mine.push((
+                            key.clone(),
+                            Action::Pool(p.name.clone()),
+                            vec![format!("pool {}", p.name)],
+                        ));
                     }
                 }
                 edges.push((key.clone(), format!("dev:{name}")));
@@ -189,7 +244,11 @@ pub fn plan(sys: &Sys, system: &System, held: &[String], erased: &[String]) -> R
             }
             // A holder: never mounted, swap or open, and only on erased disks.
             let d = describe(b);
-            for m in system.mounts.iter().filter(|m| m.devno == b.devno || on_b(&resolve_name(sys, &m.source))) {
+            for m in system
+                .mounts
+                .iter()
+                .filter(|m| m.devno == b.devno || on_b(&resolve_name(sys, &m.source)))
+            {
                 why.push(format!("{d} is mounted at {}", m.target));
             }
             if system.swaps.iter().any(|s| on_b(s)) {
@@ -197,12 +256,19 @@ pub fn plan(sys: &Sys, system: &System, held: &[String], erased: &[String]) -> R
             }
             let other = not_erased(&bases(all, &b.name));
             if !other.is_empty() {
-                why.push(format!("{d} also sits on {}, which isn't named with --erase", other.join(", ")));
+                why.push(format!(
+                    "{d} also sits on {}, which isn't named with --erase",
+                    other.join(", ")
+                ));
             }
             if b.kind == Kind::Dm {
                 let counts = open.get_or_insert_with(|| dm_open_counts(sys));
                 if let (Some(counts), Some(n)) = (counts.as_ref(), b.dm_name.as_ref()) {
-                    let pools = system.pools.iter().filter(|p| p.devices.iter().any(|d| on_b(d))).count();
+                    let pools = system
+                        .pools
+                        .iter()
+                        .filter(|p| p.devices.iter().any(|d| on_b(d)))
+                        .count();
                     if let Some((_, c)) = counts.iter().find(|(x, _)| x == n) {
                         if *c as usize > b.holders.len() + pools {
                             why.push(format!("{d} is open (open count {c}, of which what's stacked on it accounts for {})", b.holders.len() + pools));
@@ -214,22 +280,40 @@ pub fn plan(sys: &Sys, system: &System, held: &[String], erased: &[String]) -> R
                 (Kind::Md, _) => (format!("md:{}", b.name), Some(Action::Md(b.name.clone()))),
                 (Kind::Dm, Some(u)) if u.starts_with("LVM-") => {
                     let Some(vgu) = lvm_vg_uuid(u) else {
-                        why.push(format!("{d}: an LVM device whose UUID ({u}) names no volume group"));
+                        why.push(format!(
+                            "{d}: an LVM device whose UUID ({u}) names no volume group"
+                        ));
                         continue;
                     };
                     let key = format!("lvm:{vgu}");
                     let mut act = None;
                     if !mine.iter().any(|(k, ..)| *k == key) {
                         // Every LV of the group goes; each is a holder to check.
-                        for lv in all.iter().filter(|x| x.kind == Kind::Dm && x.dm_uuid.as_deref().and_then(lvm_vg_uuid).as_deref() == Some(vgu.as_str())) {
+                        for lv in all.iter().filter(|x| {
+                            x.kind == Kind::Dm
+                                && x.dm_uuid.as_deref().and_then(lvm_vg_uuid).as_deref()
+                                    == Some(vgu.as_str())
+                        }) {
                             if !queue.contains(&lv.name) {
                                 queue.push(lv.name.clone());
                             }
                         }
-                        let vg = b.dm_name.as_deref().and_then(crate::blockdev::split_lvm_dm_name).map(|(v, _)| v).unwrap_or_default();
-                        let pvs: Vec<_> = system.pvs.iter().filter(|p| p.vg_uuid.replace('-', "") == vgu).collect();
+                        let vg = b
+                            .dm_name
+                            .as_deref()
+                            .and_then(crate::blockdev::split_lvm_dm_name)
+                            .map(|(v, _)| v)
+                            .unwrap_or_default();
+                        let pvs: Vec<_> = system
+                            .pvs
+                            .iter()
+                            .filter(|p| p.vg_uuid.replace('-', "") == vgu)
+                            .collect();
                         if pvs.is_empty() || vg.is_empty() {
-                            why.push(format!("{d}: which PVs its volume group {} has wasn't read", if vg.is_empty() { "?" } else { &vg }));
+                            why.push(format!(
+                                "{d}: which PVs its volume group {} has wasn't read",
+                                if vg.is_empty() { "?" } else { &vg }
+                            ));
                         }
                         for pv in &pvs {
                             let other = not_erased(&pv.disks);
@@ -239,9 +323,15 @@ pub fn plan(sys: &Sys, system: &System, held: &[String], erased: &[String]) -> R
                         }
                         let paths = pvs
                             .iter()
-                            .map(|p| match all.iter().find(|x| x.name == p.dev).and_then(|x| x.dm_name.as_ref()) {
-                                Some(n) => format!("/dev/mapper/{n}"),
-                                None => format!("/dev/{}", p.dev),
+                            .map(|p| {
+                                match all
+                                    .iter()
+                                    .find(|x| x.name == p.dev)
+                                    .and_then(|x| x.dm_name.as_ref())
+                                {
+                                    Some(n) => format!("/dev/mapper/{n}"),
+                                    None => format!("/dev/{}", p.dev),
+                                }
                             })
                             .collect();
                         act = Some(Action::Lvm { vg, pvs: paths });
@@ -263,7 +353,10 @@ pub fn plan(sys: &Sys, system: &System, held: &[String], erased: &[String]) -> R
                     }
                 },
                 _ => {
-                    why.push(format!("{d} holds it, and load knows no way to let go of a {}", b.kind.name()));
+                    why.push(format!(
+                        "{d} holds it, and load knows no way to let go of a {}",
+                        b.kind.name()
+                    ));
                     continue;
                 }
             };
@@ -324,14 +417,27 @@ pub fn plan(sys: &Sys, system: &System, held: &[String], erased: &[String]) -> R
     // plan, so nothing runs).  Top-down: an action goes once everything that must precede it has.
     let mut done: Vec<String> = Vec::new();
     while done.len() < actions.len() {
-        let next = actions.iter().find(|(k, ..)| !done.contains(k) && before.iter().filter(|(_, b)| b == k).all(|(a, _)| done.contains(a) || !actions.iter().any(|(x, ..)| x == a)));
+        let next = actions.iter().find(|(k, ..)| {
+            !done.contains(k)
+                && before
+                    .iter()
+                    .filter(|(_, b)| b == k)
+                    .all(|(a, _)| done.contains(a) || !actions.iter().any(|(x, ..)| x == a))
+        });
         let Some((k, a, stops, disks)) = next else {
-            r.problems.push((held.first().cloned().unwrap_or_default(), "what holds it stacks in a loop; nothing is let go".into()));
+            r.problems.push((
+                held.first().cloned().unwrap_or_default(),
+                "what holds it stacks in a loop; nothing is let go".into(),
+            ));
             r.steps.clear();
             return r;
         };
         done.push(k.clone());
-        r.steps.push(Step { action: a.clone(), stops: stops.clone(), disks: disks.clone() });
+        r.steps.push(Step {
+            action: a.clone(),
+            stops: stops.clone(),
+            disks: disks.clone(),
+        });
     }
     r
 }
@@ -342,7 +448,13 @@ mod tests {
     use crate::load::target::{HostPv, ImportedPool};
     use crate::mounts::Mount;
 
-    fn dev(name: &str, kind: Kind, parent: Option<&str>, holders: &[&str], slaves: &[&str]) -> BlockDev {
+    fn dev(
+        name: &str,
+        kind: Kind,
+        parent: Option<&str>,
+        holders: &[&str],
+        slaves: &[&str],
+    ) -> BlockDev {
         BlockDev {
             name: name.into(),
             kind,
@@ -355,7 +467,11 @@ mod tests {
     }
 
     fn dm(name: &str, dm_name: &str, uuid: &str, holders: &[&str], slaves: &[&str]) -> BlockDev {
-        BlockDev { dm_name: Some(dm_name.into()), dm_uuid: Some(uuid.into()), ..dev(name, Kind::Dm, None, holders, slaves) }
+        BlockDev {
+            dm_name: Some(dm_name.into()),
+            dm_uuid: Some(uuid.into()),
+            ..dev(name, Kind::Dm, None, holders, slaves)
+        }
     }
 
     const VG: &str = "Yb3kFa0Pz1AbCdEfGhIjKlMnOpQrStUv";
@@ -363,7 +479,13 @@ mod tests {
         format!("LVM-{VG}{}", format!("{n}").repeat(32))
     }
     fn pv(dev: &str, disks: &[&str]) -> HostPv {
-        HostPv { dev: dev.into(), uuid: "x".into(), vg: "vg0".into(), vg_uuid: "Yb3kFa-0Pz1-AbCd-EfGh-IjKl-MnOp-QrStUv".into(), disks: disks.iter().map(|s| s.to_string()).collect() }
+        HostPv {
+            dev: dev.into(),
+            uuid: "x".into(),
+            vg: "vg0".into(),
+            vg_uuid: "Yb3kFa-0Pz1-AbCd-EfGh-IjKl-MnOp-QrStUv".into(),
+            disks: disks.iter().map(|s| s.to_string()).collect(),
+        }
     }
 
     fn sys() -> (crate::testutil::Tree, Sys) {
@@ -401,7 +523,13 @@ mod tests {
         let r = plan(&s, &lvm_system(), &["vdb".into()], &["vdb".into()]);
         assert!(r.problems.is_empty(), "{:?}", r.problems);
         assert_eq!(r.steps.len(), 1);
-        assert_eq!(r.steps[0].action, Action::Lvm { vg: "vg0".into(), pvs: vec!["/dev/vdb2".into()] });
+        assert_eq!(
+            r.steps[0].action,
+            Action::Lvm {
+                vg: "vg0".into(),
+                pvs: vec!["/dev/vdb2".into()]
+            }
+        );
         assert_eq!(r.steps[0].stops, vec!["dm-0 (vg0-root)", "dm-1 (vg0-swap)"]);
         assert_eq!(r.steps[0].disks, vec!["vdb"]);
     }
@@ -418,14 +546,34 @@ mod tests {
         // Both disks named: the group goes, PVs on both.
         let r = plan(&s, &sy, &["vdb".into()], &["vdb".into(), "vdc".into()]);
         assert!(r.problems.is_empty(), "{:?}", r.problems);
-        assert_eq!(r.steps[0].action, Action::Lvm { vg: "vg0".into(), pvs: vec!["/dev/vdb2".into(), "/dev/vdc1".into()] });
+        assert_eq!(
+            r.steps[0].action,
+            Action::Lvm {
+                vg: "vg0".into(),
+                pvs: vec!["/dev/vdb2".into(), "/dev/vdc1".into()]
+            }
+        );
         // An LV of the group that sits on the other disk is checked too.
         let mut sy2 = lvm_system();
         sy2.pvs.push(pv("vdc1", &["vdc"]));
-        sy2.devs.push(dm("dm-2", "vg0-home", &lv(3), &[], &["vdc1"]));
-        sy2.mounts.push(Mount { devno: sy2.devs.last().unwrap().devno.clone(), source: "/dev/mapper/vg0-home".into(), target: "/home".into(), fstype: "ext4".into(), ..Mount::default() });
+        sy2.devs
+            .push(dm("dm-2", "vg0-home", &lv(3), &[], &["vdc1"]));
+        sy2.mounts.push(Mount {
+            devno: sy2.devs.last().unwrap().devno.clone(),
+            source: "/dev/mapper/vg0-home".into(),
+            target: "/home".into(),
+            fstype: "ext4".into(),
+            ..Mount::default()
+        });
         let r = plan(&s, &sy2, &["vdb".into()], &["vdb".into(), "vdc".into()]);
-        assert!(r.steps.is_empty() && r.problems[0].1.contains("dm-2 (vg0-home) is mounted at /home"), "{:?}", r.problems);
+        assert!(
+            r.steps.is_empty()
+                && r.problems[0]
+                    .1
+                    .contains("dm-2 (vg0-home) is mounted at /home"),
+            "{:?}",
+            r.problems
+        );
     }
 
     #[test]
@@ -434,24 +582,57 @@ mod tests {
         let mut sy = lvm_system();
         // dm-0 holds a LUKS mapping, dm-3, with a pool on it.
         sy.devs[4].holders = vec!["dm-3".into()];
-        sy.devs.push(dm("dm-3", "cryptroot", "CRYPT-LUKS2-abc-cryptroot", &[], &["dm-0"]));
-        sy.pools.push(ImportedPool { name: "tank".into(), altroot: "-".into(), devices: vec!["dm-3".into()] });
+        sy.devs.push(dm(
+            "dm-3",
+            "cryptroot",
+            "CRYPT-LUKS2-abc-cryptroot",
+            &[],
+            &["dm-0"],
+        ));
+        sy.pools.push(ImportedPool {
+            name: "tank".into(),
+            altroot: "-".into(),
+            devices: vec!["dm-3".into()],
+        });
         let r = plan(&s, &sy, &["vdb".into()], &["vdb".into()]);
         assert!(r.problems.is_empty(), "{:?}", r.problems);
-        assert_eq!(names(&r), vec!["ZFS pool tank exported", "LUKS mapping cryptroot closed", "volume group vg0 deactivated"]);
+        assert_eq!(
+            names(&r),
+            vec![
+                "ZFS pool tank exported",
+                "LUKS mapping cryptroot closed",
+                "volume group vg0 deactivated"
+            ]
+        );
         // Open by a process beyond what's stacked on it: refused.
         let t = crate::testutil::Tree::new("release-open");
         let s2 = Sys::new(
             t.root(),
-            Box::new(crate::sys::FakeRunner::default().with("dmsetup info -c --noheadings --separator : -o name,open", "vg0-root:1\nvg0-swap:0\ncryptroot:2\n")),
+            Box::new(crate::sys::FakeRunner::default().with(
+                "dmsetup info -c --noheadings --separator : -o name,open",
+                "vg0-root:1\nvg0-swap:0\ncryptroot:2\n",
+            )),
             true,
         );
         let r = plan(&s2, &sy, &["vdb".into()], &["vdb".into()]);
         assert!(r.steps.is_empty() && r.problems[0].1.contains("dm-3 (cryptroot) is open (open count 2, of which what's stacked on it accounts for 1)"), "{:?}", r.problems);
         // A dataset mounted: refused.
-        sy.mounts.push(Mount { source: "tank/home".into(), target: "/home".into(), fstype: "zfs".into(), devno: "0:99".into(), ..Mount::default() });
+        sy.mounts.push(Mount {
+            source: "tank/home".into(),
+            target: "/home".into(),
+            fstype: "zfs".into(),
+            devno: "0:99".into(),
+            ..Mount::default()
+        });
         let r = plan(&s, &sy, &["vdb".into()], &["vdb".into()]);
-        assert!(r.steps.is_empty() && r.problems[0].1.contains("ZFS pool tank's dataset tank/home is mounted at /home"), "{:?}", r.problems);
+        assert!(
+            r.steps.is_empty()
+                && r.problems[0]
+                    .1
+                    .contains("ZFS pool tank's dataset tank/home is mounted at /home"),
+            "{:?}",
+            r.problems
+        );
     }
 
     #[test]
@@ -472,10 +653,29 @@ mod tests {
             swaps: vec![],
         };
         let r = plan(&s, &sy, &["vdb".into()], &["vdb".into()]);
-        assert!(r.steps.is_empty() && r.problems[0].1.contains("md127 also sits on vdc, which isn't named with --erase"), "{:?}", r.problems);
-        let r = plan(&s, &sy, &["vdb".into(), "vdc".into()], &["vdb".into(), "vdc".into()]);
+        assert!(
+            r.steps.is_empty()
+                && r.problems[0]
+                    .1
+                    .contains("md127 also sits on vdc, which isn't named with --erase"),
+            "{:?}",
+            r.problems
+        );
+        let r = plan(
+            &s,
+            &sy,
+            &["vdb".into(), "vdc".into()],
+            &["vdb".into(), "vdc".into()],
+        );
         assert!(r.problems.is_empty(), "{:?}", r.problems);
-        assert_eq!(r.steps, vec![Step { action: Action::Md("md127".into()), stops: vec!["md127".into()], disks: vec!["vdb".into(), "vdc".into()] }]);
+        assert_eq!(
+            r.steps,
+            vec![Step {
+                action: Action::Md("md127".into()),
+                stops: vec!["md127".into()],
+                disks: vec!["vdb".into(), "vdc".into()]
+            }]
+        );
     }
 
     #[test]
@@ -483,11 +683,21 @@ mod tests {
         let (_t, s) = sys();
         let mut sy = lvm_system();
         sy.swaps.push("dm-1".into());
-        sy.mounts.push(Mount { devno: sy.devs[4].devno.clone(), source: "/dev/mapper/vg0-root".into(), target: "/mnt/old".into(), fstype: "ext4".into(), ..Mount::default() });
+        sy.mounts.push(Mount {
+            devno: sy.devs[4].devno.clone(),
+            source: "/dev/mapper/vg0-root".into(),
+            target: "/mnt/old".into(),
+            fstype: "ext4".into(),
+            ..Mount::default()
+        });
         let r = plan(&s, &sy, &["vdb".into()], &["vdb".into()]);
         assert!(r.steps.is_empty());
         let p = &r.problems[0].1;
-        assert!(p.contains("dm-0 (vg0-root) is mounted at /mnt/old") && p.contains("dm-1 (vg0-swap) is in use as swap"), "{p}");
+        assert!(
+            p.contains("dm-0 (vg0-root) is mounted at /mnt/old")
+                && p.contains("dm-1 (vg0-swap) is in use as swap"),
+            "{p}"
+        );
     }
 
     #[test]
@@ -508,10 +718,24 @@ mod tests {
             ],
             swaps: vec![],
         };
-        let r = plan(&s, &sy, &["vdb".into(), "vdc".into()], &["vdb".into(), "vdc".into()]);
+        let r = plan(
+            &s,
+            &sy,
+            &["vdb".into(), "vdc".into()],
+            &["vdb".into(), "vdc".into()],
+        );
         assert!(r.problems.is_empty(), "{:?}", r.problems);
-        assert_eq!(names(&r), vec!["volume group vg0 deactivated", "md array md127 stopped"]);
-        assert_eq!(r.steps[0].action, Action::Lvm { vg: "vg0".into(), pvs: vec!["/dev/md127".into()] });
+        assert_eq!(
+            names(&r),
+            vec!["volume group vg0 deactivated", "md array md127 stopped"]
+        );
+        assert_eq!(
+            r.steps[0].action,
+            Action::Lvm {
+                vg: "vg0".into(),
+                pvs: vec!["/dev/md127".into()]
+            }
+        );
     }
 
     #[test]
@@ -522,7 +746,10 @@ mod tests {
         let odd = "Yb3kFa0Pz1Ab!dEfGhIjKlMn#pQrStUv";
         assert_eq!(lvm_vg_uuid(&format!("LVM-{odd}{lv}")).as_deref(), Some(odd));
         assert_eq!(lvm_vg_uuid(&format!("LVM-{}é{lv}", "a".repeat(31))), None);
-        assert_eq!(lvm_vg_uuid(&format!("LVM-{}\u{FFFD}{lv}", "a".repeat(30))), None);
+        assert_eq!(
+            lvm_vg_uuid(&format!("LVM-{}\u{FFFD}{lv}", "a".repeat(30))),
+            None
+        );
         assert_eq!(lvm_vg_uuid(&format!("LVM-{}", "a".repeat(31))), None);
         assert_eq!(lvm_vg_uuid(&format!("CRYPT-LUKS2-{VG}")), None);
     }

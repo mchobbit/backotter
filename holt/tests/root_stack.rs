@@ -21,19 +21,38 @@ use std::process::Command;
 const PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
 
 fn sh(script: &str) -> String {
-    let out = Command::new("/bin/sh").arg("-ec").arg(script).env("PATH", PATH).env("LC_ALL", "C").output().unwrap();
-    assert!(out.status.success(), "script failed:\n{script}\n{}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("/bin/sh")
+        .arg("-ec")
+        .arg(script)
+        .env("PATH", PATH)
+        .env("LC_ALL", "C")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "script failed:\n{script}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
 fn sh_quiet(script: &str) {
-    let _ = Command::new("/bin/sh").arg("-c").arg(script).env("PATH", PATH).output();
+    let _ = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(script)
+        .env("PATH", PATH)
+        .output();
 }
 
 fn dump() -> Value {
-    let exe = std::env::var("BKO_HOLT_BIN").unwrap_or_else(|_| env!("CARGO_BIN_EXE_bko-holt").to_string());
+    let exe = std::env::var("BKO_HOLT_BIN")
+        .unwrap_or_else(|_| env!("CARGO_BIN_EXE_bko-holt").to_string());
     let out = Command::new(exe).arg("dump").output().unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     json::parse(&String::from_utf8(out.stdout).unwrap()).unwrap()
 }
 
@@ -47,12 +66,28 @@ fn as_root() -> bool {
 
 /// Every device in the dump, flattened, by kernel name.
 fn device<'a>(v: &'a Value, name: &str) -> &'a Value {
-    for sec in ["disks", "md_arrays", "dm_devices", "loop_devices", "other_devices"] {
-        for d in v.at(&["storage", sec]).and_then(Value::as_array).into_iter().flatten() {
+    for sec in [
+        "disks",
+        "md_arrays",
+        "dm_devices",
+        "loop_devices",
+        "other_devices",
+    ] {
+        for d in v
+            .at(&["storage", sec])
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             if d.get("name").and_then(Value::as_str) == Some(name) {
                 return d;
             }
-            for p in d.get("partitions").and_then(Value::as_array).into_iter().flatten() {
+            for p in d
+                .get("partitions")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 if p.get("name").and_then(Value::as_str) == Some(name) {
                     return p;
                 }
@@ -63,11 +98,18 @@ fn device<'a>(v: &'a Value, name: &str) -> &'a Value {
 }
 
 fn kname(path: &str) -> String {
-    std::fs::canonicalize(path).unwrap().file_name().unwrap().to_string_lossy().into_owned()
+    std::fs::canonicalize(path)
+        .unwrap()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn st<'a>(v: &'a Value, p: &[&str]) -> &'a str {
-    v.at(p).and_then(Value::as_str).unwrap_or_else(|| panic!("no string at {p:?} in {}", v.compact()))
+    v.at(p)
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("no string at {p:?} in {}", v.compact()))
 }
 
 struct Cleanup(String);
@@ -126,7 +168,13 @@ fn md_luks_lvm_stack() {
     assert_eq!(st(p1, &["content", "label"]), "ESPA");
     // md: superblock and sysfs agree with mdadm.
     let detail = sh("mdadm --detail --export /dev/md/bkold");
-    let get = |k: &str| detail.lines().find_map(|l| l.strip_prefix(&format!("{k}="))).unwrap().to_string();
+    let get = |k: &str| {
+        detail
+            .lines()
+            .find_map(|l| l.strip_prefix(&format!("{k}=")))
+            .unwrap()
+            .to_string()
+    };
     let m = device(&v, &md);
     assert_eq!(st(m, &["md", "level"]), "raid1");
     assert_eq!(st(m, &["md", "uuid"]), get("MD_UUID"));
@@ -138,7 +186,11 @@ fn md_luks_lvm_stack() {
     // LUKS2 on md.
     assert_eq!(st(m, &["content", "type"]), "crypto_LUKS");
     assert_eq!(st(m, &["content", "label"]), "bkoldcrypt");
-    assert_eq!(m.at(&["content", "segments", "0", "sector_size"]).and_then(Value::as_u64), Some(4096));
+    assert_eq!(
+        m.at(&["content", "segments", "0", "sector_size"])
+            .and_then(Value::as_u64),
+        Some(4096)
+    );
     let luks_uuid = sh("cryptsetup luksUUID /dev/md/bkold");
     assert_eq!(st(m, &["content", "uuid"]), luks_uuid);
     let c = device(&v, &crypt);
@@ -146,26 +198,59 @@ fn md_luks_lvm_stack() {
     assert_eq!(st(c, &["dm", "luks_uuid"]), luks_uuid);
     // LVM, checked against lvs/vgs.
     assert_eq!(st(c, &["content", "type"]), "LVM2_member");
-    let vg = v.at(&["storage", "lvm", "volume_groups"]).and_then(Value::as_array).unwrap().iter().find(|g| g.get("name").and_then(Value::as_str) == Some("bkold-vg")).unwrap();
+    let vg = v
+        .at(&["storage", "lvm", "volume_groups"])
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+        .find(|g| g.get("name").and_then(Value::as_str) == Some("bkold-vg"))
+        .unwrap();
     assert_eq!(st(vg, &["id"]), sh("vgs --noheadings -o vg_uuid bkold-vg"));
-    assert_eq!(vg.get("extent_size_bytes").and_then(Value::as_u64), Some(8 << 20));
+    assert_eq!(
+        vg.get("extent_size_bytes").and_then(Value::as_u64),
+        Some(8 << 20)
+    );
     assert_eq!(st(vg, &["physical_volumes", "0", "device"]), crypt);
     for lv in vg.get("logical_volumes").and_then(Value::as_array).unwrap() {
         let name = st(lv, &["name"]);
-        let size: u64 = sh(&format!("lvs --noheadings --units b --nosuffix -o lv_size bkold-vg/{name}")).parse().unwrap();
-        assert_eq!(lv.get("size_bytes").and_then(Value::as_u64), Some(size), "{name}");
-        assert_eq!(st(lv, &["id"]), sh(&format!("lvs --noheadings -o lv_uuid bkold-vg/{name}")));
+        let size: u64 = sh(&format!(
+            "lvs --noheadings --units b --nosuffix -o lv_size bkold-vg/{name}"
+        ))
+        .parse()
+        .unwrap();
+        assert_eq!(
+            lv.get("size_bytes").and_then(Value::as_u64),
+            Some(size),
+            "{name}"
+        );
+        assert_eq!(
+            st(lv, &["id"]),
+            sh(&format!("lvs --noheadings -o lv_uuid bkold-vg/{name}"))
+        );
         let dev = st(lv, &["active_device"]);
-        assert_eq!(dev, if name == "xfs" { xfs.as_str() } else { ext.as_str() });
+        assert_eq!(
+            dev,
+            if name == "xfs" {
+                xfs.as_str()
+            } else {
+                ext.as_str()
+            }
+        );
     }
     let e = device(&v, &ext);
     assert_eq!(st(e, &["dm", "vg"]), "bkold-vg");
     assert_eq!(st(e, &["dm", "lv"]), "ext-4");
     assert_eq!(st(e, &["content", "label"]), "bkoldext");
-    assert_eq!(e.get("mounted_at"), Some(&Value::from(vec!["/mnt/bkold-ext4"])));
+    assert_eq!(
+        e.get("mounted_at"),
+        Some(&Value::from(vec!["/mnt/bkold-ext4"]))
+    );
     let x = device(&v, &xfs);
     assert_eq!(st(x, &["content", "type"]), "xfs");
-    assert_eq!(x.get("mounted_at"), Some(&Value::from(vec!["/mnt/bkold-xfs"])));
+    assert_eq!(
+        x.get("mounted_at"),
+        Some(&Value::from(vec!["/mnt/bkold-xfs"]))
+    );
     let warnings = v.get("warnings").and_then(Value::as_array).unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");
 }
@@ -188,10 +273,17 @@ fn zfs_mirror_pool() {
          zpool create -f -o ashift=12 -o cachefile=none -o compatibility=openzfs-2.1-linux -O compression=zstd -O mountpoint=none {pool} mirror $la $lb; \
          zfs create -o mountpoint=none -o recordsize=1M {pool}/data; zfs create -V 32M {pool}/vol; udevadm settle; echo $la $lb"
     ));
-    let la = s.split_whitespace().next().unwrap().trim_start_matches("/dev/").to_string();
+    let la = s
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .trim_start_matches("/dev/")
+        .to_string();
     // zpool partitions a real whole disk (the vdev is then partition 1) but
     // labels a loop device as it is: ask zpool which device it used.
-    let vpath = sh(&format!("zpool list -v -H -P {pool} | awk '$1 ~ /^\\/dev\\// {{print $1; exit}}'"));
+    let vpath = sh(&format!(
+        "zpool list -v -H -P {pool} | awk '$1 ~ /^\\/dev\\// {{print $1; exit}}'"
+    ));
     let vname = kname(&vpath);
     let v = dump();
     let vdev = device(&v, &vname);
@@ -199,30 +291,76 @@ fn zfs_mirror_pool() {
     assert_eq!(st(vdev, &["content", "label"]), pool);
     let guid = sh(&format!("zpool get -H -p -o value guid {pool}"));
     assert_eq!(st(vdev, &["content", "uuid"]), guid);
-    assert_eq!(vdev.at(&["content", "labels_valid"]).and_then(Value::as_u64), Some(4));
+    assert_eq!(
+        vdev.at(&["content", "labels_valid"])
+            .and_then(Value::as_u64),
+        Some(4)
+    );
     if vname != la {
         // The whole disk isn't a vdev itself, whatever blkid says.
         assert!(device(&v, &la).get("content").unwrap().is_null());
     }
-    let p = v.at(&["storage", "zfs", "pools_from_labels"]).and_then(Value::as_array).unwrap().iter().find(|p| p.get("name").and_then(Value::as_str) == Some(pool.as_str())).unwrap();
+    let p = v
+        .at(&["storage", "zfs", "pools_from_labels"])
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+        .find(|p| p.get("name").and_then(Value::as_str) == Some(pool.as_str()))
+        .unwrap();
     assert_eq!(st(p, &["pool_guid"]), guid);
     assert_eq!(st(p, &["top_level_vdevs", "0", "type"]), "mirror");
-    assert_eq!(p.at(&["top_level_vdevs", "0", "children"]).and_then(Value::as_array).map(Vec::len), Some(2));
-    assert_eq!(p.get("member_devices").and_then(Value::as_array).map(Vec::len), Some(2));
-    let ip = v.at(&["storage", "zfs", "tools", "imported_pools"]).and_then(Value::as_array).unwrap().iter().find(|x| x.get("name").and_then(Value::as_str) == Some(pool.as_str())).unwrap();
-    assert_eq!(st(ip, &["properties", "compatibility"]), "openzfs-2.1-linux");
+    assert_eq!(
+        p.at(&["top_level_vdevs", "0", "children"])
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(
+        p.get("member_devices")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(2)
+    );
+    let ip = v
+        .at(&["storage", "zfs", "tools", "imported_pools"])
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+        .find(|x| x.get("name").and_then(Value::as_str) == Some(pool.as_str()))
+        .unwrap();
+    assert_eq!(
+        st(ip, &["properties", "compatibility"]),
+        "openzfs-2.1-linux"
+    );
     assert_eq!(st(ip, &["properties", "ashift"]), "12");
     let features = ip.get("features").and_then(Value::as_object).unwrap();
-    let want = sh(&format!("zpool get -H -o property all {pool} | grep -c '^feature@'"));
+    let want = sh(&format!(
+        "zpool get -H -o property all {pool} | grep -c '^feature@'"
+    ));
     assert_eq!(features.len().to_string(), want);
-    let ds = v.at(&["storage", "zfs", "tools", "datasets"]).and_then(Value::as_array).unwrap();
-    let data = ds.iter().find(|x| x.get("name").and_then(Value::as_str) == Some(format!("{pool}/data").as_str())).unwrap();
-    assert_eq!(data.get("recordsize").and_then(Value::as_u64), Some(1 << 20));
+    let ds = v
+        .at(&["storage", "zfs", "tools", "datasets"])
+        .and_then(Value::as_array)
+        .unwrap();
+    let data = ds
+        .iter()
+        .find(|x| x.get("name").and_then(Value::as_str) == Some(format!("{pool}/data").as_str()))
+        .unwrap();
+    assert_eq!(
+        data.get("recordsize").and_then(Value::as_u64),
+        Some(1 << 20)
+    );
     assert_eq!(st(data, &["compression"]), "zstd");
-    let vol = ds.iter().find(|x| x.get("name").and_then(Value::as_str) == Some(format!("{pool}/vol").as_str())).unwrap();
+    let vol = ds
+        .iter()
+        .find(|x| x.get("name").and_then(Value::as_str) == Some(format!("{pool}/vol").as_str()))
+        .unwrap();
     assert_eq!(st(vol, &["type"]), "volume");
     assert_eq!(vol.get("volsize").and_then(Value::as_u64), Some(32 << 20));
     // The zvol shows up as a block device too.
     let zd = kname(&format!("/dev/zvol/{pool}/vol"));
-    assert_eq!(device(&v, &zd).get("size_bytes").and_then(Value::as_u64), Some(32 << 20));
+    assert_eq!(
+        device(&v, &zd).get("size_bytes").and_then(Value::as_u64),
+        Some(32 << 20)
+    );
 }

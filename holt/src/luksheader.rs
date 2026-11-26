@@ -34,10 +34,20 @@ pub struct Options {
 
 /// A header file's name: by the LUKS UUID, else by the device.
 pub fn file_name(uuid: Option<&str>, dev: &str) -> String {
-    let safe = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'));
+    let safe = |s: &str| {
+        !s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    };
     match uuid.filter(|u| safe(u)) {
         Some(u) => format!("luks2-header-{u}.img"),
-        None => format!("luks2-header-{}.img", dev.replace(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'), "_")),
+        None => format!(
+            "luks2-header-{}.img",
+            dev.replace(
+                |c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+                "_"
+            )
+        ),
     }
 }
 
@@ -46,22 +56,49 @@ fn luks_devices(sections: &[&[Value]]) -> Vec<(String, String, Vec<String>, Valu
     let mut out = Vec::new();
     let mut add = |x: &Value| {
         if x.at(&["content", "type"]).and_then(Value::as_str) == Some("crypto_LUKS") {
-            let name = x.get("name").and_then(Value::as_str).unwrap_or("").to_string();
-            let node = x.get("path").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("/dev/{name}"));
-            let mut aliases: Vec<String> = x.get("links").and_then(Value::as_array).into_iter().flatten().filter_map(|l| l.as_str().map(str::to_string)).collect();
+            let name = x
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let node = x
+                .get("path")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("/dev/{name}"));
+            let mut aliases: Vec<String> = x
+                .get("links")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|l| l.as_str().map(str::to_string))
+                .collect();
             if let Some(mp) = x.at(&["dm", "mapper_path"]).and_then(Value::as_str) {
                 aliases.push(mp.to_string());
             }
-            if let (Some(vg), Some(lv)) = (x.at(&["dm", "vg"]).and_then(Value::as_str), x.at(&["dm", "lv"]).and_then(Value::as_str)) {
+            if let (Some(vg), Some(lv)) = (
+                x.at(&["dm", "vg"]).and_then(Value::as_str),
+                x.at(&["dm", "lv"]).and_then(Value::as_str),
+            ) {
                 aliases.push(format!("/dev/{vg}/{lv}"));
             }
-            out.push((name, node, aliases, x.get("content").cloned().unwrap_or(Value::Null)));
+            out.push((
+                name,
+                node,
+                aliases,
+                x.get("content").cloned().unwrap_or(Value::Null),
+            ));
         }
     };
     for sect in sections {
         for d in sect.iter() {
             add(d);
-            for p in d.get("partitions").and_then(Value::as_array).into_iter().flatten() {
+            for p in d
+                .get("partitions")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 add(p);
             }
         }
@@ -78,18 +115,37 @@ fn hdr_and_areas(c: &Value) -> Option<u64> {
     // symlinked device paths; hdr_and_areas() also computed 2 * header_size +
     // keyslots_size without checked arithmetic, risking u64 overflow. Match
     // layout aliases and canonicalized paths, and use checked_mul/checked_add.
-    let n = |k: &str| c.get(k).and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())));
-    n("header_size")?.checked_mul(2)?.checked_add(n("keyslots_size")?)
+    let n = |k: &str| {
+        c.get(k).and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
+    };
+    n("header_size")?
+        .checked_mul(2)?
+        .checked_add(n("keyslots_size")?)
 }
 
-fn resolve_luks_arg<'a>(sys: &Sys, all: &'a [(String, String, Vec<String>, Value)], k: &str) -> Option<&'a str> {
+fn resolve_luks_arg<'a>(
+    sys: &Sys,
+    all: &'a [(String, String, Vec<String>, Value)],
+    k: &str,
+) -> Option<&'a str> {
     let bare = k.trim_start_matches("/dev/");
     if let Some((name, _, _, _)) = all.iter().find(|(name, node, aliases, _)| {
-        name == bare || node == k || aliases.iter().any(|a| a == k || a.trim_start_matches("/dev/") == bare)
+        name == bare
+            || node == k
+            || aliases
+                .iter()
+                .any(|a| a == k || a.trim_start_matches("/dev/") == bare)
     }) {
         return Some(name.as_str());
     }
-    let kp = if k.starts_with('/') { sys.p(k) } else { sys.p(&format!("/dev/{k}")) };
+    let kp = if k.starts_with('/') {
+        sys.p(k)
+    } else {
+        sys.p(&format!("/dev/{k}"))
+    };
     let canon = std::fs::canonicalize(kp).ok()?;
     all.iter()
         .find(|(_, node, _, _)| std::fs::canonicalize(sys.p(node)).ok().as_ref() == Some(&canon))
@@ -104,7 +160,10 @@ pub fn capture(sys: &Sys, sections: &[&[Value]], want: &[String], opts: &Options
     let mut names: Vec<String> = want.to_vec();
     for k in &opts.keep {
         let Some(n) = resolve_luks_arg(sys, &all, k).map(str::to_string) else {
-            sys.warn(format!("--keep-luks-header {k}: no LUKS container is on {} in this dump", k.trim_start_matches("/dev/")));
+            sys.warn(format!(
+                "--keep-luks-header {k}: no LUKS container is on {} in this dump",
+                k.trim_start_matches("/dev/")
+            ));
             continue;
         };
         if !names.contains(&n) {
@@ -117,7 +176,9 @@ pub fn capture(sys: &Sys, sections: &[&[Value]], want: &[String], opts: &Options
     let dir = opts.dir.clone().unwrap_or_else(|| DEFAULT_DIR.to_string());
     let mut out = Vec::new();
     for n in names {
-        let Some((_, node, _, c)) = all.iter().find(|(x, _, _, _)| *x == n) else { continue };
+        let Some((_, node, _, c)) = all.iter().find(|(x, _, _, _)| *x == n) else {
+            continue;
+        };
         let uuid = c.get("uuid").and_then(Value::as_str);
         if c.get("version").and_then(Value::as_str) != Some("2") {
             sys.warn(format!("{n}: its LUKS header is LUKS{}, not LUKS2: not kept (load keeps LUKS2 headers only)", c.get("version").and_then(Value::as_str).unwrap_or("?")));
@@ -139,12 +200,17 @@ pub fn capture(sys: &Sys, sections: &[&[Value]], want: &[String], opts: &Options
                 .and_then(|()| std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o700)))
         };
         if let Err(e) = made {
-            sys.warn(format!("{n}: can't make {dir} for its LUKS2 header ({e}): load can't keep it"));
+            sys.warn(format!(
+                "{n}: can't make {dir} for its LUKS2 header ({e}): load can't keep it"
+            ));
             continue;
         }
         // cryptsetup won't write over a file.
         let _ = std::fs::remove_file(sys.p(&path));
-        let ran = sys.run("cryptsetup", &["luksHeaderBackup", node, "--header-backup-file", &path]);
+        let ran = sys.run(
+            "cryptsetup",
+            &["luksHeaderBackup", node, "--header-backup-file", &path],
+        );
         let bytes = match crate::bytes::read_bounded(&sys.p(&path), HEADER_MAX) {
             Ok(b) => Some(b),
             Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
@@ -154,7 +220,10 @@ pub fn capture(sys: &Sys, sections: &[&[Value]], want: &[String], opts: &Options
             }
             Err(_) => None,
         };
-        let ok = |b: &Vec<u8>| b.starts_with(b"LUKS\xba\xbe") && hdr_and_areas(c).is_none_or(|need| b.len() as u64 >= need);
+        let ok = |b: &Vec<u8>| {
+            b.starts_with(b"LUKS\xba\xbe")
+                && hdr_and_areas(c).is_none_or(|need| b.len() as u64 >= need)
+        };
         match (ran, bytes) {
             (Some(_), Some(b)) if ok(&b) => out.push(
                 Obj::new()
@@ -179,7 +248,11 @@ pub fn capture(sys: &Sys, sections: &[&[Value]], want: &[String], opts: &Options
 
 /// storage.luks_headers' entry for the device DEV, when its header is kept.
 pub fn kept<'a>(layout: &'a Value, dev: &str) -> Option<&'a Value> {
-    layout.at(&["storage", "luks_headers"]).and_then(Value::as_array)?.iter().find(|h| h.get("device").and_then(Value::as_str) == Some(dev))
+    layout
+        .at(&["storage", "luks_headers"])
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|h| h.get("device").and_then(Value::as_str) == Some(dev))
 }
 
 /// Where load finds a kept header's FILE: in DIR (load's
@@ -187,7 +260,10 @@ pub fn kept<'a>(layout: &'a Value, dev: &str) -> Option<&'a Value> {
 pub fn path_at_load(dir: Option<&str>, layout_path: &str, file: &str) -> String {
     let base = match dir {
         Some(d) => d.trim_end_matches('/').to_string(),
-        None => match std::path::Path::new(layout_path).parent().map(|p| p.to_string_lossy().into_owned()) {
+        None => match std::path::Path::new(layout_path)
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+        {
             Some(p) if !p.is_empty() => p,
             _ => ".".to_string(),
         },
@@ -201,7 +277,9 @@ pub fn check_file(path: &str, h: &Value) -> Option<String> {
     let want = h.get("sha256").and_then(Value::as_str).unwrap_or("");
     match crate::bytes::read_bounded(std::path::Path::new(path), HEADER_MAX) {
         Err(e) => Some(format!("{path}: {e}")),
-        Ok(b) if crate::bytes::sha256_hex(&b) != want => Some(format!("{path} isn't the header the dump kept (its SHA-256 differs)")),
+        Ok(b) if crate::bytes::sha256_hex(&b) != want => Some(format!(
+            "{path} isn't the header the dump kept (its SHA-256 differs)"
+        )),
         Ok(_) => None,
     }
 }
@@ -214,12 +292,21 @@ mod tests {
 
     #[test]
     fn names_and_paths() {
-        assert_eq!(file_name(Some("b93c93b3-cf55-40e1-9972-c5b49656a810"), "vda5"), "luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img");
+        assert_eq!(
+            file_name(Some("b93c93b3-cf55-40e1-9972-c5b49656a810"), "vda5"),
+            "luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img"
+        );
         assert_eq!(file_name(None, "vda5"), "luks2-header-vda5.img");
         assert_eq!(file_name(Some("../x"), "md/x"), "luks2-header-md_x.img");
-        assert_eq!(path_at_load(None, "/run/x/layout.json", "h.img"), "/run/x/h.img");
+        assert_eq!(
+            path_at_load(None, "/run/x/layout.json", "h.img"),
+            "/run/x/h.img"
+        );
         assert_eq!(path_at_load(None, "layout.json", "h.img"), "./h.img");
-        assert_eq!(path_at_load(Some("/h/"), "/run/x/layout.json", "h.img"), "/h/h.img");
+        assert_eq!(
+            path_at_load(Some("/h/"), "/run/x/layout.json", "h.img"),
+            "/h/h.img"
+        );
     }
 
     /// A runner that writes what `cryptsetup luksHeaderBackup` would: the
@@ -233,7 +320,11 @@ mod tests {
                 return None;
             }
             let dev = std::fs::read(self.root.join(args[1].trim_start_matches('/'))).ok()?;
-            std::fs::write(self.root.join(args[3].trim_start_matches('/')), &dev[..dev.len().min(2 * 16384 + 16744448).min(dev.len())]).ok()?;
+            std::fs::write(
+                self.root.join(args[3].trim_start_matches('/')),
+                &dev[..dev.len().min(2 * 16384 + 16744448).min(dev.len())],
+            )
+            .ok()?;
             Some(String::new())
         }
         fn installed(&self, _: &str) -> bool {
@@ -244,14 +335,41 @@ mod tests {
     #[test]
     fn captures_luks2_only() {
         let t = Tree::new("luksheader");
-        let img = crate::probe::luks::sample::luks2("6c3e5f0e-6b0a-4d6c-9a2e-8f7e1d2c3b4a", "ubuntu-data-enc");
+        let img = crate::probe::luks::sample::luks2(
+            "6c3e5f0e-6b0a-4d6c-9a2e-8f7e1d2c3b4a",
+            "ubuntu-data-enc",
+        );
         t.file("/dev/vda5", &img);
         let c = crate::probe::probe_all(&crate::bytes::MemSource(img.clone()))[0].to_json();
-        let disks = vec![Obj::new().set("name", "vda").set("partitions", vec![Obj::new().set("name", "vda5").set("path", "/dev/vda5").set("content", c.clone()).build()]).build()];
+        let disks = vec![
+            Obj::new()
+                .set("name", "vda")
+                .set(
+                    "partitions",
+                    vec![
+                        Obj::new()
+                            .set("name", "vda5")
+                            .set("path", "/dev/vda5")
+                            .set("content", c.clone())
+                            .build(),
+                    ],
+                )
+                .build(),
+        ];
         // The sample is 1 MiB, short of its keyslots area: refused as not whole.
-        let sys = Sys::new(t.root(), Box::new(Backup { root: t.root().to_path_buf() }), true);
+        let sys = Sys::new(
+            t.root(),
+            Box::new(Backup {
+                root: t.root().to_path_buf(),
+            }),
+            true,
+        );
         assert!(capture(&sys, &[&disks], &["vda5".into()], &Options::default()).is_empty());
-        assert!(sys.warnings()[0].contains("aren't a whole LUKS2 header"), "{:?}", sys.warnings());
+        assert!(
+            sys.warnings()[0].contains("aren't a whole LUKS2 header"),
+            "{:?}",
+            sys.warnings()
+        );
         // A header whose keyslots area fits.
         let mut c2 = c.clone();
         if let Value::Obj(o) = &mut c2 {
@@ -261,25 +379,84 @@ mod tests {
                 }
             }
         }
-        let disks = vec![Obj::new().set("name", "vda").set("partitions", vec![Obj::new().set("name", "vda5").set("path", "/dev/vda5").set("content", c2).build()]).build()];
-        let sys = Sys::new(t.root(), Box::new(Backup { root: t.root().to_path_buf() }), true);
-        let h = capture(&sys, &[&disks], &[], &Options { keep: vec!["/dev/vda5".into(), "vdb1".into()], dir: Some("/hdr".into()) });
+        let disks = vec![
+            Obj::new()
+                .set("name", "vda")
+                .set(
+                    "partitions",
+                    vec![
+                        Obj::new()
+                            .set("name", "vda5")
+                            .set("path", "/dev/vda5")
+                            .set("content", c2)
+                            .build(),
+                    ],
+                )
+                .build(),
+        ];
+        let sys = Sys::new(
+            t.root(),
+            Box::new(Backup {
+                root: t.root().to_path_buf(),
+            }),
+            true,
+        );
+        let h = capture(
+            &sys,
+            &[&disks],
+            &[],
+            &Options {
+                keep: vec!["/dev/vda5".into(), "vdb1".into()],
+                dir: Some("/hdr".into()),
+            },
+        );
         assert_eq!(h.len(), 1, "{:?}", sys.warnings());
-        assert_eq!(h[0].get("file").and_then(Value::as_str), Some("luks2-header-6c3e5f0e-6b0a-4d6c-9a2e-8f7e1d2c3b4a.img"));
-        assert_eq!(h[0].get("written_to").and_then(Value::as_str), Some("/hdr/luks2-header-6c3e5f0e-6b0a-4d6c-9a2e-8f7e1d2c3b4a.img"));
-        let b = std::fs::read(t.p("/hdr/luks2-header-6c3e5f0e-6b0a-4d6c-9a2e-8f7e1d2c3b4a.img")).unwrap();
-        assert_eq!(h[0].get("sha256").and_then(Value::as_str), Some(crate::bytes::sha256_hex(&b).as_str()));
-        assert!(sys.warnings().iter().any(|w| w.contains("--keep-luks-header vdb1: no LUKS container")), "{:?}", sys.warnings());
-        let path = t.p("/hdr/luks2-header-6c3e5f0e-6b0a-4d6c-9a2e-8f7e1d2c3b4a.img").to_string_lossy().into_owned();
+        assert_eq!(
+            h[0].get("file").and_then(Value::as_str),
+            Some("luks2-header-6c3e5f0e-6b0a-4d6c-9a2e-8f7e1d2c3b4a.img")
+        );
+        assert_eq!(
+            h[0].get("written_to").and_then(Value::as_str),
+            Some("/hdr/luks2-header-6c3e5f0e-6b0a-4d6c-9a2e-8f7e1d2c3b4a.img")
+        );
+        let b = std::fs::read(t.p("/hdr/luks2-header-6c3e5f0e-6b0a-4d6c-9a2e-8f7e1d2c3b4a.img"))
+            .unwrap();
+        assert_eq!(
+            h[0].get("sha256").and_then(Value::as_str),
+            Some(crate::bytes::sha256_hex(&b).as_str())
+        );
+        assert!(
+            sys.warnings()
+                .iter()
+                .any(|w| w.contains("--keep-luks-header vdb1: no LUKS container")),
+            "{:?}",
+            sys.warnings()
+        );
+        let path = t
+            .p("/hdr/luks2-header-6c3e5f0e-6b0a-4d6c-9a2e-8f7e1d2c3b4a.img")
+            .to_string_lossy()
+            .into_owned();
         assert_eq!(check_file(&path, &h[0]), None);
         std::fs::write(&path, b"x").unwrap();
-        assert!(check_file(&path, &h[0]).unwrap().contains("SHA-256 differs"));
+        assert!(
+            check_file(&path, &h[0])
+                .unwrap()
+                .contains("SHA-256 differs")
+        );
         // Unprivileged, or a failing cryptsetup: said, nothing kept.
         let sys = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         assert!(capture(&sys, &[&disks], &["vda5".into()], &Options::default()).is_empty());
-        assert!(sys.warnings()[0].contains("luksHeaderBackup /dev/vda5` failed"), "{:?}", sys.warnings());
+        assert!(
+            sys.warnings()[0].contains("luksHeaderBackup /dev/vda5` failed"),
+            "{:?}",
+            sys.warnings()
+        );
         let sys = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         assert!(capture(&sys, &[&disks], &["vda5".into()], &Options::default()).is_empty());
-        assert!(sys.warnings()[0].contains("not running as root"), "{:?}", sys.warnings());
+        assert!(
+            sys.warnings()[0].contains("not running as root"),
+            "{:?}",
+            sys.warnings()
+        );
     }
 }

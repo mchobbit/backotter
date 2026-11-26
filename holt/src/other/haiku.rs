@@ -4,7 +4,7 @@
 //! restored system's root.  Haiku has no fstab: the report makes up one
 //! line, the boot volume's, for load to mount it.
 
-use super::{found_json, read_disk, Family, RawDisk};
+use super::{Family, RawDisk, found_json, read_disk};
 use crate::bytes::FileSource;
 use crate::json::{Obj, Value};
 
@@ -17,7 +17,9 @@ pub fn probe_size(path: &std::path::Path) -> Option<u64> {
     let f = std::fs::File::open(path).ok()?;
     probe_size_by(|sector| {
         let mut b = [0u8; 512];
-        let at = sector.checked_mul(512).ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+        let at = sector
+            .checked_mul(512)
+            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
         f.read_at(&mut b, at).map(|n| n == 512)
     })
 }
@@ -38,7 +40,10 @@ fn probe_size_by(reads: impl Fn(u64) -> std::io::Result<bool>) -> Option<u64> {
             Ok(true) => Some(mid),
             Ok(false) => None,
             // Bad sectors come in runs: look 1, 2, 4, ... sectors on.
-            Err(_) => (0..32).map(|k| mid + (1u64 << k)).take_while(|s| *s < hi).find(|s| reads(*s).unwrap_or(false)),
+            Err(_) => (0..32)
+                .map(|k| mid + (1u64 << k))
+                .take_while(|s| *s < hi)
+                .find(|s| reads(*s).unwrap_or(false)),
         };
         match next {
             Some(s) => lo = s,
@@ -85,7 +90,14 @@ pub fn disks(sys: &Sys) -> Vec<RawDisk> {
         .filter_map(|dir| {
             let path = format!("{dir}/raw");
             let size = probe_size(&sys.p(&path))?;
-            Some(RawDisk { name: name_of(&dir), path, size, sector: 512, model: None, serial: None })
+            Some(RawDisk {
+                name: name_of(&dir),
+                path,
+                size,
+                sector: 512,
+                model: None,
+                serial: None,
+            })
         })
         .collect()
 }
@@ -151,17 +163,29 @@ pub fn parse_df(text: &str) -> Vec<(String, String, String)> {
     out
 }
 
-pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, generated: &str) -> Value {
+pub fn report(
+    sys: &Sys,
+    fam: Family,
+    os: Option<&crate::osrel::OsRelease>,
+    generated: &str,
+) -> Value {
     let hostname = sys.run("hostname", &[]).map(|s| s.trim().to_string());
     let df = parse_df(&sys.run("df", &[]).unwrap_or_default());
     let dev_name = |dev: &str| -> Option<String> {
         let (dir, idx) = dev.rsplit_once('/')?;
         Some(format!("{}_{idx}", name_of(dir)))
     };
-    let mounted_at = |name: &str| -> Vec<String> { df.iter().filter(|m| dev_name(&m.2).as_deref() == Some(name)).map(|m| m.0.clone()).collect() };
+    let mounted_at = |name: &str| -> Vec<String> {
+        df.iter()
+            .filter(|m| dev_name(&m.2).as_deref() == Some(name))
+            .map(|m| m.0.clone())
+            .collect()
+    };
     let mut all: Vec<(RawDisk, Option<crate::parttable::Table>, Vec<Value>)> = Vec::new();
     for d in disks(sys) {
-        let Ok(src) = FileSource::open_sized(&sys.p(&d.path), d.size) else { continue };
+        let Ok(src) = FileSource::open_sized(&sys.p(&d.path), d.size) else {
+            continue;
+        };
         let name = d.name.clone();
         let (t, found) = read_disk(&src, &d, &|n, _| part_name(&name, n));
         // An ESP not mounted (so not in the backup) is kept as its bytes,
@@ -188,15 +212,46 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
         o.put("mounted_at", mounted_at(&d.name));
         disks_json.push(o.build());
     }
-    let mounts_json: Vec<Value> = df.iter().map(|m| Obj::new().set("target", m.0.as_str()).set("source", m.2.as_str()).set("fstype", m.1.as_str()).set("device", dev_name(&m.2)).build()).collect();
+    let mounts_json: Vec<Value> = df
+        .iter()
+        .map(|m| {
+            Obj::new()
+                .set("target", m.0.as_str())
+                .set("source", m.2.as_str())
+                .set("fstype", m.1.as_str())
+                .set("device", dev_name(&m.2))
+                .build()
+        })
+        .collect();
     // The boot volume, mounted at /boot, is the restored system's /.
     let fstab: Vec<Value> = df
         .iter()
         .filter(|m| m.0 == "/boot" && m.1 == "bfs")
-        .map(|m| Obj::new().set("spec", m.2.as_str()).set("file", "/").set("type", "bfs").set("options", "").set("freq", 0).set("passno", 0).set("resolves_to", dev_name(&m.2)).set("made_up", true).build())
+        .map(|m| {
+            Obj::new()
+                .set("spec", m.2.as_str())
+                .set("file", "/")
+                .set("type", "bfs")
+                .set("options", "")
+                .set("freq", 0)
+                .set("passno", 0)
+                .set("resolves_to", dev_name(&m.2))
+                .set("made_up", true)
+                .build()
+        })
         .collect();
-    let storage = Obj::new().set("disks", disks_json).set("mounts", mounts_json).set("swaps", Vec::<Value>::new()).set("fstab", fstab);
-    let boot = Obj::new().set("loader", Obj::new().set("name", "haiku").set("firmware", "bios").set("evidence", vec!["Haiku's MBR and BFS boot block (makebootable)".to_string()]));
+    let storage = Obj::new()
+        .set("disks", disks_json)
+        .set("mounts", mounts_json)
+        .set("swaps", Vec::<Value>::new())
+        .set("fstab", fstab);
+    let boot = Obj::new().set(
+        "loader",
+        Obj::new().set("name", "haiku").set("firmware", "bios").set(
+            "evidence",
+            vec!["Haiku's MBR and BFS boot block (makebootable)".to_string()],
+        ),
+    );
     super::frame(sys, fam, os, generated, hostname, "bios", storage, boot)
 }
 
@@ -206,7 +261,13 @@ mod tests {
 
     /// A disk of `n` sectors whose `bad` ones fail to read.
     fn disk(n: u64, bad: &[u64]) -> impl Fn(u64) -> std::io::Result<bool> + '_ {
-        move |s| if bad.contains(&s) { Err(std::io::Error::from_raw_os_error(5)) } else { Ok(s < n) }
+        move |s| {
+            if bad.contains(&s) {
+                Err(std::io::Error::from_raw_os_error(5))
+            } else {
+                Ok(s < n)
+            }
+        }
     }
 
     #[test]
@@ -219,21 +280,39 @@ mod tests {
             seen.borrow_mut().push(s);
             disk(n, &[])(s)
         });
-        let probed: Vec<u64> = seen.into_inner().into_iter().filter(|s| *s > 0 && *s < n).collect();
+        let probed: Vec<u64> = seen
+            .into_inner()
+            .into_iter()
+            .filter(|s| *s > 0 && *s < n)
+            .collect();
         assert!(probed.len() > 5);
         for s in probed {
             // One bad sector, or a run of five, at a sector it reads, with
             // sound ones after it (a bad last sector reads as the end).
             if s + 1 < n {
-                assert_eq!(probe_size_by(disk(n, &[s])), Some(n * 512), "bad sector {s}");
+                assert_eq!(
+                    probe_size_by(disk(n, &[s])),
+                    Some(n * 512),
+                    "bad sector {s}"
+                );
             }
             if s + 16 < n {
                 let run: Vec<u64> = (s..s + 5).collect();
-                assert_eq!(probe_size_by(disk(n, &run)), Some(n * 512), "bad run at {s}");
+                assert_eq!(
+                    probe_size_by(disk(n, &run)),
+                    Some(n * 512),
+                    "bad run at {s}"
+                );
             }
         }
         // A device that fails past its end, rather than reading short.
-        let fails_past = |s: u64| if s < n { Ok(true) } else { Err(std::io::Error::from_raw_os_error(6)) };
+        let fails_past = |s: u64| {
+            if s < n {
+                Ok(true)
+            } else {
+                Err(std::io::Error::from_raw_os_error(6))
+            }
+        };
         assert_eq!(probe_size_by(fails_past), Some(n * 512));
         assert_eq!(probe_size_by(disk(n, &[0])), None);
         assert_eq!(probe_size_by(disk(0, &[])), None);
@@ -245,7 +324,14 @@ mod tests {
         assert_eq!(dir_of("scsi_2_0_0"), "/dev/disk/scsi/2/0/0");
         assert_eq!(part_path("scsi_3_0_0", 1), "/dev/disk/scsi/3/0/0/0");
         let t = "\u{1b}[1mVolume\u{1b}[0m\n Type        Total      Free      Flags   Used%  Device\n----------- ---------- --------- ------- ------ -------------------\n\u{1b}[1m/boot             \u{1b}[0m\n        bfs   16.0 GiB  13.4 GiB QAM-P-W    16% /dev/disk/scsi/2/0/0/0  \n\u{1b}[1m/boot/system      \u{1b}[0m\n  packagefs          0         0 QAM-P--   100%                         \n";
-        assert_eq!(parse_df(t), vec![("/boot".into(), "bfs".into(), "/dev/disk/scsi/2/0/0/0".into())]);
+        assert_eq!(
+            parse_df(t),
+            vec![(
+                "/boot".into(),
+                "bfs".into(),
+                "/dev/disk/scsi/2/0/0/0".into()
+            )]
+        );
     }
 
     /// RustAudit1 H9-01: a virtio-blk disk (/dev/disk/virtual/virtio_block/
@@ -256,16 +342,38 @@ mod tests {
     fn virtio_disks_are_disks() {
         let t = crate::testutil::Tree::new("haiku-virtio");
         let disk = vec![0u8; 8192];
-        for d in ["ata/0/master", "virtual/virtio_block/0", "virtual/virtio_block/1", "virtual/ram/0", "virtual/files/0"] {
+        for d in [
+            "ata/0/master",
+            "virtual/virtio_block/0",
+            "virtual/virtio_block/1",
+            "virtual/ram/0",
+            "virtual/files/0",
+        ] {
             t.file(&format!("/dev/disk/{d}/raw"), disk.clone());
         }
         t.file("/dev/disk/virtual/ram/control", "");
         let sys = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), true);
         let names: Vec<String> = disks(&sys).into_iter().map(|d| d.name).collect();
-        assert_eq!(names, ["ata_0_master", "virtual_virtio_block_0", "virtual_virtio_block_1"]);
-        assert_eq!(dir_of("virtual_virtio_block_0"), "/dev/disk/virtual/virtio_block/0");
-        assert_eq!(dir_of(&name_of("/dev/disk/virtual/remote_disk/0")), "/dev/disk/virtual/remote_disk/0");
-        assert_eq!(part_path("virtual_virtio_block_1", 2), "/dev/disk/virtual/virtio_block/1/1");
+        assert_eq!(
+            names,
+            [
+                "ata_0_master",
+                "virtual_virtio_block_0",
+                "virtual_virtio_block_1"
+            ]
+        );
+        assert_eq!(
+            dir_of("virtual_virtio_block_0"),
+            "/dev/disk/virtual/virtio_block/0"
+        );
+        assert_eq!(
+            dir_of(&name_of("/dev/disk/virtual/remote_disk/0")),
+            "/dev/disk/virtual/remote_disk/0"
+        );
+        assert_eq!(
+            part_path("virtual_virtio_block_1", 2),
+            "/dev/disk/virtual/virtio_block/1/1"
+        );
         assert_eq!(dir_of("ata_0_master"), "/dev/disk/ata/0/master");
     }
 
@@ -280,7 +388,11 @@ mod tests {
         mbr_entry(&mut img[..512], 1, 0, 0xef, 4096, 4096);
         img[510] = 0x55;
         img[511] = 0xaa;
-        img[4096 * 512..8192 * 512].copy_from_slice(&crate::probe::fat::sample::fat16(4096, 0x1a2b_3c4d, "EFI"));
+        img[4096 * 512..8192 * 512].copy_from_slice(&crate::probe::fat::sample::fat16(
+            4096,
+            0x1a2b_3c4d,
+            "EFI",
+        ));
         let df = |esp: bool| {
             // df's layout: a volume's mount point, then its type ... device.
             let mut t = "Volume\n Type Total Free Flags Used% Device\n/boot\n bfs 1.0 MiB 0.5 MiB QAM-P-W 50% /dev/disk/scsi/2/0/0/0\n".to_string();
@@ -292,11 +404,27 @@ mod tests {
         for mounted in [false, true] {
             let t = crate::testutil::Tree::new("haiku-esp");
             t.file("/dev/disk/scsi/2/0/0/raw", img.clone());
-            let sys = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default().with("df", &df(mounted))), true);
+            let sys = Sys::new(
+                t.root(),
+                Box::new(crate::sys::FakeRunner::default().with("df", &df(mounted))),
+                true,
+            );
             let v = report(&sys, Family::Haiku, None, "x");
-            let p = |i: &str, k: &str| v.at(&["storage", "disks", "0", "partitions", i, k]).cloned();
-            assert_eq!(p("1", "content").and_then(|c| c.get("type").and_then(Value::as_str).map(str::to_string)).as_deref(), Some("vfat"));
-            assert_eq!(p("1", "esp_image").is_some(), !mounted, "mounted: {mounted}");
+            let p = |i: &str, k: &str| {
+                v.at(&["storage", "disks", "0", "partitions", i, k])
+                    .cloned()
+            };
+            assert_eq!(
+                p("1", "content")
+                    .and_then(|c| c.get("type").and_then(Value::as_str).map(str::to_string))
+                    .as_deref(),
+                Some("vfat")
+            );
+            assert_eq!(
+                p("1", "esp_image").is_some(),
+                !mounted,
+                "mounted: {mounted}"
+            );
             assert!(p("0", "esp_image").is_none());
         }
     }

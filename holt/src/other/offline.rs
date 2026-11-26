@@ -8,7 +8,7 @@
 //! ESP that nothing mounts, the MBR's code) are kept byte for byte, for
 //! load to write back.
 
-use super::{found_json, read_disk, Family, RawDisk};
+use super::{Family, RawDisk, found_json, read_disk};
 use crate::bytes::{ByteSource, FileSource, OffsetSource};
 use crate::json::{Obj, Value};
 use crate::parttable::Table;
@@ -25,25 +25,54 @@ pub fn report(sys: &Sys, devs: &[String], generated: &str) -> Result<Value, Stri
     for dev in devs {
         let src = FileSource::open(&sys.p(dev)).map_err(|e| format!("{dev}: {e}"))?;
         let name = dev.trim_start_matches("/dev/").to_string();
-        let d = RawDisk { name: name.clone(), path: dev.clone(), size: src.size(), sector: 512, model: None, serial: None };
+        let d = RawDisk {
+            name: name.clone(),
+            path: dev.clone(),
+            size: src.size(),
+            sector: 512,
+            model: None,
+            serial: None,
+        };
         let nm = name.clone();
-        let (table, found) = read_disk(&src, &d, &|n, _| crate::load::commands::part_path(&nm, n).trim_start_matches("/dev/").to_string());
+        let (table, found) = read_disk(&src, &d, &|n, _| {
+            crate::load::commands::part_path(&nm, n)
+                .trim_start_matches("/dev/")
+                .to_string()
+        });
         let mut parts = Vec::new();
         for f in &found {
             let mut extra = Obj::new();
             let ty = f.field("type").unwrap_or("").to_ascii_lowercase();
             let label = f.field("partlabel").unwrap_or("").to_string();
             if ty == BIOS_BOOT {
-                extra.put("boot_code", Obj::new().set("kind", "bios-boot").set("image_b64", super::image_b64(&OffsetSource { inner: &src, start: f.start, len: f.size })));
+                extra.put(
+                    "boot_code",
+                    Obj::new().set("kind", "bios-boot").set(
+                        "image_b64",
+                        super::image_b64(&OffsetSource {
+                            inner: &src,
+                            start: f.start,
+                            len: f.size,
+                        }),
+                    ),
+                );
             }
             super::esp_image(&src, f, &[], &mut extra);
             let c = f.contents.first();
             if c.is_some_and(|c| c.kind == "redoxfs") {
                 fam = Some(Family::Redox);
-                root = Some((f.name.clone(), "redoxfs".into(), c.and_then(|c| c.uuid.clone())));
+                root = Some((
+                    f.name.clone(),
+                    "redoxfs".into(),
+                    c.and_then(|c| c.uuid.clone()),
+                ));
             } else if label.starts_with("GENODE") && c.is_some_and(|c| c.kind.starts_with("ext")) {
                 fam = fam.or(Some(Family::Genode));
-                root = root.or(Some((f.name.clone(), c.map(|c| c.kind.clone()).unwrap_or_default(), c.and_then(|c| c.uuid.clone()))));
+                root = root.or(Some((
+                    f.name.clone(),
+                    c.map(|c| c.kind.clone()).unwrap_or_default(),
+                    c.and_then(|c| c.uuid.clone()),
+                )));
             }
             parts.push(found_json(f, vec![], extra));
         }
@@ -55,10 +84,25 @@ pub fn report(sys: &Sys, devs: &[String], generated: &str) -> Result<Value, Stri
                 "boot_code",
                 super::boot_code_json(t)
                     // GRUB's core.img in the gap after the MBR, when there is one.
-                    .set("gap_b64", match t {
-                        Table::Mbr(m) => m.parts.iter().map(|p| u64::from(p.start)).min().filter(|&s| s > 1).map(|s| super::image_b64(&OffsetSource { inner: &src, start: 512, len: (s - 1) * 512 })),
-                        _ => None,
-                    }),
+                    .set(
+                        "gap_b64",
+                        match t {
+                            Table::Mbr(m) => m
+                                .parts
+                                .iter()
+                                .map(|p| u64::from(p.start))
+                                .min()
+                                .filter(|&s| s > 1)
+                                .map(|s| {
+                                    super::image_b64(&OffsetSource {
+                                        inner: &src,
+                                        start: 512,
+                                        len: (s - 1) * 512,
+                                    })
+                                }),
+                            _ => None,
+                        },
+                    ),
             );
         }
         o.put("mounted_at", Vec::<String>::new());
@@ -70,24 +114,47 @@ pub fn report(sys: &Sys, devs: &[String], generated: &str) -> Result<Value, Stri
         Family::Redox => ("redox", "Redox"),
         _ => ("sculpt", "Sculpt OS"),
     };
-    let os = Obj::new().set("family", fam.name()).set("id", id).set("version_id", Value::Null).set("pretty_name", name).set("read_offline", true).set("architecture", "x86_64");
-    let fstab = vec![Obj::new()
-        // The device, not the UUID: RedoxFS's newfs makes a new one.
-        .set("spec", format!("/dev/{rootdev}"))
-        .set("file", "/")
-        .set("type", rootfs.as_str())
-        .set("options", "")
-        .set("freq", 0)
-        .set("passno", 0)
-        .set("resolves_to", rootdev.as_str())
-        .set("made_up", true)
-        .build()];
-    let storage = Obj::new().set("disks", disks_json).set("mounts", Vec::<Value>::new()).set("swaps", Vec::<Value>::new()).set("fstab", fstab);
-    let boot = Obj::new().set("loader", Obj::new().set("name", id).set("firmware", "bios").set("evidence", vec!["read off the disks: their boot areas are kept byte for byte".to_string()]));
+    let os = Obj::new()
+        .set("family", fam.name())
+        .set("id", id)
+        .set("version_id", Value::Null)
+        .set("pretty_name", name)
+        .set("read_offline", true)
+        .set("architecture", "x86_64");
+    let fstab = vec![
+        Obj::new()
+            // The device, not the UUID: RedoxFS's newfs makes a new one.
+            .set("spec", format!("/dev/{rootdev}"))
+            .set("file", "/")
+            .set("type", rootfs.as_str())
+            .set("options", "")
+            .set("freq", 0)
+            .set("passno", 0)
+            .set("resolves_to", rootdev.as_str())
+            .set("made_up", true)
+            .build(),
+    ];
+    let storage = Obj::new()
+        .set("disks", disks_json)
+        .set("mounts", Vec::<Value>::new())
+        .set("swaps", Vec::<Value>::new())
+        .set("fstab", fstab);
+    let boot = Obj::new().set(
+        "loader",
+        Obj::new().set("name", id).set("firmware", "bios").set(
+            "evidence",
+            vec!["read off the disks: their boot areas are kept byte for byte".to_string()],
+        ),
+    );
     let mut out = Obj::new()
         .set("format", crate::report::FORMAT)
         .set("schema", crate::report::SCHEMA)
-        .set("tool", Obj::new().set("name", "bko-holt").set("version", env!("CARGO_PKG_VERSION")))
+        .set(
+            "tool",
+            Obj::new()
+                .set("name", "bko-holt")
+                .set("version", env!("CARGO_PKG_VERSION")),
+        )
         .set("generated", generated)
         .set("privileged", sys.privileged)
         .set("host", Obj::new().set("hostname", Value::Null))

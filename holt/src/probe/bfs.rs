@@ -1,7 +1,7 @@
 //! BFS (Haiku): the superblock, 512 bytes into the volume.
 
 use super::Content;
-use crate::bytes::{label, le32, le64, sub, ByteSource};
+use crate::bytes::{ByteSource, label, le32, le64, sub};
 use crate::json::Obj;
 
 const MAGIC1: u32 = 0x4246_5331;
@@ -20,7 +20,15 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
         .set("inode_size", le32(&b, 64))
         .set("blocks_per_ag", le32(&b, 72))
         .set("allocation_groups", le32(&b, 80));
-    Some(Content { kind: "befs".into(), usage: "filesystem", uuid: None, label: label(sub(&b, 0, 32)), version: None, details: d, extra: None })
+    Some(Content {
+        kind: "befs".into(),
+        usage: "filesystem",
+        uuid: None,
+        label: label(sub(&b, 0, 32)),
+        version: None,
+        details: d,
+        extra: None,
+    })
 }
 
 #[cfg(test)]
@@ -51,7 +59,10 @@ mod tests {
         let c = probe(&MemSource(sample::image("Haiku"))).unwrap();
         assert_eq!(c.kind, "befs");
         assert_eq!(c.label.as_deref(), Some("Haiku"));
-        assert_eq!(c.details.build().get("block_size").and_then(Value::as_u64), Some(2048));
+        assert_eq!(
+            c.details.build().get("block_size").and_then(Value::as_u64),
+            Some(2048)
+        );
         assert!(probe(&MemSource(vec![0u8; 65536])).is_none());
     }
 }

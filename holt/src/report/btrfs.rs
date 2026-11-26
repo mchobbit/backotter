@@ -43,12 +43,30 @@ pub(super) fn btrfs_json(sys: &Sys, ctx: &Ctx, known: &[(String, Value)]) -> Val
     let mut out = Vec::new();
     for (uuid, devs) in fss {
         let sysfs = format!("/sys/fs/btrfs/{uuid}");
-        let alloc = btrfs_allocation(sys, &uuid).or_else(|| known.iter().find(|(u, _)| *u == uuid).map(|(_, v)| v.clone()));
-        let all: Vec<&Mount> = ctx.mounts.iter().filter(|m| m.fstype == "btrfs" && devs.iter().any(|d| ctx.resolve(sys, &m.source).as_deref() == Some(d.b.name.as_str()))).collect();
+        let alloc = btrfs_allocation(sys, &uuid).or_else(|| {
+            known
+                .iter()
+                .find(|(u, _)| *u == uuid)
+                .map(|(_, v)| v.clone())
+        });
+        let all: Vec<&Mount> = ctx
+            .mounts
+            .iter()
+            .filter(|m| {
+                m.fstype == "btrfs"
+                    && devs
+                        .iter()
+                        .any(|d| ctx.resolve(sys, &m.source).as_deref() == Some(d.b.name.as_str()))
+            })
+            .collect();
         // The mounts of a subvolume's own root: not binds of a directory in
         // one (ostree's /etc, its FSROOT /root/ostree/deploy/.../etc, carries
         // the same subvol=/root as /sysroot, and may come first).
-        let mut mounts: Vec<&Mount> = all.iter().copied().filter(|m| m.is_subvolume_root()).collect();
+        let mut mounts: Vec<&Mount> = all
+            .iter()
+            .copied()
+            .filter(|m| m.is_subvolume_root())
+            .collect();
         if mounts.is_empty() {
             mounts = all.clone();
         }
@@ -56,10 +74,18 @@ pub(super) fn btrfs_json(sys: &Sys, ctx: &Ctx, known: &[(String, Value)]) -> Val
         let mut default = Value::Null;
         let mut qgroups = Value::Null;
         if let Some(m) = mounts.first() {
-            if let Some(out) = sys.run("btrfs", &["subvolume", "list", "-a", "-p", "-u", "-q", &m.target]) {
+            if let Some(out) = sys.run(
+                "btrfs",
+                &["subvolume", "list", "-a", "-p", "-u", "-q", &m.target],
+            ) {
                 let ro: Vec<u64> = sys
                     .run("btrfs", &["subvolume", "list", "-a", "-r", &m.target])
-                    .map(|o| o.lines().filter_map(parse_btrfs_subvol_line).filter_map(|v| v.get("id").and_then(Value::as_u64)).collect())
+                    .map(|o| {
+                        o.lines()
+                            .filter_map(parse_btrfs_subvol_line)
+                            .filter_map(|v| v.get("id").and_then(Value::as_u64))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 let list = out
                     .lines()
@@ -67,10 +93,15 @@ pub(super) fn btrfs_json(sys: &Sys, ctx: &Ctx, known: &[(String, Value)]) -> Val
                     .map(|mut v| {
                         let id = v.get("id").and_then(Value::as_u64).unwrap_or(0);
                         let path = v.get("path").and_then(Value::as_str).map(str::to_string);
-                        let props = path.and_then(|p| btrfs_reachable_path(&mounts, &p)).map(|p| btrfs_properties(sys, &p));
+                        let props = path
+                            .and_then(|p| btrfs_reachable_path(&mounts, &p))
+                            .map(|p| btrfs_properties(sys, &p));
                         if let Value::Obj(o) = &mut v {
                             o.push(("readonly".into(), Value::Bool(ro.contains(&id))));
-                            o.push(("properties".into(), props.map(Obj::build).unwrap_or(Value::Null)));
+                            o.push((
+                                "properties".into(),
+                                props.map(Obj::build).unwrap_or(Value::Null),
+                            ));
                         }
                         v
                     })
@@ -87,7 +118,10 @@ pub(super) fn btrfs_json(sys: &Sys, ctx: &Ctx, known: &[(String, Value)]) -> Val
             }
             // Quotas: sysfs has a qgroups directory while they're enabled.
             if sys.is_dir(&format!("{sysfs}/qgroups")) {
-                qgroups = match sys.run("btrfs", &["qgroup", "show", "-p", "-r", "-e", "--raw", &m.target]) {
+                qgroups = match sys.run(
+                    "btrfs",
+                    &["qgroup", "show", "-p", "-r", "-e", "--raw", &m.target],
+                ) {
                     Some(out) => Value::Arr(parse_btrfs_qgroups(&out)),
                     None => Obj::new().set("error", "btrfs qgroup show failed").build(),
                 };
@@ -97,22 +131,35 @@ pub(super) fn btrfs_json(sys: &Sys, ctx: &Ctx, known: &[(String, Value)]) -> Val
             Obj::new()
                 .set("uuid", uuid.as_str())
                 .set("label", devs.first().and_then(|d| d.fs_label()))
-                .set("devices", devs.iter().map(|d| d.b.name.clone()).collect::<Vec<_>>())
-                .set("mounted", !all.is_empty())
-                .set("features", sys.is_dir(&sysfs).then(|| sys.list(&format!("{sysfs}/features"))))
-                .set("allocation_profiles", alloc.unwrap_or(Value::Null))
                 .set(
-                    "mounted_subvolumes",
-                    {
-                        // By mount point: the mount order isn't the layout's.
-                        let mut ms: Vec<_> = mounts.iter().map(|m| (m.target.clone(), m.btrfs_subvol())).collect();
-                        ms.sort();
-                        ms.into_iter().map(|(t, sv)| Obj::new().set("target", t).set("subvol", sv).build()).collect::<Vec<_>>()
-                    },
+                    "devices",
+                    devs.iter().map(|d| d.b.name.clone()).collect::<Vec<_>>(),
                 )
+                .set("mounted", !all.is_empty())
+                .set(
+                    "features",
+                    sys.is_dir(&sysfs)
+                        .then(|| sys.list(&format!("{sysfs}/features"))),
+                )
+                .set("allocation_profiles", alloc.unwrap_or(Value::Null))
+                .set("mounted_subvolumes", {
+                    // By mount point: the mount order isn't the layout's.
+                    let mut ms: Vec<_> = mounts
+                        .iter()
+                        .map(|m| (m.target.clone(), m.btrfs_subvol()))
+                        .collect();
+                    ms.sort();
+                    ms.into_iter()
+                        .map(|(t, sv)| Obj::new().set("target", t).set("subvol", sv).build())
+                        .collect::<Vec<_>>()
+                })
                 .set("subvolumes", subvols)
                 .set("default_subvolume", default)
-                .set("quota_enabled", sys.is_dir(&sysfs).then(|| sys.is_dir(&format!("{sysfs}/qgroups"))))
+                .set(
+                    "quota_enabled",
+                    sys.is_dir(&sysfs)
+                        .then(|| sys.is_dir(&format!("{sysfs}/qgroups"))),
+                )
                 .set("qgroups", qgroups)
                 .build(),
         );
@@ -125,7 +172,10 @@ pub(super) fn btrfs_json(sys: &Sys, ctx: &Ctx, known: &[(String, Value)]) -> Val
 /// Only a mount of a subvolume's own root counts: a bind of a directory
 /// inside one has the subvolume's subvol= but not its contents at its top.
 pub fn btrfs_reachable_path(mounts: &[&Mount], path: &str) -> Option<String> {
-    let path = path.strip_prefix("<FS_TREE>/").unwrap_or(path).trim_matches('/');
+    let path = path
+        .strip_prefix("<FS_TREE>/")
+        .unwrap_or(path)
+        .trim_matches('/');
     for m in mounts.iter().filter(|m| m.is_subvolume_root()) {
         let sub = m.btrfs_subvol().unwrap_or_default();
         let sub = sub.trim_matches('/');
@@ -138,7 +188,11 @@ pub fn btrfs_reachable_path(mounts: &[&Mount], path: &str) -> Option<String> {
         };
         if let Some(r) = rest {
             let t = m.target.trim_end_matches('/');
-            return Some(if r.is_empty() { m.target.clone() } else { format!("{t}/{r}") });
+            return Some(if r.is_empty() {
+                m.target.clone()
+            } else {
+                format!("{t}/{r}")
+            });
         }
     }
     None
@@ -163,7 +217,10 @@ fn btrfs_properties(sys: &Sys, path: &str) -> Obj {
 pub fn parse_btrfs_qgroups(out: &str) -> Vec<Value> {
     let num = |s: &str| match s {
         "none" | "-" => Value::Null,
-        _ => s.parse::<u64>().map(Value::UInt).unwrap_or_else(|_| Value::from(s)),
+        _ => s
+            .parse::<u64>()
+            .map(Value::UInt)
+            .unwrap_or_else(|_| Value::from(s)),
     };
     out.lines()
         .skip_while(|l| !l.trim_start().starts_with("--"))
@@ -174,7 +231,11 @@ pub fn parse_btrfs_qgroups(out: &str) -> Vec<Value> {
                 return None;
             }
             // "-" (btrfs-progs 6) or "---" (older) when there's no parent.
-            let parents: Vec<String> = if w[5].chars().all(|c| c == '-') { vec![] } else { w[5].split(',').map(str::to_string).collect() };
+            let parents: Vec<String> = if w[5].chars().all(|c| c == '-') {
+                vec![]
+            } else {
+                w[5].split(',').map(str::to_string).collect()
+            };
             Some(
                 Obj::new()
                     .set("qgroupid", w[0])

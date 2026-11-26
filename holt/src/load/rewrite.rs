@@ -30,8 +30,17 @@ use std::path::{Path, PathBuf};
 
 fn rootflags_word(w: &str, c: &Change) -> Option<String> {
     if let Some(v) = w.strip_prefix("rootflags=") {
-        let keep: Vec<&str> = v.split(',').filter(|x| !x.is_empty() && *x != "defaults" && reformat::generic_options(x).1.is_empty()).collect();
-        return if keep.is_empty() { None } else { Some(format!("rootflags={}", keep.join(","))) };
+        let keep: Vec<&str> = v
+            .split(',')
+            .filter(|x| {
+                !x.is_empty() && *x != "defaults" && reformat::generic_options(x).1.is_empty()
+            })
+            .collect();
+        return if keep.is_empty() {
+            None
+        } else {
+            Some(format!("rootflags={}", keep.join(",")))
+        };
     }
     if w.strip_prefix("rootfstype=") == Some(c.from.as_str()) {
         return Some(format!("rootfstype={}", c.to));
@@ -69,7 +78,10 @@ pub fn fstab(text: &str, c: &Change) -> Result<String, String> {
             let file = mounts::unescape(f[1]);
             if file == c.mount {
                 let dump = f.get(4).copied().unwrap_or("0");
-                out += &format!("{}\t{}\t{}\t{}\t{}\t{}", f[0], f[1], c.to, c.options, dump, c.passno);
+                out += &format!(
+                    "{}\t{}\t{}\t{}\t{}\t{}",
+                    f[0], f[1], c.to, c.options, dump, c.passno
+                );
                 out += if line.ends_with('\n') { "\n" } else { "" };
                 kept = true;
                 continue;
@@ -87,7 +99,10 @@ pub fn fstab(text: &str, c: &Change) -> Result<String, String> {
         // mount has the new type's line and none of the old type's is left.
         let done = text.lines().any(|l| {
             let f: Vec<&str> = l.split_whitespace().collect();
-            f.len() >= 3 && !f[0].starts_with('#') && mounts::unescape(f[1]) == c.mount && f[2] == c.to
+            f.len() >= 3
+                && !f[0].starts_with('#')
+                && mounts::unescape(f[1]) == c.mount
+                && f[2] == c.to
         });
         if done && gone.is_empty() {
             return Ok(text.to_string());
@@ -106,7 +121,9 @@ pub fn bls_entry(text: &str, c: &Change) -> String {
         .map(|l| {
             let t = l.trim_start();
             match t.strip_prefix("options") {
-                Some(rest) if rest.starts_with([' ', '\t']) => format!("{}options{}", &l[..l.len() - t.len()], cmdline(rest, c)),
+                Some(rest) if rest.starts_with([' ', '\t']) => {
+                    format!("{}options{}", &l[..l.len() - t.len()], cmdline(rest, c))
+                }
                 _ => l.to_string(),
             }
         })
@@ -140,10 +157,18 @@ pub fn grubenv(text: &str, c: &Change) -> Result<String, String> {
 /// env_block= is left as it is.
 pub fn grubenv_unblock(text: &str, vars: &Value) -> Result<String, String> {
     let body = text.trim_end_matches('#');
-    if !body.split_inclusive('\n').any(|l| l.starts_with("env_block=")) {
+    if !body
+        .split_inclusive('\n')
+        .any(|l| l.starts_with("env_block="))
+    {
         return Ok(text.to_string());
     }
-    let vars: Vec<(&str, &str)> = vars.as_object().into_iter().flatten().map(|(k, v)| (k.as_str(), v.as_str().unwrap_or_default())).collect();
+    let vars: Vec<(&str, &str)> = vars
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(k, v)| (k.as_str(), v.as_str().unwrap_or_default()))
+        .collect();
     let mut out = String::new();
     let mut done: Vec<&str> = Vec::new();
     for l in body.split_inclusive('\n') {
@@ -163,7 +188,11 @@ pub fn grubenv_unblock(text: &str, vars: &Value) -> Result<String, String> {
         out += &format!("{k}={v}\n");
     }
     if out.len() > text.len() {
-        return Err(format!("GRUB's environment block's variables don't fit in it ({} bytes, the file's {})", out.len(), text.len()));
+        return Err(format!(
+            "GRUB's environment block's variables don't fit in it ({} bytes, the file's {})",
+            out.len(),
+            text.len()
+        ));
     }
     out += &"#".repeat(text.len() - out.len());
     Ok(out)
@@ -174,7 +203,9 @@ pub fn grubenv_unblock(text: &str, vars: &Value) -> Result<String, String> {
 fn assignments(text: &str, c: &Change, named: impl Fn(&str) -> bool) -> String {
     text.split_inclusive('\n')
         .map(|l| {
-            let Some(eq) = l.find('=') else { return l.to_string() };
+            let Some(eq) = l.find('=') else {
+                return l.to_string();
+            };
             let (key, v) = (&l[..=eq], &l[eq + 1..]);
             if !named(key.trim_end_matches('=').trim_end_matches('+')) {
                 return l.to_string();
@@ -182,7 +213,9 @@ fn assignments(text: &str, c: &Change, named: impl Fn(&str) -> bool) -> String {
             let (v, nl) = v.strip_suffix('\n').map(|x| (x, "\n")).unwrap_or((v, ""));
             let q = v.chars().next().filter(|q| *q == '"' || *q == '\'');
             match q {
-                Some(q) if v.len() >= 2 && v.ends_with(q) => format!("{key}{q}{}{q}{nl}", cmdline(&v[1..v.len() - 1], c)),
+                Some(q) if v.len() >= 2 && v.ends_with(q) => {
+                    format!("{key}{q}{}{q}{nl}", cmdline(&v[1..v.len() - 1], c))
+                }
                 _ => format!("{key}{}{nl}", cmdline(v, c)),
             }
         })
@@ -192,14 +225,18 @@ fn assignments(text: &str, c: &Change, named: impl Fn(&str) -> bool) -> String {
 /// /etc/default/grub: GRUB_CMDLINE_LINUX and GRUB_CMDLINE_LINUX_DEFAULT
 /// through cmdline(), inside their quotes.
 pub fn default_grub(text: &str, c: &Change) -> String {
-    assignments(text, c, |k| matches!(k, "GRUB_CMDLINE_LINUX" | "GRUB_CMDLINE_LINUX_DEFAULT"))
+    assignments(text, c, |k| {
+        matches!(k, "GRUB_CMDLINE_LINUX" | "GRUB_CMDLINE_LINUX_DEFAULT")
+    })
 }
 
 /// /etc/default/limine (limine-entry-tool, CachyOS): KERNEL_CMDLINE[...]=
 /// and +=, from which limine-mkinitcpio-hook writes limine.conf again when
 /// the boot stage runs mkinitcpio.
 pub fn default_limine(text: &str, c: &Change) -> String {
-    assignments(text, c, |k| k == "KERNEL_CMDLINE" || (k.starts_with("KERNEL_CMDLINE[") && k.ends_with(']')))
+    assignments(text, c, |k| {
+        k == "KERNEL_CMDLINE" || (k.starts_with("KERNEL_CMDLINE[") && k.ends_with(']'))
+    })
 }
 
 /// rEFInd's refind_linux.conf (`"TITLE" "OPTIONS"` a line) and refind.conf
@@ -212,12 +249,19 @@ pub fn refind(text: &str, c: &Change) -> String {
             if t.starts_with('#') {
                 return l.to_string();
             }
-            let opts = t.strip_prefix("options").is_some_and(|r| r.starts_with([' ', '\t']));
+            let opts = t
+                .strip_prefix("options")
+                .is_some_and(|r| r.starts_with([' ', '\t']));
             let body = l.trim_end_matches('\n');
             let nl = &l[body.len()..];
             if let (Some(end), true) = (body.rfind('"'), body.matches('"').count() >= 2) {
                 let start = body[..end].rfind('"').unwrap_or(end);
-                return format!("{}{}{}{nl}", &body[..=start], cmdline(&body[start + 1..end], c), &body[end..]);
+                return format!(
+                    "{}{}{}{nl}",
+                    &body[..=start],
+                    cmdline(&body[start + 1..end], c),
+                    &body[end..]
+                );
             }
             if opts {
                 let cut = l.len() - t.len() + "options".len();
@@ -237,7 +281,10 @@ pub fn limine(text: &str, c: &Change) -> String {
                 // Bytes, not a str slice: a title like `/Ubuntu 中文版` has
                 // no char boundary at every key's length.  A match is ASCII,
                 // so `cut` is a boundary.
-                if t.as_bytes().get(..key.len()).is_some_and(|p| p.eq_ignore_ascii_case(key.as_bytes())) {
+                if t.as_bytes()
+                    .get(..key.len())
+                    .is_some_and(|p| p.eq_ignore_ascii_case(key.as_bytes()))
+                {
                     let cut = l.len() - t.len() + key.len();
                     return format!("{}{}", &l[..cut], cmdline(&l[cut..], c));
                 }
@@ -254,7 +301,19 @@ pub fn mkinitcpio(text: &str) -> String {
             for key in ["MODULES=(", "BINARIES=(", "HOOKS=("] {
                 if let Some(rest) = l.strip_prefix(key) {
                     if let Some((inside, after)) = rest.split_once(')') {
-                        let words: Vec<&str> = inside.split_whitespace().filter(|w| !matches!(w.trim_matches(['"', '\'']), "btrfs" | "/usr/bin/btrfs" | "/bin/btrfs" | "/sbin/btrfs" | "/usr/sbin/btrfs")).collect();
+                        let words: Vec<&str> = inside
+                            .split_whitespace()
+                            .filter(|w| {
+                                !matches!(
+                                    w.trim_matches(['"', '\'']),
+                                    "btrfs"
+                                        | "/usr/bin/btrfs"
+                                        | "/bin/btrfs"
+                                        | "/sbin/btrfs"
+                                        | "/usr/sbin/btrfs"
+                                )
+                            })
+                            .collect();
                         if words.len() != inside.split_whitespace().count() {
                             return format!("{key}{}){after}", words.join(" "));
                         }
@@ -279,13 +338,18 @@ pub fn mkinitcpio(text: &str) -> String {
 /// EFI/ID one, not the fallback EFI/BOOT copy.  A file not naming UUID
 /// is left as it is.
 pub fn grub_stub(text: &str, uuid: &str, map: impl Fn(&str, bool) -> Option<String>) -> String {
-    if uuid.is_empty() || !text.to_ascii_lowercase().contains(&uuid.to_ascii_lowercase()) {
+    if uuid.is_empty()
+        || !text
+            .to_ascii_lowercase()
+            .contains(&uuid.to_ascii_lowercase())
+    {
         return text.to_string();
     }
     let relative = text.lines().any(|l| {
         let t = l.trim();
         let t = t.strip_prefix("set ").map(str::trim_start).unwrap_or(t);
-        t.strip_prefix("btrfs_relative_path=").is_some_and(|v| matches!(v.trim().trim_matches(['"', '\'']), "y" | "yes" | "1"))
+        t.strip_prefix("btrfs_relative_path=")
+            .is_some_and(|v| matches!(v.trim().trim_matches(['"', '\'']), "y" | "yes" | "1"))
     });
     text.split_inclusive('\n')
         .map(|l| {
@@ -295,7 +359,9 @@ pub fn grub_stub(text: &str, uuid: &str, map: impl Fn(&str, bool) -> Option<Stri
             let mut out = String::new();
             let mut rest = l;
             while let Some(open) = rest.find('(') {
-                let Some(close) = rest[open..].find(')').map(|c| open + c) else { break };
+                let Some(close) = rest[open..].find(')').map(|c| open + c) else {
+                    break;
+                };
                 if rest[open + 1..close].contains(char::is_whitespace) {
                     out += &rest[..=open];
                     rest = &rest[open + 1..];
@@ -310,7 +376,11 @@ pub fn grub_stub(text: &str, uuid: &str, map: impl Fn(&str, bool) -> Option<Stri
                 }
                 let end = match quote {
                     Some(q) => body.find(q).unwrap_or(body.len()),
-                    None => body.find(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '\'' | '"' | '}' | ')')).unwrap_or(body.len()),
+                    None => body
+                        .find(|ch: char| {
+                            ch.is_whitespace() || matches!(ch, ';' | '\'' | '"' | '}' | ')')
+                        })
+                        .unwrap_or(body.len()),
                 };
                 let path = &body[..end];
                 if let Some(q) = quote {
@@ -326,7 +396,13 @@ pub fn grub_stub(text: &str, uuid: &str, map: impl Fn(&str, bool) -> Option<Stri
 
 /// The ESPs' GRUB stubs: each EFI/*/grub.cfg on a boot directory.
 fn grub_stubs(run: &Run, layout: &Value) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = boot_dirs(layout).iter().flat_map(|d| read_dir(&run.at(&format!("{d}/EFI")))).filter(|p| is_dir(p)).map(|p| p.join("grub.cfg")).filter(|p| is_file(p)).collect();
+    let mut v: Vec<PathBuf> = boot_dirs(layout)
+        .iter()
+        .flat_map(|d| read_dir(&run.at(&format!("{d}/EFI"))))
+        .filter(|p| is_dir(p))
+        .map(|p| p.join("grub.cfg"))
+        .filter(|p| is_file(p))
+        .collect();
     v.sort();
     v.dedup();
     v
@@ -334,8 +410,14 @@ fn grub_stubs(run: &Run, layout: &Value) -> Vec<PathBuf> {
 
 /// A systemd mount unit for the kept mount: Type= and Options= as fstab's.
 pub fn mount_unit(text: &str, c: &Change) -> String {
-    let wher = text.lines().find_map(|l| l.trim().strip_prefix("Where=")).map(str::trim);
-    let ty = text.lines().find_map(|l| l.trim().strip_prefix("Type=")).map(str::trim);
+    let wher = text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("Where="))
+        .map(str::trim);
+    let ty = text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("Type="))
+        .map(str::trim);
     if wher != Some(c.mount.as_str()) || ty != Some(c.from.as_str()) {
         return text.to_string();
     }
@@ -356,7 +438,11 @@ pub fn mount_unit(text: &str, c: &Change) -> String {
 // ---- running it ------------------------------------------------------------
 
 fn read_dir(p: &Path) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = std::fs::read_dir(p).into_iter().flatten().filter_map(|e| e.ok().map(|e| e.path())).collect();
+    let mut v: Vec<PathBuf> = std::fs::read_dir(p)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .collect();
     v.sort();
     v
 }
@@ -410,14 +496,18 @@ fn resolve_in_target(target: &str, path: &Path) -> Result<Option<PathBuf>, Strin
             cur.pop();
             continue;
         }
-        let here: PathBuf = std::iter::once(root.as_os_str()).chain(cur.iter().map(OsString::as_os_str)).chain(std::iter::once(c.as_os_str())).collect();
+        let here: PathBuf = std::iter::once(root.as_os_str())
+            .chain(cur.iter().map(OsString::as_os_str))
+            .chain(std::iter::once(c.as_os_str()))
+            .collect();
         match std::fs::symlink_metadata(&here) {
             Ok(m) if m.file_type().is_symlink() => {
                 links += 1;
                 if links > MAX_LINKS {
                     return Err(format!("{}: too many symlinks", path.display()));
                 }
-                let to = std::fs::read_link(&here).map_err(|e| format!("{}: {e}", here.display()))?;
+                let to =
+                    std::fs::read_link(&here).map_err(|e| format!("{}: {e}", here.display()))?;
                 if to.is_absolute() {
                     cur.clear();
                 }
@@ -435,7 +525,11 @@ fn resolve_in_target(target: &str, path: &Path) -> Result<Option<PathBuf>, Strin
             Err(e) => return Err(format!("{}: {e}", here.display())),
         }
     }
-    Ok(Some(std::iter::once(root.as_os_str()).chain(cur.iter().map(OsString::as_os_str)).collect()))
+    Ok(Some(
+        std::iter::once(root.as_os_str())
+            .chain(cur.iter().map(OsString::as_os_str))
+            .collect(),
+    ))
 }
 
 /// CONTENT written over the regular file at PATH, in place: the same
@@ -448,12 +542,18 @@ fn write_in_place(path: &Path, content: &str) -> std::io::Result<()> {
     use std::os::unix::fs::MetadataExt;
     let before = std::fs::symlink_metadata(path)?;
     if !before.is_file() {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a regular file"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
     }
     let mut f = std::fs::OpenOptions::new().write(true).open(path)?;
     let opened = f.metadata()?;
     if (opened.dev(), opened.ino()) != (before.dev(), before.ino()) {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "changed while it was being edited"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "changed while it was being edited",
+        ));
     }
     f.write_all(content.as_bytes())?;
     f.set_len(content.len() as u64)?;
@@ -480,7 +580,12 @@ fn boot_dirs(layout: &Value) -> Vec<String> {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|e| e.get("mounted_at").and_then(Value::as_str).filter(|m| crate::load::commands::safe_target_subpath(m)).map(str::to_string))
+        .filter_map(|e| {
+            e.get("mounted_at")
+                .and_then(Value::as_str)
+                .filter(|m| crate::load::commands::safe_target_subpath(m))
+                .map(str::to_string)
+        })
         .collect();
     for d in ["/boot", "/boot/efi", "/efi"] {
         if !v.iter().any(|x| x == d) {
@@ -516,9 +621,15 @@ fn slackware_rootfs_verdict(rootfs: &str, c: &Change) -> Result<String, String> 
     if rootfs == c.to {
         Ok(format!("its init mounts / as {} (/rootfs)", c.to))
     } else if rootfs.is_empty() {
-        Err(format!("it has no /rootfs, so its init wouldn't know / is {}", c.to))
+        Err(format!(
+            "it has no /rootfs, so its init wouldn't know / is {}",
+            c.to
+        ))
     } else {
-        Err(format!("its /rootfs says {rootfs}, so its init would mount / as {rootfs}, not {}", c.to))
+        Err(format!(
+            "its /rootfs says {rootfs}, so its init would mount / as {rootfs}, not {}",
+            c.to
+        ))
     }
 }
 
@@ -567,7 +678,11 @@ impl Run<'_> {
         match f(&old) {
             Ok(new) if new != old => match write_in_place(&real, &new) {
                 Ok(()) => {
-                    self.log += &format!("bko-holt rewrite: {}:\n{}", path.display(), changed_lines(&old, &new));
+                    self.log += &format!(
+                        "bko-holt rewrite: {}:\n{}",
+                        path.display(),
+                        changed_lines(&old, &new)
+                    );
                     return true;
                 }
                 Err(e) => self.errors.push(format!("{}: {e}", path.display())),
@@ -583,7 +698,8 @@ impl Run<'_> {
         match resolve_in_target(self.t, &fstab_path) {
             Ok(Some(p)) if is_file(&p) => {}
             Ok(_) => {
-                self.errors.push(format!("{}: not there", fstab_path.display()));
+                self.errors
+                    .push(format!("{}: not there", fstab_path.display()));
                 return;
             }
             Err(e) => {
@@ -593,21 +709,53 @@ impl Run<'_> {
         }
         self.edit(&fstab_path, |t| fstab(t, c));
         if c.mount == "/" {
-            let (k, g, lim) = (self.at("/etc/kernel/cmdline"), self.at("/etc/default/grub"), self.at("/etc/default/limine"));
+            let (k, g, lim) = (
+                self.at("/etc/kernel/cmdline"),
+                self.at("/etc/default/grub"),
+                self.at("/etc/default/limine"),
+            );
             self.edit(&k, |t| Ok(cmdline(t, c)));
             self.edit(&g, |t| Ok(default_grub(t, c)));
             self.edit(&lim, |t| Ok(default_limine(t, c)));
             // mkinitcpio's and kernel-install's command line drop-ins.
-            for p in read_dir(&self.at("/etc/cmdline.d")).into_iter().filter(|p| p.extension().is_some_and(|x| x == "conf")) {
-                self.edit(&p, |t| Ok(t.split_inclusive('\n').map(|l| if l.trim_start().starts_with('#') { l.to_string() } else { cmdline(l, c) }).collect()));
+            for p in read_dir(&self.at("/etc/cmdline.d"))
+                .into_iter()
+                .filter(|p| p.extension().is_some_and(|x| x == "conf"))
+            {
+                self.edit(&p, |t| {
+                    Ok(t.split_inclusive('\n')
+                        .map(|l| {
+                            if l.trim_start().starts_with('#') {
+                                l.to_string()
+                            } else {
+                                cmdline(l, c)
+                            }
+                        })
+                        .collect())
+                });
             }
             for d in boot_dirs(layout) {
-                for e in read_dir(&self.at(&format!("{d}/loader/entries"))).into_iter().filter(|p| p.extension().is_some_and(|x| x == "conf")) {
+                for e in read_dir(&self.at(&format!("{d}/loader/entries")))
+                    .into_iter()
+                    .filter(|p| p.extension().is_some_and(|x| x == "conf"))
+                {
                     self.edit(&e, |t| Ok(bls_entry(t, c)));
                 }
-                let mut envs = vec![self.at(&format!("{d}/grub2/grubenv")), self.at(&format!("{d}/grub/grubenv"))];
-                envs.extend(read_dir(&self.at(&format!("{d}/EFI"))).into_iter().map(|p| p.join("grubenv")));
-                for l in ["limine.conf", "limine/limine.conf", "EFI/BOOT/limine.conf", "EFI/limine/limine.conf"] {
+                let mut envs = vec![
+                    self.at(&format!("{d}/grub2/grubenv")),
+                    self.at(&format!("{d}/grub/grubenv")),
+                ];
+                envs.extend(
+                    read_dir(&self.at(&format!("{d}/EFI")))
+                        .into_iter()
+                        .map(|p| p.join("grubenv")),
+                );
+                for l in [
+                    "limine.conf",
+                    "limine/limine.conf",
+                    "EFI/BOOT/limine.conf",
+                    "EFI/limine/limine.conf",
+                ] {
                     let p = self.at(&format!("{d}/{l}"));
                     self.edit(&p, |t| Ok(limine(t, c)));
                 }
@@ -617,7 +765,11 @@ impl Run<'_> {
                 // rEFInd (PikaOS): refind_linux.conf beside the kernels, and
                 // refind.conf's manual stanzas on the ESP.
                 let mut refind_files = vec![self.at(&format!("{d}/refind_linux.conf"))];
-                refind_files.extend(read_dir(&self.at(&format!("{d}/EFI"))).into_iter().map(|p| p.join("refind.conf")));
+                refind_files.extend(
+                    read_dir(&self.at(&format!("{d}/EFI")))
+                        .into_iter()
+                        .map(|p| p.join("refind.conf")),
+                );
                 for p in refind_files {
                     self.edit(&p, |t| Ok(refind(t, c)));
                 }
@@ -637,7 +789,9 @@ impl Run<'_> {
                     if reformat::holds(layout, c, &p) {
                         let at = self.at(&p);
                         if self.edit(&at, |t| grubenv_unblock(t, &vars)) && block.is_none() {
-                            self.log += &format!("bko-holt rewrite: {p}: the dump doesn't have the variables of GRUB's environment block (a dump made before bko-holt read it); env_block= taken out without them\n");
+                            self.log += &format!(
+                                "bko-holt rewrite: {p}: the dump doesn't have the variables of GRUB's environment block (a dump made before bko-holt read it); env_block= taken out without them\n"
+                            );
                         }
                     }
                 }
@@ -646,15 +800,26 @@ impl Run<'_> {
         // The ESPs' GRUB stubs: their prefix out of the subvolume.
         if c.from == "btrfs" {
             for p in grub_stubs(self, layout) {
-                self.edit(&p, |t| Ok(grub_stub(t, &c.uuid, |x, rel| reformat::grub_path(layout, c, x, rel))));
+                self.edit(&p, |t| {
+                    Ok(grub_stub(t, &c.uuid, |x, rel| {
+                        reformat::grub_path(layout, c, x, rel)
+                    }))
+                });
             }
         }
-        for u in read_dir(&self.at("/etc/systemd/system")).into_iter().filter(|p| is_file(p) && p.extension().is_some_and(|x| x == "mount")) {
+        for u in read_dir(&self.at("/etc/systemd/system"))
+            .into_iter()
+            .filter(|p| is_file(p) && p.extension().is_some_and(|x| x == "mount"))
+        {
             self.edit(&u, |t| Ok(mount_unit(t, c)));
         }
         if c.from == "btrfs" && !btrfs_left {
             let mut confs = vec![self.at("/etc/mkinitcpio.conf")];
-            confs.extend(read_dir(&self.at("/etc/mkinitcpio.conf.d")).into_iter().filter(|p| p.extension().is_some_and(|x| x == "conf")));
+            confs.extend(
+                read_dir(&self.at("/etc/mkinitcpio.conf.d"))
+                    .into_iter()
+                    .filter(|p| p.extension().is_some_and(|x| x == "conf")),
+            );
             for p in confs {
                 self.edit(&p, |t| Ok(mkinitcpio(t)));
             }
@@ -669,12 +834,21 @@ impl Run<'_> {
             return;
         }
         for p in grub_stubs(self, layout) {
-            let Some(t) = self.read_confined(&p) else { continue };
+            let Some(t) = self.read_confined(&p) else {
+                continue;
+            };
             let new = grub_stub(&t, &c.uuid, |x, rel| reformat::grub_path(layout, c, x, rel));
             if new != t {
                 let name = p.to_string_lossy().trim_start_matches(self.t).to_string();
-                let lines: Vec<&str> = t.lines().filter(|l| !new.lines().any(|n| n == *l)).map(str::trim).collect();
-                self.errors.push(format!("{name}: GRUB's stub still reads from inside the old btrfs's subvolumes: {}", lines.join("; ")));
+                let lines: Vec<&str> = t
+                    .lines()
+                    .filter(|l| !new.lines().any(|n| n == *l))
+                    .map(str::trim)
+                    .collect();
+                self.errors.push(format!(
+                    "{name}: GRUB's stub still reads from inside the old btrfs's subvolumes: {}",
+                    lines.join("; ")
+                ));
             }
         }
     }
@@ -684,12 +858,17 @@ impl Run<'_> {
     /// the initramfs mounts (initrd_mounts) only.  kdump's images aren't
     /// checked (is_kdump_image).
     fn check_initramfs(&mut self, c: &Change, layout: &Value) {
-        let generator = layout.at(&["boot", "initramfs", "generator"]).and_then(Value::as_str);
+        let generator = layout
+            .at(&["boot", "initramfs", "generator"])
+            .and_then(Value::as_str);
         if let Some(g @ ("mkinitrd" | "geninitrd")) = generator {
             return self.check_slackware_initrd(c, layout, g);
         }
         if !initrd_mounts(c) {
-            self.log += &format!("bko-holt rewrite: the initramfs doesn't mount {} (only /, /usr and x-initrd.mount ones); its images not checked for {}\n", c.mount, c.to);
+            self.log += &format!(
+                "bko-holt rewrite: the initramfs doesn't mount {} (only /, /usr and x-initrd.mount ones); its images not checked for {}\n",
+                c.mount, c.to
+            );
             return;
         }
         let lister = match generator {
@@ -702,22 +881,31 @@ impl Run<'_> {
             }
             // mkinitfs (Alpine), booster (PikaOS), tiny-initramfs: no lister.
             g => {
-                self.log += &format!("bko-holt rewrite: {}'s images aren't listed here; not checked\n", g.unwrap_or("an unknown generator"));
+                self.log += &format!(
+                    "bko-holt rewrite: {}'s images aren't listed here; not checked\n",
+                    g.unwrap_or("an unknown generator")
+                );
                 return;
             }
         };
         let images = self.initramfs_images(layout);
         if images.is_empty() {
-            self.errors.push("no initramfs image found under /boot or the ESP to check".into());
+            self.errors
+                .push("no initramfs image found under /boot or the ESP to check".into());
             return;
         }
         for img in images {
             let inside = img.to_string_lossy().trim_start_matches(self.t).to_string();
-            let out = std::process::Command::new("chroot").args([self.t, lister, &inside]).output();
+            let out = std::process::Command::new("chroot")
+                .args([self.t, lister, &inside])
+                .output();
             let text = match out {
                 Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
                 Ok(o) => {
-                    self.errors.push(format!("{lister} {inside}: {}", String::from_utf8_lossy(&o.stderr).trim()));
+                    self.errors.push(format!(
+                        "{lister} {inside}: {}",
+                        String::from_utf8_lossy(&o.stderr).trim()
+                    ));
                     continue;
                 }
                 Err(e) => {
@@ -736,24 +924,42 @@ impl Run<'_> {
         for d in boot_dirs(layout) {
             let dir = self.at(&d);
             for p in read_dir(&dir) {
-                let n = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                if is_file(&p) && (n.starts_with("initramfs-") || n.starts_with("initrd.img-") || n.starts_with("initrd-")) {
+                let n = p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                if is_file(&p)
+                    && (n.starts_with("initramfs-")
+                        || n.starts_with("initrd.img-")
+                        || n.starts_with("initrd-"))
+                {
                     images.push(p);
                 } else if is_dir(&p) {
                     // kernel-install's ENTRY-TOKEN/KVER/initrd.
                     for k in read_dir(&p).into_iter().filter(|k| is_dir(k)) {
                         // limine-mkinitcpio-hook's MACHINE-ID/KERNEL/initramfs.
-                        images.extend(read_dir(&k).into_iter().filter(|f| is_file(f) && f.file_name().is_some_and(|n| n.to_string_lossy().starts_with("initrd") || n.to_string_lossy() == "initramfs")));
+                        images.extend(read_dir(&k).into_iter().filter(|f| {
+                            is_file(f)
+                                && f.file_name().is_some_and(|n| {
+                                    n.to_string_lossy().starts_with("initrd")
+                                        || n.to_string_lossy() == "initramfs"
+                                })
+                        }));
                     }
                 }
             }
         }
         images.sort();
         images.dedup();
-        let (kdump, images): (Vec<PathBuf>, Vec<PathBuf>) = images.into_iter().partition(|p| p.file_name().is_some_and(|n| is_kdump_image(&n.to_string_lossy())));
+        let (kdump, images): (Vec<PathBuf>, Vec<PathBuf>) = images.into_iter().partition(|p| {
+            p.file_name()
+                .is_some_and(|n| is_kdump_image(&n.to_string_lossy()))
+        });
         for k in kdump {
             let inside = k.to_string_lossy().trim_start_matches(self.t).to_string();
-            self.log += &format!("bko-holt rewrite: {inside}: kdump's image, remade by the kdump service when /etc/fstab is newer than it (as the rewrite made it); not checked\n");
+            self.log += &format!(
+                "bko-holt rewrite: {inside}: kdump's image, remade by the kdump service when /etc/fstab is newer than it (as the rewrite made it); not checked\n"
+            );
         }
         images
     }
@@ -764,17 +970,36 @@ impl Run<'_> {
     fn module_in(&mut self, inside: &str, text: &str, c: &Change) {
         let module = format!("/kernel/fs/{0}/{0}.ko", c.to);
         if text.lines().any(|l| l.contains(&module)) {
-            self.log += &format!("bko-holt rewrite: {inside} has {}\n", module.trim_start_matches('/'));
+            self.log += &format!(
+                "bko-holt rewrite: {inside} has {}\n",
+                module.trim_start_matches('/')
+            );
             return;
         }
-        let kver = text.lines().find_map(|l| l.split_once("lib/modules/").and_then(|(_, r)| r.split('/').next()).filter(|k| !k.is_empty()).map(str::to_string));
+        let kver = text.lines().find_map(|l| {
+            l.split_once("lib/modules/")
+                .and_then(|(_, r)| r.split('/').next())
+                .filter(|k| !k.is_empty())
+                .map(str::to_string)
+        });
         let builtin = kver.as_ref().is_some_and(|k| {
-            ["/usr/lib/modules", "/lib/modules"].iter().any(|m| self.read_confined(&self.at(&format!("{m}/{k}/modules.builtin"))).is_some_and(|b| b.lines().any(|l| format!("/{l}").starts_with(&module))))
+            ["/usr/lib/modules", "/lib/modules"].iter().any(|m| {
+                self.read_confined(&self.at(&format!("{m}/{k}/modules.builtin")))
+                    .is_some_and(|b| b.lines().any(|l| format!("/{l}").starts_with(&module)))
+            })
         });
         if builtin {
-            self.log += &format!("bko-holt rewrite: {inside}: {} is built into {}\n", c.to, kver.unwrap_or_default());
+            self.log += &format!(
+                "bko-holt rewrite: {inside}: {} is built into {}\n",
+                c.to,
+                kver.unwrap_or_default()
+            );
         } else {
-            self.errors.push(format!("{inside} has no {} module, and its kernel{} doesn't have it built in", c.to, kver.map(|k| format!(" ({k})")).unwrap_or_default()));
+            self.errors.push(format!(
+                "{inside} has no {} module, and its kernel{} doesn't have it built in",
+                c.to,
+                kver.map(|k| format!(" ({k})")).unwrap_or_default()
+            ));
         }
     }
 
@@ -788,11 +1013,20 @@ impl Run<'_> {
     /// newc | gzip`); one with a microcode archive in front (-P) isn't.
     fn check_slackware_initrd(&mut self, c: &Change, layout: &Value, generator: &str) {
         if c.mount != "/" {
-            self.log += &format!("bko-holt rewrite: {generator}'s initrd mounts / only; not checked for {}\n", c.mount);
+            self.log += &format!(
+                "bko-holt rewrite: {generator}'s initrd mounts / only; not checked for {}\n",
+                c.mount
+            );
             return;
         }
-        let mk = |k: &str| layout.at(&["boot", "initramfs", "mkinitrd", k]).and_then(Value::as_str);
-        if generator == "mkinitrd" && mk("command_line").is_some_and(|l| l.split_whitespace().any(|w| w == "-P")) {
+        let mk = |k: &str| {
+            layout
+                .at(&["boot", "initramfs", "mkinitrd", k])
+                .and_then(Value::as_str)
+        };
+        if generator == "mkinitrd"
+            && mk("command_line").is_some_and(|l| l.split_whitespace().any(|w| w == "-P"))
+        {
             self.log += "bko-holt rewrite: mkinitrd's initrd has a microcode archive in front (-P); not checked\n";
             return;
         }
@@ -806,29 +1040,50 @@ impl Run<'_> {
         for d in boot_dirs(layout) {
             let dir = self.at(&d);
             for p in read_dir(&dir) {
-                let n = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                if is_file(&p) && ((n.starts_with("initrd-") && n.ends_with(".img")) || n == "initrd.gz") {
+                let n = p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                if is_file(&p)
+                    && ((n.starts_with("initrd-") && n.ends_with(".img")) || n == "initrd.gz")
+                {
                     images.push(p);
                 }
             }
             // ELILO's copies, EFI/DIR/initrd.gz (eliloconfig's).
-            for e in read_dir(&self.at(&format!("{d}/EFI"))).into_iter().filter(|e| is_dir(e)) {
-                images.extend(read_dir(&e).into_iter().filter(|f| is_file(f) && f.file_name().is_some_and(|n| n == "initrd.gz")));
+            for e in read_dir(&self.at(&format!("{d}/EFI")))
+                .into_iter()
+                .filter(|e| is_dir(e))
+            {
+                images.extend(
+                    read_dir(&e)
+                        .into_iter()
+                        .filter(|f| is_file(f) && f.file_name().is_some_and(|n| n == "initrd.gz")),
+                );
             }
         }
         images.sort();
         images.dedup();
         if images.is_empty() {
-            self.errors.push(format!("no {generator} initrd image found under /boot or the ESP to check"));
+            self.errors.push(format!(
+                "no {generator} initrd image found under /boot or the ESP to check"
+            ));
             return;
         }
         for img in images {
             let inside = img.to_string_lossy().trim_start_matches(self.t).to_string();
-            let run = |what: &str| std::process::Command::new("chroot").args([self.t, "/bin/sh", "-c", what, "sh", &inside]).output();
+            let run = |what: &str| {
+                std::process::Command::new("chroot")
+                    .args([self.t, "/bin/sh", "-c", what, "sh", &inside])
+                    .output()
+            };
             let list = match run("gzip -dc -- \"$1\" | cpio -it --quiet") {
                 Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
                 Ok(o) => {
-                    self.errors.push(format!("{inside}: gzip -dc | cpio -it: {}", String::from_utf8_lossy(&o.stderr).trim()));
+                    self.errors.push(format!(
+                        "{inside}: gzip -dc | cpio -it: {}",
+                        String::from_utf8_lossy(&o.stderr).trim()
+                    ));
                     continue;
                 }
                 Err(e) => {
@@ -837,9 +1092,14 @@ impl Run<'_> {
                 }
             };
             let rootfs = match run("gzip -dc -- \"$1\" | cpio -i --quiet --to-stdout rootfs") {
-                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+                Ok(o) if o.status.success() => {
+                    String::from_utf8_lossy(&o.stdout).trim().to_string()
+                }
                 Ok(o) => {
-                    self.errors.push(format!("{inside}: its /rootfs: {}", String::from_utf8_lossy(&o.stderr).trim()));
+                    self.errors.push(format!(
+                        "{inside}: its /rootfs: {}",
+                        String::from_utf8_lossy(&o.stderr).trim()
+                    ));
                     continue;
                 }
                 Err(e) => {
@@ -858,12 +1118,21 @@ impl Run<'_> {
     /// Whether a grub.cfg (beside FILE, or in a boot directory's grub or
     /// grub2) has an uncommented line naming NAME: GRUB would read FILE.
     fn grub_reads(&self, file: &Path, layout: &Value, name: &str) -> bool {
-        let mut cfgs: Vec<PathBuf> = file.parent().map(|d| d.join("grub.cfg")).into_iter().collect();
+        let mut cfgs: Vec<PathBuf> = file
+            .parent()
+            .map(|d| d.join("grub.cfg"))
+            .into_iter()
+            .collect();
         for d in boot_dirs(layout) {
             cfgs.push(self.at(&format!("{d}/grub/grub.cfg")));
             cfgs.push(self.at(&format!("{d}/grub2/grub.cfg")));
         }
-        cfgs.iter().any(|g| self.read_confined(g).is_some_and(|t| t.lines().any(|l| !l.trim_start().starts_with('#') && l.contains(name))))
+        cfgs.iter().any(|g| {
+            self.read_confined(g).is_some_and(|t| {
+                t.lines()
+                    .any(|l| !l.trim_start().starts_with('#') && l.contains(name))
+            })
+        })
     }
 
     /// What's left of the old type: a command line still asking for a
@@ -881,11 +1150,16 @@ impl Run<'_> {
                     stack.extend(read_dir(&p));
                     continue;
                 }
-                if !is_file(&p) || seen.contains(&p) || std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0) > 1 << 20 {
+                if !is_file(&p)
+                    || seen.contains(&p)
+                    || std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0) > 1 << 20
+                {
                     continue;
                 }
                 seen.insert(p.clone());
-                let Ok(bytes) = crate::bytes::read_bounded(&p, 1 << 20) else { continue };
+                let Ok(bytes) = crate::bytes::read_bounded(&p, 1 << 20) else {
+                    continue;
+                };
                 if bytes.iter().take(8192).any(|b| *b == 0) {
                     continue;
                 }
@@ -896,8 +1170,14 @@ impl Run<'_> {
                 // reading it and the old file stays (BigLinux, Garuda).  Its
                 // entries boot snapshots that weren't brought over; while no
                 // grub.cfg reads it, it's a leftover, not a boot that fails.
-                if c.mount == "/" && c.from == "btrfs" && p.file_name().is_some_and(|n| n == "grub-btrfs.cfg") && !self.grub_reads(&p, layout, "grub-btrfs.cfg") {
-                    self.log += &format!("bko-holt rewrite: left over: {name}: grub-btrfs's snapshot menu for the old btrfs root, which no grub.cfg reads now\n");
+                if c.mount == "/"
+                    && c.from == "btrfs"
+                    && p.file_name().is_some_and(|n| n == "grub-btrfs.cfg")
+                    && !self.grub_reads(&p, layout, "grub-btrfs.cfg")
+                {
+                    self.log += &format!(
+                        "bko-holt rewrite: left over: {name}: grub-btrfs's snapshot menu for the old btrfs root, which no grub.cfg reads now\n"
+                    );
                     continue;
                 }
                 for (i, l) in text.lines().enumerate() {
@@ -906,10 +1186,28 @@ impl Run<'_> {
                         continue;
                     }
                     let low = t.to_ascii_lowercase();
-                    if c.mount == "/" && c.from == "btrfs" && low.split_whitespace().any(|w| w.starts_with("rootflags=") && w.contains("subvol")) {
-                        self.errors.push(format!("{name}:{}: a kernel command line still asks for a subvolume: {}", i + 1, t.trim()));
-                    } else if low.contains(&uuid) && (low.split(|ch: char| !ch.is_ascii_alphanumeric()).any(|w| w == c.from) || low.contains("subvol")) {
-                        self.log += &format!("bko-holt rewrite: left over: {name}:{}: {}\n", i + 1, t.trim());
+                    if c.mount == "/"
+                        && c.from == "btrfs"
+                        && low
+                            .split_whitespace()
+                            .any(|w| w.starts_with("rootflags=") && w.contains("subvol"))
+                    {
+                        self.errors.push(format!(
+                            "{name}:{}: a kernel command line still asks for a subvolume: {}",
+                            i + 1,
+                            t.trim()
+                        ));
+                    } else if low.contains(&uuid)
+                        && (low
+                            .split(|ch: char| !ch.is_ascii_alphanumeric())
+                            .any(|w| w == c.from)
+                            || low.contains("subvol"))
+                    {
+                        self.log += &format!(
+                            "bko-holt rewrite: left over: {name}:{}: {}\n",
+                            i + 1,
+                            t.trim()
+                        );
                     }
                 }
             }
@@ -922,15 +1220,27 @@ impl Run<'_> {
             if is_file(&self.at("/etc/grub.d/41_snapshots-btrfs")) {
                 tools.push("grub-btrfs (/etc/grub.d/41_snapshots-btrfs)".into());
             }
-            for w in read_dir(&self.at("/etc/systemd/system")).into_iter().filter(|p| p.to_string_lossy().ends_with(".wants")) {
+            for w in read_dir(&self.at("/etc/systemd/system"))
+                .into_iter()
+                .filter(|p| p.to_string_lossy().ends_with(".wants"))
+            {
                 for u in read_dir(&w) {
-                    let n = u.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                    if n.starts_with("btrfs") || n.starts_with("grub-btrfsd") || n.starts_with("snapper") {
+                    let n = u
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if n.starts_with("btrfs")
+                        || n.starts_with("grub-btrfsd")
+                        || n.starts_with("snapper")
+                    {
                         tools.push(format!("{n}, enabled"));
                     }
                 }
             }
-            if self.read_confined(&self.at("/etc/timeshift/timeshift.json")).is_some_and(|t| t.replace(' ', "").contains("\"btrfs_mode\":\"true\"")) {
+            if self
+                .read_confined(&self.at("/etc/timeshift/timeshift.json"))
+                .is_some_and(|t| t.replace(' ', "").contains("\"btrfs_mode\":\"true\""))
+            {
                 tools.push("Timeshift in btrfs mode".into());
             }
             for x in tools {
@@ -961,13 +1271,17 @@ pub fn main(args: &[String]) -> u8 {
         eprintln!("{usage}");
         return 2;
     };
-    let layout = match crate::bytes::read_to_string_bounded(Path::new(layout_path), crate::LAYOUT_MAX).map_err(|e| e.to_string()).and_then(|t| crate::json::parse(&t).map_err(|e| e.message.to_string())) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("bko-holt rewrite: {layout_path}: {e}");
-            return 2;
-        }
-    };
+    let layout =
+        match crate::bytes::read_to_string_bounded(Path::new(layout_path), crate::LAYOUT_MAX)
+            .map_err(|e| e.to_string())
+            .and_then(|t| crate::json::parse(&t).map_err(|e| e.message.to_string()))
+        {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("bko-holt rewrite: {layout_path}: {e}");
+                return 2;
+            }
+        };
     let r = reformat::work_out(&layout, &reformats);
     if !r.problems.is_empty() {
         for p in &r.problems {
@@ -976,8 +1290,17 @@ pub fn main(args: &[String]) -> u8 {
         return 2;
     }
     let edited = reformat::apply(layout.clone(), &r);
-    let btrfs_left = edited.at(&["storage", "fstab"]).and_then(Value::as_array).into_iter().flatten().any(|e| e.get("type").and_then(Value::as_str) == Some("btrfs"));
-    let mut run = Run { t: target.trim_end_matches('/'), log: String::new(), errors: Vec::new() };
+    let btrfs_left = edited
+        .at(&["storage", "fstab"])
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|e| e.get("type").and_then(Value::as_str) == Some("btrfs"));
+    let mut run = Run {
+        t: target.trim_end_matches('/'),
+        log: String::new(),
+        errors: Vec::new(),
+    };
     for c in &r.changes {
         if check {
             run.check_initramfs(c, &layout);
@@ -1042,8 +1365,16 @@ tmpfs                                     /tmp           tmpfs   defaults,noatim
         // Already rewritten (the boot stage run again): left as it is.
         assert_eq!(fstab(&out, &change()).unwrap(), out);
         // Neither type's line for /: not the fstab the layout describes.
-        let none = EOS_FSTAB.lines().filter(|l| !l.contains(" /              ")).map(|l| format!("{l}\n")).collect::<String>();
-        assert!(fstab(&none, &change()).unwrap_err().contains("no btrfs line for /"));
+        let none = EOS_FSTAB
+            .lines()
+            .filter(|l| !l.contains(" /              "))
+            .map(|l| format!("{l}\n"))
+            .collect::<String>();
+        assert!(
+            fstab(&none, &change())
+                .unwrap_err()
+                .contains("no btrfs line for /")
+        );
     }
 
     // Mount points and a spec with fstab(5)'s octal escapes: a space, a tab,
@@ -1061,7 +1392,13 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
     fn escaped_change() -> Change {
         Change {
             mount: "/mnt/my data".into(),
-            folded: vec!["/mnt/tab\tdir".into(), "/mnt/new\nline".into(), "/mnt/back\\slash".into(), "/mnt/trailing ".into(), "/mnt/lit\\040".into()],
+            folded: vec![
+                "/mnt/tab\tdir".into(),
+                "/mnt/new\nline".into(),
+                "/mnt/back\\slash".into(),
+                "/mnt/trailing ".into(),
+                "/mnt/lit\\040".into(),
+            ],
             ..change()
         }
     }
@@ -1079,14 +1416,34 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
 /dev/sdb1 /mnt/my\\040data\\040too ext4 defaults 0 2\n"
         );
         let e = crate::mounts::parse_fstab(&out);
-        assert_eq!(e.iter().map(|e| (e.spec.as_str(), e.file.as_str())).collect::<Vec<_>>(), [("LABEL=My Data", "/mnt/my data"), ("LABEL=My Data", "/mnt/my dat"), ("/dev/sdb1", "/mnt/my data too")]);
+        assert_eq!(
+            e.iter()
+                .map(|e| (e.spec.as_str(), e.file.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("LABEL=My Data", "/mnt/my data"),
+                ("LABEL=My Data", "/mnt/my dat"),
+                ("/dev/sdb1", "/mnt/my data too")
+            ]
+        );
         // Run again: the new type's line is found by its decoded mount point.
         assert_eq!(fstab(&out, &c).unwrap(), out);
         // A folded mount not in it, by its decoded name, is an error.
-        let c2 = Change { folded: vec!["/mnt/lit 040".into()], ..escaped_change() };
-        assert!(fstab(ESCAPED_FSTAB, &c2).unwrap_err().contains("no btrfs line for /mnt/lit 040"));
+        let c2 = Change {
+            folded: vec!["/mnt/lit 040".into()],
+            ..escaped_change()
+        };
+        assert!(
+            fstab(ESCAPED_FSTAB, &c2)
+                .unwrap_err()
+                .contains("no btrfs line for /mnt/lit 040")
+        );
         // The kept mount's escape at the field's end.
-        let c3 = Change { mount: "/mnt/trailing ".into(), folded: vec![], ..change() };
+        let c3 = Change {
+            mount: "/mnt/trailing ".into(),
+            folded: vec![],
+            ..change()
+        };
         let out3 = fstab("UUID=x /mnt/trailing\\040 btrfs subvol=@ 0 0\n", &c3).unwrap();
         assert_eq!(out3, "UUID=x\t/mnt/trailing\\040\txfs\tnoatime\t0\t0\n");
         assert_eq!(fstab(&out3, &c3).unwrap(), out3);
@@ -1098,32 +1455,81 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
     fn slackware_rootfs() {
         let mut c = change();
         c.to = "ext4".into();
-        assert_eq!(slackware_rootfs_verdict("ext4", &c), Ok("its init mounts / as ext4 (/rootfs)".into()));
-        assert_eq!(slackware_rootfs_verdict("btrfs", &c), Err("its /rootfs says btrfs, so its init would mount / as btrfs, not ext4".into()));
-        assert!(slackware_rootfs_verdict("", &c).unwrap_err().contains("no /rootfs"));
+        assert_eq!(
+            slackware_rootfs_verdict("ext4", &c),
+            Ok("its init mounts / as ext4 (/rootfs)".into())
+        );
+        assert_eq!(
+            slackware_rootfs_verdict("btrfs", &c),
+            Err("its /rootfs says btrfs, so its init would mount / as btrfs, not ext4".into())
+        );
+        assert!(
+            slackware_rootfs_verdict("", &c)
+                .unwrap_err()
+                .contains("no /rootfs")
+        );
     }
 
     #[test]
     fn command_lines() {
         let c = change();
-        assert_eq!(cmdline("nvme_load=YES nowatchdog rw rootflags=subvol=/@ root=UUID=1b64", &c), "nvme_load=YES nowatchdog rw root=UUID=1b64");
-        assert_eq!(cmdline(" root=UUID=x rootflags=subvol=@,noatime rootfstype=btrfs quiet\n", &c), " root=UUID=x rootflags=noatime rootfstype=xfs quiet\n");
-        assert_eq!(cmdline("root=UUID=x ro  quiet", &c), "root=UUID=x ro  quiet");
+        assert_eq!(
+            cmdline(
+                "nvme_load=YES nowatchdog rw rootflags=subvol=/@ root=UUID=1b64",
+                &c
+            ),
+            "nvme_load=YES nowatchdog rw root=UUID=1b64"
+        );
+        assert_eq!(
+            cmdline(
+                " root=UUID=x rootflags=subvol=@,noatime rootfstype=btrfs quiet\n",
+                &c
+            ),
+            " root=UUID=x rootflags=noatime rootfstype=xfs quiet\n"
+        );
+        assert_eq!(
+            cmdline("root=UUID=x ro  quiet", &c),
+            "root=UUID=x ro  quiet"
+        );
         let entry = "title   EndeavourOS\nlinux   /0bb6/6.18.60-1-lts/linux\noptions nvme_load=YES rw rootflags=subvol=/@ root=UUID=1b64 systemd.machine_id=0bb6\n";
-        assert_eq!(bls_entry(entry, &c), "title   EndeavourOS\nlinux   /0bb6/6.18.60-1-lts/linux\noptions nvme_load=YES rw root=UUID=1b64 systemd.machine_id=0bb6\n");
+        assert_eq!(
+            bls_entry(entry, &c),
+            "title   EndeavourOS\nlinux   /0bb6/6.18.60-1-lts/linux\noptions nvme_load=YES rw root=UUID=1b64 systemd.machine_id=0bb6\n"
+        );
         let g = "GRUB_TIMEOUT=5\nGRUB_CMDLINE_LINUX_DEFAULT=\"quiet splash\"\nGRUB_CMDLINE_LINUX=\"rootflags=subvol=root rhgb\"\n";
-        assert_eq!(default_grub(g, &c), "GRUB_TIMEOUT=5\nGRUB_CMDLINE_LINUX_DEFAULT=\"quiet splash\"\nGRUB_CMDLINE_LINUX=\"rhgb\"\n");
+        assert_eq!(
+            default_grub(g, &c),
+            "GRUB_TIMEOUT=5\nGRUB_CMDLINE_LINUX_DEFAULT=\"quiet splash\"\nGRUB_CMDLINE_LINUX=\"rhgb\"\n"
+        );
         let lim = "TARGET_OS_NAME=\"CachyOS\"\nKERNEL_CMDLINE[default]+=\"quiet nowatchdog splash rw rootflags=subvol=/@ root=UUID=x\"\n";
-        assert_eq!(default_limine(lim, &c), "TARGET_OS_NAME=\"CachyOS\"\nKERNEL_CMDLINE[default]+=\"quiet nowatchdog splash rw root=UUID=x\"\n");
+        assert_eq!(
+            default_limine(lim, &c),
+            "TARGET_OS_NAME=\"CachyOS\"\nKERNEL_CMDLINE[default]+=\"quiet nowatchdog splash rw root=UUID=x\"\n"
+        );
         let rl = "\"Boot with standard options\"  \"quiet splash rootflags=subvol=@ root=UUID=x\"\n# \"x\" \"rootflags=subvol=@\"\n";
-        assert_eq!(refind(rl, &c), "\"Boot with standard options\"  \"quiet splash root=UUID=x\"\n# \"x\" \"rootflags=subvol=@\"\n");
-        assert_eq!(refind("menuentry x {\n    options \"rw rootflags=subvol=@\"\n}\n", &c), "menuentry x {\n    options \"rw\"\n}\n");
+        assert_eq!(
+            refind(rl, &c),
+            "\"Boot with standard options\"  \"quiet splash root=UUID=x\"\n# \"x\" \"rootflags=subvol=@\"\n"
+        );
+        assert_eq!(
+            refind(
+                "menuentry x {\n    options \"rw rootflags=subvol=@\"\n}\n",
+                &c
+            ),
+            "menuentry x {\n    options \"rw\"\n}\n"
+        );
         let l = "/Omarchy\n    protocol: linux\n    kernel_cmdline: cryptdevice=PARTUUID=x:root root=/dev/mapper/root zswap.enabled=0 rootflags=subvol=@ rw\n";
-        assert_eq!(limine(l, &c), "/Omarchy\n    protocol: linux\n    kernel_cmdline: cryptdevice=PARTUUID=x:root root=/dev/mapper/root zswap.enabled=0 rw\n");
+        assert_eq!(
+            limine(l, &c),
+            "/Omarchy\n    protocol: linux\n    kernel_cmdline: cryptdevice=PARTUUID=x:root root=/dev/mapper/root zswap.enabled=0 rw\n"
+        );
         // RustAudit1 H8-01: multi-byte characters across the keys' lengths
         // (版 at bytes 14..17 of the title, 中 at 7..10 of the comment).
         let l = "/Ubuntu 中文版\n# 12345中文 kernel_cmdline: x\n    protocol: linux\n    kernel_cmdline: quiet rootflags=subvol=@ rw\n";
-        assert_eq!(limine(l, &c), "/Ubuntu 中文版\n# 12345中文 kernel_cmdline: x\n    protocol: linux\n    kernel_cmdline: quiet rw\n");
+        assert_eq!(
+            limine(l, &c),
+            "/Ubuntu 中文版\n# 12345中文 kernel_cmdline: x\n    protocol: linux\n    kernel_cmdline: quiet rw\n"
+        );
     }
 
     #[test]
@@ -1132,7 +1538,9 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         env += &"#".repeat(1024 - env.len());
         let out = grubenv(&env, &change()).unwrap();
         assert_eq!(out.len(), 1024);
-        assert!(out.starts_with("# GRUB Environment Block\nsaved_entry=x\nkernelopts=root=UUID=x ro rhgb quiet\n#"));
+        assert!(out.starts_with(
+            "# GRUB Environment Block\nsaved_entry=x\nkernelopts=root=UUID=x ro rhgb quiet\n#"
+        ));
     }
 
     /// --reformat from a btrfs with GRUB's environment block (Leap 16's
@@ -1140,27 +1548,50 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
     /// variables, still 1024 bytes; without env_block= it's left alone.
     #[test]
     fn grubenv_unblock_moves_the_block_in() {
-        let mut env = "# GRUB Environment Block\nsaved_entry=x\nnext_entry=0\nenv_block=512+1\n".to_string();
+        let mut env =
+            "# GRUB Environment Block\nsaved_entry=x\nnext_entry=0\nenv_block=512+1\n".to_string();
         env += &"#".repeat(1024 - env.len());
         let vars = crate::json::parse(r#"{"next_entry": "2", "health": "a=b"}"#).unwrap();
         let out = grubenv_unblock(&env, &vars).unwrap();
         assert_eq!(out.len(), 1024);
-        assert!(out.starts_with("# GRUB Environment Block\nsaved_entry=x\nnext_entry=2\nhealth=a=b\n#"), "{out}");
+        assert!(
+            out.starts_with("# GRUB Environment Block\nsaved_entry=x\nnext_entry=2\nhealth=a=b\n#"),
+            "{out}"
+        );
         assert_eq!(grubenv_unblock(&out, &vars).unwrap(), out);
         let empty = grubenv_unblock(&env, &crate::json::parse("{}").unwrap()).unwrap();
-        assert!(empty.starts_with("# GRUB Environment Block\nsaved_entry=x\nnext_entry=0\n#"), "{empty}");
+        assert!(
+            empty.starts_with("# GRUB Environment Block\nsaved_entry=x\nnext_entry=0\n#"),
+            "{empty}"
+        );
         let big = crate::json::parse(&format!(r#"{{"x": "{}"}}"#, "y".repeat(1100))).unwrap();
-        assert!(grubenv_unblock(&env, &big).unwrap_err().contains("don't fit"));
+        assert!(
+            grubenv_unblock(&env, &big)
+                .unwrap_err()
+                .contains("don't fit")
+        );
     }
 
     #[test]
     fn mkinitcpio_and_mount_units() {
-        assert_eq!(mkinitcpio("MODULES=(btrfs i915)\nBINARIES=(/usr/bin/btrfs)\nHOOKS=(base udev autodetect btrfs filesystems fsck)\nFILES=()\n"), "MODULES=(i915)\nBINARIES=()\nHOOKS=(base udev autodetect filesystems fsck)\nFILES=()\n");
+        assert_eq!(
+            mkinitcpio(
+                "MODULES=(btrfs i915)\nBINARIES=(/usr/bin/btrfs)\nHOOKS=(base udev autodetect btrfs filesystems fsck)\nFILES=()\n"
+            ),
+            "MODULES=(i915)\nBINARIES=()\nHOOKS=(base udev autodetect filesystems fsck)\nFILES=()\n"
+        );
         assert_eq!(mkinitcpio("MODULES=()\n"), "MODULES=()\n");
         let c = change();
-        let unit = "[Mount]\nWhat=/dev/disk/by-uuid/1b64\nWhere=/\nType=btrfs\nOptions=subvol=@,noatime\n";
-        assert_eq!(mount_unit(unit, &c), "[Mount]\nWhat=/dev/disk/by-uuid/1b64\nWhere=/\nType=xfs\nOptions=noatime\n");
-        assert_eq!(mount_unit("[Mount]\nWhere=/srv\nType=btrfs\n", &c), "[Mount]\nWhere=/srv\nType=btrfs\n");
+        let unit =
+            "[Mount]\nWhat=/dev/disk/by-uuid/1b64\nWhere=/\nType=btrfs\nOptions=subvol=@,noatime\n";
+        assert_eq!(
+            mount_unit(unit, &c),
+            "[Mount]\nWhat=/dev/disk/by-uuid/1b64\nWhere=/\nType=xfs\nOptions=noatime\n"
+        );
+        assert_eq!(
+            mount_unit("[Mount]\nWhere=/srv\nType=btrfs\n", &c),
+            "[Mount]\nWhere=/srv\nType=btrfs\n"
+        );
     }
 
     const ANDUINOS_UUID: &str = "6952b714-eb5b-4747-a32b-95b6fa1f800a";
@@ -1177,17 +1608,46 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
             _ => None,
         };
         let u = ANDUINOS_UUID;
-        let anduinos = format!("search.fs_uuid {u} root \nset prefix=($root)'/@root/boot/grub'\nconfigfile $prefix/grub.cfg\n");
-        assert_eq!(grub_stub(&anduinos, u, map), format!("search.fs_uuid {u} root \nset prefix=($root)'/boot/grub'\nconfigfile $prefix/grub.cfg\n"));
+        let anduinos = format!(
+            "search.fs_uuid {u} root \nset prefix=($root)'/@root/boot/grub'\nconfigfile $prefix/grub.cfg\n"
+        );
+        assert_eq!(
+            grub_stub(&anduinos, u, map),
+            format!(
+                "search.fs_uuid {u} root \nset prefix=($root)'/boot/grub'\nconfigfile $prefix/grub.cfg\n"
+            )
+        );
         // The UUID in capitals, a hint, a direct configfile, a comment.
-        let other = format!("search.fs_uuid {} root hd0,gpt4\n# set prefix=($root)'/@root/boot/grub'\nconfigfile (${{root}})/@root/boot/grub/grub.cfg\n", u.to_uppercase());
-        assert_eq!(grub_stub(&other, u, map), format!("search.fs_uuid {} root hd0,gpt4\n# set prefix=($root)'/@root/boot/grub'\nconfigfile (${{root}})/boot/grub/grub.cfg\n", u.to_uppercase()));
-        let fedora = format!("search --no-floppy --root-dev-only --fs-uuid --set=dev {u}\nset prefix=($dev)/root/boot/grub2\nexport $prefix\nconfigfile $prefix/grub.cfg\n");
-        assert_eq!(grub_stub(&fedora, u, map), fedora.replace("($dev)/root/boot/grub2", "($dev)/boot/grub2"));
-        let suse = format!("set btrfs_relative_path=\"yes\"\nsearch --fs-uuid --set=root {u}\nset prefix=(${{root}})/boot/grub2\nsource \"${{prefix}}/grub.cfg\"\n");
-        assert_eq!(grub_stub(&suse, u, map), suse.replace("(${root})/boot/grub2", "(${root})/relative"));
+        let other = format!(
+            "search.fs_uuid {} root hd0,gpt4\n# set prefix=($root)'/@root/boot/grub'\nconfigfile (${{root}})/@root/boot/grub/grub.cfg\n",
+            u.to_uppercase()
+        );
+        assert_eq!(
+            grub_stub(&other, u, map),
+            format!(
+                "search.fs_uuid {} root hd0,gpt4\n# set prefix=($root)'/@root/boot/grub'\nconfigfile (${{root}})/boot/grub/grub.cfg\n",
+                u.to_uppercase()
+            )
+        );
+        let fedora = format!(
+            "search --no-floppy --root-dev-only --fs-uuid --set=dev {u}\nset prefix=($dev)/root/boot/grub2\nexport $prefix\nconfigfile $prefix/grub.cfg\n"
+        );
+        assert_eq!(
+            grub_stub(&fedora, u, map),
+            fedora.replace("($dev)/root/boot/grub2", "($dev)/boot/grub2")
+        );
+        let suse = format!(
+            "set btrfs_relative_path=\"yes\"\nsearch --fs-uuid --set=root {u}\nset prefix=(${{root}})/boot/grub2\nsource \"${{prefix}}/grub.cfg\"\n"
+        );
+        assert_eq!(
+            grub_stub(&suse, u, map),
+            suse.replace("(${root})/boot/grub2", "(${root})/relative")
+        );
         // Another filesystem's stub, or the ESP's own paths: as they were.
-        assert_eq!(grub_stub(&anduinos.replace(u, "34CD-367E"), u, map), anduinos.replace(u, "34CD-367E"));
+        assert_eq!(
+            grub_stub(&anduinos.replace(u, "34CD-367E"), u, map),
+            anduinos.replace(u, "34CD-367E")
+        );
         let esp = format!("search.fs_uuid {u} root\nchainloader ($root)/EFI/x.efi (hd0) ( a b )\n");
         assert_eq!(grub_stub(&esp, u, map), esp);
         assert_eq!(grub_stub(&anduinos, "", map), anduinos);
@@ -1219,11 +1679,15 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
             std::fs::write(f, s).unwrap();
         };
         let u = ANDUINOS_UUID;
-        let mut fstab = format!("UUID={u} / btrfs defaults,subvol=@root,compress=zstd:3,noatime 0 0\nUUID={u} /home btrfs defaults,subvol=@home,compress=zstd:3,noatime 0 0\nUUID=34CD-367E /boot/efi vfat defaults,noatime 0 1\n");
+        let mut fstab = format!(
+            "UUID={u} / btrfs defaults,subvol=@root,compress=zstd:3,noatime 0 0\nUUID={u} /home btrfs defaults,subvol=@home,compress=zstd:3,noatime 0 0\nUUID=34CD-367E /boot/efi vfat defaults,noatime 0 1\n"
+        );
         let mut extra = String::new();
         if let Some((at, o)) = top {
             fstab += &format!("UUID={u} {at} btrfs {o} 0 0\n");
-            extra = format!(r#", {{"file": "{at}", "type": "btrfs", "options": "{o}", "resolves_to": "vda4"}}"#);
+            extra = format!(
+                r#", {{"file": "{at}", "type": "btrfs", "options": "{o}", "resolves_to": "vda4"}}"#
+            );
         }
         let layout = crate::json::parse(&format!(
             r#"{{"os": {{"id": "anduinos"}},
@@ -1238,12 +1702,18 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         let r = reformat::work_out(&layout, &[("/".to_string(), "ext4".to_string())]);
         assert!(r.problems.is_empty(), "{:?}", r.problems);
         let c = &r.changes[0];
-        let stub = format!("search.fs_uuid {u} root \nset prefix=($root)'/@root/boot/grub'\nconfigfile $prefix/grub.cfg\n");
+        let stub = format!(
+            "search.fs_uuid {u} root \nset prefix=($root)'/@root/boot/grub'\nconfigfile $prefix/grub.cfg\n"
+        );
         w("/etc/fstab", &fstab);
         w("/boot/efi/EFI/AnduinOS/grub.cfg", &stub);
         w("/boot/efi/EFI/BOOT/grub.cfg", &stub);
         w("/boot/efi/EFI/BOOT/BOOTX64.CSV", "shimx64.efi,AnduinOS,,\n");
-        let mut run = Run { t: &root, log: String::new(), errors: vec![] };
+        let mut run = Run {
+            t: &root,
+            log: String::new(),
+            errors: vec![],
+        };
         // Before the rewrite, the check stops on both.
         run.check_grub_stubs(c, &layout);
         assert_eq!(run.errors.len(), 2, "{:?}", run.errors);
@@ -1253,7 +1723,10 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         assert!(run.errors.is_empty(), "{:?}", run.errors);
         let want = stub.replace("'/@root/boot/grub'", "'/boot/grub'");
         for d in ["AnduinOS", "BOOT"] {
-            assert_eq!(std::fs::read_to_string(format!("{root}/boot/efi/EFI/{d}/grub.cfg")).unwrap(), want);
+            assert_eq!(
+                std::fs::read_to_string(format!("{root}/boot/efi/EFI/{d}/grub.cfg")).unwrap(),
+                want
+            );
         }
         assert!(run.log.contains("/boot/efi/EFI/BOOT/grub.cfg:\n    - set prefix=($root)'/@root/boot/grub'\n    + set prefix=($root)'/boot/grub'\n"), "{}", run.log);
         run.check_grub_stubs(c, &layout);
@@ -1261,19 +1734,37 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         // Run again: nothing left to change.
         run.log.clear();
         run.rewrite(c, &layout, false);
-        assert!(run.errors.is_empty() && run.log.is_empty(), "{:?} {}", run.errors, run.log);
+        assert!(
+            run.errors.is_empty() && run.log.is_empty(),
+            "{:?} {}",
+            run.errors,
+            run.log
+        );
         for d in ["AnduinOS", "BOOT"] {
-            assert_eq!(std::fs::read_to_string(format!("{root}/boot/efi/EFI/{d}/grub.cfg")).unwrap(), want);
+            assert_eq!(
+                std::fs::read_to_string(format!("{root}/boot/efi/EFI/{d}/grub.cfg")).unwrap(),
+                want
+            );
         }
         // A stub grub-install wrote fresh (the new filesystem's paths), and
         // one with the ESP's own: the check passes, the rewrite leaves them.
-        let fresh = format!("search.fs_uuid {u} root hd0,gpt4\nset prefix=($root)'/boot/grub'\nconfigfile ($root)/boot/grub/grub.cfg\nchainloader ($esp)/EFI/BOOT/fbx64.efi\n");
+        let fresh = format!(
+            "search.fs_uuid {u} root hd0,gpt4\nset prefix=($root)'/boot/grub'\nconfigfile ($root)/boot/grub/grub.cfg\nchainloader ($esp)/EFI/BOOT/fbx64.efi\n"
+        );
         w("/boot/efi/EFI/AnduinOS/grub.cfg", &fresh);
         run.check_grub_stubs(c, &layout);
         assert!(run.errors.is_empty(), "{:?}", run.errors);
         run.rewrite(c, &layout, false);
-        assert!(run.errors.is_empty() && run.log.is_empty(), "{:?} {}", run.errors, run.log);
-        assert_eq!(std::fs::read_to_string(format!("{root}/boot/efi/EFI/AnduinOS/grub.cfg")).unwrap(), fresh);
+        assert!(
+            run.errors.is_empty() && run.log.is_empty(),
+            "{:?} {}",
+            run.errors,
+            run.log
+        );
+        assert_eq!(
+            std::fs::read_to_string(format!("{root}/boot/efi/EFI/AnduinOS/grub.cfg")).unwrap(),
+            fresh
+        );
     }
 
     #[test]
@@ -1286,24 +1777,55 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
             std::fs::write(f, s).unwrap();
         };
         w("/etc/fstab", EOS_FSTAB);
-        w("/etc/kernel/cmdline", "nvme_load=YES rw rootflags=subvol=/@ root=UUID=1b64a017-659b-4484-bf36-b97f639c3c35\n");
-        w("/efi/loader/entries/0bb6-6.18.60-1-lts.conf", "title EndeavourOS\noptions rw rootflags=subvol=/@ root=UUID=1b64a017-659b-4484-bf36-b97f639c3c35\n");
+        w(
+            "/etc/kernel/cmdline",
+            "nvme_load=YES rw rootflags=subvol=/@ root=UUID=1b64a017-659b-4484-bf36-b97f639c3c35\n",
+        );
+        w(
+            "/efi/loader/entries/0bb6-6.18.60-1-lts.conf",
+            "title EndeavourOS\noptions rw rootflags=subvol=/@ root=UUID=1b64a017-659b-4484-bf36-b97f639c3c35\n",
+        );
         w("/etc/grub.d/41_snapshots-btrfs", "#!/bin/sh\n");
         let layout = crate::json::parse(r#"{"boot": {"esps": [{"mounted_at": "/efi"}]}}"#).unwrap();
-        let mut run = Run { t: &root, log: String::new(), errors: vec![] };
+        let mut run = Run {
+            t: &root,
+            log: String::new(),
+            errors: vec![],
+        };
         run.rewrite(&change(), &layout, false);
         assert!(run.errors.is_empty(), "{:?}", run.errors);
-        assert_eq!(std::fs::read_to_string(format!("{root}/etc/kernel/cmdline")).unwrap(), "nvme_load=YES rw root=UUID=1b64a017-659b-4484-bf36-b97f639c3c35\n");
-        assert!(std::fs::read_to_string(format!("{root}/efi/loader/entries/0bb6-6.18.60-1-lts.conf")).unwrap().contains("options rw root=UUID="));
-        assert!(run.log.contains("    - UUID=1b64a017-659b-4484-bf36-b97f639c3c35 /home"), "{}", run.log);
+        assert_eq!(
+            std::fs::read_to_string(format!("{root}/etc/kernel/cmdline")).unwrap(),
+            "nvme_load=YES rw root=UUID=1b64a017-659b-4484-bf36-b97f639c3c35\n"
+        );
+        assert!(
+            std::fs::read_to_string(format!("{root}/efi/loader/entries/0bb6-6.18.60-1-lts.conf"))
+                .unwrap()
+                .contains("options rw root=UUID=")
+        );
+        assert!(
+            run.log
+                .contains("    - UUID=1b64a017-659b-4484-bf36-b97f639c3c35 /home"),
+            "{}",
+            run.log
+        );
         // The boot stage run again: nothing left to change, and no error.
         run.log.clear();
         run.rewrite(&change(), &layout, false);
-        assert!(run.errors.is_empty() && run.log.is_empty(), "{:?} {}", run.errors, run.log);
+        assert!(
+            run.errors.is_empty() && run.log.is_empty(),
+            "{:?} {}",
+            run.errors,
+            run.log
+        );
         run.log.clear();
         run.leftovers(&change(), &layout);
         assert!(run.errors.is_empty(), "{:?}", run.errors);
-        assert!(run.log.contains("made for btrfs, still there: grub-btrfs"), "{}", run.log);
+        assert!(
+            run.log.contains("made for btrfs, still there: grub-btrfs"),
+            "{}",
+            run.log
+        );
         // GRUB's environment block (a btrfs Leap-style GRUB used): the
         // grubenv on the reformatted / stops pointing at it.
         let mut env = "# GRUB Environment Block\nsaved_entry=x\nenv_block=512+1\n".to_string();
@@ -1319,8 +1841,16 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         run.rewrite(&change(), &with_block, false);
         assert!(run.errors.is_empty(), "{:?}", run.errors);
         let g = std::fs::read_to_string(format!("{root}/boot/grub2/grubenv")).unwrap();
-        assert!(g.len() == 1024 && g.starts_with("# GRUB Environment Block\nsaved_entry=x\nnext_entry=1\n#"), "{g}");
-        assert!(run.log.contains("    - env_block=512+1\n") && run.log.contains("    + next_entry=1\n"), "{}", run.log);
+        assert!(
+            g.len() == 1024
+                && g.starts_with("# GRUB Environment Block\nsaved_entry=x\nnext_entry=1\n#"),
+            "{g}"
+        );
+        assert!(
+            run.log.contains("    - env_block=512+1\n") && run.log.contains("    + next_entry=1\n"),
+            "{}",
+            run.log
+        );
         // RustAudit1 XH1-01: a dump from before the probe read the block
         // has no grub_env_block, and env_block= still goes, with a log line.
         let no_block = crate::json::parse(
@@ -1334,30 +1864,73 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         run.rewrite(&change(), &no_block, false);
         assert!(run.errors.is_empty(), "{:?}", run.errors);
         let g = std::fs::read_to_string(format!("{root}/boot/grub2/grubenv")).unwrap();
-        assert!(g.len() == 1024 && g.starts_with("# GRUB Environment Block\nsaved_entry=x\n#") && !g.contains("env_block="), "{g}");
-        assert!(run.log.contains("    - env_block=512+1\n") && run.log.contains("/boot/grub2/grubenv: the dump doesn't have the variables"), "{}", run.log);
+        assert!(
+            g.len() == 1024
+                && g.starts_with("# GRUB Environment Block\nsaved_entry=x\n#")
+                && !g.contains("env_block="),
+            "{g}"
+        );
+        assert!(
+            run.log.contains("    - env_block=512+1\n")
+                && run
+                    .log
+                    .contains("/boot/grub2/grubenv: the dump doesn't have the variables"),
+            "{}",
+            run.log
+        );
         run.log.clear();
         run.rewrite(&change(), &no_block, false);
-        assert!(run.errors.is_empty() && run.log.is_empty(), "{:?} {}", run.errors, run.log);
+        assert!(
+            run.errors.is_empty() && run.log.is_empty(),
+            "{:?} {}",
+            run.errors,
+            run.log
+        );
         // grub-btrfs's old snapshot menu (BigLinux): no grub.cfg reads it
         // after grub-mkconfig on the new root, so it's a leftover; while a
         // grub.cfg still sources it, its subvolume lines fail the check.
         let snap = "submenu 'x' {\n  menuentry 'snap' {\n    linux \"/timeshift-btrfs/snapshots/1/@/boot/vmlinuz\" root=UUID=x rootflags=subvol=\"timeshift-btrfs/snapshots/1/@\"\n  }\n}\n";
         w("/boot/grub/grub-btrfs.cfg", snap);
-        w("/boot/grub/grub.cfg", "### BEGIN /etc/grub.d/41_snapshots-btrfs ###\n# configfile ${prefix}/grub-btrfs.cfg\n### END /etc/grub.d/41_snapshots-btrfs ###\n");
+        w(
+            "/boot/grub/grub.cfg",
+            "### BEGIN /etc/grub.d/41_snapshots-btrfs ###\n# configfile ${prefix}/grub-btrfs.cfg\n### END /etc/grub.d/41_snapshots-btrfs ###\n",
+        );
         run.log.clear();
         run.leftovers(&change(), &layout);
         assert!(run.errors.is_empty(), "{:?}", run.errors);
-        assert!(run.log.contains("left over: /boot/grub/grub-btrfs.cfg: grub-btrfs's snapshot menu"), "{}", run.log);
-        w("/boot/grub/grub.cfg", "submenu 'snapshots' {\n    configfile \"${prefix}/grub-btrfs.cfg\"\n}\n");
+        assert!(
+            run.log
+                .contains("left over: /boot/grub/grub-btrfs.cfg: grub-btrfs's snapshot menu"),
+            "{}",
+            run.log
+        );
+        w(
+            "/boot/grub/grub.cfg",
+            "submenu 'snapshots' {\n    configfile \"${prefix}/grub-btrfs.cfg\"\n}\n",
+        );
         run.leftovers(&change(), &layout);
-        assert!(run.errors.iter().any(|e| e.contains("grub-btrfs.cfg:3: a kernel command line still asks for a subvolume")), "{:?}", run.errors);
+        assert!(
+            run.errors.iter().any(|e| e
+                .contains("grub-btrfs.cfg:3: a kernel command line still asks for a subvolume")),
+            "{:?}",
+            run.errors
+        );
         std::fs::remove_file(format!("{root}/boot/grub/grub-btrfs.cfg")).unwrap();
         run.errors.clear();
         // An entry the rewrite missed fails the check.
-        w("/efi/loader/entries/other.conf", "options root=UUID=x rootflags=subvol=@\n");
+        w(
+            "/efi/loader/entries/other.conf",
+            "options root=UUID=x rootflags=subvol=@\n",
+        );
         run.leftovers(&change(), &layout);
-        assert!(run.errors.iter().any(|e| e.contains("other.conf:1: a kernel command line still asks for a subvolume")), "{:?}", run.errors);
+        assert!(
+            run.errors
+                .iter()
+                .any(|e| e
+                    .contains("other.conf:1: a kernel command line still asks for a subvolume")),
+            "{:?}",
+            run.errors
+        );
     }
 
     /// A symlink is followed as in a chroot at the target: an absolute one
@@ -1376,39 +1949,80 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         std::fs::write(format!("{root}/etc/fstab"), EOS_FSTAB).unwrap();
         // Absolute: the target's own path of that name, which isn't there.
         std::os::unix::fs::symlink(&victim, format!("{root}/etc/default/grub")).unwrap();
-        let bad_layout = crate::json::parse(r#"{"boot": {"esps": [{"mounted_at": "/../../etc"}]}}"#).unwrap();
+        let bad_layout =
+            crate::json::parse(r#"{"boot": {"esps": [{"mounted_at": "/../../etc"}]}}"#).unwrap();
         assert!(!boot_dirs(&bad_layout).iter().any(|d| d.contains("..")));
-        let mut run = Run { t: &root, log: String::new(), errors: vec![] };
+        let mut run = Run {
+            t: &root,
+            log: String::new(),
+            errors: vec![],
+        };
         run.rewrite(&change(), &bad_layout, false);
         assert!(run.errors.is_empty(), "{:?}", run.errors);
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), orig);
         // Relative, climbing past the root: it stays at the target root,
         // where the victim's path isn't there.
         std::fs::remove_file(format!("{root}/etc/default/grub")).unwrap();
-        std::os::unix::fs::symlink(format!("{}{}", "../".repeat(64), victim.display()), format!("{root}/etc/default/grub")).unwrap();
+        std::os::unix::fs::symlink(
+            format!("{}{}", "../".repeat(64), victim.display()),
+            format!("{root}/etc/default/grub"),
+        )
+        .unwrap();
         std::fs::write(format!("{root}/etc/fstab"), EOS_FSTAB).unwrap();
-        let mut run = Run { t: &root, log: String::new(), errors: vec![] };
+        let mut run = Run {
+            t: &root,
+            log: String::new(),
+            errors: vec![],
+        };
         run.rewrite(&change(), &bad_layout, false);
         assert!(run.errors.is_empty(), "{:?}", run.errors);
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), orig);
-        assert_eq!(resolve_in_target(&root, Path::new(&format!("{root}/etc/default/grub"))), Ok(None));
+        assert_eq!(
+            resolve_in_target(&root, Path::new(&format!("{root}/etc/default/grub"))),
+            Ok(None)
+        );
         // One `..` too many, as a chroot sees it: the target's own file.
         std::fs::remove_file(format!("{root}/etc/default/grub")).unwrap();
-        std::os::unix::fs::symlink("../../../etc/real-grub", format!("{root}/etc/default/grub")).unwrap();
+        std::os::unix::fs::symlink("../../../etc/real-grub", format!("{root}/etc/default/grub"))
+            .unwrap();
         std::fs::write(format!("{root}/etc/real-grub"), orig).unwrap();
-        assert_eq!(resolve_in_target(&root, Path::new(&format!("{root}/etc/default/grub"))), Ok(Some(PathBuf::from(format!("{root}/etc/real-grub")))));
+        assert_eq!(
+            resolve_in_target(&root, Path::new(&format!("{root}/etc/default/grub"))),
+            Ok(Some(PathBuf::from(format!("{root}/etc/real-grub"))))
+        );
         std::fs::write(format!("{root}/etc/fstab"), EOS_FSTAB).unwrap();
-        let mut run = Run { t: &root, log: String::new(), errors: vec![] };
+        let mut run = Run {
+            t: &root,
+            log: String::new(),
+            errors: vec![],
+        };
         run.rewrite(&change(), &bad_layout, false);
         assert!(run.errors.is_empty(), "{:?}", run.errors);
-        assert!(std::fs::symlink_metadata(format!("{root}/etc/default/grub")).unwrap().file_type().is_symlink());
-        assert_ne!(std::fs::read_to_string(format!("{root}/etc/real-grub")).unwrap(), orig, "the target's file is the one rewritten");
+        assert!(
+            std::fs::symlink_metadata(format!("{root}/etc/default/grub"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_ne!(
+            std::fs::read_to_string(format!("{root}/etc/real-grub")).unwrap(),
+            orig,
+            "the target's file is the one rewritten"
+        );
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), orig);
-        assert_eq!(resolve_in_target(&root, Path::new(&format!("{root}/etc/../etc/fstab"))).map(|_| ()), Err(format!("{root}/etc/../etc/fstab: unsafe path traversal refused")));
+        assert_eq!(
+            resolve_in_target(&root, Path::new(&format!("{root}/etc/../etc/fstab"))).map(|_| ()),
+            Err(format!(
+                "{root}/etc/../etc/fstab: unsafe path traversal refused"
+            ))
+        );
         // A loop ends.
         std::os::unix::fs::symlink("loop2", format!("{root}/etc/loop1")).unwrap();
         std::os::unix::fs::symlink("loop1", format!("{root}/etc/loop2")).unwrap();
-        assert!(resolve_in_target(&root, Path::new(&format!("{root}/etc/loop1"))).is_err_and(|e| e.contains("too many symlinks")));
+        assert!(
+            resolve_in_target(&root, Path::new(&format!("{root}/etc/loop1")))
+                .is_err_and(|e| e.contains("too many symlinks"))
+        );
     }
 
     /// RHEL 8 UEFI (and Fedora to 33): /boot/grub2/grubenv is a relative
@@ -1428,25 +2042,56 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         let mut env = "# GRUB Environment Block\nsaved_entry=x\nkernelopts=root=UUID=1b64a017-659b-4484-bf36-b97f639c3c35 ro rootflags=subvol=@ rhgb quiet\n".to_string();
         env += &"#".repeat(1024 - env.len());
         std::fs::write(format!("{root}/boot/efi/EFI/redhat/grubenv"), &env).unwrap();
-        std::os::unix::fs::symlink("../efi/EFI/redhat/grubenv", format!("{root}/boot/grub2/grubenv")).unwrap();
-        let layout = crate::json::parse(r#"{"boot": {"esps": [{"mounted_at": "/boot/efi"}]}}"#).unwrap();
-        let mut run = Run { t: &root, log: String::new(), errors: vec![] };
+        std::os::unix::fs::symlink(
+            "../efi/EFI/redhat/grubenv",
+            format!("{root}/boot/grub2/grubenv"),
+        )
+        .unwrap();
+        let layout =
+            crate::json::parse(r#"{"boot": {"esps": [{"mounted_at": "/boot/efi"}]}}"#).unwrap();
+        let mut run = Run {
+            t: &root,
+            log: String::new(),
+            errors: vec![],
+        };
         run.rewrite(&change(), &layout, false);
         assert!(run.errors.is_empty(), "{:?}", run.errors);
         let out = std::fs::read_to_string(format!("{root}/boot/efi/EFI/redhat/grubenv")).unwrap();
-        assert!(out.contains("kernelopts=root=UUID=1b64a017-659b-4484-bf36-b97f639c3c35 ro rhgb quiet\n"), "{out}");
+        assert!(
+            out.contains(
+                "kernelopts=root=UUID=1b64a017-659b-4484-bf36-b97f639c3c35 ro rhgb quiet\n"
+            ),
+            "{out}"
+        );
         assert_eq!(out.len(), 1024);
-        assert!(std::fs::symlink_metadata(format!("{root}/boot/grub2/grubenv")).unwrap().file_type().is_symlink());
-        assert!(std::fs::symlink_metadata(format!("{root}/etc/fstab")).unwrap().file_type().is_symlink());
+        assert!(
+            std::fs::symlink_metadata(format!("{root}/boot/grub2/grubenv"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(
+            std::fs::symlink_metadata(format!("{root}/etc/fstab"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
         let fstab = std::fs::read_to_string(format!("{root}/usr/share/fstab/fstab")).unwrap();
-        assert!(fstab.contains("\txfs\tnoatime\t") && !fstab.contains("@home"), "{fstab}");
+        assert!(
+            fstab.contains("\txfs\tnoatime\t") && !fstab.contains("@home"),
+            "{fstab}"
+        );
     }
 
     /// The module check is for what the initramfs mounts: /, /usr and an
     /// x-initrd.mount entry, not /boot (BackShot2 rocky10 `/boot=ext4`).
     #[test]
     fn only_what_the_initramfs_mounts_needs_its_module() {
-        let at = |m: &str, o: &str| Change { mount: m.into(), options: o.into(), ..change() };
+        let at = |m: &str, o: &str| Change {
+            mount: m.into(),
+            options: o.into(),
+            ..change()
+        };
         assert!(initrd_mounts(&at("/", "noatime")));
         assert!(initrd_mounts(&at("/usr", "defaults")));
         assert!(!initrd_mounts(&at("/boot", "defaults")));
@@ -1457,9 +2102,15 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
 
     #[test]
     fn kdumps_images_are_told_apart() {
-        assert!(is_kdump_image("initramfs-6.12.0-211.69.1.el10_2.x86_64kdump.img"));
-        assert!(!is_kdump_image("initramfs-6.12.0-211.69.1.el10_2.x86_64.img"));
-        assert!(!is_kdump_image("initramfs-0-rescue-6b6e557af0ae43d5b802b3440e5510d1.img"));
+        assert!(is_kdump_image(
+            "initramfs-6.12.0-211.69.1.el10_2.x86_64kdump.img"
+        ));
+        assert!(!is_kdump_image(
+            "initramfs-6.12.0-211.69.1.el10_2.x86_64.img"
+        ));
+        assert!(!is_kdump_image(
+            "initramfs-0-rescue-6b6e557af0ae43d5b802b3440e5510d1.img"
+        ));
         assert!(!is_kdump_image("initrd.img-6.12.0-amd64"));
     }
 
@@ -1470,13 +2121,34 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         let t = crate::testutil::TempDir::new("rewrite-boot-reformat");
         let root = t.path().to_string_lossy().into_owned();
         std::fs::create_dir_all(format!("{root}/boot")).unwrap();
-        std::fs::write(format!("{root}/boot/initramfs-6.12.0-211.69.1.el10_2.x86_64kdump.img"), "x").unwrap();
-        let layout = crate::json::parse(r#"{"boot": {"initramfs": {"generator": "dracut"}}}"#).unwrap();
-        let c = Change { mount: "/boot".into(), from: "xfs".into(), to: "ext4".into(), folded: vec![], options: "defaults".into(), ..change() };
-        let mut run = Run { t: &root, log: String::new(), errors: vec![] };
+        std::fs::write(
+            format!("{root}/boot/initramfs-6.12.0-211.69.1.el10_2.x86_64kdump.img"),
+            "x",
+        )
+        .unwrap();
+        let layout =
+            crate::json::parse(r#"{"boot": {"initramfs": {"generator": "dracut"}}}"#).unwrap();
+        let c = Change {
+            mount: "/boot".into(),
+            from: "xfs".into(),
+            to: "ext4".into(),
+            folded: vec![],
+            options: "defaults".into(),
+            ..change()
+        };
+        let mut run = Run {
+            t: &root,
+            log: String::new(),
+            errors: vec![],
+        };
         run.check_initramfs(&c, &layout);
         assert!(run.errors.is_empty(), "{:?}", run.errors);
-        assert!(run.log.contains("the initramfs doesn't mount /boot") && run.log.contains("not checked for ext4"), "{}", run.log);
+        assert!(
+            run.log.contains("the initramfs doesn't mount /boot")
+                && run.log.contains("not checked for ext4"),
+            "{}",
+            run.log
+        );
     }
 
     /// kdump's images are left out of the list, each with a log line;
@@ -1486,13 +2158,38 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         let t = crate::testutil::TempDir::new("rewrite-kdump-list");
         let root = t.path().to_string_lossy().into_owned();
         std::fs::create_dir_all(format!("{root}/boot")).unwrap();
-        for n in ["initramfs-6.12.0-211.73.1.el10_2.x86_64.img", "initramfs-6.12.0-211.73.1.el10_2.x86_64kdump.img", "initramfs-0-rescue-6b6e557af0ae43d5b802b3440e5510d1.img", "vmlinuz-6.12.0-211.73.1.el10_2.x86_64"] {
+        for n in [
+            "initramfs-6.12.0-211.73.1.el10_2.x86_64.img",
+            "initramfs-6.12.0-211.73.1.el10_2.x86_64kdump.img",
+            "initramfs-0-rescue-6b6e557af0ae43d5b802b3440e5510d1.img",
+            "vmlinuz-6.12.0-211.73.1.el10_2.x86_64",
+        ] {
             std::fs::write(format!("{root}/boot/{n}"), "x").unwrap();
         }
-        let mut run = Run { t: &root, log: String::new(), errors: vec![] };
-        let got: Vec<String> = run.initramfs_images(&Value::Null).iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
-        assert_eq!(got, ["initramfs-0-rescue-6b6e557af0ae43d5b802b3440e5510d1.img", "initramfs-6.12.0-211.73.1.el10_2.x86_64.img"]);
-        assert!(run.log.contains("/boot/initramfs-6.12.0-211.73.1.el10_2.x86_64kdump.img: kdump's image") && run.log.contains("not checked"), "{}", run.log);
+        let mut run = Run {
+            t: &root,
+            log: String::new(),
+            errors: vec![],
+        };
+        let got: Vec<String> = run
+            .initramfs_images(&Value::Null)
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            got,
+            [
+                "initramfs-0-rescue-6b6e557af0ae43d5b802b3440e5510d1.img",
+                "initramfs-6.12.0-211.73.1.el10_2.x86_64.img"
+            ]
+        );
+        assert!(
+            run.log
+                .contains("/boot/initramfs-6.12.0-211.73.1.el10_2.x86_64kdump.img: kdump's image")
+                && run.log.contains("not checked"),
+            "{}",
+            run.log
+        );
         assert!(run.errors.is_empty(), "{:?}", run.errors);
     }
 
@@ -1510,17 +2207,32 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         std::fs::set_permissions(&fstab, std::fs::Permissions::from_mode(0o640)).unwrap();
         // An xattr where the filesystem and tools allow one (tmpfs since
         // Linux 6.6, ext4, xfs, btrfs); the inode check below stands alone.
-        let xattr = std::process::Command::new("setfattr").args(["-n", "user.bko-test", "-v", "kept"]).arg(&fstab).status().is_ok_and(|s| s.success());
+        let xattr = std::process::Command::new("setfattr")
+            .args(["-n", "user.bko-test", "-v", "kept"])
+            .arg(&fstab)
+            .status()
+            .is_ok_and(|s| s.success());
         let before = std::fs::metadata(&fstab).unwrap();
-        let mut run = Run { t: &root, log: String::new(), errors: vec![] };
+        let mut run = Run {
+            t: &root,
+            log: String::new(),
+            errors: vec![],
+        };
         run.rewrite(&change(), &Value::Null, false);
         assert!(run.errors.is_empty(), "{:?}", run.errors);
         let after = std::fs::metadata(&fstab).unwrap();
         assert!(std::fs::read_to_string(&fstab).unwrap().contains("\txfs\t"));
-        assert_eq!((after.dev(), after.ino(), after.uid(), after.gid()), (before.dev(), before.ino(), before.uid(), before.gid()));
+        assert_eq!(
+            (after.dev(), after.ino(), after.uid(), after.gid()),
+            (before.dev(), before.ino(), before.uid(), before.gid())
+        );
         assert_eq!(after.permissions().mode() & 0o7777, 0o640);
         if xattr {
-            let out = std::process::Command::new("getfattr").args(["--only-values", "-n", "user.bko-test"]).arg(&fstab).output().unwrap();
+            let out = std::process::Command::new("getfattr")
+                .args(["--only-values", "-n", "user.bko-test"])
+                .arg(&fstab)
+                .output()
+                .unwrap();
             assert_eq!(String::from_utf8_lossy(&out.stdout), "kept");
         }
         // No temporary file left beside it.

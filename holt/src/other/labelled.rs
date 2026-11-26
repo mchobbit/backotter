@@ -5,7 +5,7 @@
 //! parameters dumpfs prints, and the boot code.
 
 use super::bsdlabel::{self, Label};
-use super::{found_json, open, read_disk, Family, Found, RawDisk};
+use super::{Family, Found, RawDisk, found_json, open, read_disk};
 use crate::bytes::OffsetSource;
 use crate::json::{Obj, Value};
 use crate::mounts;
@@ -15,11 +15,7 @@ use crate::sys::Sys;
 
 /// The whole-disk ("raw") partition's letter: NetBSD/amd64's d, OpenBSD's c.
 pub fn raw_letter(fam: Family) -> char {
-    if fam == Family::NetBsd {
-        'd'
-    } else {
-        'c'
-    }
+    if fam == Family::NetBsd { 'd' } else { 'c' }
 }
 
 /// hw.disknames: NetBSD's "ld0 dk0 cd0", OpenBSD's "sd0:duid,cd0:".  Whole
@@ -33,7 +29,11 @@ pub fn disk_names(fam: Family, text: &str) -> Vec<(String, Option<String>)> {
             Some((n, d)) => (n.to_string(), (!d.is_empty()).then(|| d.to_string())),
             None => (w.to_string(), None),
         })
-        .filter(|(n, _)| !["dk", "cd", "fd", "md", "rd", "vnd", "cgd", "ccd", "raid"].iter().any(|p| n.starts_with(p) && n[p.len()..].chars().all(|c| c.is_ascii_digit())))
+        .filter(|(n, _)| {
+            !["dk", "cd", "fd", "md", "rd", "vnd", "cgd", "ccd", "raid"]
+                .iter()
+                .any(|p| n.starts_with(p) && n[p.len()..].chars().all(|c| c.is_ascii_digit()))
+        })
         .collect();
     if fam == Family::OpenBsd {
         out.retain(|(n, _)| !n.starts_with("vnd") && !n.starts_with("rd"));
@@ -68,7 +68,9 @@ pub fn dumpfs_fields(text: &str) -> Vec<(String, String)> {
         let w: Vec<&str> = line.split_whitespace().collect();
         let mut i = 0;
         while i + 1 < w.len() {
-            if w[i].chars().all(|c| c.is_ascii_alphabetic() || c == '_') && !w[i + 1].starts_with('(') {
+            if w[i].chars().all(|c| c.is_ascii_alphabetic() || c == '_')
+                && !w[i + 1].starts_with('(')
+            {
                 out.push((w[i].to_string(), w[i + 1].to_string()));
                 i += 2;
             } else {
@@ -84,15 +86,30 @@ pub fn dumpfs_fields(text: &str) -> Vec<(String, String)> {
 /// optimisation, and the size, in sectors.
 pub fn newfs_from_dumpfs(fam: Family, text: &str) -> Option<String> {
     let f = dumpfs_fields(text);
-    let get = |k: &str| f.iter().find(|(n, _)| n == k).map(|(_, v)| v.trim_end_matches('%').to_string());
-    let v2 = text.contains("FFSv2") || text.contains("(FFS2)") || get("magic").as_deref() == Some("19540119");
+    let get = |k: &str| {
+        f.iter()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.trim_end_matches('%').to_string())
+    };
+    let v2 = text.contains("FFSv2")
+        || text.contains("(FFS2)")
+        || get("magic").as_deref() == Some("19540119");
     let bsize: u64 = get("bsize")?.parse().ok()?;
     let fsize: u64 = get("fsize")?.parse().ok()?;
     let fpg: u64 = get("fpg")?.parse().ok()?;
     let ipg: u64 = get("ipg")?.parse().ok()?;
     let size: u64 = get("size")?.parse().ok()?;
-    let mut a = vec!["newfs".to_string(), "-O".into(), if v2 { "2" } else { "1" }.into()];
-    a.extend(["-b".into(), bsize.to_string(), "-f".into(), fsize.to_string()]);
+    let mut a = vec![
+        "newfs".to_string(),
+        "-O".into(),
+        if v2 { "2" } else { "1" }.into(),
+    ];
+    a.extend([
+        "-b".into(),
+        bsize.to_string(),
+        "-f".into(),
+        fsize.to_string(),
+    ]);
     // NetBSD's newfs takes the inode count itself (-n), which gives the
     // source's inodes per group exactly; OpenBSD's only bytes per inode.
     let ncg: u64 = get("ncg").and_then(|n| n.parse().ok()).unwrap_or(0);
@@ -113,7 +130,11 @@ pub fn newfs_from_dumpfs(fam: Family, text: &str) -> Option<String> {
         }
     }
     // size is in fragments; newfs's -s is in sectors.
-    a.extend(["-s".into(), (size * fsize / 512).to_string(), "DEVICE".into()]);
+    a.extend([
+        "-s".into(),
+        (size * fsize / 512).to_string(),
+        "DEVICE".into(),
+    ]);
     Some(a.join(" "))
 }
 
@@ -123,8 +144,22 @@ pub fn newfs_from_dumpfs(fam: Family, text: &str) -> Option<String> {
 pub fn newfs_from_probe(fam: Family, d: &Value) -> Option<String> {
     let g = |k: &str| d.get(k).and_then(Value::as_u64);
     let ea = d.get("extended_attributes").and_then(Value::as_bool) == Some(true);
-    let mut a = vec!["newfs".to_string(), "-O".into(), if ea && fam == Family::NetBsd { "2ea" } else { "2" }.into()];
-    a.extend(["-b".into(), g("block_size")?.to_string(), "-f".into(), g("fragment_size")?.to_string()]);
+    let mut a = vec![
+        "newfs".to_string(),
+        "-O".into(),
+        if ea && fam == Family::NetBsd {
+            "2ea"
+        } else {
+            "2"
+        }
+        .into(),
+    ];
+    a.extend([
+        "-b".into(),
+        g("block_size")?.to_string(),
+        "-f".into(),
+        g("fragment_size")?.to_string(),
+    ]);
     if let (Some(ipg), Some(ncg)) = (g("inodes_per_group"), g("cylinder_groups")) {
         if fam == Family::NetBsd {
             a.extend(["-n".into(), (ipg * ncg).to_string()]);
@@ -158,7 +193,11 @@ struct DiskSeen {
 /// OpenBSD's DUID.a.
 fn resolve(spec: &str, seen: &[DiskSeen]) -> Option<String> {
     if let Some(n) = spec.strip_prefix("NAME=") {
-        return seen.iter().flat_map(|s| s.wedges.iter()).find(|(_, name, _)| name == n).map(|(dk, _, _)| dk.clone());
+        return seen
+            .iter()
+            .flat_map(|s| s.wedges.iter())
+            .find(|(_, name, _)| name == n)
+            .map(|(dk, _, _)| dk.clone());
     }
     if let Some((duid, letter)) = spec.split_once('.') {
         if duid.len() == 16 && duid.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -167,22 +206,41 @@ fn resolve(spec: &str, seen: &[DiskSeen]) -> Option<String> {
         }
     }
     let s = spec.strip_prefix("/dev/")?;
-    let s = s.strip_prefix('r').filter(|x| seen.iter().any(|d| x.starts_with(&d.d.name)) || x.starts_with("dk")).unwrap_or(s);
+    let s = s
+        .strip_prefix('r')
+        .filter(|x| seen.iter().any(|d| x.starts_with(&d.d.name)) || x.starts_with("dk"))
+        .unwrap_or(s);
     for d in seen {
-        if d.d.name == s || d.lparts.iter().any(|(n, _, _)| n == s) || d.wedges.iter().any(|(dk, _, _)| dk == s) {
+        if d.d.name == s
+            || d.lparts.iter().any(|(n, _, _)| n == s)
+            || d.wedges.iter().any(|(dk, _, _)| dk == s)
+        {
             return Some(s.to_string());
         }
     }
     None
 }
 
-pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, generated: &str) -> Value {
+pub fn report(
+    sys: &Sys,
+    fam: Family,
+    os: Option<&crate::osrel::OsRelease>,
+    generated: &str,
+) -> Value {
     let hostname = sys.run("hostname", &[]).map(|s| s.trim().to_string());
     let firmware = match fam {
-        Family::NetBsd => match sys.run("sysctl", &["-n", "machdep.bootmethod"]).map(|s| s.trim().to_ascii_lowercase()) {
+        Family::NetBsd => match sys
+            .run("sysctl", &["-n", "machdep.bootmethod"])
+            .map(|s| s.trim().to_ascii_lowercase())
+        {
             Some(m) if m == "uefi" => "uefi",
             Some(m) if m == "bios" => "bios",
-            m => super::firmware_unknown(sys, "sysctl", "`sysctl -n machdep.bootmethod`", m.as_deref()),
+            m => super::firmware_unknown(
+                sys,
+                "sysctl",
+                "`sysctl -n machdep.bootmethod`",
+                m.as_deref(),
+            ),
         },
         _ => match sys.run("dmesg", &[]) {
             Some(t) if t.contains("efi0 at ") => "uefi",
@@ -190,29 +248,69 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
             None => super::firmware_unknown(sys, "dmesg", "`dmesg`", None),
         },
     };
-    let names = disk_names(fam, &sys.run("sysctl", &["-n", "hw.disknames"]).unwrap_or_default());
+    let names = disk_names(
+        fam,
+        &sys.run("sysctl", &["-n", "hw.disknames"])
+            .unwrap_or_default(),
+    );
     // OpenBSD's softraid volumes (softraid.rs): each is a disk in
     // hw.disknames, read as one, and reported as a virtual disk on its
     // chunks, not a disk of its own.
-    let volumes = if fam == Family::OpenBsd { super::softraid::parse_bioctl(&sys.run("bioctl", &["softraid0"]).unwrap_or_default()) } else { Vec::new() };
+    let volumes = if fam == Family::OpenBsd {
+        super::softraid::parse_bioctl(&sys.run("bioctl", &["softraid0"]).unwrap_or_default())
+    } else {
+        Vec::new()
+    };
     let mut seen: Vec<DiskSeen> = Vec::new();
     for (name, duid) in names {
         let text = sys.run_any("disklabel", &[&name]).unwrap_or_default();
         let lab = bsdlabel::parse(&text);
-        let sector = if lab.bytes_per_sector > 0 { lab.bytes_per_sector } else { 512 };
-        let d = RawDisk { name: name.clone(), path: format!("/dev/r{name}{}", raw_letter(fam)), size: lab.total_sectors * sector, sector, model: None, serial: duid.clone() };
-        let wedges = if fam == Family::NetBsd { parse_wedges(&sys.run("dkctl", &[&name, "listwedges"]).unwrap_or_default()) } else { Vec::new() };
+        let sector = if lab.bytes_per_sector > 0 {
+            lab.bytes_per_sector
+        } else {
+            512
+        };
+        let d = RawDisk {
+            name: name.clone(),
+            path: format!("/dev/r{name}{}", raw_letter(fam)),
+            size: lab.total_sectors * sector,
+            sector,
+            model: None,
+            serial: duid.clone(),
+        };
+        let wedges = if fam == Family::NetBsd {
+            parse_wedges(&sys.run("dkctl", &[&name, "listwedges"]).unwrap_or_default())
+        } else {
+            Vec::new()
+        };
         let Some(src) = open(sys, &d) else {
             sys.warn(format!("{}: can't read the disk", d.path));
-            seen.push(DiskSeen { d, duid, label: None, found: vec![], lparts: vec![], wedges, whole: vec![], table: None });
+            seen.push(DiskSeen {
+                d,
+                duid,
+                label: None,
+                found: vec![],
+                lparts: vec![],
+                wedges,
+                whole: vec![],
+                table: None,
+            });
             continue;
         };
         let nm = name.clone();
         let wd = wedges.clone();
         let (table, found) = read_disk(&src, &d, &|n, t| match t {
             Table::Gpt { gpt, .. } => {
-                let start = gpt.parts.iter().find(|p| p.number == n).map(|p| p.first_lba).unwrap_or(0);
-                wd.iter().find(|(_, _, s)| *s == start).map(|(dk, _, _)| dk.clone()).unwrap_or_else(|| format!("{nm}gpt{n}"))
+                let start = gpt
+                    .parts
+                    .iter()
+                    .find(|p| p.number == n)
+                    .map(|p| p.first_lba)
+                    .unwrap_or(0);
+                wd.iter()
+                    .find(|(_, _, s)| *s == start)
+                    .map(|(dk, _, _)| dk.clone())
+                    .unwrap_or_else(|| format!("{nm}gpt{n}"))
             }
             Table::Mbr(_) => format!("{nm}mbr{n}"),
         });
@@ -221,26 +319,59 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
         let real_label = fam == Family::OpenBsd || matches!(table, Some(Table::Mbr(_)));
         let mut lparts = Vec::new();
         if real_label {
-            for p in lab.parts.iter().filter(|p| p.letter != raw_letter(fam) && p.fstype != "unused" && p.size > 0) {
-                let c = probe::probe_all(&OffsetSource { inner: &src, start: p.offset * sector, len: p.size * sector });
+            for p in lab
+                .parts
+                .iter()
+                .filter(|p| p.letter != raw_letter(fam) && p.fstype != "unused" && p.size > 0)
+            {
+                let c = probe::probe_all(&OffsetSource {
+                    inner: &src,
+                    start: p.offset * sector,
+                    len: p.size * sector,
+                });
                 lparts.push((format!("{name}{}", p.letter), p.clone(), c));
             }
         }
-        let whole = if table.is_none() && lparts.is_empty() { probe::probe_all(&src) } else { Vec::new() };
+        let whole = if table.is_none() && lparts.is_empty() {
+            probe::probe_all(&src)
+        } else {
+            Vec::new()
+        };
         // The MBR partition the disklabel is in starts where its first
         // partition does: what's found there is that partition's.
         let mut found = found;
         if real_label {
-            for f in found.iter_mut().filter(|f| matches!(f.field("type"), Some("0xa6" | "0xa9" | "0xa5"))) {
+            for f in found
+                .iter_mut()
+                .filter(|f| matches!(f.field("type"), Some("0xa6" | "0xa9" | "0xa5")))
+            {
                 f.contents.clear();
             }
         }
-        seen.push(DiskSeen { d, duid, label: real_label.then(|| (text.clone(), lab)), found, lparts, wedges, whole, table });
+        seen.push(DiskSeen {
+            d,
+            duid,
+            label: real_label.then(|| (text.clone(), lab)),
+            found,
+            lparts,
+            wedges,
+            whole,
+            table,
+        });
     }
     // mount(8)'s list.
-    let mounted: Vec<(String, String, String, String)> = sys.run("mount", &[]).unwrap_or_default().lines().filter_map(bsdlabel::parse_mount_line).collect();
+    let mounted: Vec<(String, String, String, String)> = sys
+        .run("mount", &[])
+        .unwrap_or_default()
+        .lines()
+        .filter_map(bsdlabel::parse_mount_line)
+        .collect();
     let mounted_at = |name: &str| -> Vec<String> {
-        let mut t: Vec<String> = mounted.iter().filter(|m| resolve(&m.0, &seen).as_deref() == Some(name)).map(|m| m.1.clone()).collect();
+        let mut t: Vec<String> = mounted
+            .iter()
+            .filter(|m| resolve(&m.0, &seen).as_deref() == Some(name))
+            .map(|m| m.1.clone())
+            .collect();
         t.sort();
         t
     };
@@ -254,7 +385,13 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
             };
             if let Some(t) = t {
                 x.put("newfs", newfs_from_dumpfs(fam, &t));
-                x.put("ffs_flags", dumpfs_fields(&t).into_iter().find(|(k, _)| k == "flags").map(|(_, v)| v));
+                x.put(
+                    "ffs_flags",
+                    dumpfs_fields(&t)
+                        .into_iter()
+                        .find(|(k, _)| k == "flags")
+                        .map(|(_, v)| v),
+                );
             } else if let Some(d) = c.first().map(|c| c.details.clone().build()) {
                 // No dumpfs (AlpineBSD): newfs from the superblock as read.
                 x.put("newfs", newfs_from_probe(fam, &d));
@@ -264,12 +401,24 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
     };
     // A CRYPTO volume's KDF hint, from its chunk's softraid metadata.
     let hint = |v: &super::softraid::Volume| -> Option<super::softraid::KdfHint> {
-        let [chunk] = v.chunks.as_slice() else { return None };
-        let s = seen.iter().find(|s| s.lparts.iter().any(|(n, _, _)| n == chunk))?;
+        let [chunk] = v.chunks.as_slice() else {
+            return None;
+        };
+        let s = seen
+            .iter()
+            .find(|s| s.lparts.iter().any(|(n, _, _)| n == chunk))?;
         let (_, p, _) = s.lparts.iter().find(|(n, _, _)| n == chunk)?;
         let src = open(sys, &s.d)?;
-        let meta = OffsetSource { inner: &src, start: p.offset * s.d.sector + super::softraid::META_OFFSET, len: super::softraid::META_LEN as u64 };
-        super::softraid::kdf_hint(&crate::bytes::ByteSource::read_at(&meta, 0, super::softraid::META_LEN))
+        let meta = OffsetSource {
+            inner: &src,
+            start: p.offset * s.d.sector + super::softraid::META_OFFSET,
+            len: super::softraid::META_LEN as u64,
+        };
+        super::softraid::kdf_hint(&crate::bytes::ByteSource::read_at(
+            &meta,
+            0,
+            super::softraid::META_LEN,
+        ))
     };
     let mut disks_json = Vec::new();
     let mut volumes_json = Vec::new();
@@ -306,7 +455,10 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
                 for (k, v) in ffs_extra(n, c).0 {
                     o.put(&k, v);
                 }
-                if let Some(v) = volumes.iter().find(|v| v.chunks.contains(n) || v.key_disk.as_ref() == Some(n)) {
+                if let Some(v) = volumes
+                    .iter()
+                    .find(|v| v.chunks.contains(n) || v.key_disk.as_ref() == Some(n))
+                {
                     o.put("softraid_volume", v.device.as_str());
                 }
                 o.put("mounted_at", mounted_at(n));
@@ -314,12 +466,19 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
             })
             .collect();
         let vol = volumes.iter().find(|v| v.device == s.d.name);
-        let mut o = super::disk_obj(&s.d, if vol.is_some() { "softraid" } else { "disk" }, Obj::new().set_some("softraid", vol.map(|v| super::softraid::volume_json(v, hint(v)))))
-            .set("duid", s.duid.clone())
-            .set("partition_table", super::table_json(s.table.as_ref(), &s.d))
-            .set("partitions", parts)
-            .set("label_partitions", lparts)
-            .set("disklabel", s.label.as_ref().map(|(t, _)| t.clone()));
+        let mut o = super::disk_obj(
+            &s.d,
+            if vol.is_some() { "softraid" } else { "disk" },
+            Obj::new().set_some(
+                "softraid",
+                vol.map(|v| super::softraid::volume_json(v, hint(v))),
+            ),
+        )
+        .set("duid", s.duid.clone())
+        .set("partition_table", super::table_json(s.table.as_ref(), &s.d))
+        .set("partitions", parts)
+        .set("label_partitions", lparts)
+        .set("disklabel", s.label.as_ref().map(|(t, _)| t.clone()));
         if let Some(t) = &s.table {
             o.put("boot_code", super::boot_code_json(t));
         }
@@ -333,17 +492,37 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
     }
     let mounts_json: Vec<Value> = mounted
         .iter()
-        .map(|m| Obj::new().set("target", m.1.as_str()).set("source", m.0.as_str()).set("fstype", m.2.as_str()).set("options", m.3.as_str()).set("device", resolve(&m.0, &seen)).build())
+        .map(|m| {
+            Obj::new()
+                .set("target", m.1.as_str())
+                .set("source", m.0.as_str())
+                .set("fstype", m.2.as_str())
+                .set("options", m.3.as_str())
+                .set("device", resolve(&m.0, &seen))
+                .build()
+        })
         .collect();
     let fstab = match sys.read("/etc/fstab") {
-        Some(t) => Value::Arr(mounts::parse_fstab(&t).iter().map(|e| e.to_json(resolve(&e.spec, &seen).as_deref())).collect()),
+        Some(t) => Value::Arr(
+            mounts::parse_fstab(&t)
+                .iter()
+                .map(|e| e.to_json(resolve(&e.spec, &seen).as_deref()))
+                .collect(),
+        ),
         None => Value::Null,
     };
     let swaps: Vec<Value> = super::swapctl_list(&sys.run("swapctl", &["-l"]).unwrap_or_default())
         .into_iter()
-        .map(|(file, size)| Obj::new().set("file", file).set("size_bytes", size).set("device", resolve(file, &seen)).build())
+        .map(|(file, size)| {
+            Obj::new()
+                .set("file", file)
+                .set("size_bytes", size)
+                .set("device", resolve(file, &seen))
+                .build()
+        })
         .collect();
-    let member_refs: Vec<(String, &Content)> = members.iter().map(|(n, c)| (n.clone(), c)).collect();
+    let member_refs: Vec<(String, &Content)> =
+        members.iter().map(|(n, c)| (n.clone(), c)).collect();
     let mut storage = Obj::new().set("disks", disks_json);
     if !volumes_json.is_empty() {
         storage.put("softraid_volumes", volumes_json);
@@ -352,11 +531,39 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
         .set("mounts", mounts_json)
         .set("swaps", swaps)
         .set("fstab", fstab)
-        .set("zfs", crate::report::zfs_section(sys, &member_refs, &["/etc/zfs/zpool.cache"], mounted.iter().any(|m| m.2 == "zfs")));
-    let loader = if fam == Family::NetBsd { "netbsd" } else { "openbsd" };
+        .set(
+            "zfs",
+            crate::report::zfs_section(
+                sys,
+                &member_refs,
+                &["/etc/zfs/zpool.cache"],
+                mounted.iter().any(|m| m.2 == "zfs"),
+            ),
+        );
+    let loader = if fam == Family::NetBsd {
+        "netbsd"
+    } else {
+        "openbsd"
+    };
     let boot = Obj::new()
-        .set("loader", Obj::new().set("name", loader).set("firmware", firmware).set("evidence", vec![format!("{loader}'s own boot blocks ({firmware})")]))
-        .set("boot_cfg", if fam == Family::NetBsd { sys.read("/boot.cfg") } else { None })
+        .set(
+            "loader",
+            Obj::new()
+                .set("name", loader)
+                .set("firmware", firmware)
+                .set(
+                    "evidence",
+                    vec![format!("{loader}'s own boot blocks ({firmware})")],
+                ),
+        )
+        .set(
+            "boot_cfg",
+            if fam == Family::NetBsd {
+                sys.read("/boot.cfg")
+            } else {
+                None
+            },
+        )
         .set("secondary_boot", sys.is_file("/boot"));
     super::frame(sys, fam, os, generated, hostname, firmware, storage, boot)
 }
@@ -367,21 +574,50 @@ mod tests {
 
     #[test]
     fn names_and_wedges() {
-        assert_eq!(disk_names(Family::NetBsd, "ld0 dk0 dk1 cd0 wd1"), vec![("ld0".into(), None), ("wd1".into(), None)]);
-        assert_eq!(disk_names(Family::OpenBsd, "cd0:,sd0:1a4a1728e6a303a2,fd0:"), vec![("sd0".into(), Some("1a4a1728e6a303a2".into()))]);
-        let w = parse_wedges("/dev/rld0: 3 wedges:\ndk0: EFI, 2097152 blocks at 34, type: msdos\ndk2: AlpineBSD, 27262909 blocks at 6291490, type: ffs\n");
-        assert_eq!(w, vec![("dk0".into(), "EFI".into(), 34), ("dk2".into(), "AlpineBSD".into(), 6291490)]);
+        assert_eq!(
+            disk_names(Family::NetBsd, "ld0 dk0 dk1 cd0 wd1"),
+            vec![("ld0".into(), None), ("wd1".into(), None)]
+        );
+        assert_eq!(
+            disk_names(Family::OpenBsd, "cd0:,sd0:1a4a1728e6a303a2,fd0:"),
+            vec![("sd0".into(), Some("1a4a1728e6a303a2".into()))]
+        );
+        let w = parse_wedges(
+            "/dev/rld0: 3 wedges:\ndk0: EFI, 2097152 blocks at 34, type: msdos\ndk2: AlpineBSD, 27262909 blocks at 6291490, type: ffs\n",
+        );
+        assert_eq!(
+            w,
+            vec![
+                ("dk0".into(), "EFI".into(), 34),
+                ("dk2".into(), "AlpineBSD".into(), 6291490)
+            ]
+        );
         // A GPT name with ", " (and " at ") in it is read whole.
-        let w = parse_wedges("dk1: Data, backup, 2048 blocks at 34, type: ffs\ndk3: a, 1 blocks at x, 9 blocks at 4096, type: ffs\ndk4: , 8 blocks at 64, type: msdos\n");
-        assert_eq!(w, vec![("dk1".into(), "Data, backup".into(), 34), ("dk3".into(), "a, 1 blocks at x".into(), 4096), ("dk4".into(), "".into(), 64)]);
+        let w = parse_wedges(
+            "dk1: Data, backup, 2048 blocks at 34, type: ffs\ndk3: a, 1 blocks at x, 9 blocks at 4096, type: ffs\ndk4: , 8 blocks at 64, type: msdos\n",
+        );
+        assert_eq!(
+            w,
+            vec![
+                ("dk1".into(), "Data, backup".into(), 34),
+                ("dk3".into(), "a, 1 blocks at x".into(), 4096),
+                ("dk4".into(), "".into(), 64)
+            ]
+        );
         assert!(parse_wedges("dk5: no fields\ndk6: x, 8 blocks at y, type: ffs\n").is_empty());
     }
 
     #[test]
     fn newfs_args() {
         let nb = "file system: /dev/rld0a\nformat\tFFSv2\nendian\tlittle-endian\nmagic\t19540119\ttime\tThu Nov  5 21:10:45 2026\nncg\t78\tsize\t7339520\tblocks\t7115463\nbsize\t16384\tshift\t14\tmask\t0xffffc000\nfsize\t2048\tshift\t11\tmask\t0xfffff800\nbpg\t11763\tfpg\t94104\tipg\t22848\nminfree\t5%\toptim\ttime\tmaxcontig 4\tmaxbpg\t2048\n";
-        assert_eq!(newfs_from_dumpfs(Family::NetBsd, nb).unwrap(), "newfs -O 2 -b 16384 -f 2048 -n 1782144 -m 5 -o time -e 2048 -s 29358080 DEVICE");
+        assert_eq!(
+            newfs_from_dumpfs(Family::NetBsd, nb).unwrap(),
+            "newfs -O 2 -b 16384 -f 2048 -n 1782144 -m 5 -o time -e 2048 -s 29358080 DEVICE"
+        );
         let ob = "magic\t19540119 (FFS2)\ttime\tThu Nov  5 21:11:54 2026\nncg\t71\tsize\t7340016\tblocks\t7108799\nbsize\t16384\tshift\t14\tmask\t0xffffc000\nfsize\t2048\tshift\t11\tmask\t0xfffff800\nminfree\t5%\toptim\ttime\tsymlinklen 120\nbpg\t12960\tfpg\t103680\tipg\t25920\n";
-        assert_eq!(newfs_from_dumpfs(Family::OpenBsd, ob).unwrap(), "newfs -O 2 -b 16384 -f 2048 -i 8192 -m 5 -o time -s 29360064 DEVICE");
+        assert_eq!(
+            newfs_from_dumpfs(Family::OpenBsd, ob).unwrap(),
+            "newfs -O 2 -b 16384 -f 2048 -i 8192 -m 5 -o time -s 29360064 DEVICE"
+        );
     }
 }

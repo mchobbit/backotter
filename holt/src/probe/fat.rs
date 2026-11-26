@@ -1,7 +1,7 @@
 //! Boot-sector filesystems: FAT12/16/32 (ESPs), exFAT and NTFS.
 
 use super::Content;
-use crate::bytes::{le16, le32, le64, sub, u8_at, ByteSource};
+use crate::bytes::{ByteSource, le16, le32, le64, sub, u8_at};
 use crate::json::Obj;
 
 pub fn probe(src: &dyn ByteSource) -> Option<Content> {
@@ -31,13 +31,23 @@ fn vfat(src: &dyn ByteSource, b: &[u8]) -> Option<Content> {
     let media = u8_at(b, 21);
     let fatsz16 = le16(b, 22) as u64;
     let total32 = le32(b, 32) as u64;
-    if !matches!(bps, 512 | 1024 | 2048 | 4096) || spc == 0 || !spc.is_power_of_two() || reserved == 0 || fats == 0 || fats > 4 {
+    if !matches!(bps, 512 | 1024 | 2048 | 4096)
+        || spc == 0
+        || !spc.is_power_of_two()
+        || reserved == 0
+        || fats == 0
+        || fats > 4
+    {
         return None;
     }
     if !(media == 0xf0 || media >= 0xf8) {
         return None;
     }
-    let fatsz = if fatsz16 != 0 { fatsz16 } else { le32(b, 36) as u64 };
+    let fatsz = if fatsz16 != 0 {
+        fatsz16
+    } else {
+        le32(b, 36) as u64
+    };
     let total = if total16 != 0 { total16 } else { total32 };
     if fatsz == 0 || total == 0 {
         return None;
@@ -58,7 +68,11 @@ fn vfat(src: &dyn ByteSource, b: &[u8]) -> Option<Content> {
     let ebr = if bits == 32 { 64 } else { 36 };
     let has_ebr = u8_at(b, ebr + 2) == 0x29;
     let serial = has_ebr.then(|| le32(b, ebr + 3));
-    let bs_label = if has_ebr { crate::bytes::label(sub(b, ebr + 7, 11)).filter(|l| l != "NO NAME") } else { None };
+    let bs_label = if has_ebr {
+        crate::bytes::label(sub(b, ebr + 7, 11)).filter(|l| l != "NO NAME")
+    } else {
+        None
+    };
     // The label people see is the root directory's volume-label entry; the
     // boot sector's copy is often stale.  FAT32's root directory is a
     // cluster chain: read only its first cluster, where mkfs.fat and fatlabel
@@ -69,7 +83,11 @@ fn vfat(src: &dyn ByteSource, b: &[u8]) -> Option<Content> {
     } else {
         (reserved + fats * fatsz) * bps
     };
-    let root_len = if bits == 32 { spc * bps } else { root_dir_sectors * bps };
+    let root_len = if bits == 32 {
+        spc * bps
+    } else {
+        root_dir_sectors * bps
+    };
     let dir_label = root_dir_label(&src.read_at(root_dir_offset, root_len.min(65536) as usize));
     let mut d = Obj::new()
         .set("fat_bits", bits)
@@ -154,7 +172,11 @@ fn ntfs(b: &[u8]) -> Option<Content> {
         return None;
     }
     // Values above 0x80 encode a cluster size of 2^(256 - n) bytes.
-    let cluster = if spc_raw > 0x80 { 1u64 << (256 - spc_raw as u32).min(31) } else { spc_raw as u64 * bps };
+    let cluster = if spc_raw > 0x80 {
+        1u64 << (256 - spc_raw as u32).min(31)
+    } else {
+        spc_raw as u64 * bps
+    };
     if cluster == 0 {
         return None;
     }
@@ -259,7 +281,10 @@ mod tests {
         assert_eq!(d.get("fat_bits").and_then(Value::as_u64), Some(32));
         assert_eq!(d.get("size_bytes").and_then(Value::as_u64), Some(512 << 20));
         assert_eq!(d.get("root_cluster").and_then(Value::as_u64), Some(2));
-        assert_eq!(d.get("boot_sector_label").and_then(Value::as_str), Some("EFI"));
+        assert_eq!(
+            d.get("boot_sector_label").and_then(Value::as_str),
+            Some("EFI")
+        );
         assert_eq!(d.get("oem_name").and_then(Value::as_str), Some("mkfs.fat"));
     }
 
@@ -278,7 +303,13 @@ mod tests {
         img[root + 64 + 11] = 0x08;
         let c = probe(&MemSource(img)).unwrap();
         assert_eq!(c.label.as_deref(), Some("NEWLABEL"));
-        assert_eq!(c.details.build().get("boot_sector_label").and_then(Value::as_str), Some("OLD"));
+        assert_eq!(
+            c.details
+                .build()
+                .get("boot_sector_label")
+                .and_then(Value::as_str),
+            Some("OLD")
+        );
     }
 
     #[test]
@@ -312,13 +343,26 @@ mod tests {
     #[test]
     fn vfat_rejects() {
         let good = fat32(65536 * 2, 1, "X");
-        for (off, val) in [(510usize, 0u8), (0, 0x00), (11, 0x03), (13, 3), (13, 0), (14, 0), (16, 0), (16, 9), (21, 0x12)] {
+        for (off, val) in [
+            (510usize, 0u8),
+            (0, 0x00),
+            (11, 0x03),
+            (13, 3),
+            (13, 0),
+            (14, 0),
+            (16, 0),
+            (16, 9),
+            (21, 0x12),
+        ] {
             let mut b = good.clone();
             b[off] = val;
             if off == 14 {
                 b[15] = 0;
             }
-            assert!(probe(&MemSource(b)).is_none(), "byte {off}={val:#x} accepted");
+            assert!(
+                probe(&MemSource(b)).is_none(),
+                "byte {off}={val:#x} accepted"
+            );
         }
         // An MBR (GRUB, no BPB) isn't FAT.
         assert!(probe(&MemSource(crate::bootcode::samples::grub2_boot_img(1))).is_none());
@@ -358,9 +402,24 @@ mod tests {
         let c = probe(&MemSource(n.clone())).unwrap();
         assert_eq!(c.kind, "ntfs");
         assert_eq!(c.uuid.as_deref(), Some("0123456789ABCDEF"));
-        assert_eq!(c.details.clone().build().get("cluster_size").and_then(Value::as_u64), Some(4096));
+        assert_eq!(
+            c.details
+                .clone()
+                .build()
+                .get("cluster_size")
+                .and_then(Value::as_u64),
+            Some(4096)
+        );
         n[13] = 0xf4; // 2^12
-        assert_eq!(probe(&MemSource(n.clone())).unwrap().details.build().get("cluster_size").and_then(Value::as_u64), Some(4096));
+        assert_eq!(
+            probe(&MemSource(n.clone()))
+                .unwrap()
+                .details
+                .build()
+                .get("cluster_size")
+                .and_then(Value::as_u64),
+            Some(4096)
+        );
         n[11..13].copy_from_slice(&300u16.to_le_bytes());
         assert!(probe(&MemSource(n.clone())).is_none());
         n[11..13].copy_from_slice(&512u16.to_le_bytes());

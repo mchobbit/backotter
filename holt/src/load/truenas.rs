@@ -21,7 +21,7 @@
 //! The pool must keep the name boot-pool (the GRUB script names it), and
 //! only TrueNAS 25.10 is supported.
 
-use super::commands::{part_node, Builder, Cmd};
+use super::commands::{Builder, Cmd, part_node};
 use crate::json::Value;
 use crate::zfs_be::TRUENAS_POOL;
 
@@ -35,7 +35,10 @@ fn s(v: &Value, k: &str) -> Option<String> {
 impl Builder<'_> {
     /// boot.truenas, when the source is TrueNAS.
     pub(crate) fn truenas(&self) -> Option<&Value> {
-        self.layout.v.at(&["boot", "truenas"]).filter(|v| v.as_object().is_some())
+        self.layout
+            .v
+            .at(&["boot", "truenas"])
+            .filter(|v| v.as_object().is_some())
     }
 
     /// The pool may not go by another name here on TrueNAS.
@@ -47,8 +50,16 @@ impl Builder<'_> {
 
     /// The source disks holding a boot-pool vdev, in the layout's order.
     fn truenas_disks(&self) -> Vec<String> {
-        let member = |c: &Value| s(c, "type").as_deref() == Some("zfs_member") && (s(c, "pool_name").or_else(|| s(c, "label"))).as_deref() == Some(TRUENAS_POOL);
-        self.layout.disks.iter().filter(|d| member(&d.content) || d.parts.iter().any(|p| member(&p.content))).map(|d| d.name.clone()).collect()
+        let member = |c: &Value| {
+            s(c, "type").as_deref() == Some("zfs_member")
+                && (s(c, "pool_name").or_else(|| s(c, "label"))).as_deref() == Some(TRUENAS_POOL)
+        };
+        self.layout
+            .disks
+            .iter()
+            .filter(|d| member(&d.content) || d.parts.iter().any(|p| member(&p.content)))
+            .map(|d| d.name.clone())
+            .collect()
     }
 
     /// The truenas boot arm, steps 3 to 5 (and the notes), run in the
@@ -89,19 +100,58 @@ impl Builder<'_> {
                 // goes again after it (a mark in load's run directory says so).
                 let made = format!("{}/truenas-boot-efi-made", super::RUN_DIR);
                 let (qe, qm) = (super::shell_quote(&efi), super::shell_quote(&made));
-                out.push(Cmd::new(&["sh", "-c", &format!("[ -d {qe} ] || {{ mkdir {qe} && : > {qm}; }}")]).why("its mount point, made only if the BE hasn't one (TrueNAS's haven't)"));
+                out.push(
+                    Cmd::new(&[
+                        "sh",
+                        "-c",
+                        &format!("[ -d {qe} ] || {{ mkdir {qe} && : > {qm}; }}"),
+                    ])
+                    .why("its mount point, made only if the BE hasn't one (TrueNAS's haven't)"),
+                );
                 out.push(Cmd::new(&["mount", "-t", "vfat", &dev, &efi]).why(format!("{}: the ESP, mounted only while GRUB is installed to it (as truenas_install does)", p.name)));
-                out.push(Cmd::new(&["chroot", t, "grub-install", "--target=x86_64-efi", "--efi-directory=/boot/efi", "--bootloader-id=debian", "--recheck", "--no-floppy", "--no-nvram"]));
+                out.push(Cmd::new(&[
+                    "chroot",
+                    t,
+                    "grub-install",
+                    "--target=x86_64-efi",
+                    "--efi-directory=/boot/efi",
+                    "--bootloader-id=debian",
+                    "--recheck",
+                    "--no-floppy",
+                    "--no-nvram",
+                ]));
                 out.push(Cmd::new(&["mkdir", "-p", &format!("{efi}/EFI/boot")]));
-                out.push(Cmd::new(&["cp", &format!("{efi}/EFI/debian/grubx64.efi"), &format!("{efi}/EFI/boot/bootx64.efi")]).why("the removable-media path too, as TrueNAS installs it"));
+                out.push(
+                    Cmd::new(&[
+                        "cp",
+                        &format!("{efi}/EFI/debian/grubx64.efi"),
+                        &format!("{efi}/EFI/boot/bootx64.efi"),
+                    ])
+                    .why("the removable-media path too, as TrueNAS installs it"),
+                );
                 out.push(Cmd::new(&["umount", &efi]));
-                out.push(Cmd::new(&["sh", "-c", &format!("[ ! -f {qm} ] || {{ rmdir {qe} && rm {qm}; }}")]).why("the mount point taken away again when this stage made it"));
+                out.push(
+                    Cmd::new(&[
+                        "sh",
+                        "-c",
+                        &format!("[ ! -f {qm} ] || {{ rmdir {qe} && rm {qm}; }}"),
+                    ])
+                    .why("the mount point taken away again when this stage made it"),
+                );
                 esps += 1;
             }
         }
         self.remake_grub_cfg(t, &mut out);
-        let bes = tn.get("bes").and_then(Value::as_array).cloned().unwrap_or_default();
-        let active = bes.iter().find(|b| b.get("active").and_then(Value::as_bool) == Some(true)).and_then(|b| s(b, "version").or_else(|| s(b, "name"))).unwrap_or_else(|| "unknown".into());
+        let bes = tn
+            .get("bes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let active = bes
+            .iter()
+            .find(|b| b.get("active").and_then(Value::as_bool) == Some(true))
+            .and_then(|b| s(b, "version").or_else(|| s(b, "name")))
+            .unwrap_or_else(|| "unknown".into());
         let n = targets.len();
         self.notes.push(format!(
             "TrueNAS: {} boot environment{} restored (active {active}); GRUB reinstalled on {n} disk{}{}, its menu rebuilt",
@@ -110,7 +160,9 @@ impl Builder<'_> {
             if n == 1 { "" } else { "s" },
             if esps > 0 { format!(" and {esps} ESP{}", if esps == 1 { "" } else { "s" }) } else { String::new() }
         ));
-        self.notes.push("TrueNAS: each boot environment's initrd came back with it; none is rebuilt".into());
+        self.notes.push(
+            "TrueNAS: each boot environment's initrd came back with it; none is rebuilt".into(),
+        );
         out
     }
 }

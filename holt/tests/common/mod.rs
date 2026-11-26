@@ -22,7 +22,7 @@
 pub mod invariants;
 
 use bko_holt::json::{self, Value};
-use bko_holt::load::{parse_args, run, Parsed};
+use bko_holt::load::{Parsed, parse_args, run};
 use bko_holt::sys::{FakeRunner, Sys};
 use bko_holt::testutil::Tree;
 
@@ -56,13 +56,33 @@ pub struct Planned {
 /// no disk ram0"), and alpine324 has 16 of them.
 pub fn dumped_disks(v: &Value) -> Vec<(String, u64, u32)> {
     let mut out = Vec::new();
-    for d in v.at(&["storage", "disks"]).and_then(Value::as_array).into_iter().flatten() {
-        let Some(name) = d.get("name").and_then(Value::as_str) else { continue };
-        if d.get("kind").and_then(Value::as_str) == Some("ram") || d.get("links").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).any(|l| l.starts_with("/dev/zvol/")) {
+    for d in v
+        .at(&["storage", "disks"])
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(name) = d.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        if d.get("kind").and_then(Value::as_str) == Some("ram")
+            || d.get("links")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .any(|l| l.starts_with("/dev/zvol/"))
+        {
             continue;
         }
-        let size = d.get("size_bytes").and_then(Value::as_u64).unwrap_or(1 << 34);
-        let ss = d.get("logical_sector_size").and_then(Value::as_u64).unwrap_or(512) as u32;
+        let size = d
+            .get("size_bytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(1 << 34);
+        let ss = d
+            .get("logical_sector_size")
+            .and_then(Value::as_u64)
+            .unwrap_or(512) as u32;
         out.push((name.to_string(), size, ss));
     }
     out
@@ -77,7 +97,11 @@ pub fn plan(layout_text: &str, grow: u64) -> Result<Planned, String> {
 /// with EXTRA arguments after load's own (BackShot2's tier 0: a drifted
 /// layout, its case's targets and load options).  The targets are
 /// sdq, sdr, ... (sd_target).
-pub fn plan_onto(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, extra: &[String]) -> Result<Planned, String> {
+pub fn plan_onto(
+    layout_text: &str,
+    size_of: &dyn Fn(&str, u64) -> u64,
+    extra: &[String],
+) -> Result<Planned, String> {
     plan_onto_named(layout_text, size_of, extra, &sd_target)
 }
 
@@ -95,25 +119,44 @@ pub fn sd_target(i: usize, _disk: &str) -> Result<String, String> {
 /// Slackware check judges a target by its name's driver class and place.
 /// A vd target's device number is virtio_blk's (major 253), any other's
 /// sd's (major 8); load reads neither's major.
-pub fn plan_onto_named(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, extra: &[String], target_name: &dyn Fn(usize, &str) -> Result<String, String>) -> Result<Planned, String> {
+pub fn plan_onto_named(
+    layout_text: &str,
+    size_of: &dyn Fn(&str, u64) -> u64,
+    extra: &[String],
+    target_name: &dyn Fn(usize, &str) -> Result<String, String>,
+) -> Result<Planned, String> {
     let v = json::parse(layout_text).map_err(|e| format!("not JSON: {}", e.message))?;
     let t = Tree::new("golden-plan");
-    t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+    t.file("/proc/self/mountinfo", "")
+        .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
     // A rescue system of the dump's own architecture, which load holds it
     // to (docs/design/arm64.md, A3): the kernel's name, as os.machine (or,
     // before A3, os.architecture) gives it; x86_64 for a dump with neither.
-    let machine = ["machine", "architecture"].iter().find_map(|k| v.at(&["os", k]).and_then(Value::as_str)).unwrap_or("x86_64");
+    let machine = ["machine", "architecture"]
+        .iter()
+        .find_map(|k| v.at(&["os", k]).and_then(Value::as_str))
+        .unwrap_or("x86_64");
     t.file("/proc/sys/kernel/arch", format!("{machine}\n"));
     let mut args = vec![LAYOUT.to_string()];
     let mut maps = Vec::new();
     for (i, (name, size, ss)) in dumped_disks(&v).into_iter().enumerate() {
         let tgt = target_name(i, &name)?;
-        if tgt.is_empty() || !tgt.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()) || maps.iter().any(|m: &(String, String, u64)| m.1 == tgt) {
-            return Err(format!("disk {name}'s target {tgt:?} isn't a kernel disk name of its own"));
+        if tgt.is_empty()
+            || !tgt
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+            || maps.iter().any(|m: &(String, String, u64)| m.1 == tgt)
+        {
+            return Err(format!(
+                "disk {name}'s target {tgt:?} isn't a kernel disk name of its own"
+            ));
         }
         let bytes = size_of(&name, size);
         let major = if tgt.starts_with("vd") { 253 } else { 8 };
-        t.disk(&tgt, &format!("{major}:{}", 16 * i), &[], ss).file(&format!("/sys/block/{tgt}/size"), format!("{}\n", bytes / 512));
+        t.disk(&tgt, &format!("{major}:{}", 16 * i), &[], ss).file(
+            &format!("/sys/block/{tgt}/size"),
+            format!("{}\n", bytes / 512),
+        );
         args.push("--map".into());
         args.push(format!("{name}={tgt}"));
         maps.push((name, tgt, bytes));
@@ -124,8 +167,18 @@ pub fn plan_onto_named(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, ex
     // path, KEYS/NAME, never a real key.  Raw and hex keys (Ubuntu's
     // keystore) plan without one, as before.
     let mut keys = Vec::new();
-    for ds in v.at(&["storage", "zfs", "tools", "datasets"]).and_then(Value::as_array).into_iter().flatten() {
-        let (Some(name), Some(root)) = (ds.get("name").and_then(Value::as_str), ds.get("encryptionroot").and_then(Value::as_str)) else { continue };
+    for ds in v
+        .at(&["storage", "zfs", "tools", "datasets"])
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let (Some(name), Some(root)) = (
+            ds.get("name").and_then(Value::as_str),
+            ds.get("encryptionroot").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
         if name == root && ds.get("keyformat").and_then(Value::as_str) == Some("passphrase") {
             let f = format!("{KEYS}/{}", name.replace('/', "_"));
             args.extend(["--key-file".to_string(), format!("{name}={f}")]);
@@ -143,16 +196,31 @@ pub fn plan_onto_named(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, ex
     // header).  Never a real header or key.
     let mut layout_text = layout_text.to_string();
     let mut headers = Vec::new();
-    for h in v.at(&["storage", "luks_headers"]).and_then(Value::as_array).into_iter().flatten() {
-        let Some(file) = h.get("file").and_then(Value::as_str) else { continue };
-        let name = h.get("label").and_then(Value::as_str).or_else(|| h.get("device").and_then(Value::as_str)).unwrap_or(file);
+    for h in v
+        .at(&["storage", "luks_headers"])
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(file) = h.get("file").and_then(Value::as_str) else {
+            continue;
+        };
+        let name = h
+            .get("label")
+            .and_then(Value::as_str)
+            .or_else(|| h.get("device").and_then(Value::as_str))
+            .unwrap_or(file);
         let f = format!("{KEYS}/{}", name.replace('/', "_"));
         if !keys.contains(&f) {
             args.extend(["--key-file".to_string(), format!("{name}={f}")]);
             keys.push(f);
         }
         let body = format!("golden-plan test LUKS2 header {file}\n");
-        if let Some(real) = h.get("sha256").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+        if let Some(real) = h
+            .get("sha256")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        {
             layout_text = layout_text.replace(real, &sha256_hex(body.as_bytes()));
         }
         headers.push((file.to_string(), body));
@@ -178,7 +246,8 @@ pub fn plan_onto_named(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, ex
     // 664.  The file check fails first, so KEYS's own mode never shows.
     for f in &keys {
         t.file(f, "golden-plan test key\n");
-        std::fs::set_permissions(t.p(f), std::os::unix::fs::PermissionsExt::from_mode(0o644)).unwrap();
+        std::fs::set_permissions(t.p(f), std::os::unix::fs::PermissionsExt::from_mode(0o644))
+            .unwrap();
     }
     // The rescue image carries OpenZFS's feature sets (zpool create -o
     // compatibility=grub2, e.g. TrueNAS's boot-pool).
@@ -189,20 +258,43 @@ pub fn plan_onto_named(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, ex
     // which is this test's binary: installed where it is, as a rescue
     // system has bko-holt, and named `bko-holt` in the plan, which would
     // otherwise hold the build's own path.
-    let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
     if exe.starts_with('/') {
         t.file(&exe, "");
     }
-    let sys = || Sys::new(t.root(), Box::new(FakeRunner::default().with("/usr/sbin/rustic-bko --version", RUSTIC_VERSION)), true);
+    let sys = || {
+        Sys::new(
+            t.root(),
+            Box::new(FakeRunner::default().with("/usr/sbin/rustic-bko --version", RUSTIC_VERSION)),
+            true,
+        )
+    };
     // Every tool the plan asks for, installed as a rescue system has it: a
     // path where it says, a name in /usr/sbin.
     let mut res = run(&opts, layout_text, &sys());
     for _ in 0..4 {
         // A --json plan (plan_json.rs): its document's text, which is text
         // mode's plan of the same arguments.
-        let doc = if res.1.starts_with('{') { json::parse(&res.1).ok() } else { None };
-        let text = doc.as_ref().and_then(|d| d.get("text")).and_then(Value::as_str).unwrap_or(&res.1);
-        let missing: Vec<String> = text.lines().filter_map(|l| l.trim_start_matches("#   - ").split_once(" isn't installed here").map(|(p, _)| p.to_string())).collect();
+        let doc = if res.1.starts_with('{') {
+            json::parse(&res.1).ok()
+        } else {
+            None
+        };
+        let text = doc
+            .as_ref()
+            .and_then(|d| d.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or(&res.1);
+        let missing: Vec<String> = text
+            .lines()
+            .filter_map(|l| {
+                l.trim_start_matches("#   - ")
+                    .split_once(" isn't installed here")
+                    .map(|(p, _)| p.to_string())
+            })
+            .collect();
         if missing.is_empty() {
             break;
         }
@@ -210,14 +302,25 @@ pub fn plan_onto_named(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, ex
             if m.starts_with('/') {
                 t.file(&m, "");
             } else {
-                t.file(&format!("/usr/sbin/{}", m.rsplit('/').next().unwrap_or(&m)), "");
+                t.file(
+                    &format!("/usr/sbin/{}", m.rsplit('/').next().unwrap_or(&m)),
+                    "",
+                );
             }
         }
         res = run(&opts, layout_text, &sys());
     }
     let named = |s: String| {
-        let s = if headers.is_empty() { s } else { s.replace(&header_dir, HEADERS) };
-        if exe.len() > 1 { s.replace(&exe, "bko-holt") } else { s }
+        let s = if headers.is_empty() {
+            s
+        } else {
+            s.replace(&header_dir, HEADERS)
+        };
+        if exe.len() > 1 {
+            s.replace(&exe, "bko-holt")
+        } else {
+            s
+        }
     };
     let mut out = named(res.1);
     // What `status` looks for after each stage: load builds it with the
@@ -234,7 +337,10 @@ pub fn plan_onto_named(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, ex
             out += &format!("{GOLDEN_MARK} status pool {p}\n");
         }
         for (node, ty, uuid) in &b.filesystems {
-            out += &format!("{GOLDEN_MARK} status filesystem {node} {ty} {}\n", uuid.as_deref().unwrap_or("-"));
+            out += &format!(
+                "{GOLDEN_MARK} status filesystem {node} {ty} {}\n",
+                uuid.as_deref().unwrap_or("-")
+            );
         }
         for d in &b.datasets {
             out += &format!("{GOLDEN_MARK} status dataset {d}\n");
@@ -243,20 +349,33 @@ pub fn plan_onto_named(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, ex
             out += &format!("{GOLDEN_MARK} status mount {m}\n");
         }
     }
-    Ok(Planned { code: res.0, out, err: named(res.2), maps })
+    Ok(Planned {
+        code: res.0,
+        out,
+        err: named(res.2),
+        maps,
+    })
 }
 
 /// SHA-256 of DATA in lower-case hex (FIPS 180-4).  Here, not holt's
 /// bytes::sha256_hex, which is newer than 3671e96 (the replay of #16).
 pub fn sha256_hex(data: &[u8]) -> String {
     const K: [u32; 64] = [
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
-        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
     ];
-    let mut h: [u32; 8] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    let mut h: [u32; 8] = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
+    ];
     let mut m = data.to_vec();
     m.push(0x80);
     while m.len() % 64 != 56 {
@@ -266,22 +385,43 @@ pub fn sha256_hex(data: &[u8]) -> String {
     for block in m.chunks(64) {
         let mut w = [0u32; 64];
         for i in 0..16 {
-            w[i] = u32::from_be_bytes([block[4 * i], block[4 * i + 1], block[4 * i + 2], block[4 * i + 3]]);
+            w[i] = u32::from_be_bytes([
+                block[4 * i],
+                block[4 * i + 1],
+                block[4 * i + 2],
+                block[4 * i + 3],
+            ]);
         }
         for i in 16..64 {
             let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
             let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+            w[i] = w[i - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[i - 7])
+                .wrapping_add(s1);
         }
         let mut v = h;
         for i in 0..64 {
             let s1 = v[4].rotate_right(6) ^ v[4].rotate_right(11) ^ v[4].rotate_right(25);
             let ch = (v[4] & v[5]) ^ (!v[4] & v[6]);
-            let t1 = v[7].wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
+            let t1 = v[7]
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K[i])
+                .wrapping_add(w[i]);
             let s0 = v[0].rotate_right(2) ^ v[0].rotate_right(13) ^ v[0].rotate_right(22);
             let maj = (v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]);
             let t2 = s0.wrapping_add(maj);
-            v = [t1.wrapping_add(t2), v[0], v[1], v[2], v[3].wrapping_add(t1), v[4], v[5], v[6]];
+            v = [
+                t1.wrapping_add(t2),
+                v[0],
+                v[1],
+                v[2],
+                v[3].wrapping_add(t1),
+                v[4],
+                v[5],
+                v[6],
+            ];
         }
         for (a, b) in h.iter_mut().zip(v) {
             *a = a.wrapping_add(b);
@@ -293,7 +433,10 @@ pub fn sha256_hex(data: &[u8]) -> String {
 /// Writes TEXT to PATH whole or not at all: a `.NAME.part` beside it, then a
 /// rename, so a killed run leaves the old file or the new one, never half.
 pub fn write_atomic(path: &std::path::Path, text: &[u8]) -> Result<(), String> {
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let tmp = path.with_file_name(format!(".{name}.part"));
     std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
     std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
@@ -321,12 +464,24 @@ pub fn golden_text(p: &Planned) -> String {
 }
 
 /// load's stages, in the order plans print them.
-pub const STAGES: [&str; 7] = ["partition", "assemble", "format", "mount", "restore", "boot", "close"];
+pub const STAGES: [&str; 7] = [
+    "partition",
+    "assemble",
+    "format",
+    "mount",
+    "restore",
+    "boot",
+    "close",
+];
 
 /// The name in a stage header line, `# ---- STAGE ----`.
 pub fn stage_header(line: &str) -> Option<&str> {
     let name = line.strip_prefix("# ---- ")?.strip_suffix(" ----")?;
-    (!name.is_empty() && name.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')).then_some(name)
+    (!name.is_empty()
+        && name
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-'))
+    .then_some(name)
 }
 
 /// TEXT split into its sections: `header` (everything before the first
@@ -339,7 +494,9 @@ pub fn sections(text: &str) -> Vec<(String, Vec<&str>)> {
     let lines: Vec<&str> = text.lines().collect();
     let last_stage = lines.iter().rposition(|l| stage_header(l).is_some());
     let from = last_stage.map(|i| i + 1).unwrap_or(0);
-    let trailer = (from..lines.len()).find(|&i| lines[i].starts_with("# Nothing was written") || lines[i].starts_with(GOLDEN_MARK));
+    let trailer = (from..lines.len()).find(|&i| {
+        lines[i].starts_with("# Nothing was written") || lines[i].starts_with(GOLDEN_MARK)
+    });
     let mut out: Vec<(String, Vec<&str>)> = vec![("header".to_string(), Vec::new())];
     for (i, l) in lines.iter().enumerate() {
         if Some(i) == trailer {
@@ -369,7 +526,10 @@ pub fn stages_changed(old: &str, new: &str) -> Vec<String> {
         let parts: Vec<&Vec<&str>> = s.iter().filter(|(m, _)| m == n).map(|(_, l)| l).collect();
         (!parts.is_empty()).then(|| parts.into_iter().flatten().map(|l| l.to_string()).collect())
     };
-    names.into_iter().filter(|n| get(&a, n) != get(&b, n)).collect()
+    names
+        .into_iter()
+        .filter(|n| get(&a, n) != get(&b, n))
+        .collect()
 }
 
 /// How many lines a line diff of OLD and NEW removes and adds (the longest
@@ -378,7 +538,12 @@ pub fn lines_changed(old: &str, new: &str) -> usize {
     let a: Vec<&str> = old.lines().collect();
     let b: Vec<&str> = new.lines().collect();
     let pre = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
-    let suf = a[pre..].iter().rev().zip(b[pre..].iter().rev()).take_while(|(x, y)| x == y).count();
+    let suf = a[pre..]
+        .iter()
+        .rev()
+        .zip(b[pre..].iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
     let (a, b) = (&a[pre..a.len() - suf], &b[pre..b.len() - suf]);
     if a.is_empty() || b.is_empty() {
         return a.len() + b.len();
@@ -388,7 +553,11 @@ pub fn lines_changed(old: &str, new: &str) -> usize {
     let mut cur = vec![0u32; b.len() + 1];
     for x in a {
         for (j, y) in b.iter().enumerate() {
-            cur[j + 1] = if x == y { prev[j] + 1 } else { prev[j + 1].max(cur[j]) };
+            cur[j + 1] = if x == y {
+                prev[j] + 1
+            } else {
+                prev[j + 1].max(cur[j])
+            };
         }
         std::mem::swap(&mut prev, &mut cur);
     }

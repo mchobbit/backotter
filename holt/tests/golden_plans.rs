@@ -75,12 +75,11 @@
 
 mod common;
 
-use common::invariants::*;
 use bko_holt::json::{self, Value};
-use common::{Planned, BIGGER};
+use common::invariants::*;
+use common::{BIGGER, Planned};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Mode {
@@ -99,12 +98,18 @@ fn mode_from_env() -> Mode {
 }
 
 fn corpus_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("corpus")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("corpus")
 }
 
 /// testvm/test2/classes.json, beside holt/.
 fn classes_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("testvm").join("test2").join("classes.json")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("testvm")
+        .join("test2")
+        .join("classes.json")
 }
 
 /// What HoltTest2 holds the corpus to (classes.json's holt section): its
@@ -126,9 +131,20 @@ fn expected_from(path: &Path) -> Result<Option<Expected>, String> {
     let at = path.display();
     let v = json::parse(&text).map_err(|e| format!("{at}: not JSON: {}", e.message))?;
     let names = |x: &Value, what: &str| -> Result<Vec<String>, String> {
-        x.as_array().ok_or_else(|| format!("{at}: {what} isn't a list"))?.iter().map(|g| g.as_str().map(str::to_string).ok_or_else(|| format!("{at}: {what} holds a non-name"))).collect()
+        x.as_array()
+            .ok_or_else(|| format!("{at}: {what} isn't a list"))?
+            .iter()
+            .map(|g| {
+                g.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| format!("{at}: {what} holds a non-name"))
+            })
+            .collect()
     };
-    let fams = v.at(&["holt", "families"]).and_then(Value::as_object).ok_or_else(|| format!("{at}: no holt.families"))?;
+    let fams = v
+        .at(&["holt", "families"])
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("{at}: no holt.families"))?;
     let mut sources = Vec::new();
     for (f, gs) in fams {
         sources.extend(names(gs, &format!("holt.families.{f}"))?);
@@ -185,14 +201,27 @@ fn entries(corpus: &Path) -> Result<Vec<Entry>, String> {
         if name.starts_with('.') || !d.is_dir() {
             continue;
         }
-        let mut files: Vec<String> = std::fs::read_dir(&d).map_err(|x| format!("{}: {x}", d.display()))?.filter_map(|x| x.ok()?.file_name().to_str().map(str::to_string)).collect();
+        let mut files: Vec<String> = std::fs::read_dir(&d)
+            .map_err(|x| format!("{}: {x}", d.display()))?
+            .filter_map(|x| x.ok()?.file_name().to_str().map(str::to_string))
+            .collect();
         files.sort();
-        let plans: Vec<&String> = files.iter().filter(|f| f.starts_with("plan") && f.ends_with(".txt")).collect();
+        let plans: Vec<&String> = files
+            .iter()
+            .filter(|f| f.starts_with("plan") && f.ends_with(".txt"))
+            .collect();
         if !d.join("src.json").is_file() {
             bad.push(if plans.is_empty() {
                 format!("{name}/: no src.json")
             } else {
-                format!("{name}/: no src.json beside its {} (a golden plan of a dump that isn't here)", plans.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(", "))
+                format!(
+                    "{name}/: no src.json beside its {} (a golden plan of a dump that isn't here)",
+                    plans
+                        .iter()
+                        .map(|p| p.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             });
             continue;
         }
@@ -208,12 +237,29 @@ fn entries(corpus: &Path) -> Result<Vec<Entry>, String> {
         guests.push(name);
     }
     guests.sort();
-    let mut out: Vec<Entry> = guests.iter().map(|g| Entry { name: g.clone(), dump: corpus.join(g).join("src.json"), plan: corpus.join(g).join("plan.txt"), grow: 0, extra: vec![], unimaged: false }).collect();
+    let mut out: Vec<Entry> = guests
+        .iter()
+        .map(|g| Entry {
+            name: g.clone(),
+            dump: corpus.join(g).join("src.json"),
+            plan: corpus.join(g).join("plan.txt"),
+            grow: 0,
+            extra: vec![],
+            unimaged: false,
+        })
+        .collect();
     let listed = match std::fs::read_to_string(corpus.join("variants.txt")) {
-        Ok(text) => text.lines().map(|l| l.split('#').next().unwrap_or("").trim().to_string()).filter(|l| !l.is_empty()).collect(),
+        Ok(text) => text
+            .lines()
+            .map(|l| l.split('#').next().unwrap_or("").trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect(),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             if !kept.is_empty() {
-                bad.push(format!("no variants.txt, but variant plans are kept: {}", kept.join(", ")));
+                bad.push(format!(
+                    "no variants.txt, but variant plans are kept: {}",
+                    kept.join(", ")
+                ));
             }
             Vec::new()
         }
@@ -228,11 +274,21 @@ fn entries(corpus: &Path) -> Result<Vec<Entry>, String> {
             "bigger" | "espfmt" => (if v == "bigger" { BIGGER } else { 0 }, vec![]),
             // A tree whose load has no --reformat (the #16 replay's older
             // ones) can't plan these: they're skipped, not failed.
-            "reformat-xfs" | "reformat-ext4" | "reformat-btrfs" if !bko_holt::load::USAGE.contains("--reformat") => {
-                println!("SKIP  {l}: needs --reformat, which this tree's bko-holt load doesn't have");
+            "reformat-xfs" | "reformat-ext4" | "reformat-btrfs"
+                if !bko_holt::load::USAGE.contains("--reformat") =>
+            {
+                println!(
+                    "SKIP  {l}: needs --reformat, which this tree's bko-holt load doesn't have"
+                );
                 continue;
             }
-            "reformat-xfs" | "reformat-ext4" | "reformat-btrfs" => (0, vec!["--reformat".to_string(), format!("/={}", &v["reformat-".len()..])]),
+            "reformat-xfs" | "reformat-ext4" | "reformat-btrfs" => (
+                0,
+                vec![
+                    "--reformat".to_string(),
+                    format!("/={}", &v["reformat-".len()..]),
+                ],
+            ),
             _ => {
                 bad.push(format!("variants.txt: {l}: only +bigger, +espfmt and +reformat-TYPE have golden plans (+oneshot plans as its guest does)"));
                 continue;
@@ -243,14 +299,25 @@ fn entries(corpus: &Path) -> Result<Vec<Entry>, String> {
             continue;
         }
         let d = corpus.join(g);
-        out.push(Entry { name: l.clone(), dump: d.join("src.json"), plan: d.join(format!("plan+{v}.txt")), grow, extra, unimaged: v == "espfmt" });
+        out.push(Entry {
+            name: l.clone(),
+            dump: d.join("src.json"),
+            plan: d.join(format!("plan+{v}.txt")),
+            grow,
+            extra,
+            unimaged: v == "espfmt",
+        });
     }
     for k in kept.iter().filter(|k| !listed.contains(k)) {
         let (g, v) = k.split_once('+').unwrap_or((k, ""));
         bad.push(format!("{g}/plan+{v}.txt: variants.txt doesn't list {k}"));
     }
     if !bad.is_empty() {
-        return Err(format!("the corpus {} doesn't hold together:\n  {}", corpus.display(), bad.join("\n  ")));
+        return Err(format!(
+            "the corpus {} doesn't hold together:\n  {}",
+            corpus.display(),
+            bad.join("\n  ")
+        ));
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
@@ -258,12 +325,18 @@ fn entries(corpus: &Path) -> Result<Vec<Entry>, String> {
 
 /// The plan of one entry, as plan.txt holds it, and its invariants.
 fn plan_entry(e: &Entry) -> Result<(String, Check), String> {
-    let mut text = std::fs::read_to_string(&e.dump).map_err(|x| format!("{}: {x}", e.dump.display()))?;
+    let mut text =
+        std::fs::read_to_string(&e.dump).map_err(|x| format!("{}: {x}", e.dump.display()))?;
     if e.unimaged {
         text = espfmt(&text).map_err(|x| format!("{}: {x}", e.name))?;
     }
-    let dump = json::parse(&text).map_err(|x| format!("{}: not JSON: {}", e.dump.display(), x.message))?;
-    let p = if e.extra.is_empty() { common::plan(&text, e.grow)? } else { common::plan_onto(&text, &|_, size| size + e.grow, &e.extra)? };
+    let dump =
+        json::parse(&text).map_err(|x| format!("{}: not JSON: {}", e.dump.display(), x.message))?;
+    let p = if e.extra.is_empty() {
+        common::plan(&text, e.grow)?
+    } else {
+        common::plan_onto(&text, &|_, size| size + e.grow, &e.extra)?
+    };
     Ok((common::golden_text(&p), invariants(&dump, &p)))
 }
 
@@ -356,7 +429,10 @@ impl Summary {
                 .into_iter()
                 .map(|n| {
                     let d = self.differ.get(n).cloned().unwrap_or_default();
-                    let mut kv = vec![("stages".to_string(), json_list(&d.stages)), ("lines_changed".to_string(), Value::UInt(d.lines as u64))];
+                    let mut kv = vec![
+                        ("stages".to_string(), json_list(&d.stages)),
+                        ("lines_changed".to_string(), Value::UInt(d.lines as u64)),
+                    ];
                     if d.new {
                         kv.push(("new".to_string(), Value::Bool(true)));
                     }
@@ -370,13 +446,18 @@ impl Summary {
                 })
                 .collect(),
         );
-        let map = |m: &BTreeMap<String, Vec<String>>| Value::Obj(m.iter().map(|(n, l)| (n.clone(), json_list(l))).collect());
+        let map = |m: &BTreeMap<String, Vec<String>>| {
+            Value::Obj(m.iter().map(|(n, l)| (n.clone(), json_list(l))).collect())
+        };
         Value::Obj(vec![
             ("v".into(), Value::UInt(1)),
             ("corpus".into(), Value::UInt(self.dumps as u64)),
             ("plans".into(), Value::UInt(self.plans as u64)),
             ("planned".into(), json_list(&self.planned)),
-            ("sources".into(), self.sources.map_or(Value::Null, |n| Value::UInt(n as u64))),
+            (
+                "sources".into(),
+                self.sources.map_or(Value::Null, |n| Value::UInt(n as u64)),
+            ),
             ("differ".into(), differ),
             ("invariants".into(), map(&self.invariants)),
             ("invariants_skipped".into(), map(&self.skipped)),
@@ -396,15 +477,31 @@ fn unverified_in(corpus: &Path) -> Result<BTreeMap<String, String>, String> {
     };
     let mut lines = text.lines();
     let cols: Vec<&str> = lines.next().unwrap_or("").split('\t').collect();
-    let (Some(gi), Some(ci)) = (cols.iter().position(|c| *c == "guest"), cols.iter().position(|c| *c == "check_plan_raw")) else {
-        return Err(format!("{}: no guest or check_plan_raw column", p.display()));
+    let (Some(gi), Some(ci)) = (
+        cols.iter().position(|c| *c == "guest"),
+        cols.iter().position(|c| *c == "check_plan_raw"),
+    ) else {
+        return Err(format!(
+            "{}: no guest or check_plan_raw column",
+            p.display()
+        ));
     };
     let mut out = BTreeMap::new();
     for l in lines.filter(|l| !l.is_empty()) {
         let row: Vec<&str> = l.split('\t').collect();
-        let (g, c) = (row.get(gi).copied().unwrap_or(""), row.get(ci).copied().unwrap_or(""));
+        let (g, c) = (
+            row.get(gi).copied().unwrap_or(""),
+            row.get(ci).copied().unwrap_or(""),
+        );
         if !g.is_empty() && !c.starts_with("ok:") {
-            out.insert(g.to_string(), if c.is_empty() { "-".to_string() } else { c.to_string() });
+            out.insert(
+                g.to_string(),
+                if c.is_empty() {
+                    "-".to_string()
+                } else {
+                    c.to_string()
+                },
+            );
         }
     }
     Ok(out)
@@ -417,32 +514,63 @@ fn unplanned(s: &mut Summary, list: &[Entry], x: &Expected) {
     let have = |n: &str| list.iter().any(|e| e.name == n);
     for g in &x.sources {
         if !have(g) {
-            s.differ.insert(g.clone(), Differ { new: true, unplanned: Some("no corpus dump".into()), ..Differ::default() });
+            s.differ.insert(
+                g.clone(),
+                Differ {
+                    new: true,
+                    unplanned: Some("no corpus dump".into()),
+                    ..Differ::default()
+                },
+            );
             s.log.push(format!("NO DUMP  {g}: HoltTest2's source, with no dump in the corpus (its README: Rebuilding it)"));
         }
     }
     for g in &x.bigger {
         let n = format!("{g}+bigger");
         if !have(&n) {
-            let why = if have(g) { "not in variants.txt" } else { "no corpus dump" };
-            s.differ.insert(n.clone(), Differ { new: true, unplanned: Some(why.into()), ..Differ::default() });
-            s.log.push(format!("NO PLAN  {n}: HoltTest2's +bigger cell, with no golden plan ({why})"));
+            let why = if have(g) {
+                "not in variants.txt"
+            } else {
+                "no corpus dump"
+            };
+            s.differ.insert(
+                n.clone(),
+                Differ {
+                    new: true,
+                    unplanned: Some(why.into()),
+                    ..Differ::default()
+                },
+            );
+            s.log.push(format!(
+                "NO PLAN  {n}: HoltTest2's +bigger cell, with no golden plan ({why})"
+            ));
         }
     }
     for e in list {
         if e.is_guest() && !x.sources.contains(&e.name) {
-            s.log.push(format!("note  {}: in the corpus, but not one of HoltTest2's sources in classes.json", e.name));
+            s.log.push(format!(
+                "note  {}: in the corpus, but not one of HoltTest2's sources in classes.json",
+                e.name
+            ));
         }
         if let Some(g) = e.name.strip_suffix("+bigger") {
             if !x.bigger.iter().any(|b| b == g) {
-                s.log.push(format!("note  {}: a golden plan, but classes.json has no such cell", e.name));
+                s.log.push(format!(
+                    "note  {}: a golden plan, but classes.json has no such cell",
+                    e.name
+                ));
             }
         }
     }
     s.sources = Some(x.sources.len());
 }
 
-fn run_golden(corpus: &Path, mode: Mode, out: Option<&Path>, expect: Option<&Expected>) -> Result<Summary, String> {
+fn run_golden(
+    corpus: &Path,
+    mode: Mode,
+    out: Option<&Path>,
+    expect: Option<&Expected>,
+) -> Result<Summary, String> {
     let list = entries(corpus)?;
     if list.is_empty() {
         return Err(format!("no GUEST/src.json in {}", corpus.display()));
@@ -451,7 +579,11 @@ fn run_golden(corpus: &Path, mode: Mode, out: Option<&Path>, expect: Option<&Exp
         Mode::Report => Some(out.ok_or("BKO_HOLT_GOLDEN=report needs BKO_HOLT_PLANS_OUT, the directory for the plans that differ and diff.json")?),
         _ => None,
     };
-    let mut s = Summary { dumps: list.iter().filter(|e| e.is_guest()).count(), plans: list.len(), ..Summary::default() };
+    let mut s = Summary {
+        dumps: list.iter().filter(|e| e.is_guest()).count(),
+        plans: list.len(),
+        ..Summary::default()
+    };
     // Everything is planned before anything is written: an entry that can't
     // be planned stops the run with the files as they were.
     let mut todo: Vec<(&Entry, String)> = Vec::new();
@@ -468,7 +600,8 @@ fn run_golden(corpus: &Path, mode: Mode, out: Option<&Path>, expect: Option<&Exp
         };
         s.planned.push(e.name.clone());
         if !check.violations.is_empty() {
-            s.invariants.insert(e.name.clone(), check.violations.clone());
+            s.invariants
+                .insert(e.name.clone(), check.violations.clone());
         }
         if !check.skipped.is_empty() {
             s.skipped.insert(e.name.clone(), check.skipped.clone());
@@ -476,15 +609,35 @@ fn run_golden(corpus: &Path, mode: Mode, out: Option<&Path>, expect: Option<&Exp
         let same = old.as_deref() == Some(text.as_str());
         if !same {
             let o = old.clone().unwrap_or_default();
-            let stages = if old.is_some() { common::stages_changed(&o, &text) } else { common::sections(&text).into_iter().map(|(n, _)| n).collect() };
-            s.differ.insert(e.name.clone(), Differ { stages, lines: common::lines_changed(&o, &text), new: old.is_none(), unplanned: None });
+            let stages = if old.is_some() {
+                common::stages_changed(&o, &text)
+            } else {
+                common::sections(&text)
+                    .into_iter()
+                    .map(|(n, _)| n)
+                    .collect()
+            };
+            s.differ.insert(
+                e.name.clone(),
+                Differ {
+                    stages,
+                    lines: common::lines_changed(&o, &text),
+                    new: old.is_none(),
+                    unplanned: None,
+                },
+            );
         }
         let state = match (&old, same) {
             (None, _) => "NEW ",
             (_, true) => "ok  ",
             (_, false) => "DIFF",
         };
-        let mut line = format!("{state}  {}: {} lines; checked {}", e.name, text.lines().count(), check.checked.join(", "));
+        let mut line = format!(
+            "{state}  {}: {} lines; checked {}",
+            e.name,
+            text.lines().count(),
+            check.checked.join(", ")
+        );
         if let Some(d) = s.differ.get(&e.name) {
             line += &format!(", {} changed in {}", d.lines, d.stages.join(", "));
         }
@@ -546,17 +699,25 @@ fn differ_line(n: &str, d: &Differ) -> String {
 /// fs in ...` (file system add-ons) lists.  None without a checks.sh (holt
 /// on its own, as T6.4 archives it).
 fn rescue_ships(stick: &Path, plat: &str) -> Option<BTreeMap<String, Vec<String>>> {
-    let text = std::fs::read_to_string(stick.join(plat).join("checks.sh")).ok()?.replace("\\\n", " ");
+    let text = std::fs::read_to_string(stick.join(plat).join("checks.sh"))
+        .ok()?
+        .replace("\\\n", " ");
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut rest = text.as_str();
     while let Some(i) = rest.find("for ") {
         rest = &rest[i + 4..];
-        let Some((var, after)) = rest.split_once(" in ") else { break };
+        let Some((var, after)) = rest.split_once(" in ") else {
+            break;
+        };
         if !matches!(var, "c" | "p" | "fs") {
             continue;
         }
-        let Some((list, _)) = after.split_once("; do") else { break };
-        out.entry(var.to_string()).or_default().extend(list.split_whitespace().map(str::to_string));
+        let Some((list, _)) = after.split_once("; do") else {
+            break;
+        };
+        out.entry(var.to_string())
+            .or_default()
+            .extend(list.split_whitespace().map(str::to_string));
     }
     Some(out)
 }
@@ -574,7 +735,9 @@ const SHELL_WORDS: [&str; 6] = ["[", "test", "true", "false", "exit", "echo"];
 /// Neither image has newfs_msdos, the BSDs' FAT formatter.
 #[test]
 fn golden_format_runs_the_rescues_own_tools() {
-    let stick = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("stick");
+    let stick = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("stick");
     let mut bad = Vec::new();
     let mut checked = 0;
     for e in entries(&corpus_dir()).unwrap_or_else(|x| panic!("{x}")) {
@@ -585,7 +748,11 @@ fn golden_format_runs_the_rescues_own_tools() {
             _ => continue,
         };
         let Some(ships) = rescue_ships(&stick, plat) else {
-            println!("SKIP  {}: no {}", e.name, stick.join(plat).join("checks.sh").display());
+            println!(
+                "SKIP  {}: no {}",
+                e.name,
+                stick.join(plat).join("checks.sh").display()
+            );
             continue;
         };
         let has = |k: &str, w: &str| ships.get(k).is_some_and(|l| l.iter().any(|x| x == w));
@@ -595,7 +762,10 @@ fn golden_format_runs_the_rescues_own_tools() {
                 let p = prog(&c[0]);
                 checked += 1;
                 if !(has("c", p) || SHELL_WORDS.contains(&p) || p == "bko-holt") {
-                    bad.push(format!("{}: {p} isn't in {plat}'s rescue image (stick/{plat}/checks.sh): {}", e.name, step.cmd));
+                    bad.push(format!(
+                        "{}: {p} isn't in {plat}'s rescue image (stick/{plat}/checks.sh): {}",
+                        e.name, step.cmd
+                    ));
                     continue;
                 }
                 let flag = if plat == "illumos" { "-F" } else { "-t" };
@@ -607,7 +777,12 @@ fn golden_format_runs_the_rescues_own_tools() {
                         None => false,
                     };
                     if !ok {
-                        bad.push(format!("{}: mkfs {flag} {} isn't one {plat}'s rescue image checks it has: {}", e.name, ty.map_or("(none)", |t| t.as_str()), step.cmd));
+                        bad.push(format!(
+                            "{}: mkfs {flag} {} isn't one {plat}'s rescue image checks it has: {}",
+                            e.name,
+                            ty.map_or("(none)", |t| t.as_str()),
+                            step.cmd
+                        ));
                     }
                 }
             }
@@ -621,16 +796,23 @@ fn golden_format_runs_the_rescues_own_tools() {
 fn golden_plans() {
     let mode = mode_from_env();
     if mode != Mode::Check && !cfg!(target_os = "linux") {
-        panic!("BKO_HOLT_GOLDEN={mode:?}: the golden plans are Linux's (load's run directory is /run/bko-holt there and /var/run/bko-holt here): report and bless them on a Linux host");
+        panic!(
+            "BKO_HOLT_GOLDEN={mode:?}: the golden plans are Linux's (load's run directory is /run/bko-holt there and /var/run/bko-holt here): report and bless them on a Linux host"
+        );
     }
     let corpus = corpus_dir();
     let out = std::env::var_os("BKO_HOLT_PLANS_OUT").map(PathBuf::from);
     let expect = expected_from(&classes_path()).unwrap_or_else(|e| panic!("{e}"));
-    let s = run_golden(&corpus, mode, out.as_deref(), expect.as_ref()).unwrap_or_else(|e| panic!("{e}"));
+    let s = run_golden(&corpus, mode, out.as_deref(), expect.as_ref())
+        .unwrap_or_else(|e| panic!("{e}"));
     for l in &s.log {
         println!("{l}");
     }
-    let inv: Vec<String> = s.invariants.iter().map(|(n, v)| format!("{n}: {}", v.join("; "))).collect();
+    let inv: Vec<String> = s
+        .invariants
+        .iter()
+        .map(|(n, v)| format!("{n}: {}", v.join("; ")))
+        .collect();
     println!(
         "{} plans of {} dumps: {} differ, {} break an invariant, {} unverified{}; {}",
         s.plans,
@@ -640,19 +822,44 @@ fn golden_plans() {
         s.unverified.len(),
         match mode {
             Mode::Bless => format!("; blessed {}", s.written.len()),
-            Mode::Report => format!("; {} written to {}", s.written.len() + 1, out.as_ref().unwrap().display()),
+            Mode::Report => format!(
+                "; {} written to {}",
+                s.written.len() + 1,
+                out.as_ref().unwrap().display()
+            ),
             Mode::Check => String::new(),
         },
-        match (&expect, s.differ.values().filter(|d| d.unplanned.is_some()).count()) {
-            (None, _) => "no testvm/test2/classes.json beside holt/: HoltTest2's cells aren't checked".to_string(),
-            (Some(x), 0) => format!("HoltTest2's {} sources and {} +bigger cells all have golden plans", x.sources.len(), x.bigger.len()),
-            (Some(x), k) => format!("{k} of HoltTest2's {} sources and {} +bigger cells have no golden plan", x.sources.len(), x.bigger.len()),
+        match (
+            &expect,
+            s.differ.values().filter(|d| d.unplanned.is_some()).count()
+        ) {
+            (None, _) =>
+                "no testvm/test2/classes.json beside holt/: HoltTest2's cells aren't checked"
+                    .to_string(),
+            (Some(x), 0) => format!(
+                "HoltTest2's {} sources and {} +bigger cells all have golden plans",
+                x.sources.len(),
+                x.bigger.len()
+            ),
+            (Some(x), k) => format!(
+                "{k} of HoltTest2's {} sources and {} +bigger cells have no golden plan",
+                x.sources.len(),
+                x.bigger.len()
+            ),
         }
     );
-    assert!(inv.is_empty(), "invariants broken (nothing of theirs blessed):\n{}", inv.join("\n"));
+    assert!(
+        inv.is_empty(),
+        "invariants broken (nothing of theirs blessed):\n{}",
+        inv.join("\n")
+    );
     if mode == Mode::Check {
         let d: Vec<String> = s.differ.iter().map(|(n, d)| differ_line(n, d)).collect();
-        assert!(d.is_empty(), "plans differ from the corpus's (BKO_HOLT_GOLDEN=report shows them, =bless takes them):\n{}", d.join("\n"));
+        assert!(
+            d.is_empty(),
+            "plans differ from the corpus's (BKO_HOLT_GOLDEN=report shows them, =bless takes them):\n{}",
+            d.join("\n")
+        );
     }
 }
 
@@ -702,8 +909,15 @@ fn synth() -> (Value, Planned) {
 
 /// P with its standard output's line FROM replaced by TO (FROM must be there).
 fn edit(p: &Planned, from: &str, to: &str) -> Planned {
-    assert!(p.out.contains(from), "{from:?} isn't in the plan:\n{}", p.out);
-    Planned { out: p.out.replacen(from, to, 1), ..p.clone() }
+    assert!(
+        p.out.contains(from),
+        "{from:?} isn't in the plan:\n{}",
+        p.out
+    );
+    Planned {
+        out: p.out.replacen(from, to, 1),
+        ..p.clone()
+    }
 }
 
 fn has(c: &Check, what: &str) -> bool {
@@ -716,7 +930,10 @@ fn golden_text_holds_what_status_looks_for() {
     let (_, p) = synth();
     let text = common::golden_text(&p);
     for what in ["status filesystem ", "status mount /"] {
-        assert!(text.contains(&format!("{} {what}", common::GOLDEN_MARK)), "no {what:?} in\n{text}");
+        assert!(
+            text.contains(&format!("{} {what}", common::GOLDEN_MARK)),
+            "no {what:?} in\n{text}"
+        );
     }
     let moved = text.replacen(" status mount /", " status mount /x", 1);
     assert_eq!(common::stages_changed(&text, &moved), ["trailer"]);
@@ -730,9 +947,27 @@ fn golden_invariants_hold_on_a_synthetic_plan() {
     assert!(c.violations.is_empty(), "{:?}\n{}", c.violations, p.out);
     // tmpfs, the noauto CD and swap are skipped, with their reasons.
     assert_eq!(c.skipped.len(), 3, "{:?}", c.skipped);
-    assert!(c.skipped.iter().any(|s| s.contains("/tmp") && s.contains("pseudo")), "{:?}", c.skipped);
-    assert!(c.skipped.iter().any(|s| s.contains("/media/cdrom0") && s.contains("noauto")), "{:?}", c.skipped);
-    assert!(c.skipped.iter().any(|s| s.starts_with("fstab none ") && s.ends_with(": swap")), "{:?}", c.skipped);
+    assert!(
+        c.skipped
+            .iter()
+            .any(|s| s.contains("/tmp") && s.contains("pseudo")),
+        "{:?}",
+        c.skipped
+    );
+    assert!(
+        c.skipped
+            .iter()
+            .any(|s| s.contains("/media/cdrom0") && s.contains("noauto")),
+        "{:?}",
+        c.skipped
+    );
+    assert!(
+        c.skipped
+            .iter()
+            .any(|s| s.starts_with("fstab none ") && s.ends_with(": swap")),
+        "{:?}",
+        c.skipped
+    );
     // The +bigger plan keeps them too, on targets 1 GiB bigger.
     let b = common::plan(SYNTH, BIGGER).unwrap();
     assert_eq!(b.maps[0].2, 17179869184 + BIGGER);
@@ -741,69 +976,171 @@ fn golden_invariants_hold_on_a_synthetic_plan() {
 
 #[test]
 fn golden_commands_of_a_line() {
-    assert_eq!(commands("mount -t ext4 -o defaults /dev/sdq3 /mnt/bko-target"), [["mount", "-t", "ext4", "-o", "defaults", "/dev/sdq3", "/mnt/bko-target"]]);
+    assert_eq!(
+        commands("mount -t ext4 -o defaults /dev/sdq3 /mnt/bko-target"),
+        [[
+            "mount",
+            "-t",
+            "ext4",
+            "-o",
+            "defaults",
+            "/dev/sdq3",
+            "/mnt/bko-target"
+        ]]
+    );
     let redox = "sh -c 'redoxfs /dev/sdq3 /mnt/bko-target >/run/bko-holt/redoxfs.log 2>&1 </dev/null; i=0; until mountpoint -q /mnt/bko-target; do i=$((i + 1)); [ $i -lt 60 ] || { cat /run/bko-holt/redoxfs.log; exit 1; }; sleep 1; done'";
     let c = commands(redox);
     assert_eq!(c[0], ["redoxfs", "/dev/sdq3", "/mnt/bko-target"]);
-    assert!(c.iter().any(|w| w == &["mountpoint", "-q", "/mnt/bko-target"]), "{c:?}");
-    assert_eq!(commands("sh -c 'x > /run/f; LC_ALL=C sort -z && if mount a b; then :; fi'"), vec![vec!["x"], vec!["sort", "-z"], vec!["mount", "a", "b"], vec![":"]]);
+    assert!(
+        c.iter()
+            .any(|w| w == &["mountpoint", "-q", "/mnt/bko-target"]),
+        "{c:?}"
+    );
+    assert_eq!(
+        commands("sh -c 'x > /run/f; LC_ALL=C sort -z && if mount a b; then :; fi'"),
+        vec![
+            vec!["x"],
+            vec!["sort", "-z"],
+            vec!["mount", "a", "b"],
+            vec![":"]
+        ]
+    );
     let wt = "sh -c 'bko-holt write-table layout.json ld0 /dev/rsdqd $(disklabel sdq | awk '\\''/^bytes.sector:/ { b = $2 } END { print b }'\\'')'";
-    assert_eq!(commands(wt)[0][..5], ["bko-holt", "write-table", "layout.json", "ld0", "/dev/rsdqd"]);
+    assert_eq!(
+        commands(wt)[0][..5],
+        [
+            "bko-holt",
+            "write-table",
+            "layout.json",
+            "ld0",
+            "/dev/rsdqd"
+        ]
+    );
 }
 
 #[test]
 fn golden_invariant_root_mounted() {
     let (v, p) = synth();
-    let line = p.out.lines().find(|l| l.starts_with("mount ") && l.ends_with(&format!(" {TARGET}"))).unwrap().to_string();
+    let line = p
+        .out
+        .lines()
+        .find(|l| l.starts_with("mount ") && l.ends_with(&format!(" {TARGET}")))
+        .unwrap()
+        .to_string();
     let bad = edit(&p, &format!("{line}\n"), "");
-    assert!(has(&invariants(&v, &bad), "/ mounted"), "{:?}", invariants(&v, &bad));
+    assert!(
+        has(&invariants(&v, &bad), "/ mounted"),
+        "{:?}",
+        invariants(&v, &bad)
+    );
     // Commands that name the target without mounting it, and a mount elsewhere.
-    for near in [format!("chmod 0755 {TARGET}"), format!("umount {TARGET}"), format!("mountpoint -q {TARGET}"), format!("{line}/srv"), format!("mount --make-private {TARGET} /srv")] {
+    for near in [
+        format!("chmod 0755 {TARGET}"),
+        format!("umount {TARGET}"),
+        format!("mountpoint -q {TARGET}"),
+        format!("{line}/srv"),
+        format!("mount --make-private {TARGET} /srv"),
+    ] {
         let bad = edit(&p, &format!("{line}\n"), &format!("{near}\n"));
-        assert!(has(&invariants(&v, &bad), "/ mounted"), "{near}: {:?}", invariants(&v, &bad));
+        assert!(
+            has(&invariants(&v, &bad), "/ mounted"),
+            "{near}: {:?}",
+            invariants(&v, &bad)
+        );
     }
     // ZFS: a / dataset mounted in a pool made under -R TARGET, and not without it.
     let zfs = |rooted: bool| {
         let out = format!(
             "# bko-holt load plan for layout.json\n\n# ---- assemble ----\nzpool create -f -d {}rpool /dev/sdq3\n\n# ---- mount ----\nzfs mount rpool/ROOT/debian\n\n# ---- restore ----\nrustic-bko --repository /srv/bko-repo restore latest {TARGET}\n\n# Nothing was written.\n",
-            if rooted { format!("-R {TARGET} ") } else { String::new() }
+            if rooted {
+                format!("-R {TARGET} ")
+            } else {
+                String::new()
+            }
         );
-        Planned { code: 0, out, err: String::new(), maps: vec![] }
+        Planned {
+            code: 0,
+            out,
+            err: String::new(),
+            maps: vec![],
+        }
     };
     let dump = json::parse(r#"{"storage": {"zfs": {"tools": {"datasets": [{"name": "rpool", "mountpoint": "/"}, {"name": "rpool/ROOT/debian", "mountpoint": "/"}]}}}}"#).unwrap();
     let sec = |p: &Planned| root_mounted(&dump, &Sections::of(&p.out));
     assert_eq!(sec(&zfs(true)), None);
     assert!(sec(&zfs(false)).is_some());
     // An echo of the pool's command makes no pool.
-    let echo = Planned { out: zfs(true).out.replace("zpool create -f", "echo zpool create -f"), ..zfs(true) };
+    let echo = Planned {
+        out: zfs(true)
+            .out
+            .replace("zpool create -f", "echo zpool create -f"),
+        ..zfs(true)
+    };
     assert!(sec(&echo).is_some());
     // illumos's legacy boot dataset, mounted with the system's mount.
-    let legacy = Planned { out: format!("# ---- mount ----\nmount -F zfs rpool/ROOT/omnios-r151058 {TARGET}\n"), ..zfs(false) };
+    let legacy = Planned {
+        out: format!("# ---- mount ----\nmount -F zfs rpool/ROOT/omnios-r151058 {TARGET}\n"),
+        ..zfs(false)
+    };
     assert_eq!(sec(&legacy), None);
     // Redox's redoxfs, in its sh -c; the wait for it alone isn't a mount.
-    let redox = Planned { out: format!("# ---- mount ----\nsh -c 'redoxfs /dev/sdq3 {TARGET} >/run/bko-holt/redoxfs.log 2>&1 </dev/null; until mountpoint -q {TARGET}; do sleep 1; done'\n"), ..zfs(false) };
+    let redox = Planned {
+        out: format!(
+            "# ---- mount ----\nsh -c 'redoxfs /dev/sdq3 {TARGET} >/run/bko-holt/redoxfs.log 2>&1 </dev/null; until mountpoint -q {TARGET}; do sleep 1; done'\n"
+        ),
+        ..zfs(false)
+    };
     assert_eq!(sec(&redox), None);
-    let wait = Planned { out: format!("# ---- mount ----\nsh -c 'until mountpoint -q {TARGET}; do sleep 1; done'\n"), ..zfs(false) };
+    let wait = Planned {
+        out: format!("# ---- mount ----\nsh -c 'until mountpoint -q {TARGET}; do sleep 1; done'\n"),
+        ..zfs(false)
+    };
     assert!(sec(&wait).is_some());
     // A mkdir of the target isn't a mount.
-    let mk = Planned { out: format!("# ---- mount ----\nmkdir -p {TARGET}\n"), ..zfs(false) };
+    let mk = Planned {
+        out: format!("# ---- mount ----\nmkdir -p {TARGET}\n"),
+        ..zfs(false)
+    };
     assert!(sec(&mk).is_some());
     // Ubuntu Core: no /, its four run-mode roots under run/mnt; three of
     // them aren't enough, and nor are the four without boot.snapcore.
     let uc = json::parse(r#"{"boot": {"snapcore": {"encrypted": false}}}"#).unwrap();
-    let four = |roots: &[&str]| Planned { out: format!("# ---- mount ----\n{}", roots.iter().map(|r| format!("mount -t ext4 -o defaults /dev/sdq3 {TARGET}/run/mnt/{r}\n")).collect::<String>()), ..zfs(false) };
+    let four = |roots: &[&str]| Planned {
+        out: format!(
+            "# ---- mount ----\n{}",
+            roots
+                .iter()
+                .map(|r| format!("mount -t ext4 -o defaults /dev/sdq3 {TARGET}/run/mnt/{r}\n"))
+                .collect::<String>()
+        ),
+        ..zfs(false)
+    };
     let all = four(&["data", "ubuntu-boot", "ubuntu-save", "ubuntu-seed"]);
-    assert_eq!(root_mounted_by(&uc, &Sections::of(&all.out)), Ok("snapcore"));
-    assert!(root_mounted(&uc, &Sections::of(&four(&["data", "ubuntu-boot", "ubuntu-seed"]).out)).is_some());
+    assert_eq!(
+        root_mounted_by(&uc, &Sections::of(&all.out)),
+        Ok("snapcore")
+    );
+    assert!(
+        root_mounted(
+            &uc,
+            &Sections::of(&four(&["data", "ubuntu-boot", "ubuntu-seed"]).out)
+        )
+        .is_some()
+    );
     assert!(root_mounted(&dump, &Sections::of(&all.out)).is_some());
 }
 
 /// P with NOTE added to its header's Notes.
 fn add_note(p: &Planned, note: &str) -> Planned {
     let out = if p.out.contains("# Notes:\n") {
-        p.out.replacen("# Notes:\n", &format!("# Notes:\n#   - {note}\n"), 1)
+        p.out
+            .replacen("# Notes:\n", &format!("# Notes:\n#   - {note}\n"), 1)
     } else {
-        p.out.replacen("\n# ---- ", &format!("#\n# Notes:\n#   - {note}\n\n# ---- "), 1)
+        p.out.replacen(
+            "\n# ---- ",
+            &format!("#\n# Notes:\n#   - {note}\n\n# ---- "),
+            1,
+        )
     };
     Planned { out, ..p.clone() }
 }
@@ -811,9 +1148,15 @@ fn add_note(p: &Planned, note: &str) -> Planned {
 /// DUMP with ENTRIES (JSON objects) added to its fstab.
 fn with_fstab(dump: &str, entries: &[&str]) -> Value {
     let mut d = json::parse(dump).unwrap();
-    let Value::Obj(kv) = &mut d else { unreachable!() };
-    let Some((_, Value::Obj(st))) = kv.iter_mut().find(|(k, _)| k == "storage") else { unreachable!() };
-    let Some((_, Value::Arr(f))) = st.iter_mut().find(|(k, _)| k == "fstab") else { unreachable!() };
+    let Value::Obj(kv) = &mut d else {
+        unreachable!()
+    };
+    let Some((_, Value::Obj(st))) = kv.iter_mut().find(|(k, _)| k == "storage") else {
+        unreachable!()
+    };
+    let Some((_, Value::Arr(f))) = st.iter_mut().find(|(k, _)| k == "fstab") else {
+        unreachable!()
+    };
     f.extend(entries.iter().map(|e| json::parse(e).unwrap()));
     d
 }
@@ -821,18 +1164,43 @@ fn with_fstab(dump: &str, entries: &[&str]) -> Value {
 #[test]
 fn golden_invariant_every_fstab_mount_planned() {
     let (v, p) = synth();
-    let line = p.out.lines().find(|l| l.starts_with("mount ") && l.ends_with(&format!(" {TARGET}/boot"))).unwrap().to_string();
+    let line = p
+        .out
+        .lines()
+        .find(|l| l.starts_with("mount ") && l.ends_with(&format!(" {TARGET}/boot")))
+        .unwrap()
+        .to_string();
     let bad = edit(&p, &format!("{line}\n"), "");
     let c = invariants(&v, &bad);
-    assert!(has(&c, "every fstab mount planned: fstab's /boot"), "{:?}", c);
+    assert!(
+        has(&c, "every fstab mount planned: fstab's /boot"),
+        "{:?}",
+        c
+    );
     // A command that names the mount point without mounting it there.
-    for near in [format!("chmod 0700 {TARGET}/boot"), format!("umount {TARGET}/boot"), format!("mount -t ext4 /dev/sdq1 {TARGET}/boot2")] {
+    for near in [
+        format!("chmod 0700 {TARGET}/boot"),
+        format!("umount {TARGET}/boot"),
+        format!("mount -t ext4 /dev/sdq1 {TARGET}/boot2"),
+    ] {
         let c = invariants(&v, &edit(&p, &format!("{line}\n"), &format!("{near}\n")));
-        assert!(has(&c, "every fstab mount planned: fstab's /boot"), "{near}: {:?}", c);
+        assert!(
+            has(&c, "every fstab mount planned: fstab's /boot"),
+            "{near}: {:?}",
+            c
+        );
     }
     // Named in a Note instead: planned.
-    let noted = add_note(&bad, "fstab's /boot (ext4) isn't on the layout's disks; not mounted");
-    assert!(!has(&invariants(&v, &noted), "every fstab mount planned"), "{:?}\n{}", invariants(&v, &noted), noted.out);
+    let noted = add_note(
+        &bad,
+        "fstab's /boot (ext4) isn't on the layout's disks; not mounted",
+    );
+    assert!(
+        !has(&invariants(&v, &noted), "every fstab mount planned"),
+        "{:?}\n{}",
+        invariants(&v, &noted),
+        noted.out
+    );
     // A noauto entry, a network one and a bind mount are skipped; an entry
     // on a dumped device that nothing mounts isn't.
     let d = with_fstab(
@@ -845,16 +1213,44 @@ fn golden_invariant_every_fstab_mount_planned() {
         ],
     );
     let c = invariants(&d, &p);
-    assert!(c.skipped.iter().any(|s| s.contains("/srv") && s.contains("noauto")), "{:?}", c.skipped);
-    assert!(c.skipped.iter().any(|s| s.contains("/nas") && s.contains("network")), "{:?}", c.skipped);
-    assert!(c.skipped.iter().any(|s| s.contains("/x ") && s.contains("bind")), "{:?}", c.skipped);
-    assert!(has(&c, "every fstab mount planned: fstab's /data"), "{:?}", c);
+    assert!(
+        c.skipped
+            .iter()
+            .any(|s| s.contains("/srv") && s.contains("noauto")),
+        "{:?}",
+        c.skipped
+    );
+    assert!(
+        c.skipped
+            .iter()
+            .any(|s| s.contains("/nas") && s.contains("network")),
+        "{:?}",
+        c.skipped
+    );
+    assert!(
+        c.skipped
+            .iter()
+            .any(|s| s.contains("/x ") && s.contains("bind")),
+        "{:?}",
+        c.skipped
+    );
+    assert!(
+        has(&c, "every fstab mount planned: fstab's /data"),
+        "{:?}",
+        c
+    );
     assert_eq!(unescape("/srv/my\\040disk"), "/srv/my disk");
     // Ubuntu Core's / is the base snap: skipped there, and only there.
     let root = r#"{"spec": "/dev/root", "file": "/", "type": "rootfs", "options": "defaults", "resolves_to": null}"#;
-    let uc = json::parse(&format!(r#"{{"boot": {{"snapcore": {{}}}}, "storage": {{"fstab": [{root}]}}}}"#)).unwrap();
+    let uc = json::parse(&format!(
+        r#"{{"boot": {{"snapcore": {{}}}}, "storage": {{"fstab": [{root}]}}}}"#
+    ))
+    .unwrap();
     let (bad, skipped, n) = fstab_planned_n(&uc, &Sections::of(""));
-    assert!(bad.is_empty() && n == 0 && skipped[0].contains("Ubuntu Core's /"), "{bad:?} {skipped:?}");
+    assert!(
+        bad.is_empty() && n == 0 && skipped[0].contains("Ubuntu Core's /"),
+        "{bad:?} {skipped:?}"
+    );
     let other = json::parse(&format!(r#"{{"storage": {{"fstab": [{root}]}}}}"#)).unwrap();
     assert_eq!(fstab_planned_n(&other, &Sections::of("")).0.len(), 1);
 }
@@ -862,23 +1258,60 @@ fn golden_invariant_every_fstab_mount_planned() {
 #[test]
 fn golden_invariant_archiver_found() {
     let (v, p) = synth();
-    let restore = p.out.lines().find(|l| l.contains("rustic-bko --repository")).unwrap().to_string();
+    let restore = p
+        .out
+        .lines()
+        .find(|l| l.contains("rustic-bko --repository"))
+        .unwrap()
+        .to_string();
     let bad = edit(&p, &format!("{restore}\n"), "");
-    assert!(has(&invariants(&v, &bad), "the archiver found: the restore stage runs no"));
+    assert!(has(
+        &invariants(&v, &bad),
+        "the archiver found: the restore stage runs no"
+    ));
     // rustic-bko run, but no restore into the target.
-    for near in ["rustic-bko --version".to_string(), "rustic-bko --repository /srv/bko-repo snapshots".to_string(), restore.replace(TARGET, "/tmp/elsewhere"), format!("echo {restore}")] {
+    for near in [
+        "rustic-bko --version".to_string(),
+        "rustic-bko --repository /srv/bko-repo snapshots".to_string(),
+        restore.replace(TARGET, "/tmp/elsewhere"),
+        format!("echo {restore}"),
+    ] {
         let bad = edit(&p, &format!("{restore}\n"), &format!("{near}\n"));
-        assert!(has(&invariants(&v, &bad), "the archiver found: the restore stage runs no"), "{near}: {:?}", invariants(&v, &bad));
+        assert!(
+            has(
+                &invariants(&v, &bad),
+                "the archiver found: the restore stage runs no"
+            ),
+            "{near}: {:?}",
+            invariants(&v, &bad)
+        );
     }
     // Load's wrapper of the restore (FreeBSD's msdosfs ESP): `sh -c '... "$@" ...' sh rustic-bko ...`.
-    let (env, argv) = restore.split_once(" rustic-bko ").map(|(e, a)| (e.to_string(), format!("rustic-bko {a}"))).unwrap();
+    let (env, argv) = restore
+        .split_once(" rustic-bko ")
+        .map(|(e, a)| (e.to_string(), format!("rustic-bko {a}")))
+        .unwrap();
     let wrap = |script: &str, argv: &str| format!("{env} sh -c '{script}' sh {argv}\n");
     let script = r#""$@" 2>/run/bko-holt/restore.err; s=$?; [ $s -eq 1 ] || exit $s; e=$(printf '\''\033'\''); echo '\''bko-holt: spared'\'' >&2"#;
     let wrapped = edit(&p, &format!("{restore}\n"), &wrap(script, &argv));
-    assert!(!has(&invariants(&v, &wrapped), "the archiver found"), "{:?}", invariants(&v, &wrapped));
-    for bad in [wrap(script, &argv.replace(TARGET, "/tmp/elsewhere")), wrap(&script.replace("\"$@\"", "true"), &argv)] {
+    assert!(
+        !has(&invariants(&v, &wrapped), "the archiver found"),
+        "{:?}",
+        invariants(&v, &wrapped)
+    );
+    for bad in [
+        wrap(script, &argv.replace(TARGET, "/tmp/elsewhere")),
+        wrap(&script.replace("\"$@\"", "true"), &argv),
+    ] {
         let bad = edit(&p, &format!("{restore}\n"), &bad);
-        assert!(has(&invariants(&v, &bad), "the archiver found: the restore stage runs no"), "{:?}", invariants(&v, &bad));
+        assert!(
+            has(
+                &invariants(&v, &bad),
+                "the archiver found: the restore stage runs no"
+            ),
+            "{:?}",
+            invariants(&v, &bad)
+        );
     }
     let problem = Planned {
         out: p.out.replacen("#\n# Disks:", "#\n# Problems (1): nothing can be written until they're fixed\n#   - rustic-bko isn't BackOtter's rustic (rustic 0.11.4); restore needs rustic-bko\n#\n# Disks:", 1),
@@ -886,7 +1319,10 @@ fn golden_invariant_archiver_found() {
         ..p.clone()
     };
     assert!(problem.out.contains("# Problems (1)"), "{}", problem.out);
-    assert!(has(&invariants(&v, &problem), "the archiver found: Problem"));
+    assert!(has(
+        &invariants(&v, &problem),
+        "the archiver found: Problem"
+    ));
 }
 
 #[test]
@@ -898,25 +1334,61 @@ fn golden_invariant_pool_disks_in_use() {
             "btrfs": [{"uuid": "bc000000-0000-4000-8000-000000000007", "devices": ["vda2", "vdb2"]}]}}"#,
     )
     .unwrap();
-    let maps = vec![("vda".to_string(), "sdq".to_string(), 1u64 << 34), ("vdb".to_string(), "sdr".to_string(), 1u64 << 34)];
+    let maps = vec![
+        ("vda".to_string(), "sdq".to_string(), 1u64 << 34),
+        ("vdb".to_string(), "sdr".to_string(), 1u64 << 34),
+    ];
     let plan = |md: &str, zp: &str, bt: &str| Planned {
         code: 0,
-        out: format!("# ---- assemble ----\nmdadm --create /dev/md/0 --uuid=bc000000:00004000:80000000:00000001 {md}\nzpool create -f -R {TARGET} rpool mirror {zp}\n\n# ---- format ----\nmkfs.btrfs -f -U bc000000-0000-4000-8000-000000000007 -d raid1 {bt}\n"),
+        out: format!(
+            "# ---- assemble ----\nmdadm --create /dev/md/0 --uuid=bc000000:00004000:80000000:00000001 {md}\nzpool create -f -R {TARGET} rpool mirror {zp}\n\n# ---- format ----\nmkfs.btrfs -f -U bc000000-0000-4000-8000-000000000007 -d raid1 {bt}\n"
+        ),
         err: String::new(),
         maps: maps.clone(),
     };
     let both = "/dev/sdq1 /dev/sdr1";
     let ok = plan(both, "/dev/sdq2 /dev/sdr2", "/dev/sdq2 /dev/sdr2");
-    assert!(pool_disks(&dump, &Sections::of(&ok.out), &ok).is_empty(), "{:?}", pool_disks(&dump, &Sections::of(&ok.out), &ok));
-    for (bad, what) in [(plan("/dev/sdq1", "/dev/sdq2 /dev/sdr2", "/dev/sdq2 /dev/sdr2"), "md array md0: member vdb1"), (plan(both, "/dev/sdq2", "/dev/sdq2 /dev/sdr2"), "ZFS pool rpool: member vdb2"), (plan(both, "/dev/sdq2 /dev/sdr2", "/dev/sdr2"), "btrfs bc000000-0000-4000-8000-000000000007: member vda2")] {
+    assert!(
+        pool_disks(&dump, &Sections::of(&ok.out), &ok).is_empty(),
+        "{:?}",
+        pool_disks(&dump, &Sections::of(&ok.out), &ok)
+    );
+    for (bad, what) in [
+        (
+            plan("/dev/sdq1", "/dev/sdq2 /dev/sdr2", "/dev/sdq2 /dev/sdr2"),
+            "md array md0: member vdb1",
+        ),
+        (
+            plan(both, "/dev/sdq2", "/dev/sdq2 /dev/sdr2"),
+            "ZFS pool rpool: member vdb2",
+        ),
+        (
+            plan(both, "/dev/sdq2 /dev/sdr2", "/dev/sdr2"),
+            "btrfs bc000000-0000-4000-8000-000000000007: member vda2",
+        ),
+    ] {
         let v = pool_disks(&dump, &Sections::of(&bad.out), &bad);
         assert!(v.iter().any(|x| x.contains(what)), "{what}: {v:?}");
     }
     // An array nothing makes, and a pool whose only "maker" names it without making it.
-    let none = Planned { out: "# ---- assemble ----\n# (nothing to do)\n".into(), ..ok.clone() };
-    assert!(pool_disks(&dump, &Sections::of(&none.out), &none).iter().any(|x| x.contains("md array md0: no command makes it")));
-    let echo = Planned { out: ok.out.replace("zpool create", "echo zpool create"), ..ok.clone() };
-    assert!(pool_disks(&dump, &Sections::of(&echo.out), &echo).iter().any(|x| x.contains("ZFS pool rpool: no command makes it")));
+    let none = Planned {
+        out: "# ---- assemble ----\n# (nothing to do)\n".into(),
+        ..ok.clone()
+    };
+    assert!(
+        pool_disks(&dump, &Sections::of(&none.out), &none)
+            .iter()
+            .any(|x| x.contains("md array md0: no command makes it"))
+    );
+    let echo = Planned {
+        out: ok.out.replace("zpool create", "echo zpool create"),
+        ..ok.clone()
+    };
+    assert!(
+        pool_disks(&dump, &Sections::of(&echo.out), &echo)
+            .iter()
+            .any(|x| x.contains("ZFS pool rpool: no command makes it"))
+    );
     // LVM: two volume groups on the disks.  vg0's PV on vdb is its own
     // pvcreate's to make; vg1's on vdb2 doesn't stand in for it.
     let lvm = json::parse(
@@ -926,18 +1398,47 @@ fn golden_invariant_pool_disks_in_use() {
               {"name": "vg1", "physical_volumes": [{"name": "pv0", "id": "bkoLVM-0000-0000-0000-0000-0000-000003", "device": "vdb2"}]}]}}}"#,
     )
     .unwrap();
-    let pv = |id: u8, vg: &str, dev: &str| format!("pvcreate --uuid bkoLVM-0000-0000-0000-0000-0000-00000{id} --restorefile /run/bko-holt/lvm/{vg}.vg {dev}\n");
-    let lplan = |pvs: &str| Planned { out: format!("# ---- assemble ----\nmkdir -p /run/bko-holt/lvm\n{pvs}vgcfgrestore --file /run/bko-holt/lvm/vg0.vg vg0\nvgcfgrestore --file /run/bko-holt/lvm/vg1.vg vg1\n"), ..ok.clone() };
-    let good = lplan(&(pv(1, "vg0", "/dev/sdq2") + &pv(2, "vg0", "/dev/sdr3") + &pv(3, "vg1", "/dev/sdr2")));
-    assert!(pool_disks(&lvm, &Sections::of(&good.out), &good).is_empty(), "{:?}", pool_disks(&lvm, &Sections::of(&good.out), &good));
+    let pv = |id: u8, vg: &str, dev: &str| {
+        format!(
+            "pvcreate --uuid bkoLVM-0000-0000-0000-0000-0000-00000{id} --restorefile /run/bko-holt/lvm/{vg}.vg {dev}\n"
+        )
+    };
+    let lplan = |pvs: &str| Planned {
+        out: format!(
+            "# ---- assemble ----\nmkdir -p /run/bko-holt/lvm\n{pvs}vgcfgrestore --file /run/bko-holt/lvm/vg0.vg vg0\nvgcfgrestore --file /run/bko-holt/lvm/vg1.vg vg1\n"
+        ),
+        ..ok.clone()
+    };
+    let good = lplan(
+        &(pv(1, "vg0", "/dev/sdq2") + &pv(2, "vg0", "/dev/sdr3") + &pv(3, "vg1", "/dev/sdr2")),
+    );
+    assert!(
+        pool_disks(&lvm, &Sections::of(&good.out), &good).is_empty(),
+        "{:?}",
+        pool_disks(&lvm, &Sections::of(&good.out), &good)
+    );
     let dropped = lplan(&(pv(1, "vg0", "/dev/sdq2") + &pv(3, "vg1", "/dev/sdr2")));
     let v = pool_disks(&lvm, &Sections::of(&dropped.out), &dropped);
-    assert!(v.iter().any(|x| x.contains("LVM volume group vg0: member vdb3")), "{v:?}");
+    assert!(
+        v.iter()
+            .any(|x| x.contains("LVM volume group vg0: member vdb3")),
+        "{v:?}"
+    );
     assert!(!v.iter().any(|x| x.contains("vg1")), "{v:?}");
-    let swapped = lplan(&(pv(1, "vg0", "/dev/sdq2") + &pv(2, "vg0", "/dev/sdq3") + &pv(3, "vg1", "/dev/sdr2")));
-    assert!(pool_disks(&lvm, &Sections::of(&swapped.out), &swapped).iter().any(|x| x.contains("vg0: member vdb3")));
+    let swapped = lplan(
+        &(pv(1, "vg0", "/dev/sdq2") + &pv(2, "vg0", "/dev/sdq3") + &pv(3, "vg1", "/dev/sdr2")),
+    );
+    assert!(
+        pool_disks(&lvm, &Sections::of(&swapped.out), &swapped)
+            .iter()
+            .any(|x| x.contains("vg0: member vdb3"))
+    );
     let nothing = lplan(&pv(3, "vg1", "/dev/sdr2"));
-    assert!(pool_disks(&lvm, &Sections::of(&nothing.out), &nothing).iter().any(|x| x.contains("LVM volume group vg0: no command makes it")));
+    assert!(
+        pool_disks(&lvm, &Sections::of(&nothing.out), &nothing)
+            .iter()
+            .any(|x| x.contains("LVM volume group vg0: no command makes it"))
+    );
 }
 
 #[test]
@@ -945,7 +1446,14 @@ fn golden_invariant_disk_ids_round_tripped() {
     let (v, p) = synth();
     // MBR: the label-id is the disk signature.
     let bad = edit(&p, "label-id: 0xbc000001", "label-id: 0xbc000002");
-    assert!(has(&invariants(&v, &bad), "disk IDs round-tripped: vda: label-id"), "{:?}", invariants(&v, &bad));
+    assert!(
+        has(
+            &invariants(&v, &bad),
+            "disk IDs round-tripped: vda: label-id"
+        ),
+        "{:?}",
+        invariants(&v, &bad)
+    );
     // GPT: the disk GUID and each partition's uuid.
     let gdump = json::parse(
         r#"{"storage": {"disks": [{"name": "vda", "partition_table": {"type": "gpt", "disk_guid": "BC000000-0000-4000-8000-000000000001"},
@@ -954,19 +1462,49 @@ fn golden_invariant_disk_ids_round_tripped() {
     .unwrap();
     let gplan = |ids: &str, u2: &str| Planned {
         code: 0,
-        out: format!("# ---- partition ----\nsfdisk --wipe always /dev/sdq <<'EOF'\nlabel: gpt\nlabel-id: {ids}\n\n/dev/sdq1 : start=2048, size=2048, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, uuid=BC000000-0000-4000-8000-000000000002\n/dev/sdq2 : start=4096, size=2048, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid={u2}\nEOF\n"),
+        out: format!(
+            "# ---- partition ----\nsfdisk --wipe always /dev/sdq <<'EOF'\nlabel: gpt\nlabel-id: {ids}\n\n/dev/sdq1 : start=2048, size=2048, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, uuid=BC000000-0000-4000-8000-000000000002\n/dev/sdq2 : start=4096, size=2048, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid={u2}\nEOF\n"
+        ),
         err: String::new(),
         maps: vec![("vda".to_string(), "sdq".to_string(), 1 << 30)],
     };
-    let ok = gplan("bc000000-0000-4000-8000-000000000001", "BC000000-0000-4000-8000-000000000003");
-    assert!(disk_ids(&gdump, &Sections::of(&ok.out), &ok).is_empty(), "{:?}", disk_ids(&gdump, &Sections::of(&ok.out), &ok));
-    let b1 = gplan("bc000000-0000-4000-8000-000000000009", "BC000000-0000-4000-8000-000000000003");
-    assert!(disk_ids(&gdump, &Sections::of(&b1.out), &b1).iter().any(|x| x.contains("label-id")));
-    let b2 = gplan("bc000000-0000-4000-8000-000000000001", "BC000000-0000-4000-8000-000000000008");
-    assert!(disk_ids(&gdump, &Sections::of(&b2.out), &b2).iter().any(|x| x.contains("partition 2")));
+    let ok = gplan(
+        "bc000000-0000-4000-8000-000000000001",
+        "BC000000-0000-4000-8000-000000000003",
+    );
+    assert!(
+        disk_ids(&gdump, &Sections::of(&ok.out), &ok).is_empty(),
+        "{:?}",
+        disk_ids(&gdump, &Sections::of(&ok.out), &ok)
+    );
+    let b1 = gplan(
+        "bc000000-0000-4000-8000-000000000009",
+        "BC000000-0000-4000-8000-000000000003",
+    );
+    assert!(
+        disk_ids(&gdump, &Sections::of(&b1.out), &b1)
+            .iter()
+            .any(|x| x.contains("label-id"))
+    );
+    let b2 = gplan(
+        "bc000000-0000-4000-8000-000000000001",
+        "BC000000-0000-4000-8000-000000000008",
+    );
+    assert!(
+        disk_ids(&gdump, &Sections::of(&b2.out), &b2)
+            .iter()
+            .any(|x| x.contains("partition 2"))
+    );
     // No table written at all.
-    let none = Planned { out: "# ---- partition ----\n# (nothing to do)\n".into(), ..ok.clone() };
-    assert!(disk_ids(&gdump, &Sections::of(&none.out), &none).iter().any(|x| x.contains("writes no table")));
+    let none = Planned {
+        out: "# ---- partition ----\n# (nothing to do)\n".into(),
+        ..ok.clone()
+    };
+    assert!(
+        disk_ids(&gdump, &Sections::of(&none.out), &none)
+            .iter()
+            .any(|x| x.contains("writes no table"))
+    );
 }
 
 /// A FreeBSD-style GPT disk VTBD0 of 1 GiB, with disk GUID and partition uuid.
@@ -982,39 +1520,87 @@ fn bsd_disk(guid: &str, part: &str) -> Value {
 #[test]
 fn golden_invariant_write_table_ids() {
     // The disk written by load::writetable and read back.
-    let good = bsd_disk("bc000000-0000-4000-8000-000000000001", "bc000000-0000-4000-8000-000000000002");
+    let good = bsd_disk(
+        "bc000000-0000-4000-8000-000000000001",
+        "bc000000-0000-4000-8000-000000000002",
+    );
     let w = bko_holt::load::writetable::plan(&good, 1 << 30).unwrap();
-    assert!(table_ids(&good, &w, 1 << 30).is_empty(), "{:?}", table_ids(&good, &w, 1 << 30));
+    assert!(
+        table_ids(&good, &w, 1 << 30).is_empty(),
+        "{:?}",
+        table_ids(&good, &w, 1 << 30)
+    );
     // Bytes that carry other IDs than the dump's.
-    let other = bsd_disk("bc000000-0000-4000-8000-000000000003", "bc000000-0000-4000-8000-000000000004");
+    let other = bsd_disk(
+        "bc000000-0000-4000-8000-000000000003",
+        "bc000000-0000-4000-8000-000000000004",
+    );
     let w2 = bko_holt::load::writetable::plan(&other, 1 << 30).unwrap();
     let v = table_ids(&good, &w2, 1 << 30);
-    assert!(v.iter().any(|x| x.contains("disk GUID")) && v.iter().any(|x| x.contains("partition 1")), "{v:?}");
+    assert!(
+        v.iter().any(|x| x.contains("disk GUID")) && v.iter().any(|x| x.contains("partition 1")),
+        "{v:?}"
+    );
     // Nothing written: nothing reads back.
-    assert!(table_ids(&good, &[], 1 << 30).iter().any(|x| x.contains("reads back as nothing")));
+    assert!(
+        table_ids(&good, &[], 1 << 30)
+            .iter()
+            .any(|x| x.contains("reads back as nothing"))
+    );
     // An MBR's signature.
     let mbr = json::parse(r#"{"name": "wd0", "size_bytes": 1073741824, "partition_table": {"type": "dos", "sector_size": 512, "disk_signature": "bc000001"},
         "partitions": [{"number": 1, "start_lba": 2048, "sectors": 4096, "type": "0xa9", "bootable": true}]}"#).unwrap();
     let w3 = bko_holt::load::writetable::plan(&mbr, 1 << 30).unwrap();
-    assert!(table_ids(&mbr, &w3, 1 << 30).is_empty(), "{:?}", table_ids(&mbr, &w3, 1 << 30));
-    let mbr2 = json::parse(&mbr.compact().replace("bc000001", "bc000002"))
-        .unwrap();
-    assert!(table_ids(&mbr2, &w3, 1 << 30).iter().any(|x| x.contains("signature")));
+    assert!(
+        table_ids(&mbr, &w3, 1 << 30).is_empty(),
+        "{:?}",
+        table_ids(&mbr, &w3, 1 << 30)
+    );
+    let mbr2 = json::parse(&mbr.compact().replace("bc000001", "bc000002")).unwrap();
+    assert!(
+        table_ids(&mbr2, &w3, 1 << 30)
+            .iter()
+            .any(|x| x.contains("signature"))
+    );
     // In a plan: write-table must write the disk's table onto its own target.
-    let dump = Value::Obj(vec![("storage".into(), Value::Obj(vec![("disks".into(), Value::Arr(vec![good.clone()]))]))]);
+    let dump = Value::Obj(vec![(
+        "storage".into(),
+        Value::Obj(vec![("disks".into(), Value::Arr(vec![good.clone()]))]),
+    )]);
     let wplan = |dev: &str| Planned {
         code: 0,
-        out: format!("# ---- partition ----\nsh -c 'bko-holt write-table layout.json vtbd0 {dev} $(diskinfo {dev} | awk '\\''{{ print $3 }}'\\'')'\n"),
+        out: format!(
+            "# ---- partition ----\nsh -c 'bko-holt write-table layout.json vtbd0 {dev} $(diskinfo {dev} | awk '\\''{{ print $3 }}'\\'')'\n"
+        ),
         err: String::new(),
-        maps: vec![("vtbd0".to_string(), "sdq".to_string(), 1 << 30), ("vtbd1".to_string(), "sdr".to_string(), 1 << 30)],
+        maps: vec![
+            ("vtbd0".to_string(), "sdq".to_string(), 1 << 30),
+            ("vtbd1".to_string(), "sdr".to_string(), 1 << 30),
+        ],
     };
     let ok = wplan("/dev/sdq");
-    assert_eq!(disk_ids_n(&dump, &Sections::of(&ok.out), &ok), (vec![], (0, 1)));
+    assert_eq!(
+        disk_ids_n(&dump, &Sections::of(&ok.out), &ok),
+        (vec![], (0, 1))
+    );
     let wrong = wplan("/dev/sdr");
-    assert!(disk_ids(&dump, &Sections::of(&wrong.out), &wrong).iter().any(|x| x.contains("write-table writes its table onto \"/dev/sdr\"")), "{:?}", disk_ids(&dump, &Sections::of(&wrong.out), &wrong));
+    assert!(
+        disk_ids(&dump, &Sections::of(&wrong.out), &wrong)
+            .iter()
+            .any(|x| x.contains("write-table writes its table onto \"/dev/sdr\"")),
+        "{:?}",
+        disk_ids(&dump, &Sections::of(&wrong.out), &wrong)
+    );
     // Another disk's write-table doesn't count for this one.
-    let others = Planned { out: ok.out.replace("vtbd0", "vtbd1"), ..ok.clone() };
-    assert!(disk_ids(&dump, &Sections::of(&others.out), &others).iter().any(|x| x.contains("writes no table")));
+    let others = Planned {
+        out: ok.out.replace("vtbd0", "vtbd1"),
+        ..ok.clone()
+    };
+    assert!(
+        disk_ids(&dump, &Sections::of(&others.out), &others)
+            .iter()
+            .any(|x| x.contains("writes no table"))
+    );
 }
 
 // ---- backup_sources against load's mounts ----
@@ -1032,7 +1618,8 @@ fn planned_mount_points(dump: &Value, p: &Planned) -> Vec<String> {
                 let last = c.last().map(String::as_str).unwrap_or("");
                 if last == TARGET {
                     out.push("/".to_string());
-                } else if let Some(rest) = last.strip_prefix(TARGET).filter(|r| r.starts_with('/')) {
+                } else if let Some(rest) = last.strip_prefix(TARGET).filter(|r| r.starts_with('/'))
+                {
                     out.push(rest.trim_end_matches('/').to_string());
                 }
             }
@@ -1057,10 +1644,24 @@ fn planned_mount_points(dump: &Value, p: &Planned) -> Vec<String> {
 /// older dumps don't); else the differences, empty when they agree.
 fn backup_sources_differences(dump: &Value, p: &Planned) -> Option<Vec<String>> {
     let src = dump.at(&["storage", "backup_sources"])?.as_array()?;
-    let mut paths: Vec<String> = src.iter().filter_map(|e| str_at(e, "path")).map(|s| if s == "/" { s.to_string() } else { s.trim_end_matches('/').to_string() }).collect();
+    let mut paths: Vec<String> = src
+        .iter()
+        .filter_map(|e| str_at(e, "path"))
+        .map(|s| {
+            if s == "/" {
+                s.to_string()
+            } else {
+                s.trim_end_matches('/').to_string()
+            }
+        })
+        .collect();
     let mut bad = Vec::new();
     if paths.len() != src.len() {
-        bad.push(format!("{} of {} backup_sources entries have no path", src.len() - paths.len(), src.len()));
+        bad.push(format!(
+            "{} of {} backup_sources entries have no path",
+            src.len() - paths.len(),
+            src.len()
+        ));
     }
     paths.sort();
     let n = paths.len();
@@ -1074,20 +1675,51 @@ fn backup_sources_differences(dump: &Value, p: &Planned) -> Option<Vec<String>> 
     // itself in the read-only root): reached through that source's mount,
     // where load makes it as a nested subvolume, so it needs none of its own.
     let nested = |x: &str| {
-        let me = src.iter().find(|e| str_at(e, "path").map(|s| s.trim_end_matches('/')) == Some(x));
-        let Some(sv) = me.filter(|e| str_at(e, "fstype") == Some("btrfs")).and_then(|e| str_at(e, "subvol")) else { return false };
+        let me = src
+            .iter()
+            .find(|e| str_at(e, "path").map(|s| s.trim_end_matches('/')) == Some(x));
+        let Some(sv) = me
+            .filter(|e| str_at(e, "fstype") == Some("btrfs"))
+            .and_then(|e| str_at(e, "subvol"))
+        else {
+            return false;
+        };
         src.iter().any(|o| {
-            let (Some(op), Some(osv)) = (str_at(o, "path"), str_at(o, "subvol")) else { return false };
-            let op = if op == "/" { "" } else { op.trim_end_matches('/') };
-            let rel = match x.strip_prefix(op) { Some(r) if r.starts_with('/') && planned.iter().any(|m| m == if op.is_empty() { "/" } else { op }) => r, _ => return false };
-            str_at(o, "fstype") == Some("btrfs") && str_at(o, "device") == me.and_then(|e| str_at(e, "device")) && sv == format!("{}{rel}", osv.trim_end_matches('/'))
+            let (Some(op), Some(osv)) = (str_at(o, "path"), str_at(o, "subvol")) else {
+                return false;
+            };
+            let op = if op == "/" {
+                ""
+            } else {
+                op.trim_end_matches('/')
+            };
+            let rel = match x.strip_prefix(op) {
+                Some(r)
+                    if r.starts_with('/')
+                        && planned
+                            .iter()
+                            .any(|m| m == if op.is_empty() { "/" } else { op }) =>
+                {
+                    r
+                }
+                _ => return false,
+            };
+            str_at(o, "fstype") == Some("btrfs")
+                && str_at(o, "device") == me.and_then(|e| str_at(e, "device"))
+                && sv == format!("{}{rel}", osv.trim_end_matches('/'))
         })
     };
     for x in paths.iter().filter(|x| !planned.contains(x) && !nested(x)) {
-        bad.push(format!("backup_sources' {x} is mounted at no {TARGET}{} by the mount stage", if x == "/" { "" } else { x }));
+        bad.push(format!(
+            "backup_sources' {x} is mounted at no {TARGET}{} by the mount stage",
+            if x == "/" { "" } else { x }
+        ));
     }
     for x in planned.iter().filter(|x| !paths.contains(x)) {
-        bad.push(format!("the mount stage mounts {TARGET}{}, which backup_sources doesn't name", if x == "/" { "" } else { x }));
+        bad.push(format!(
+            "the mount stage mounts {TARGET}{}, which backup_sources doesn't name",
+            if x == "/" { "" } else { x }
+        ));
     }
     Some(bad)
 }
@@ -1110,8 +1742,16 @@ fn golden_backup_sources_are_loads_mounts() {
             None => bad.push(format!("{}: storage.backup_sources isn't a list", e.name)),
         }
     }
-    println!("backup_sources: {} dumps carry it, all load's mount points: {}", checked.len(), checked.join(", "));
-    assert!(bad.is_empty(), "backup_sources and load's mount stage disagree:\n{}", bad.join("\n"));
+    println!(
+        "backup_sources: {} dumps carry it, all load's mount points: {}",
+        checked.len(),
+        checked.join(", ")
+    );
+    assert!(
+        bad.is_empty(),
+        "backup_sources and load's mount stage disagree:\n{}",
+        bad.join("\n")
+    );
 }
 
 #[test]
@@ -1121,31 +1761,85 @@ fn golden_backup_sources_check() {
     assert_eq!(backup_sources_differences(&v, &p), None);
     let with = |paths: &[&str]| {
         let list = paths.iter().map(|x| format!(r#"{{"path": "{x}", "from": "{x}", "device": "vda3", "fstype": "ext4", "source": "/dev/vda3", "subvol": null}}"#)).collect::<Vec<_>>().join(", ");
-        json::parse(&SYNTH.replacen(r#""crypttab": null,"#, &format!(r#""backup_sources": [{list}], "crypttab": null,"#), 1)).unwrap()
+        json::parse(&SYNTH.replacen(
+            r#""crypttab": null,"#,
+            &format!(r#""backup_sources": [{list}], "crypttab": null,"#),
+            1,
+        ))
+        .unwrap()
     };
     assert_eq!(planned_mount_points(&v, &p), ["/", "/boot"], "{}", p.out);
-    assert_eq!(backup_sources_differences(&with(&["/", "/boot"]), &p), Some(vec![]));
-    assert_eq!(backup_sources_differences(&with(&["/boot/", "/"]), &p), Some(vec![]));
+    assert_eq!(
+        backup_sources_differences(&with(&["/", "/boot"]), &p),
+        Some(vec![])
+    );
+    assert_eq!(
+        backup_sources_differences(&with(&["/boot/", "/"]), &p),
+        Some(vec![])
+    );
     let d = backup_sources_differences(&with(&["/"]), &p).unwrap();
-    assert_eq!(d, [format!("the mount stage mounts {TARGET}/boot, which backup_sources doesn't name")]);
+    assert_eq!(
+        d,
+        [format!(
+            "the mount stage mounts {TARGET}/boot, which backup_sources doesn't name"
+        )]
+    );
     let d = backup_sources_differences(&with(&["/", "/boot", "/home"]), &p).unwrap();
-    assert_eq!(d, [format!("backup_sources' /home is mounted at no {TARGET}/home by the mount stage")]);
+    assert_eq!(
+        d,
+        [format!(
+            "backup_sources' /home is mounted at no {TARGET}/home by the mount stage"
+        )]
+    );
     let d = backup_sources_differences(&with(&["/", "/boot", "/boot"]), &p).unwrap();
     assert_eq!(d, ["backup_sources names a path twice"]);
     // The plan without its root mount: / is named and not mounted.
-    let line = p.out.lines().find(|l| l.starts_with("mount ") && l.ends_with(&format!(" {TARGET}"))).unwrap().to_string();
-    let d = backup_sources_differences(&with(&["/", "/boot"]), &edit(&p, &format!("{line}\n"), "")).unwrap();
-    assert_eq!(d, [format!("backup_sources' / is mounted at no {TARGET} by the mount stage")]);
+    let line = p
+        .out
+        .lines()
+        .find(|l| l.starts_with("mount ") && l.ends_with(&format!(" {TARGET}")))
+        .unwrap()
+        .to_string();
+    let d = backup_sources_differences(&with(&["/", "/boot"]), &edit(&p, &format!("{line}\n"), ""))
+        .unwrap();
+    assert_eq!(
+        d,
+        [format!(
+            "backup_sources' / is mounted at no {TARGET} by the mount stage"
+        )]
+    );
     // A zfs mount counts by its dataset's mountpoint.
     let dump = json::parse(r#"{"storage": {"zfs": {"tools": {"datasets": [{"name": "rpool/ROOT/debian", "mountpoint": "/"}, {"name": "rpool/home", "mountpoint": "/home"}]}}, "backup_sources": [{"path": "/"}, {"path": "/home"}]}}"#).unwrap();
-    let z = Planned { code: 0, out: "# ---- mount ----\nzfs mount rpool/ROOT/debian\nzfs mount rpool/home\n".to_string(), err: String::new(), maps: vec![] };
+    let z = Planned {
+        code: 0,
+        out: "# ---- mount ----\nzfs mount rpool/ROOT/debian\nzfs mount rpool/home\n".to_string(),
+        err: String::new(),
+        maps: vec![],
+    };
     assert_eq!(backup_sources_differences(&dump, &z), Some(vec![]));
     // A btrfs subvolume nested in /'s at the same path (microos's /etc) needs
     // no mount of its own; one elsewhere (@/etc) does.
-    let tu = |etc: &str| json::parse(&format!(r#"{{"storage": {{"backup_sources": [{{"path": "/", "device": "vda3", "fstype": "btrfs", "subvol": "/@/.snapshots/3/snapshot"}}, {{"path": "/etc", "device": "vda3", "fstype": "btrfs", "subvol": "{etc}"}}]}}}}"#)).unwrap();
-    let m = Planned { code: 0, out: format!("# ---- mount ----\nmount -o subvol=@/.snapshots/3/snapshot /dev/sdq3 {TARGET}\n"), err: String::new(), maps: vec![] };
-    assert_eq!(backup_sources_differences(&tu("/@/.snapshots/3/snapshot/etc"), &m), Some(vec![]));
-    assert_eq!(backup_sources_differences(&tu("/@/etc"), &m), Some(vec![format!("backup_sources' /etc is mounted at no {TARGET}/etc by the mount stage")]));
+    let tu = |etc: &str| {
+        json::parse(&format!(r#"{{"storage": {{"backup_sources": [{{"path": "/", "device": "vda3", "fstype": "btrfs", "subvol": "/@/.snapshots/3/snapshot"}}, {{"path": "/etc", "device": "vda3", "fstype": "btrfs", "subvol": "{etc}"}}]}}}}"#)).unwrap()
+    };
+    let m = Planned {
+        code: 0,
+        out: format!(
+            "# ---- mount ----\nmount -o subvol=@/.snapshots/3/snapshot /dev/sdq3 {TARGET}\n"
+        ),
+        err: String::new(),
+        maps: vec![],
+    };
+    assert_eq!(
+        backup_sources_differences(&tu("/@/.snapshots/3/snapshot/etc"), &m),
+        Some(vec![])
+    );
+    assert_eq!(
+        backup_sources_differences(&tu("/@/etc"), &m),
+        Some(vec![format!(
+            "backup_sources' /etc is mounted at no {TARGET}/etc by the mount stage"
+        )])
+    );
 }
 
 #[test]
@@ -1154,18 +1848,43 @@ fn golden_sections_and_stages() {
     let names: Vec<String> = common::sections(old).into_iter().map(|(n, _)| n).collect();
     assert_eq!(names, ["header", "partition", "format", "close", "trailer"]);
     assert_eq!(common::stages_changed(old, old), Vec::<String>::new());
-    assert_eq!(common::stages_changed(old, &old.replace("mkfs.ext4", "mkfs.xfs")), ["format"]);
-    assert_eq!(common::stages_changed(old, &old.replace("exit 0", "exit 4")), ["trailer"]);
-    assert_eq!(common::stages_changed(old, &old.replace("# Source: x", "# Source: y")), ["header"]);
-    let added = old.replace("\n\n# ---- format", "\n\n# ---- assemble ----\nmdadm --create /dev/md/0\n\n# ---- format");
+    assert_eq!(
+        common::stages_changed(old, &old.replace("mkfs.ext4", "mkfs.xfs")),
+        ["format"]
+    );
+    assert_eq!(
+        common::stages_changed(old, &old.replace("exit 0", "exit 4")),
+        ["trailer"]
+    );
+    assert_eq!(
+        common::stages_changed(old, &old.replace("# Source: x", "# Source: y")),
+        ["header"]
+    );
+    let added = old.replace(
+        "\n\n# ---- format",
+        "\n\n# ---- assemble ----\nmdadm --create /dev/md/0\n\n# ---- format",
+    );
     assert_eq!(common::stages_changed(old, &added), ["assemble"]);
-    assert_eq!(common::lines_changed(old, &old.replace("mkfs.ext4", "mkfs.xfs")), 2);
+    assert_eq!(
+        common::lines_changed(old, &old.replace("mkfs.ext4", "mkfs.xfs")),
+        2
+    );
     assert_eq!(common::lines_changed(old, &added), 3);
     assert_eq!(common::lines_changed("", "a\nb\n"), 2);
     // No stages at all (load refused the layout): the golden lines are the trailer.
-    let refused = "# golden_plans.rs: exit 3; stderr:\n#   bko-holt load: layout.json: not a bko-holt dump\n";
-    assert_eq!(common::sections(refused).into_iter().map(|(n, _)| n).collect::<Vec<_>>(), ["header", "trailer"]);
-    assert!(common::stage_header("# ---- mount ----") == Some("mount") && common::stage_header("# ---- a b ----").is_none());
+    let refused =
+        "# golden_plans.rs: exit 3; stderr:\n#   bko-holt load: layout.json: not a bko-holt dump\n";
+    assert_eq!(
+        common::sections(refused)
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect::<Vec<_>>(),
+        ["header", "trailer"]
+    );
+    assert!(
+        common::stage_header("# ---- mount ----") == Some("mount")
+            && common::stage_header("# ---- a b ----").is_none()
+    );
 }
 
 #[test]
@@ -1179,49 +1898,108 @@ fn golden_modes() {
     // check: no plan kept yet fails as a difference.
     let s = run_golden(&corpus, Mode::Check, None, None).unwrap();
     assert_eq!((s.dumps, s.plans), (1, 2));
-    assert!(s.differ.get("synth").is_some_and(|d| d.new) && s.differ.get("synth+bigger").is_some_and(|d| d.new), "{:?}", s.differ);
+    assert!(
+        s.differ.get("synth").is_some_and(|d| d.new)
+            && s.differ.get("synth+bigger").is_some_and(|d| d.new),
+        "{:?}",
+        s.differ
+    );
     // bless writes both, then check passes.
     let s = run_golden(&corpus, Mode::Bless, None, None).unwrap();
     assert_eq!(s.written, ["synth", "synth+bigger"]);
     let plan = std::fs::read_to_string(corpus.join("synth").join("plan.txt")).unwrap();
     let bigger = std::fs::read_to_string(corpus.join("synth").join("plan+bigger.txt")).unwrap();
-    assert!(plan.contains("#   vda (16 GiB) -> /dev/sdq") && bigger.contains("#   vda (16 GiB) -> /dev/sdq") && plan.ends_with("# golden_plans.rs: exit 0, nothing on stderr\n"), "{plan}");
+    assert!(
+        plan.contains("#   vda (16 GiB) -> /dev/sdq")
+            && bigger.contains("#   vda (16 GiB) -> /dev/sdq")
+            && plan.ends_with("# golden_plans.rs: exit 0, nothing on stderr\n"),
+        "{plan}"
+    );
     assert!(!corpus.join("synth").join(".plan.txt.part").exists());
     let s = run_golden(&corpus, Mode::Check, None, None).unwrap();
-    assert!(s.differ.is_empty() && s.invariants.is_empty(), "{:?} {:?}", s.differ, s.invariants);
+    assert!(
+        s.differ.is_empty() && s.invariants.is_empty(),
+        "{:?} {:?}",
+        s.differ,
+        s.invariants
+    );
     // A kept plan that differs: check names it, report writes it and diff.json.
     let changed = plan.replacen("mount -t ext4", "mount -t ext3", 1);
     std::fs::write(corpus.join("synth").join("plan.txt"), &changed).unwrap();
     let s = run_golden(&corpus, Mode::Check, None, None).unwrap();
-    assert_eq!(s.differ.get("synth").map(|d| d.stages.clone()), Some(vec!["mount".to_string()]));
-    assert!(run_golden(&corpus, Mode::Report, None, None).is_err(), "report without BKO_HOLT_PLANS_OUT");
+    assert_eq!(
+        s.differ.get("synth").map(|d| d.stages.clone()),
+        Some(vec!["mount".to_string()])
+    );
+    assert!(
+        run_golden(&corpus, Mode::Report, None, None).is_err(),
+        "report without BKO_HOLT_PLANS_OUT"
+    );
     let s = run_golden(&corpus, Mode::Report, Some(&out), None).unwrap();
     assert_eq!(s.written, ["synth"]);
-    assert_eq!(std::fs::read_to_string(out.join("synth.plan")).unwrap(), plan);
+    assert_eq!(
+        std::fs::read_to_string(out.join("synth.plan")).unwrap(),
+        plan
+    );
     let d = json::parse(&std::fs::read_to_string(out.join("diff.json")).unwrap()).unwrap();
     assert_eq!(d.get("v").and_then(Value::as_u64), Some(1));
     assert_eq!(d.get("corpus").and_then(Value::as_u64), Some(1));
-    assert_eq!(d.at(&["differ", "synth", "stages", "0"]).and_then(Value::as_str), Some("mount"));
-    assert_eq!(d.at(&["differ", "synth", "lines_changed"]).and_then(Value::as_u64), Some(2));
+    assert_eq!(
+        d.at(&["differ", "synth", "stages", "0"])
+            .and_then(Value::as_str),
+        Some("mount")
+    );
+    assert_eq!(
+        d.at(&["differ", "synth", "lines_changed"])
+            .and_then(Value::as_u64),
+        Some(2)
+    );
     assert!(d.at(&["differ", "synth+bigger"]).is_none());
     assert!(d.at(&["invariants_skipped", "synth", "0"]).is_some());
-    assert_eq!(d.get("planned").map(|p| p.compact()), Some(r#"["synth","synth+bigger"]"#.to_string()));
+    assert_eq!(
+        d.get("planned").map(|p| p.compact()),
+        Some(r#"["synth","synth+bigger"]"#.to_string())
+    );
     assert!(d.get("sources").is_some_and(Value::is_null));
     // bless takes it back; a plan that breaks an invariant isn't blessed.
     run_golden(&corpus, Mode::Bless, None, None).unwrap();
-    assert_eq!(std::fs::read_to_string(corpus.join("synth").join("plan.txt")).unwrap(), plan);
-    let no_root = SYNTH.replace(r#""file": "/", "type": "ext4""#, r#""file": "/srv", "type": "ext4""#);
+    assert_eq!(
+        std::fs::read_to_string(corpus.join("synth").join("plan.txt")).unwrap(),
+        plan
+    );
+    let no_root = SYNTH.replace(
+        r#""file": "/", "type": "ext4""#,
+        r#""file": "/srv", "type": "ext4""#,
+    );
     std::fs::write(corpus.join("synth").join("src.json"), &no_root).unwrap();
     let s = run_golden(&corpus, Mode::Bless, None, None).unwrap();
-    assert!(s.invariants.get("synth").is_some_and(|v| v.iter().any(|x| x.starts_with("/ mounted"))), "{:?}", s.invariants);
+    assert!(
+        s.invariants
+            .get("synth")
+            .is_some_and(|v| v.iter().any(|x| x.starts_with("/ mounted"))),
+        "{:?}",
+        s.invariants
+    );
     assert!(s.written.is_empty(), "{:?}", s.written);
-    assert_eq!(std::fs::read_to_string(corpus.join("synth").join("plan.txt")).unwrap(), plan, "not blessed");
+    assert_eq!(
+        std::fs::read_to_string(corpus.join("synth").join("plan.txt")).unwrap(),
+        plan,
+        "not blessed"
+    );
     std::fs::write(corpus.join("synth").join("src.json"), SYNTH).unwrap();
     // A variant of a guest the corpus doesn't have, or one with no golden plan.
     std::fs::write(corpus.join("variants.txt"), "synth+bigger\nnosuch+bigger\n").unwrap();
-    assert!(run_golden(&corpus, Mode::Check, None, None).unwrap_err().contains("no nosuch/src.json"));
+    assert!(
+        run_golden(&corpus, Mode::Check, None, None)
+            .unwrap_err()
+            .contains("no nosuch/src.json")
+    );
     std::fs::write(corpus.join("variants.txt"), "synth+bigger\nsynth+oneshot\n").unwrap();
-    assert!(run_golden(&corpus, Mode::Check, None, None).unwrap_err().contains("only +bigger"));
+    assert!(
+        run_golden(&corpus, Mode::Check, None, None)
+            .unwrap_err()
+            .contains("only +bigger")
+    );
     std::fs::write(corpus.join("variants.txt"), "synth+bigger\n").unwrap();
 }
 
@@ -1235,44 +2013,111 @@ fn golden_corpus_holds_together() {
     std::fs::write(g.join("src.json"), SYNTH).unwrap();
     std::fs::write(corpus.join("variants.txt"), "synth+bigger\n").unwrap();
     run_golden(&corpus, Mode::Bless, None, None).unwrap();
-    assert!(run_golden(&corpus, Mode::Check, None, None).unwrap().differ.is_empty());
+    assert!(
+        run_golden(&corpus, Mode::Check, None, None)
+            .unwrap()
+            .differ
+            .is_empty()
+    );
     let err = |c: &Path| run_golden(c, Mode::Report, Some(&out), None).unwrap_err();
     // A plan kept without its dump fails, in report mode too.
     std::fs::create_dir_all(corpus.join("gone")).unwrap();
     std::fs::write(corpus.join("gone").join("plan.txt"), "x\n").unwrap();
-    assert!(err(&corpus).contains("gone/: no src.json beside its plan.txt"), "{}", err(&corpus));
-    assert!(!out.join("diff.json").exists(), "no diff.json for a corpus that doesn't hold together");
+    assert!(
+        err(&corpus).contains("gone/: no src.json beside its plan.txt"),
+        "{}",
+        err(&corpus)
+    );
+    assert!(
+        !out.join("diff.json").exists(),
+        "no diff.json for a corpus that doesn't hold together"
+    );
     std::fs::remove_dir_all(corpus.join("gone")).unwrap();
     // A variant plan that variants.txt doesn't list, or with no variants.txt.
     std::fs::write(g.join("plan+huge.txt"), "x\n").unwrap();
-    assert!(err(&corpus).contains("synth/plan+huge.txt: variants.txt doesn't list synth+huge"), "{}", err(&corpus));
+    assert!(
+        err(&corpus).contains("synth/plan+huge.txt: variants.txt doesn't list synth+huge"),
+        "{}",
+        err(&corpus)
+    );
     std::fs::remove_file(g.join("plan+huge.txt")).unwrap();
     std::fs::remove_file(corpus.join("variants.txt")).unwrap();
-    assert!(err(&corpus).contains("no variants.txt, but variant plans are kept: synth+bigger"), "{}", err(&corpus));
+    assert!(
+        err(&corpus).contains("no variants.txt, but variant plans are kept: synth+bigger"),
+        "{}",
+        err(&corpus)
+    );
     std::fs::write(g.join("plan-old.txt"), "x\n").unwrap();
-    assert!(err(&corpus).contains("synth/plan-old.txt: neither plan.txt nor plan+VARIANT.txt"), "{}", err(&corpus));
+    assert!(
+        err(&corpus).contains("synth/plan-old.txt: neither plan.txt nor plan+VARIANT.txt"),
+        "{}",
+        err(&corpus)
+    );
     std::fs::remove_file(g.join("plan-old.txt")).unwrap();
     std::fs::write(corpus.join("variants.txt"), "synth+bigger\n").unwrap();
     // HoltTest2's cells: a source without a dump and a +bigger cell without
     // a golden plan are differences, unplanned, in diff.json too.
-    let x = Expected { sources: vec!["other".into(), "synth".into()], bigger: vec!["other".into(), "synth".into()] };
+    let x = Expected {
+        sources: vec!["other".into(), "synth".into()],
+        bigger: vec!["other".into(), "synth".into()],
+    };
     let s = run_golden(&corpus, Mode::Check, None, Some(&x)).unwrap();
-    assert_eq!(s.differ.keys().cloned().collect::<Vec<_>>(), ["other", "other+bigger"]);
-    assert_eq!(s.differ["other"].unplanned.as_deref(), Some("no corpus dump"));
-    assert_eq!(differ_line("other", &s.differ["other"]), "other: no golden plan (no corpus dump), but HoltTest2 has the cell");
+    assert_eq!(
+        s.differ.keys().cloned().collect::<Vec<_>>(),
+        ["other", "other+bigger"]
+    );
+    assert_eq!(
+        s.differ["other"].unplanned.as_deref(),
+        Some("no corpus dump")
+    );
+    assert_eq!(
+        differ_line("other", &s.differ["other"]),
+        "other: no golden plan (no corpus dump), but HoltTest2 has the cell"
+    );
     let s = run_golden(&corpus, Mode::Report, Some(&out), Some(&x)).unwrap();
     assert!(s.written.is_empty());
     let d = json::parse(&std::fs::read_to_string(out.join("diff.json")).unwrap()).unwrap();
-    assert_eq!(d.at(&["differ", "other", "unplanned"]).and_then(Value::as_str), Some("no corpus dump"));
-    assert_eq!(d.at(&["differ", "other", "stages"]).and_then(Value::as_array).map(Vec::len), Some(0));
-    assert_eq!(d.at(&["differ", "other+bigger", "unplanned"]).and_then(Value::as_str), Some("no corpus dump"));
+    assert_eq!(
+        d.at(&["differ", "other", "unplanned"])
+            .and_then(Value::as_str),
+        Some("no corpus dump")
+    );
+    assert_eq!(
+        d.at(&["differ", "other", "stages"])
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+    assert_eq!(
+        d.at(&["differ", "other+bigger", "unplanned"])
+            .and_then(Value::as_str),
+        Some("no corpus dump")
+    );
     assert_eq!(d.get("sources").and_then(Value::as_u64), Some(2));
-    assert_eq!(d.get("planned").map(|p| p.compact()), Some(r#"["synth","synth+bigger"]"#.to_string()));
+    assert_eq!(
+        d.get("planned").map(|p| p.compact()),
+        Some(r#"["synth","synth+bigger"]"#.to_string())
+    );
     // A guest's dump without its +bigger plan listed: "not in variants.txt".
     std::fs::write(corpus.join("variants.txt"), "").unwrap();
     std::fs::remove_file(g.join("plan+bigger.txt")).unwrap();
-    let s = run_golden(&corpus, Mode::Check, None, Some(&Expected { sources: vec!["synth".into()], bigger: vec!["synth".into()] })).unwrap();
-    assert_eq!(s.differ.get("synth+bigger").and_then(|d| d.unplanned.clone()).as_deref(), Some("not in variants.txt"));
+    let s = run_golden(
+        &corpus,
+        Mode::Check,
+        None,
+        Some(&Expected {
+            sources: vec!["synth".into()],
+            bigger: vec!["synth".into()],
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        s.differ
+            .get("synth+bigger")
+            .and_then(|d| d.unplanned.clone())
+            .as_deref(),
+        Some("not in variants.txt")
+    );
     // A guest whose raw dump failed check_plan (index.tsv): listed in
     // diff.json's differ as unverified, plan unchanged; check mode passes.
     std::fs::write(corpus.join("index.tsv"), "guest\thost\tcheck_plan_raw\nsynth\tchopin\tFAIL:the-plan-of-the-redacted-dump-differs\nother\tchopin\tok:3:40\n").unwrap();
@@ -1280,31 +2125,72 @@ fn golden_corpus_holds_together() {
     run_golden(&corpus, Mode::Bless, None, None).unwrap();
     let s = run_golden(&corpus, Mode::Check, None, None).unwrap();
     assert!(s.differ.is_empty(), "{:?}", s.differ);
-    assert_eq!(s.unverified.keys().cloned().collect::<Vec<_>>(), ["synth", "synth+bigger"]);
+    assert_eq!(
+        s.unverified.keys().cloned().collect::<Vec<_>>(),
+        ["synth", "synth+bigger"]
+    );
     run_golden(&corpus, Mode::Report, Some(&out), None).unwrap();
     let d = json::parse(&std::fs::read_to_string(out.join("diff.json")).unwrap()).unwrap();
-    assert_eq!(d.at(&["differ", "synth", "unverified"]).and_then(Value::as_str), Some("FAIL:the-plan-of-the-redacted-dump-differs"));
-    assert_eq!(d.at(&["differ", "synth+bigger", "lines_changed"]).and_then(Value::as_u64), Some(0));
+    assert_eq!(
+        d.at(&["differ", "synth", "unverified"])
+            .and_then(Value::as_str),
+        Some("FAIL:the-plan-of-the-redacted-dump-differs")
+    );
+    assert_eq!(
+        d.at(&["differ", "synth+bigger", "lines_changed"])
+            .and_then(Value::as_u64),
+        Some(0)
+    );
     assert!(d.at(&["differ", "other"]).is_none());
     std::fs::write(corpus.join("index.tsv"), "guest\thost\n").unwrap();
-    assert!(run_golden(&corpus, Mode::Check, None, None).unwrap_err().contains("no guest or check_plan_raw column"));
+    assert!(
+        run_golden(&corpus, Mode::Check, None, None)
+            .unwrap_err()
+            .contains("no guest or check_plan_raw column")
+    );
     std::fs::remove_file(corpus.join("index.tsv")).unwrap();
     // The corpus's own extras are only noted.
     let s = run_golden(&corpus, Mode::Check, None, Some(&Expected::default())).unwrap();
-    assert!(s.differ.is_empty() && s.log.iter().any(|l| l.starts_with("note  synth: in the corpus, but not")), "{:?}", s.log);
+    assert!(
+        s.differ.is_empty()
+            && s.log
+                .iter()
+                .any(|l| l.starts_with("note  synth: in the corpus, but not")),
+        "{:?}",
+        s.log
+    );
     // classes.json: its holt section, or None without one.
     std::fs::write(dir.path().join("classes.json"), r#"{"holt": {"families": {"D": ["b", "a"], "M": ["c"]}, "no_family": ["d"], "variants": {"bigger": ["c", "a"], "oneshot": ["b"]}}}"#).unwrap();
-    assert_eq!(expected_from(&dir.path().join("classes.json")).unwrap(), Some(Expected { sources: vec!["a".into(), "b".into(), "c".into(), "d".into()], bigger: vec!["a".into(), "c".into()] }));
+    assert_eq!(
+        expected_from(&dir.path().join("classes.json")).unwrap(),
+        Some(Expected {
+            sources: vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            bigger: vec!["a".into(), "c".into()]
+        })
+    );
     assert_eq!(expected_from(&dir.path().join("none.json")).unwrap(), None);
     std::fs::write(dir.path().join("bad.json"), r#"{"holt": {}}"#).unwrap();
-    assert!(expected_from(&dir.path().join("bad.json")).unwrap_err().contains("no holt.families"));
+    assert!(
+        expected_from(&dir.path().join("bad.json"))
+            .unwrap_err()
+            .contains("no holt.families")
+    );
 }
 
 /// common::sha256_hex (the kept LUKS2 headers' test files): FIPS 180-4's
 /// vectors, and one of two blocks.
 #[test]
 fn golden_sha256_vectors() {
-    assert_eq!(common::sha256_hex(b""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-    assert_eq!(common::sha256_hex(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
-    assert_eq!(common::sha256_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"), "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+    assert_eq!(
+        common::sha256_hex(b""),
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    );
+    assert_eq!(
+        common::sha256_hex(b"abc"),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+    assert_eq!(
+        common::sha256_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+        "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+    );
 }

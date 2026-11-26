@@ -39,11 +39,19 @@ pub struct BeMount {
 
 impl Builder<'_> {
     fn zfs_tools(&self) -> Value {
-        self.layout.v.at(&["storage", "zfs", "tools"]).cloned().unwrap_or(Value::Null)
+        self.layout
+            .v
+            .at(&["storage", "zfs", "tools"])
+            .cloned()
+            .unwrap_or(Value::Null)
     }
 
     fn dataset_mountpoint(&self, ds: &str) -> Option<String> {
-        self.layout.arr(&["storage", "zfs", "tools", "datasets"]).iter().find(|d| s(d, "name").as_deref() == Some(ds)).and_then(|d| s(d, "mountpoint"))
+        self.layout
+            .arr(&["storage", "zfs", "tools", "datasets"])
+            .iter()
+            .find(|d| s(d, "name").as_deref() == Some(ds))
+            .and_then(|d| s(d, "mountpoint"))
     }
 
     /// The inactive BEs' datasets the dump has backup sources for: entries
@@ -63,10 +71,17 @@ impl Builder<'_> {
             .filter(|b| b.at(&["mount", "fstype"]).and_then(Value::as_str) == Some("zfs"))
             .filter_map(|b| {
                 let path = s(b, "path")?;
-                let ds = b.at(&["mount", "device"]).and_then(Value::as_str)?.to_string();
+                let ds = b
+                    .at(&["mount", "device"])
+                    .and_then(Value::as_str)?
+                    .to_string();
                 path.starts_with(&format!("{}/", zfs_be::BE_DIR)).then(|| {
                     let legacy = self.dataset_mountpoint(&ds).as_deref() == Some("legacy");
-                    BeMount { path, dataset: ds, legacy }
+                    BeMount {
+                        path,
+                        dataset: ds,
+                        legacy,
+                    }
                 })
             })
             .collect();
@@ -80,7 +95,10 @@ impl Builder<'_> {
         if self.be_mounts.is_empty() {
             return Vec::new();
         }
-        zfs_be::list(&self.zfs_tools()).into_iter().filter(|b| b.inactive() && self.be_mounts.iter().any(|m| m.dataset == b.dataset)).collect()
+        zfs_be::list(&self.zfs_tools())
+            .into_iter()
+            .filter(|b| b.inactive() && self.be_mounts.iter().any(|m| m.dataset == b.dataset))
+            .collect()
     }
 
     /// The BEs restored through their sources (Builder::be_restored).
@@ -115,14 +133,28 @@ impl Builder<'_> {
         let t = self.opts.target.clone();
         // (find_be_mounts lists none off Linux; the system's own mount
         // flag regardless, as legacy_mounts does.)
-        let fs_flag = if self.fam == Some(crate::other::Family::Illumos) { "-F" } else { "-t" };
+        let fs_flag = if self.fam == Some(crate::other::Family::Illumos) {
+            "-F"
+        } else {
+            "-t"
+        };
         self.be_mounts
             .iter()
             .map(|m| {
                 let dir = format!("{t}{}", m.path);
                 let ds = self.zname(&m.dataset);
-                let cmd = if m.legacy || self.fam.is_some() { Cmd::new(&["mount", fs_flag, "zfs", &ds, &dir]) } else { Cmd::new(&["mount", fs_flag, "zfs", "-o", "zfsutil", &ds, &dir]) };
-                (m.path.clone(), cmd.why(format!("{}: an inactive boot environment's, restored from its backup source here", m.dataset)))
+                let cmd = if m.legacy || self.fam.is_some() {
+                    Cmd::new(&["mount", fs_flag, "zfs", &ds, &dir])
+                } else {
+                    Cmd::new(&["mount", fs_flag, "zfs", "-o", "zfsutil", &ds, &dir])
+                };
+                (
+                    m.path.clone(),
+                    cmd.why(format!(
+                        "{}: an inactive boot environment's, restored from its backup source here",
+                        m.dataset
+                    )),
+                )
             })
             .collect()
     }
@@ -140,27 +172,47 @@ impl Builder<'_> {
         let mut out = Vec::new();
         for m in mounts.iter().rev() {
             let d = shell_quote(&format!("{t}{}", m.path));
-            out.push(Cmd::new(&["sh", "-c", &format!("! mountpoint -q {d} || umount {d}")]));
+            out.push(Cmd::new(&[
+                "sh",
+                "-c",
+                &format!("! mountpoint -q {d} || umount {d}"),
+            ]));
         }
         // The BEs' roots' mount points and the directories above them.
         let mut dirs: Vec<String> = Vec::new();
         for m in mounts {
             let mut p = m.path.as_str();
             while p.len() > zfs_be::BE_DIR.len() {
-                if !mounts.iter().any(|o| o.path != p && p.starts_with(&format!("{}/", o.path))) && !dirs.iter().any(|x| x == p) {
+                if !mounts
+                    .iter()
+                    .any(|o| o.path != p && p.starts_with(&format!("{}/", o.path)))
+                    && !dirs.iter().any(|x| x == p)
+                {
                     dirs.push(p.to_string());
                 }
                 p = p.rsplit_once('/').map_or("", |(a, _)| a);
             }
         }
         dirs.push(zfs_be::BE_DIR.to_string());
-        dirs.sort_by(|a, b| b.matches('/').count().cmp(&a.matches('/').count()).then(b.cmp(a)));
+        dirs.sort_by(|a, b| {
+            b.matches('/')
+                .count()
+                .cmp(&a.matches('/').count())
+                .then(b.cmp(a))
+        });
         for p in dirs {
             let d = shell_quote(&format!("{t}{p}"));
-            out.push(Cmd::new(&["sh", "-c", &format!("[ ! -d {d} ] || rmdir {d}")]));
+            out.push(Cmd::new(&[
+                "sh",
+                "-c",
+                &format!("[ ! -d {d} ] || rmdir {d}"),
+            ]));
         }
         if let Some(c) = out.first_mut() {
-            c.why = Some(format!("the inactive boot environments, restored: unmounted, and {t}{} removed", zfs_be::BE_DIR));
+            c.why = Some(format!(
+                "the inactive boot environments, restored: unmounted, and {t}{} removed",
+                zfs_be::BE_DIR
+            ));
         }
         out
     }
@@ -178,29 +230,49 @@ impl Builder<'_> {
     /// again where it wants it.
     pub(crate) fn legacy_mounts(&mut self, have: &[String]) -> Vec<(String, Cmd)> {
         let t = self.opts.target.clone();
-        let fs_flag = if self.fam == Some(crate::other::Family::Illumos) { "-F" } else { "-t" };
+        let fs_flag = if self.fam == Some(crate::other::Family::Illumos) {
+            "-F"
+        } else {
+            "-t"
+        };
         let mut out: Vec<(String, Cmd)> = Vec::new();
         let mut done: Vec<(String, String)> = Vec::new();
         for b in self.layout.arr(&["storage", "backup_sources"]).to_vec() {
-            let (Some(path), Some(ds)) = (s(&b, "path"), s(&b, "source")) else { continue };
-            if s(&b, "fstype").as_deref() != Some("zfs") || b.get("from").is_none_or(Value::is_null) || path == "/" || !path.starts_with('/') {
+            let (Some(path), Some(ds)) = (s(&b, "path"), s(&b, "source")) else {
+                continue;
+            };
+            if s(&b, "fstype").as_deref() != Some("zfs")
+                || b.get("from").is_none_or(Value::is_null)
+                || path == "/"
+                || !path.starts_with('/')
+            {
                 continue;
             }
-            if self.dataset_mountpoint(&ds).as_deref() != Some("legacy") || have.contains(&path) || out.iter().any(|(p, _)| *p == path) {
+            if self.dataset_mountpoint(&ds).as_deref() != Some("legacy")
+                || have.contains(&path)
+                || out.iter().any(|(p, _)| *p == path)
+            {
                 continue;
             }
             if done.iter().any(|(d, _)| *d == ds) {
                 continue; // (an older dump lists it at each path: the second below)
             }
             let dir = format!("{t}{path}");
-            out.push((path.clone(), Cmd::new(&["mount", fs_flag, "zfs", &self.zname(&ds), &dir]).why(format!("{ds}: mountpoint=legacy, mounted at {path} on the source"))));
+            out.push((
+                path.clone(),
+                Cmd::new(&["mount", fs_flag, "zfs", &self.zname(&ds), &dir]).why(format!(
+                    "{ds}: mountpoint=legacy, mounted at {path} on the source"
+                )),
+            ));
             done.push((ds, path));
         }
         // Its other mounts on the source, as storage.mounts has them.
         for (ds, path) in &done {
             let mut also: Vec<String> = Vec::new();
             for m in self.layout.arr(&["storage", "mounts"]) {
-                if s(m, "fstype").as_deref() == Some("zfs") && s(m, "source").as_deref() == Some(ds.as_str()) {
+                if s(m, "fstype").as_deref() == Some("zfs")
+                    && s(m, "source").as_deref() == Some(ds.as_str())
+                {
                     if let Some(tg) = s(m, "target").filter(|tg| tg != path && !also.contains(tg)) {
                         also.push(tg);
                     }
@@ -216,7 +288,12 @@ impl Builder<'_> {
     /// Whether this layout's BEs come back filled (it has BE sources, or
     /// is TrueNAS's): then the clones among their datasets are noted.
     fn be_restore(&self) -> bool {
-        !self.be_mounts.is_empty() || self.layout.v.at(&["boot", "truenas"]).is_some_and(|v| !v.is_null())
+        !self.be_mounts.is_empty()
+            || self
+                .layout
+                .v
+                .at(&["boot", "truenas"])
+                .is_some_and(|v| !v.is_null())
     }
 
     /// A note for each BE some of whose datasets were clones: they come
@@ -232,7 +309,11 @@ impl Builder<'_> {
             let mut add = |rel: String, origin: &str| {
                 what.push(rel);
                 let ds = origin.split('@').next().unwrap_or(origin);
-                let who = bes.iter().find(|o| o.holds(ds)).map(|o| format!("{}'s snapshots", o.name)).unwrap_or_else(|| origin.to_string());
+                let who = bes
+                    .iter()
+                    .find(|o| o.holds(ds))
+                    .map(|o| format!("{}'s snapshots", o.name))
+                    .unwrap_or_else(|| origin.to_string());
                 if !from.contains(&who) {
                     from.push(who);
                 }
@@ -257,7 +338,11 @@ impl Builder<'_> {
     /// The datasets whose readonly=on was held back, made read-only again:
     /// the last of the boot stage, before close exports the pools.
     pub(crate) fn readonly_sets(&self) -> Vec<Cmd> {
-        let mut out: Vec<Cmd> = self.readonly_later.iter().map(|ds| Cmd::new(&["zfs", "set", "readonly=on", ds])).collect();
+        let mut out: Vec<Cmd> = self
+            .readonly_later
+            .iter()
+            .map(|ds| Cmd::new(&["zfs", "set", "readonly=on", ds]))
+            .collect();
         if let Some(c) = out.first_mut() {
             c.why = Some("readonly=on as on the source, held back until now so that the restore and this stage could write".into());
         }
@@ -272,7 +357,14 @@ impl Builder<'_> {
         self.layout
             .arr(&["storage", "zfs", "left_out_paths"])
             .iter()
-            .filter_map(|p| p.as_str().map(|p| format!("!{}/**", super::shared::glob_literal(p.trim_end_matches('/')))))
+            .filter_map(|p| {
+                p.as_str().map(|p| {
+                    format!(
+                        "!{}/**",
+                        super::shared::glob_literal(p.trim_end_matches('/'))
+                    )
+                })
+            })
             .collect()
     }
 }

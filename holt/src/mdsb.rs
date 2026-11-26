@@ -17,7 +17,9 @@ const MAX_DEV: usize = 220;
 /// the checksum field as zero, the carry folded in.  None when `sb` is
 /// shorter than that (a max_dev too big for the superblock read).
 fn csum(sb: &[u8]) -> Option<u32> {
-    let size = (le32(sb, MAX_DEV) as usize).checked_mul(2)?.checked_add(256)?;
+    let size = (le32(sb, MAX_DEV) as usize)
+        .checked_mul(2)?
+        .checked_add(256)?;
     if size > sb.len() {
         return None;
     }
@@ -42,26 +44,41 @@ fn csum(sb: &[u8]) -> Option<u32> {
 /// at `offset`, when its max_dev runs past the 4 KiB read, and when its
 /// checksum doesn't match (the superblock is then left alone).
 pub fn set_logical_block_size(dev: &str, offset: u64, value: u32) -> Result<bool, String> {
-    let mut f = OpenOptions::new().read(true).write(true).open(dev).map_err(|e| format!("{dev}: {e}"))?;
+    let mut f = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(dev)
+        .map_err(|e| format!("{dev}: {e}"))?;
     let mut sb = vec![0u8; 4096];
-    f.seek(SeekFrom::Start(offset)).and_then(|_| f.read_exact(&mut sb)).map_err(|e| format!("{dev}: reading the superblock: {e}"))?;
+    f.seek(SeekFrom::Start(offset))
+        .and_then(|_| f.read_exact(&mut sb))
+        .map_err(|e| format!("{dev}: reading the superblock: {e}"))?;
     if le32(&sb, 0) != MAGIC || le32(&sb, 4) != 1 {
         return Err(format!("{dev}: no md v1 superblock at byte {offset}"));
     }
     let max_dev = le32(&sb, MAX_DEV);
     let too_big = || format!("{dev}: max_dev {max_dev} is too big");
-    let Some(sum) = csum(&sb) else { return Err(too_big()) };
+    let Some(sum) = csum(&sb) else {
+        return Err(too_big());
+    };
     if sum != le32(&sb, CSUM) {
-        return Err(format!("{dev}: the superblock's checksum doesn't match; left alone"));
+        return Err(format!(
+            "{dev}: the superblock's checksum doesn't match; left alone"
+        ));
     }
     if le32(&sb, LBS) == value {
         return Ok(false);
     }
     sb[LBS..LBS + 4].copy_from_slice(&value.to_le_bytes());
     // max_dev is unchanged, so the size check above still holds.
-    let Some(c) = csum(&sb) else { return Err(too_big()) };
+    let Some(c) = csum(&sb) else {
+        return Err(too_big());
+    };
     sb[CSUM..CSUM + 4].copy_from_slice(&c.to_le_bytes());
-    f.seek(SeekFrom::Start(offset)).and_then(|_| f.write_all(&sb)).and_then(|_| f.sync_all()).map_err(|e| format!("{dev}: writing the superblock: {e}"))?;
+    f.seek(SeekFrom::Start(offset))
+        .and_then(|_| f.write_all(&sb))
+        .and_then(|_| f.sync_all())
+        .map_err(|e| format!("{dev}: writing the superblock: {e}"))?;
     Ok(true)
 }
 
@@ -116,7 +133,11 @@ mod tests {
         assert_eq!(le32(sb2, LBS), 0);
         assert_eq!(csum(sb2), Some(le32(sb2, CSUM)));
         assert_eq!(set_logical_block_size(p, 4096, 0), Ok(false));
-        assert!(set_logical_block_size(p, 0, 0).unwrap_err().contains("no md v1 superblock"));
+        assert!(
+            set_logical_block_size(p, 0, 0)
+                .unwrap_err()
+                .contains("no md v1 superblock")
+        );
         std::fs::remove_file(&path).unwrap();
     }
 

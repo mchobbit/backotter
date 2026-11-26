@@ -21,7 +21,9 @@ use std::process::Command;
 const PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
 
 fn tool(name: &str) -> Option<PathBuf> {
-    PATH.split(':').map(|d| Path::new(d).join(name)).find(|p| p.is_file())
+    PATH.split(':')
+        .map(|d| Path::new(d).join(name))
+        .find(|p| p.is_file())
 }
 
 /// The tool's path; when it's missing, fails the test, or (with
@@ -39,8 +41,17 @@ fn need(name: &str) -> Option<PathBuf> {
 
 fn run(prog: &str, args: &[&str]) -> String {
     let exe = tool(prog).unwrap_or_else(|| panic!("{prog} missing"));
-    let out = Command::new(&exe).args(args).env("PATH", PATH).env("LC_ALL", "C").output().unwrap();
-    assert!(out.status.success(), "{prog} {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(&exe)
+        .args(args)
+        .env("PATH", PATH)
+        .env("LC_ALL", "C")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{prog} {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
@@ -56,9 +67,18 @@ fn run_stdin(prog: &str, args: &[&str], input: &str) -> String {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
     let out = child.wait_with_output().unwrap();
-    assert!(out.status.success(), "{prog} {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{prog} {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
@@ -78,7 +98,10 @@ fn s(p: &Path) -> &str {
 fn blkid(p: &Path) -> HashMap<String, String> {
     run("blkid", &["-p", "-o", "export", s(p)])
         .lines()
-        .filter_map(|l| l.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+        .filter_map(|l| {
+            l.split_once('=')
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+        })
         .collect()
 }
 
@@ -91,9 +114,17 @@ fn probe_file(p: &Path) -> Vec<Content> {
 fn assert_matches_blkid(p: &Path) -> Content {
     let ours = probe_file(p);
     let b = blkid(p);
-    let c = ours.first().unwrap_or_else(|| panic!("nothing found in {}; blkid says {b:?}", p.display())).clone();
+    let c = ours
+        .first()
+        .unwrap_or_else(|| panic!("nothing found in {}; blkid says {b:?}", p.display()))
+        .clone();
     assert_eq!(Some(&c.kind), b.get("TYPE"), "TYPE of {}", p.display());
-    assert_eq!(c.uuid.as_ref().map(|u| u.to_lowercase()), b.get("UUID").map(|u| u.to_lowercase()), "UUID of {}", p.display());
+    assert_eq!(
+        c.uuid.as_ref().map(|u| u.to_lowercase()),
+        b.get("UUID").map(|u| u.to_lowercase()),
+        "UUID of {}",
+        p.display()
+    );
     assert_eq!(c.label.as_ref(), b.get("LABEL"), "LABEL of {}", p.display());
     if let (Some(ours), Some(theirs)) = (&c.version, b.get("VERSION")) {
         assert_eq!(ours, theirs, "VERSION of {}", p.display());
@@ -105,11 +136,20 @@ fn assert_matches_blkid(p: &Path) -> Content {
 }
 
 fn detail<'a>(c: &'a Content, k: &str) -> &'a Value {
-    c.details.0.iter().find(|(key, _)| key == k).map(|(_, v)| v).unwrap_or_else(|| panic!("no {k}"))
+    c.details
+        .0
+        .iter()
+        .find(|(key, _)| key == k)
+        .map(|(_, v)| v)
+        .unwrap_or_else(|| panic!("no {k}"))
 }
 
 fn strs(v: &Value) -> Vec<String> {
-    v.as_array().unwrap().iter().map(|x| x.as_str().unwrap().to_string()).collect()
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_str().unwrap().to_string())
+        .collect()
 }
 
 #[test]
@@ -135,7 +175,13 @@ fn ext_family_matches_blkid_and_dumpe2fs() {
         ("ext4", &["-O", "^metadata_csum,^orphan_file,^64bit"]),
         ("ext4", &["-O", "casefold", "-E", "encoding=utf8"]),
         ("ext4", &["-O", "bigalloc", "-C", "65536"]),
-        ("ext4", &["-O", "inline_data,quota,project,encrypt,large_dir,verity,stable_inodes,fast_commit"]),
+        (
+            "ext4",
+            &[
+                "-O",
+                "inline_data,quota,project,encrypt,large_dir,verity,stable_inodes,fast_commit",
+            ],
+        ),
         ("ext4", &["-O", "^has_journal"]),
         ("ext4", &["-T", "huge", "-m", "0", "-N", "4096"]),
         ("ext3", &[]),
@@ -152,21 +198,65 @@ fn ext_family_matches_blkid_and_dumpe2fs() {
         let c = assert_matches_blkid(&img);
         assert_eq!(c.uuid.as_deref(), Some(uuid.as_str()));
         let d = run("dumpe2fs", &["-h", s(&img)]);
-        let field = |name: &str| d.lines().find_map(|l| l.strip_prefix(name)).map(|v| v.trim().to_string());
-        let features: Vec<String> = field("Filesystem features:").unwrap().split_whitespace().map(str::to_string).collect();
-        let features = if features == ["(none)"] { vec![] } else { features };
-        assert_eq!(strs(detail(&c, "features")), features, "features of case {i} {opts:?}");
-        assert_eq!(detail(&c, "block_size").as_u64().unwrap().to_string(), field("Block size:").unwrap(), "case {i}");
-        assert_eq!(detail(&c, "inode_size").as_u64().unwrap().to_string(), field("Inode size:").unwrap(), "case {i}");
-        assert_eq!(detail(&c, "blocks").as_u64().unwrap().to_string(), field("Block count:").unwrap(), "case {i}");
-        assert_eq!(detail(&c, "inodes").as_u64().unwrap().to_string(), field("Inode count:").unwrap(), "case {i}");
-        assert_eq!(detail(&c, "reserved_blocks").as_u64().unwrap().to_string(), field("Reserved block count:").unwrap(), "case {i}");
+        let field = |name: &str| {
+            d.lines()
+                .find_map(|l| l.strip_prefix(name))
+                .map(|v| v.trim().to_string())
+        };
+        let features: Vec<String> = field("Filesystem features:")
+            .unwrap()
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+        let features = if features == ["(none)"] {
+            vec![]
+        } else {
+            features
+        };
+        assert_eq!(
+            strs(detail(&c, "features")),
+            features,
+            "features of case {i} {opts:?}"
+        );
+        assert_eq!(
+            detail(&c, "block_size").as_u64().unwrap().to_string(),
+            field("Block size:").unwrap(),
+            "case {i}"
+        );
+        assert_eq!(
+            detail(&c, "inode_size").as_u64().unwrap().to_string(),
+            field("Inode size:").unwrap(),
+            "case {i}"
+        );
+        assert_eq!(
+            detail(&c, "blocks").as_u64().unwrap().to_string(),
+            field("Block count:").unwrap(),
+            "case {i}"
+        );
+        assert_eq!(
+            detail(&c, "inodes").as_u64().unwrap().to_string(),
+            field("Inode count:").unwrap(),
+            "case {i}"
+        );
+        assert_eq!(
+            detail(&c, "reserved_blocks").as_u64().unwrap().to_string(),
+            field("Reserved block count:").unwrap(),
+            "case {i}"
+        );
         if let Some(fs) = field("Flex block group size:") {
-            assert_eq!(detail(&c, "flex_bg_size").as_u64().unwrap().to_string(), fs, "case {i}");
+            assert_eq!(
+                detail(&c, "flex_bg_size").as_u64().unwrap().to_string(),
+                fs,
+                "case {i}"
+            );
         }
         if let Some(cs) = field("Cluster size:") {
             if c.details.0.iter().any(|(k, _)| k == "cluster_size") {
-                assert_eq!(detail(&c, "cluster_size").as_u64().unwrap().to_string(), cs, "case {i}");
+                assert_eq!(
+                    detail(&c, "cluster_size").as_u64().unwrap().to_string(),
+                    cs,
+                    "case {i}"
+                );
             }
         }
     }
@@ -209,23 +299,92 @@ fn xfs_matches_blkid_and_xfs_db() {
         args.push(s(&img));
         run("mkfs.xfs", &args);
         let c = assert_matches_blkid(&img);
-        let db = run("xfs_db", &["-r", "-c", "version", "-c", "sb 0", "-c", "p blocksize agcount sectsize inodesize dblocks agblocks logblocks unit width", s(&img)]);
-        let val = |k: &str| db.lines().find_map(|l| l.strip_prefix(&format!("{k} = "))).map(str::trim).unwrap_or_else(|| panic!("{k} not in {db}"));
-        assert_eq!(detail(&c, "block_size").as_u64().unwrap().to_string(), val("blocksize"), "case {i}");
-        assert_eq!(detail(&c, "ag_count").as_u64().unwrap().to_string(), val("agcount"), "case {i}");
-        assert_eq!(detail(&c, "sector_size").as_u64().unwrap().to_string(), val("sectsize"), "case {i}");
-        assert_eq!(detail(&c, "inode_size").as_u64().unwrap().to_string(), val("inodesize"), "case {i}");
-        assert_eq!(detail(&c, "blocks").as_u64().unwrap().to_string(), val("dblocks"), "case {i}");
-        assert_eq!(detail(&c, "ag_blocks").as_u64().unwrap().to_string(), val("agblocks"), "case {i}");
-        assert_eq!(detail(&c, "log_blocks").as_u64().unwrap().to_string(), val("logblocks"), "case {i}");
-        assert_eq!(detail(&c, "stripe_unit").as_u64().unwrap().to_string(), val("unit"), "case {i}");
-        assert_eq!(detail(&c, "stripe_width").as_u64().unwrap().to_string(), val("width"), "case {i}");
+        let db = run(
+            "xfs_db",
+            &[
+                "-r",
+                "-c",
+                "version",
+                "-c",
+                "sb 0",
+                "-c",
+                "p blocksize agcount sectsize inodesize dblocks agblocks logblocks unit width",
+                s(&img),
+            ],
+        );
+        let val = |k: &str| {
+            db.lines()
+                .find_map(|l| l.strip_prefix(&format!("{k} = ")))
+                .map(str::trim)
+                .unwrap_or_else(|| panic!("{k} not in {db}"))
+        };
+        assert_eq!(
+            detail(&c, "block_size").as_u64().unwrap().to_string(),
+            val("blocksize"),
+            "case {i}"
+        );
+        assert_eq!(
+            detail(&c, "ag_count").as_u64().unwrap().to_string(),
+            val("agcount"),
+            "case {i}"
+        );
+        assert_eq!(
+            detail(&c, "sector_size").as_u64().unwrap().to_string(),
+            val("sectsize"),
+            "case {i}"
+        );
+        assert_eq!(
+            detail(&c, "inode_size").as_u64().unwrap().to_string(),
+            val("inodesize"),
+            "case {i}"
+        );
+        assert_eq!(
+            detail(&c, "blocks").as_u64().unwrap().to_string(),
+            val("dblocks"),
+            "case {i}"
+        );
+        assert_eq!(
+            detail(&c, "ag_blocks").as_u64().unwrap().to_string(),
+            val("agblocks"),
+            "case {i}"
+        );
+        assert_eq!(
+            detail(&c, "log_blocks").as_u64().unwrap().to_string(),
+            val("logblocks"),
+            "case {i}"
+        );
+        assert_eq!(
+            detail(&c, "stripe_unit").as_u64().unwrap().to_string(),
+            val("unit"),
+            "case {i}"
+        );
+        assert_eq!(
+            detail(&c, "stripe_width").as_u64().unwrap().to_string(),
+            val("width"),
+            "case {i}"
+        );
         // "versionnum [0xb4a5+0x18a] = V5,NLINK,...": the same flags both ways.
-        let names: Vec<String> = db.lines().find_map(|l| l.split_once("] = ")).unwrap().1.trim().split(',').map(str::to_string).collect();
-        let mut ours: Vec<String> = strs(detail(&c, "version_flags")).iter().chain(strs(detail(&c, "features")).iter()).map(|f| {
-            let n = xfs_db_name(f);
-            if n.is_empty() { f.to_uppercase() } else { n.to_string() }
-        }).collect();
+        let names: Vec<String> = db
+            .lines()
+            .find_map(|l| l.split_once("] = "))
+            .unwrap()
+            .1
+            .trim()
+            .split(',')
+            .map(str::to_string)
+            .collect();
+        let mut ours: Vec<String> = strs(detail(&c, "version_flags"))
+            .iter()
+            .chain(strs(detail(&c, "features")).iter())
+            .map(|f| {
+                let n = xfs_db_name(f);
+                if n.is_empty() {
+                    f.to_uppercase()
+                } else {
+                    n.to_string()
+                }
+            })
+            .collect();
         ours.push(format!("V{}", c.version.as_deref().unwrap()));
         let mut a = ours.clone();
         a.sort();
@@ -263,11 +422,21 @@ fn btrfs_matches_blkid_and_dump_super() {
         let c = assert_matches_blkid(&img);
         assert_eq!(c.uuid.as_deref(), Some(uuid.as_str()));
         let sub = blkid(&img).get("UUID_SUB").cloned();
-        assert_eq!(c.details.0.iter().find(|(k, _)| k == "device").and_then(|(_, d)| d.get("uuid")).and_then(Value::as_str), sub.as_deref());
+        assert_eq!(
+            c.details
+                .0
+                .iter()
+                .find(|(k, _)| k == "device")
+                .and_then(|(_, d)| d.get("uuid"))
+                .and_then(Value::as_str),
+            sub.as_deref()
+        );
         let d = run("btrfs", &["inspect-internal", "dump-super", s(&img)]);
         // Flag names in "( A |\n B )" after each *_flags line.
         let flags = |field: &str| -> Vec<String> {
-            let start = d.find(&format!("\n{field}")).unwrap_or_else(|| panic!("{field} not in dump"));
+            let start = d
+                .find(&format!("\n{field}"))
+                .unwrap_or_else(|| panic!("{field} not in dump"));
             let rest = &d[start + 1..];
             let line_end = rest.find('\n').unwrap();
             let after = &rest[line_end..];
@@ -275,17 +444,51 @@ fn btrfs_matches_blkid_and_dump_super() {
                 return vec![];
             }
             let close = after.find(')').unwrap();
-            after[..close].replace(['(', '|'], " ").split_whitespace().map(|w| w.to_lowercase()).collect()
+            after[..close]
+                .replace(['(', '|'], " ")
+                .split_whitespace()
+                .map(|w| w.to_lowercase())
+                .collect()
         };
-        assert_eq!(strs(detail(&c, "features")), flags("incompat_flags"), "case {i} {opts:?}");
-        assert_eq!(strs(detail(&c, "compat_ro_features")), flags("compat_ro_flags"), "case {i} {opts:?}");
-        let num = |k: &str| d.lines().find_map(|l| l.strip_prefix(k)).map(|v| v.split_whitespace().next().unwrap().to_string()).unwrap();
-        assert_eq!(detail(&c, "node_size").as_u64().unwrap().to_string(), num("nodesize"), "case {i}");
-        assert_eq!(detail(&c, "sector_size").as_u64().unwrap().to_string(), num("sectorsize"), "case {i}");
-        assert_eq!(detail(&c, "total_bytes").as_u64().unwrap().to_string(), num("total_bytes"), "case {i}");
+        assert_eq!(
+            strs(detail(&c, "features")),
+            flags("incompat_flags"),
+            "case {i} {opts:?}"
+        );
+        assert_eq!(
+            strs(detail(&c, "compat_ro_features")),
+            flags("compat_ro_flags"),
+            "case {i} {opts:?}"
+        );
+        let num = |k: &str| {
+            d.lines()
+                .find_map(|l| l.strip_prefix(k))
+                .map(|v| v.split_whitespace().next().unwrap().to_string())
+                .unwrap()
+        };
+        assert_eq!(
+            detail(&c, "node_size").as_u64().unwrap().to_string(),
+            num("nodesize"),
+            "case {i}"
+        );
+        assert_eq!(
+            detail(&c, "sector_size").as_u64().unwrap().to_string(),
+            num("sectorsize"),
+            "case {i}"
+        );
+        assert_eq!(
+            detail(&c, "total_bytes").as_u64().unwrap().to_string(),
+            num("total_bytes"),
+            "case {i}"
+        );
         let csum = d.lines().find_map(|l| l.strip_prefix("csum_type")).unwrap();
         let csum = csum.split('(').nth(1).unwrap().trim_end_matches(')');
-        assert_eq!(detail(&c, "checksum").as_str().unwrap(), csum.replace("blake2", "blake2b").replace("blake2bb", "blake2b"), "case {i}");
+        assert_eq!(
+            detail(&c, "checksum").as_str().unwrap(),
+            csum.replace("blake2", "blake2b")
+                .replace("blake2bb", "blake2b"),
+            "case {i}"
+        );
     }
 }
 
@@ -295,9 +498,16 @@ fn fat_matches_blkid() {
         return;
     }
     let dir = TempDir::new("rt-fat");
-    for (i, (bits, mib, extra)) in [("12", 4u64, vec![]), ("16", 64, vec![]), ("32", 300, vec![]), ("32", 600, vec!["-s", "8"]), ("16", 256, vec!["-S", "4096"]), ("32", 100, vec!["-S", "4096"])]
-        .into_iter()
-        .enumerate()
+    for (i, (bits, mib, extra)) in [
+        ("12", 4u64, vec![]),
+        ("16", 64, vec![]),
+        ("32", 300, vec![]),
+        ("32", 600, vec!["-s", "8"]),
+        ("16", 256, vec!["-S", "4096"]),
+        ("32", 100, vec!["-S", "4096"]),
+    ]
+    .into_iter()
+    .enumerate()
     {
         let img = image(&dir, &format!("f{i}"), mib);
         let id = format!("{:08x}", 0x1a2b_3c00u32 + i as u32);
@@ -307,7 +517,11 @@ fn fat_matches_blkid() {
         args.push(s(&img));
         run("mkfs.fat", &args);
         let c = assert_matches_blkid(&img);
-        assert_eq!(c.version.as_deref(), Some(format!("FAT{bits}").as_str()), "case {i}");
+        assert_eq!(
+            c.version.as_deref(),
+            Some(format!("FAT{bits}").as_str()),
+            "case {i}"
+        );
         // Relabel: fatlabel rewrites the root directory entry, which wins.
         if tool("fatlabel").is_some() {
             run("fatlabel", &[s(&img), "NEWNAME"]);
@@ -329,14 +543,20 @@ fn exfat_ntfs_jfs_iso_match_blkid() {
         run("mkfs.exfat", &["-L", "EX", s(&img)]);
         let ours = probe_file(&img);
         assert_eq!(ours[0].kind, "exfat");
-        assert_eq!(ours[0].uuid.as_deref(), blkid(&img).get("UUID").map(String::as_str));
+        assert_eq!(
+            ours[0].uuid.as_deref(),
+            blkid(&img).get("UUID").map(String::as_str)
+        );
     }
     if need("mkntfs").is_some() {
         let img = image(&dir, "ntfs", 64);
         run("mkntfs", &["-q", "-Q", "-F", "-L", "NT", s(&img)]);
         let ours = probe_file(&img);
         assert_eq!(ours[0].kind, "ntfs");
-        assert_eq!(ours[0].uuid.as_deref(), blkid(&img).get("UUID").map(String::as_str));
+        assert_eq!(
+            ours[0].uuid.as_deref(),
+            blkid(&img).get("UUID").map(String::as_str)
+        );
     }
     if need("mkfs.jfs").is_some() {
         let img = image(&dir, "jfs", 64);
@@ -349,10 +569,23 @@ fn exfat_ntfs_jfs_iso_match_blkid() {
         std::fs::write(src.join("README"), "hello").unwrap();
         let img = dir.path().join("x.iso");
         let out = Command::new(tool("xorriso").unwrap())
-            .args(["-as", "mkisofs", "-quiet", "-V", "BKO_TEST", "-o", s(&img), s(&src)])
+            .args([
+                "-as",
+                "mkisofs",
+                "-quiet",
+                "-V",
+                "BKO_TEST",
+                "-o",
+                s(&img),
+                s(&src),
+            ])
             .output()
             .unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         assert_matches_blkid(&img);
     }
 }
@@ -363,7 +596,14 @@ fn swap_matches_blkid() {
         return;
     }
     let dir = TempDir::new("rt-swap");
-    for (i, extra) in [vec![], vec!["--pagesize", "65536"], vec!["--pagesize", "16384"]].into_iter().enumerate() {
+    for (i, extra) in [
+        vec![],
+        vec!["--pagesize", "65536"],
+        vec!["--pagesize", "16384"],
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let img = image(&dir, &format!("s{i}"), 32);
         let uuid = format!("c0c1c2c3-c4c5-c6c7-c8c9-cacbcccd{i:04x}");
         let mut args = vec!["-q", "-L", "swp", "-U", &uuid];
@@ -373,7 +613,11 @@ fn swap_matches_blkid() {
         let c = assert_matches_blkid(&img);
         let ps: u64 = extra.get(1).map(|p| p.parse().unwrap()).unwrap_or(4096);
         assert_eq!(detail(&c, "page_size").as_u64(), Some(ps));
-        assert_eq!(detail(&c, "size_bytes").as_u64(), Some(32 << 20), "case {i}");
+        assert_eq!(
+            detail(&c, "size_bytes").as_u64(),
+            Some(32 << 20),
+            "case {i}"
+        );
     }
 }
 
@@ -386,9 +630,46 @@ fn luks_matches_blkid_and_dump() {
     let key = dir.path().join("key");
     std::fs::write(&key, "not a secret").unwrap();
     let cases: &[&[&str]] = &[
-        &["--type", "luks2", "--pbkdf", "pbkdf2", "--pbkdf-force-iterations", "1000", "--label", "cryptroot"],
-        &["--type", "luks2", "--pbkdf", "argon2id", "--pbkdf-memory", "32", "--iter-time", "10", "--sector-size", "4096", "--subsystem", "bko"],
-        &["--type", "luks2", "--pbkdf", "pbkdf2", "--pbkdf-force-iterations", "1000", "--cipher", "aes-cbc-essiv:sha256", "--key-size", "256", "--luks2-metadata-size", "64k", "--luks2-keyslots-size", "1m"],
+        &[
+            "--type",
+            "luks2",
+            "--pbkdf",
+            "pbkdf2",
+            "--pbkdf-force-iterations",
+            "1000",
+            "--label",
+            "cryptroot",
+        ],
+        &[
+            "--type",
+            "luks2",
+            "--pbkdf",
+            "argon2id",
+            "--pbkdf-memory",
+            "32",
+            "--iter-time",
+            "10",
+            "--sector-size",
+            "4096",
+            "--subsystem",
+            "bko",
+        ],
+        &[
+            "--type",
+            "luks2",
+            "--pbkdf",
+            "pbkdf2",
+            "--pbkdf-force-iterations",
+            "1000",
+            "--cipher",
+            "aes-cbc-essiv:sha256",
+            "--key-size",
+            "256",
+            "--luks2-metadata-size",
+            "64k",
+            "--luks2-keyslots-size",
+            "1m",
+        ],
         &["--type", "luks1", "--pbkdf-force-iterations", "1000"],
     ];
     for (i, opts) in cases.iter().enumerate() {
@@ -401,28 +682,80 @@ fn luks_matches_blkid_and_dump() {
         let c = assert_matches_blkid(&img);
         assert_eq!(c.uuid.as_deref(), Some(uuid.as_str()));
         if c.version.as_deref() == Some("2") {
-            let meta = json::parse(&run("cryptsetup", &["luksDump", "--dump-json-metadata", s(&img)])).unwrap();
+            let meta = json::parse(&run(
+                "cryptsetup",
+                &["luksDump", "--dump-json-metadata", s(&img)],
+            ))
+            .unwrap();
             let d = c.details.clone().build();
-            assert_eq!(d.at(&["segments", "0", "encryption"]), meta.at(&["segments", "0", "encryption"]), "case {i}");
-            assert_eq!(d.at(&["segments", "0", "offset"]), meta.at(&["segments", "0", "offset"]), "case {i}");
-            assert_eq!(d.at(&["segments", "0", "sector_size"]).and_then(Value::as_u64), meta.at(&["segments", "0", "sector_size"]).and_then(Value::as_u64), "case {i}");
-            assert_eq!(d.at(&["keyslots", "0", "kdf"]), meta.at(&["keyslots", "0", "kdf", "type"]), "case {i}");
-            assert_eq!(d.get("json_size"), meta.at(&["config", "json_size"]), "case {i}");
-            assert_eq!(d.get("keyslots_size"), meta.at(&["config", "keyslots_size"]), "case {i}");
+            assert_eq!(
+                d.at(&["segments", "0", "encryption"]),
+                meta.at(&["segments", "0", "encryption"]),
+                "case {i}"
+            );
+            assert_eq!(
+                d.at(&["segments", "0", "offset"]),
+                meta.at(&["segments", "0", "offset"]),
+                "case {i}"
+            );
+            assert_eq!(
+                d.at(&["segments", "0", "sector_size"])
+                    .and_then(Value::as_u64),
+                meta.at(&["segments", "0", "sector_size"])
+                    .and_then(Value::as_u64),
+                "case {i}"
+            );
+            assert_eq!(
+                d.at(&["keyslots", "0", "kdf"]),
+                meta.at(&["keyslots", "0", "kdf", "type"]),
+                "case {i}"
+            );
+            assert_eq!(
+                d.get("json_size"),
+                meta.at(&["config", "json_size"]),
+                "case {i}"
+            );
+            assert_eq!(
+                d.get("keyslots_size"),
+                meta.at(&["config", "keyslots_size"]),
+                "case {i}"
+            );
             assert_eq!(d.get("secondary_header"), Some(&Value::Bool(true)));
             // The report never carries salts or digests.
             assert!(!d.compact().contains("salt"), "case {i}");
         } else {
             let dump = run("cryptsetup", &["luksDump", s(&img)]);
-            let field = |k: &str| dump.lines().find_map(|l| l.strip_prefix(k)).map(|v| v.trim().to_string()).unwrap();
+            let field = |k: &str| {
+                dump.lines()
+                    .find_map(|l| l.strip_prefix(k))
+                    .map(|v| v.trim().to_string())
+                    .unwrap()
+            };
             let d = c.details.clone().build();
-            assert_eq!(d.get("cipher").and_then(Value::as_str).unwrap(), format!("{}-{}", field("Cipher name:"), field("Cipher mode:")));
-            assert_eq!(d.get("hash").and_then(Value::as_str).unwrap(), field("Hash spec:"));
-            assert_eq!(d.get("data_offset_bytes").and_then(Value::as_u64).unwrap(), field("Payload offset:").parse::<u64>().unwrap() * 512);
+            assert_eq!(
+                d.get("cipher").and_then(Value::as_str).unwrap(),
+                format!("{}-{}", field("Cipher name:"), field("Cipher mode:"))
+            );
+            assert_eq!(
+                d.get("hash").and_then(Value::as_str).unwrap(),
+                field("Hash spec:")
+            );
+            assert_eq!(
+                d.get("data_offset_bytes").and_then(Value::as_u64).unwrap(),
+                field("Payload offset:").parse::<u64>().unwrap() * 512
+            );
             assert_eq!(d.get("keyslots_active").and_then(Value::as_u64), Some(1));
             // Key Slot 0's "\tIterations: N", the first active slot's.
-            let iters = dump.lines().find_map(|l| l.trim_start().strip_prefix("Iterations:")).map(|v| v.trim().parse::<u64>().unwrap()).unwrap();
-            assert_eq!(d.get("keyslot_iterations").and_then(Value::as_u64), Some(iters), "case {i}");
+            let iters = dump
+                .lines()
+                .find_map(|l| l.trim_start().strip_prefix("Iterations:"))
+                .map(|v| v.trim().parse::<u64>().unwrap())
+                .unwrap();
+            assert_eq!(
+                d.get("keyslot_iterations").and_then(Value::as_u64),
+                Some(iters),
+                "case {i}"
+            );
         }
     }
 }
@@ -452,26 +785,52 @@ fn gpt_matches_sfdisk() {
     let theirs = sfdisk_json(&img);
     let pt = theirs.get("partitiontable").unwrap();
     let t = parttable::read_table(&FileSource::open(&img).unwrap(), 512).unwrap();
-    let Table::Gpt { gpt, .. } = &t else { panic!("not gpt") };
+    let Table::Gpt { gpt, .. } = &t else {
+        panic!("not gpt")
+    };
     assert!(gpt.primary_ok);
     assert_eq!(gpt.backup, parttable::GptBackup::Ok);
-    assert_eq!(gpt.disk_guid, pt.get("id").unwrap().as_str().unwrap().to_lowercase());
-    assert_eq!(gpt.first_usable_lba, pt.get("firstlba").unwrap().as_u64().unwrap());
-    assert_eq!(gpt.last_usable_lba, pt.get("lastlba").unwrap().as_u64().unwrap());
+    assert_eq!(
+        gpt.disk_guid,
+        pt.get("id").unwrap().as_str().unwrap().to_lowercase()
+    );
+    assert_eq!(
+        gpt.first_usable_lba,
+        pt.get("firstlba").unwrap().as_u64().unwrap()
+    );
+    assert_eq!(
+        gpt.last_usable_lba,
+        pt.get("lastlba").unwrap().as_u64().unwrap()
+    );
     let parts = pt.get("partitions").unwrap().as_array().unwrap();
     assert_eq!(gpt.parts.len(), parts.len());
     for (ours, p) in gpt.parts.iter().zip(parts) {
         assert_eq!(ours.first_lba, p.get("start").unwrap().as_u64().unwrap());
-        assert_eq!(ours.last_lba - ours.first_lba + 1, p.get("size").unwrap().as_u64().unwrap());
-        assert_eq!(ours.type_guid, p.get("type").unwrap().as_str().unwrap().to_lowercase());
-        assert_eq!(ours.uuid, p.get("uuid").unwrap().as_str().unwrap().to_lowercase());
-        assert_eq!(ours.name, p.get("name").and_then(Value::as_str).unwrap_or(""));
+        assert_eq!(
+            ours.last_lba - ours.first_lba + 1,
+            p.get("size").unwrap().as_u64().unwrap()
+        );
+        assert_eq!(
+            ours.type_guid,
+            p.get("type").unwrap().as_str().unwrap().to_lowercase()
+        );
+        assert_eq!(
+            ours.uuid,
+            p.get("uuid").unwrap().as_str().unwrap().to_lowercase()
+        );
+        assert_eq!(
+            ours.name,
+            p.get("name").and_then(Value::as_str).unwrap_or("")
+        );
     }
     assert_eq!(gpt.parts[1].attributes, 1);
     assert_eq!(gpt.parts[2].attributes, 4 | (1 << 60) | (1 << 63));
     assert_eq!(gpt.parts[4].name, "Ünïcødé ☃");
     // blkid agrees on the table's id.
-    assert_eq!(blkid(&img).get("PTUUID").map(String::as_str), Some(gpt.disk_guid.as_str()));
+    assert_eq!(
+        blkid(&img).get("PTUUID").map(String::as_str),
+        Some(gpt.disk_guid.as_str())
+    );
     assert_eq!(blkid(&img).get("PTTYPE").map(String::as_str), Some("gpt"));
 }
 
@@ -482,11 +841,23 @@ fn gpt_4k_sectors_match_sfdisk() {
     }
     let dir = TempDir::new("rt-gpt4k");
     let img = image(&dir, "gpt4k", 64);
-    run_stdin("sfdisk", &["-q", "--sector-size", "4096", s(&img)], "label: gpt\nsize=8M, type=uefi\ntype=linux\n");
+    run_stdin(
+        "sfdisk",
+        &["-q", "--sector-size", "4096", s(&img)],
+        "label: gpt\nsize=8M, type=uefi\ntype=linux\n",
+    );
     let out = run("sfdisk", &["--json", "--sector-size", "4096", s(&img)]);
     let theirs = json::parse(&out).unwrap();
-    let Some(Table::Gpt { gpt, .. }) = parttable::read_table(&FileSource::open(&img).unwrap(), 4096) else { panic!("not gpt") };
-    let parts = theirs.at(&["partitiontable", "partitions"]).unwrap().as_array().unwrap();
+    let Some(Table::Gpt { gpt, .. }) =
+        parttable::read_table(&FileSource::open(&img).unwrap(), 4096)
+    else {
+        panic!("not gpt")
+    };
+    let parts = theirs
+        .at(&["partitiontable", "partitions"])
+        .unwrap()
+        .as_array()
+        .unwrap();
     for (ours, p) in gpt.parts.iter().zip(parts) {
         assert_eq!(ours.first_lba, p.get("start").unwrap().as_u64().unwrap());
     }
@@ -510,20 +881,38 @@ fn dos_with_logicals_matches_sfdisk() {
     );
     let theirs = sfdisk_json(&img);
     let pt = theirs.get("partitiontable").unwrap();
-    let Some(Table::Mbr(m)) = parttable::read_table(&FileSource::open(&img).unwrap(), 512) else { panic!("not dos") };
+    let Some(Table::Mbr(m)) = parttable::read_table(&FileSource::open(&img).unwrap(), 512) else {
+        panic!("not dos")
+    };
     assert!(m.problems.is_empty(), "{:?}", m.problems);
-    assert_eq!(format!("0x{:08x}", m.disk_signature), pt.get("id").unwrap().as_str().unwrap());
+    assert_eq!(
+        format!("0x{:08x}", m.disk_signature),
+        pt.get("id").unwrap().as_str().unwrap()
+    );
     let parts = pt.get("partitions").unwrap().as_array().unwrap();
     assert_eq!(m.parts.len(), parts.len());
     for (ours, p) in m.parts.iter().zip(parts) {
         let node = p.get("node").unwrap().as_str().unwrap();
-        assert!(node.ends_with(&ours.number.to_string()), "{node} vs {}", ours.number);
+        assert!(
+            node.ends_with(&ours.number.to_string()),
+            "{node} vs {}",
+            ours.number
+        );
         assert_eq!(ours.start, p.get("start").unwrap().as_u64().unwrap());
         assert_eq!(ours.sectors, p.get("size").unwrap().as_u64().unwrap());
-        assert_eq!(format!("{:x}", ours.ptype), p.get("type").unwrap().as_str().unwrap());
-        assert_eq!(ours.boot_flag == 0x80, p.get("bootable") == Some(&Value::Bool(true)));
+        assert_eq!(
+            format!("{:x}", ours.ptype),
+            p.get("type").unwrap().as_str().unwrap()
+        );
+        assert_eq!(
+            ours.boot_flag == 0x80,
+            p.get("bootable") == Some(&Value::Bool(true))
+        );
     }
-    assert_eq!(blkid(&img).get("PTUUID").map(String::as_str), Some("5eed0001"));
+    assert_eq!(
+        blkid(&img).get("PTUUID").map(String::as_str),
+        Some("5eed0001")
+    );
 }
 
 #[test]
@@ -534,11 +923,28 @@ fn hybrid_mbr_from_sgdisk() {
     let dir = TempDir::new("rt-hybrid");
     let img = image(&dir, "hy", 64);
     // (sgdisk -q on an image file exits 0 without writing anything.)
-    run("sgdisk", &["-o", "-n", "1:2048:+10M", "-t", "1:ef00", "-n", "2:0:0", "-t", "2:8300", s(&img)]);
+    run(
+        "sgdisk",
+        &[
+            "-o",
+            "-n",
+            "1:2048:+10M",
+            "-t",
+            "1:ef00",
+            "-n",
+            "2:0:0",
+            "-t",
+            "2:8300",
+            s(&img),
+        ],
+    );
     run("sgdisk", &["-h", "1", s(&img)]);
     let t = parttable::read_table(&FileSource::open(&img).unwrap(), 512).unwrap();
     let h = t.header_json(512, (64 << 20) / 512);
-    assert_eq!(h.at(&["protective_mbr", "hybrid"]), Some(&Value::Bool(true)));
+    assert_eq!(
+        h.at(&["protective_mbr", "hybrid"]),
+        Some(&Value::Bool(true))
+    );
     let Table::Gpt { gpt, .. } = &t else { panic!() };
     assert_eq!(gpt.parts.len(), 2);
 }
@@ -547,13 +953,25 @@ fn hybrid_mbr_from_sgdisk() {
 fn partitions_with_filesystems_end_to_end() {
     // A partitioned image whose partitions hold real filesystems: probing
     // each partition's slice agrees with blkid on the same slice.
-    if need("sfdisk").is_none() || need("mkfs.ext4").is_none() || need("mkfs.fat").is_none() || need("mkswap").is_none() {
+    if need("sfdisk").is_none()
+        || need("mkfs.ext4").is_none()
+        || need("mkfs.fat").is_none()
+        || need("mkswap").is_none()
+    {
         return;
     }
     let dir = TempDir::new("rt-e2e");
     let disk = image(&dir, "disk", 128);
-    run_stdin("sfdisk", &["-q", s(&disk)], "label: gpt\nsize=40M, type=uefi\nsize=16M, type=swap\ntype=linux\n");
-    let Some(Table::Gpt { gpt, .. }) = parttable::read_table(&FileSource::open(&disk).unwrap(), 512) else { panic!() };
+    run_stdin(
+        "sfdisk",
+        &["-q", s(&disk)],
+        "label: gpt\nsize=40M, type=uefi\nsize=16M, type=swap\ntype=linux\n",
+    );
+    let Some(Table::Gpt { gpt, .. }) =
+        parttable::read_table(&FileSource::open(&disk).unwrap(), 512)
+    else {
+        panic!()
+    };
     let mut whole = std::fs::read(&disk).unwrap();
     for (i, p) in gpt.parts.iter().enumerate() {
         let part = dir.path().join(format!("p{i}"));
@@ -571,7 +989,11 @@ fn partitions_with_filesystems_end_to_end() {
     }
     std::fs::write(&disk, &whole).unwrap();
     // The whole disk holds a table, not a filesystem, for both of us.
-    let Some(Table::Gpt { gpt: again, .. }) = parttable::read_table(&FileSource::open(&disk).unwrap(), 512) else { panic!() };
+    let Some(Table::Gpt { gpt: again, .. }) =
+        parttable::read_table(&FileSource::open(&disk).unwrap(), 512)
+    else {
+        panic!()
+    };
     assert_eq!(again.parts.len(), 3);
     assert_eq!(blkid(&disk).get("TYPE"), None);
 }
@@ -605,7 +1027,13 @@ fn real_fs(dir: &TempDir, name: &str, sectors: u64, kind: &str) -> Value {
 
 /// The dump of one GPT disk of `total` sectors, with `parts` as (number,
 /// start, sectors, content) and the mount figures of its last partition.
-fn fit_dump(total: u64, parts: &[(u32, u64, u64, Value)], mount_dev: &str, size: u64, used: u64) -> Value {
+fn fit_dump(
+    total: u64,
+    parts: &[(u32, u64, u64, Value)],
+    mount_dev: &str,
+    size: u64,
+    used: u64,
+) -> Value {
     let ps: Vec<String> = parts
         .iter()
         .map(|(n, start, sectors, c)| {
@@ -646,9 +1074,17 @@ fn fit_dump(total: u64, parts: &[(u32, u64, u64, Value)], mount_dev: &str, size:
 /// A fit of V onto a target of `bytes`, which must hold: the dump it makes
 /// and its one disk.
 fn fit_disk(v: &Value, bytes: u64, pct: u64) -> (Value, bko_holt::load::layout::Disk) {
-    let t = vec![bko_holt::load::fit::Target { disk: "vda".into(), path: "/dev/sdz".into(), size_bytes: bytes }];
+    let t = vec![bko_holt::load::fit::Target {
+        disk: "vda".into(),
+        path: "/dev/sdz".into(),
+        size_bytes: bytes,
+    }];
     let f = bko_holt::load::fit::fit(v, &t, pct);
-    assert!(f.problems.is_empty(), "the fit was refused: {:?}", f.problems);
+    assert!(
+        f.problems.is_empty(),
+        "the fit was refused: {:?}",
+        f.problems
+    );
     let out = f.v.expect("a fitted dump");
     let l = bko_holt::load::layout::Layout::from_json(out.clone()).unwrap();
     (out, l.disks.into_iter().next().unwrap())
@@ -658,16 +1094,55 @@ fn fit_disk(v: &Value, bytes: u64, pct: u64) -> (Value, bko_holt::load::layout::
 /// load's partition stage would run, and reads it back with sfdisk.
 fn apply_table(dir: &TempDir, d: &bko_holt::load::layout::Disk) -> PathBuf {
     let img = image_bytes(dir, "disk", d.size_bytes);
-    let script = bko_holt::load::commands::sfdisk_script(d, "bkofit", false).unwrap().replace("/dev/bkofit", s(&img));
-    run_stdin("sfdisk", &["-q", "--wipe", "always", "--wipe-partitions", "always", s(&img)], &script);
+    let script = bko_holt::load::commands::sfdisk_script(d, "bkofit", false)
+        .unwrap()
+        .replace("/dev/bkofit", s(&img));
+    run_stdin(
+        "sfdisk",
+        &[
+            "-q",
+            "--wipe",
+            "always",
+            "--wipe-partitions",
+            "always",
+            s(&img),
+        ],
+        &script,
+    );
     let pt = sfdisk_json(&img).get("partitiontable").cloned().unwrap();
-    assert_eq!(pt.get("lastlba").and_then(Value::as_u64), d.table.as_ref().unwrap().last_usable_lba, "the last usable LBA sfdisk wrote");
-    let parts = pt.get("partitions").and_then(Value::as_array).cloned().unwrap_or_default();
+    assert_eq!(
+        pt.get("lastlba").and_then(Value::as_u64),
+        d.table.as_ref().unwrap().last_usable_lba,
+        "the last usable LBA sfdisk wrote"
+    );
+    let parts = pt
+        .get("partitions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     assert_eq!(parts.len(), d.parts.len());
     for (p, got) in d.parts.iter().zip(&parts) {
-        assert_eq!(got.get("start").and_then(Value::as_u64), Some(p.start_lba), "partition {}'s start", p.number);
-        assert_eq!(got.get("size").and_then(Value::as_u64), Some(p.sectors), "partition {}'s size", p.number);
-        assert_eq!(got.get("uuid").and_then(Value::as_str).map(str::to_lowercase).as_deref(), p.uuid.as_deref(), "partition {}'s GUID", p.number);
+        assert_eq!(
+            got.get("start").and_then(Value::as_u64),
+            Some(p.start_lba),
+            "partition {}'s start",
+            p.number
+        );
+        assert_eq!(
+            got.get("size").and_then(Value::as_u64),
+            Some(p.sectors),
+            "partition {}'s size",
+            p.number
+        );
+        assert_eq!(
+            got.get("uuid")
+                .and_then(Value::as_str)
+                .map(str::to_lowercase)
+                .as_deref(),
+            p.uuid.as_deref(),
+            "partition {}'s GUID",
+            p.number
+        );
     }
     img
 }
@@ -726,7 +1201,10 @@ fn load_remakes_what_the_tools_made_and_reads_it_back() {
         let mut args = opts.to_vec();
         args.push(s(&src));
         run(tool, &args);
-        let want = probe_file(&src).first().unwrap_or_else(|| panic!("{tool}: nothing made")).to_json();
+        let want = probe_file(&src)
+            .first()
+            .unwrap_or_else(|| panic!("{tool}: nothing made"))
+            .to_json();
         let new = image(&dir, &format!("new{i}"), 512);
         let dev = s(&new);
         let cmds = match want.get("type").and_then(Value::as_str).unwrap_or("") {
@@ -735,8 +1213,15 @@ fn load_remakes_what_the_tools_made_and_reads_it_back() {
             _ => mkfs_cmds(dev, &want),
         };
         run_cmds(&cmds);
-        let got = probe_file(&new).first().unwrap_or_else(|| panic!("{tool}: load's commands made nothing")).to_json();
-        assert_eq!(readback::differences(dev, &want, &got), Vec::<String>::new(), "{tool}: {cmds:?}");
+        let got = probe_file(&new)
+            .first()
+            .unwrap_or_else(|| panic!("{tool}: load's commands made nothing"))
+            .to_json();
+        assert_eq!(
+            readback::differences(dev, &want, &got),
+            Vec::<String>::new(),
+            "{tool}: {cmds:?}"
+        );
     }
 }
 
@@ -751,17 +1236,37 @@ fn load_keeps_a_1k_ext4s_reserved_gdt_blocks() {
         return;
     }
     let dir = TempDir::new("rt-1k-gdt");
-    for (i, (mib, feats)) in [(32, "64bit"), (25, "64bit"), (32, "^64bit"), (24, "^64bit")].iter().enumerate() {
+    for (i, (mib, feats)) in [(32, "64bit"), (25, "64bit"), (32, "^64bit"), (24, "^64bit")]
+        .iter()
+        .enumerate()
+    {
         let src = image(&dir, &format!("src{i}"), *mib);
-        run("mke2fs", &["-q", "-F", "-t", "ext4", "-b", "1024", "-O", feats, s(&src)]);
+        run(
+            "mke2fs",
+            &["-q", "-F", "-t", "ext4", "-b", "1024", "-O", feats, s(&src)],
+        );
         let want = probe_file(&src).first().unwrap().to_json();
-        assert_eq!(want.get("first_data_block").and_then(Value::as_u64), Some(1));
-        let r = want.get("reserved_gdt_blocks").and_then(Value::as_u64).unwrap();
-        assert!(r > 0 && r < 256, "{mib} MiB {feats}: {r} reserved GDT blocks, capped or none: not a test of the arithmetic");
+        assert_eq!(
+            want.get("first_data_block").and_then(Value::as_u64),
+            Some(1)
+        );
+        let r = want
+            .get("reserved_gdt_blocks")
+            .and_then(Value::as_u64)
+            .unwrap();
+        assert!(
+            r > 0 && r < 256,
+            "{mib} MiB {feats}: {r} reserved GDT blocks, capped or none: not a test of the arithmetic"
+        );
         let new = image(&dir, &format!("new{i}"), *mib);
         run_cmds(&[cmd::mke2fs(s(&new), &want)]);
         let got = probe_file(&new).first().unwrap().to_json();
-        for k in ["reserved_gdt_blocks", "blocks", "blocks_per_group", "inodes"] {
+        for k in [
+            "reserved_gdt_blocks",
+            "blocks",
+            "blocks_per_group",
+            "inodes",
+        ] {
             assert_eq!(got.get(k), want.get(k), "{mib} MiB {feats}: {k}");
         }
     }
@@ -782,23 +1287,60 @@ fn fit_largest_keeps_ext_blocks_and_inodes_per_group() {
     let root = 4 * GIB / 512;
     let total = 2048 + root + 34;
     let img = image_bytes(&dir, "src", root * 512);
-    run("mke2fs", &["-q", "-F", "-t", "ext4", "-b", "4096", "-i", "4096", s(&img)]);
+    run(
+        "mke2fs",
+        &[
+            "-q",
+            "-F",
+            "-t",
+            "ext4",
+            "-b",
+            "4096",
+            "-i",
+            "4096",
+            s(&img),
+        ],
+    );
     let c = probe::content_json(&probe_file(&img));
     let ipg = c.get("inodes_per_group").and_then(Value::as_u64).unwrap();
     assert_eq!(ipg, 32768, "the source's inodes per group, 8 x block size");
-    let v = fit_dump(total, &[(1, 2048, root, c.clone())], "vda1", root * 512, 64 << 20);
+    let v = fit_dump(
+        total,
+        &[(1, 2048, root, c.clone())],
+        "vda1",
+        root * 512,
+        64 << 20,
+    );
     let (_, d) = fit_disk(&v, (total - GIB / 512) * 512, 30);
     let p = &d.parts[0];
     let blocks = p.content.get("blocks").and_then(Value::as_u64).unwrap();
     let groups = blocks.div_ceil(32768);
-    assert_eq!(p.content.get("inodes").and_then(Value::as_u64), Some(groups * ipg), "the fitted inode count");
+    assert_eq!(
+        p.content.get("inodes").and_then(Value::as_u64),
+        Some(groups * ipg),
+        "the fitted inode count"
+    );
     let newimg = image_bytes(&dir, "fitted", p.sectors * 512);
     run_cmds(&mkfs_cmds(s(&newimg), &p.content));
     let got = probe::content_json(&probe_file(&newimg));
-    for k in ["blocks", "blocks_per_group", "inodes_per_group", "inodes", "reserved_gdt_blocks"] {
-        assert_eq!(got.get(k), p.content.get(k), "{k}: made, and as the fit wrote it down");
+    for k in [
+        "blocks",
+        "blocks_per_group",
+        "inodes_per_group",
+        "inodes",
+        "reserved_gdt_blocks",
+    ] {
+        assert_eq!(
+            got.get(k),
+            p.content.get(k),
+            "{k}: made, and as the fit wrote it down"
+        );
     }
-    assert_eq!(got.get("blocks_per_group"), c.get("blocks_per_group"), "the source's blocks per group");
+    assert_eq!(
+        got.get("blocks_per_group"),
+        c.get("blocks_per_group"),
+        "the source's blocks per group"
+    );
 }
 
 /// Runs them, as the format stage would (an `sh -c` step through a shell).
@@ -820,14 +1362,28 @@ fn recorded_size(c: &Value) -> u64 {
 
 /// The one line of dumpe2fs or xfs_db that gives a field.
 fn field(text: &str, name: &str) -> String {
-    text.lines().find_map(|l| l.strip_prefix(name)).map(|v| v.trim().trim_start_matches('=').trim().to_string()).unwrap_or_else(|| panic!("no {name} in {text}"))
+    text.lines()
+        .find_map(|l| l.strip_prefix(name))
+        .map(|v| v.trim().trim_start_matches('=').trim().to_string())
+        .unwrap_or_else(|| panic!("no {name} in {text}"))
 }
 
 /// --fit-largest's own numbers, against the tools that make them: a 6 GiB
 /// disk fitted onto one a GiB smaller, for each filesystem it resizes.
 #[test]
 fn fit_largest_table_and_filesystems_match_the_tools() {
-    for t in ["sfdisk", "mke2fs", "dumpe2fs", "mkfs.xfs", "xfs_db", "mkfs.btrfs", "btrfs", "mkfs.f2fs", "mkfs.jfs", "mkfs.nilfs2"] {
+    for t in [
+        "sfdisk",
+        "mke2fs",
+        "dumpe2fs",
+        "mkfs.xfs",
+        "xfs_db",
+        "mkfs.btrfs",
+        "btrfs",
+        "mkfs.f2fs",
+        "mkfs.jfs",
+        "mkfs.nilfs2",
+    ] {
         if need(t).is_none() {
             return;
         }
@@ -842,14 +1398,27 @@ fn fit_largest_table_and_filesystems_match_the_tools() {
         let dir = TempDir::new(&format!("rt-fit-{kind}"));
         let bc = real_fs(&dir, "boot", boot, "ext4");
         let rc = real_fs(&dir, "root", root, kind);
-        assert!(recorded_size(&rc) <= root * 512, "{kind}: the dump's size of a filesystem of {root} sectors");
-        let v = fit_dump(total, &[(1, 2048, boot, bc), (2, root_start, root, rc.clone())], "vda2", root * 512, 512 << 20);
+        assert!(
+            recorded_size(&rc) <= root * 512,
+            "{kind}: the dump's size of a filesystem of {root} sectors"
+        );
+        let v = fit_dump(
+            total,
+            &[(1, 2048, boot, bc), (2, root_start, root, rc.clone())],
+            "vda2",
+            root * 512,
+            512 << 20,
+        );
         let (_, d) = fit_disk(&v, 5 * GIB, 25);
         // The table sfdisk writes is the fitted one, GUIDs and all.
         apply_table(&dir, &d);
         // /boot keeps its sectors; the root gives up the GiB.
         assert_eq!(d.parts[0].sectors, boot, "{kind}: /boot's size");
-        assert_eq!(d.parts[1].sectors, root - GIB / 512, "{kind}: the root's size");
+        assert_eq!(
+            d.parts[1].sectors,
+            root - GIB / 512,
+            "{kind}: the root's size"
+        );
         // The mkfs load would run, on an image of the new partition.
         let p = &d.parts[1];
         let img = image_bytes(&dir, "newroot", p.sectors * 512);
@@ -857,15 +1426,33 @@ fn fit_largest_table_and_filesystems_match_the_tools() {
         // What the dump says the new filesystem is, read back from it.
         let after = probe::content_json(&probe_file(&img));
         assert_eq!(after.get("type"), p.content.get("type"), "{kind}: the type");
-        assert_eq!(after.get("uuid"), p.content.get("uuid"), "{kind}: the UUID is still the source's");
-        assert_eq!(after.get("version"), p.content.get("version"), "{kind}: the version");
+        assert_eq!(
+            after.get("uuid"),
+            p.content.get("uuid"),
+            "{kind}: the UUID is still the source's"
+        );
+        assert_eq!(
+            after.get("version"),
+            p.content.get("version"),
+            "{kind}: the version"
+        );
         let (made, wrote) = (recorded_size(&after), recorded_size(&p.content));
-        assert!(made <= p.sectors * 512, "{kind}: {made} doesn't fit the {} of the partition", p.sectors * 512);
-        assert!(made <= recorded_size(&rc), "{kind}: {made} is bigger than the source's filesystem");
+        assert!(
+            made <= p.sectors * 512,
+            "{kind}: {made} doesn't fit the {} of the partition",
+            p.sectors * 512
+        );
+        assert!(
+            made <= recorded_size(&rc),
+            "{kind}: {made} is bigger than the source's filesystem"
+        );
         if kind == "jfs" {
             // mkfs.jfs sizes the log from the device, so what it records
             // isn't the fit's arithmetic to the byte (layload.md).
-            assert!(made.abs_diff(wrote) < wrote / 100, "jfs: it made {made} where the fit wrote {wrote} down");
+            assert!(
+                made.abs_diff(wrote) < wrote / 100,
+                "jfs: it made {made} where the fit wrote {wrote} down"
+            );
         } else {
             assert_eq!(made, wrote, "{kind}: the size the fit wrote down");
         }
@@ -873,18 +1460,60 @@ fn fit_largest_table_and_filesystems_match_the_tools() {
         match kind {
             "ext4" => {
                 let d2 = run("dumpe2fs", &["-h", s(&img)]);
-                assert_eq!(field(&d2, "Block count:"), p.content.get("blocks").and_then(Value::as_u64).unwrap().to_string(), "ext4: dumpe2fs's block count");
+                assert_eq!(
+                    field(&d2, "Block count:"),
+                    p.content
+                        .get("blocks")
+                        .and_then(Value::as_u64)
+                        .unwrap()
+                        .to_string(),
+                    "ext4: dumpe2fs's block count"
+                );
             }
             "xfs" => {
-                let db = run("xfs_db", &["-r", "-c", "sb 0", "-c", "p dblocks agblocks agcount", s(&img)]);
-                for (k, f) in [("dblocks", "blocks"), ("agblocks", "ag_blocks"), ("agcount", "ag_count")] {
-                    assert_eq!(field(&db, &format!("{k} =")), p.content.get(f).and_then(Value::as_u64).unwrap().to_string(), "xfs: {k}");
+                let db = run(
+                    "xfs_db",
+                    &[
+                        "-r",
+                        "-c",
+                        "sb 0",
+                        "-c",
+                        "p dblocks agblocks agcount",
+                        s(&img),
+                    ],
+                );
+                for (k, f) in [
+                    ("dblocks", "blocks"),
+                    ("agblocks", "ag_blocks"),
+                    ("agcount", "ag_count"),
+                ] {
+                    assert_eq!(
+                        field(&db, &format!("{k} =")),
+                        p.content
+                            .get(f)
+                            .and_then(Value::as_u64)
+                            .unwrap()
+                            .to_string(),
+                        "xfs: {k}"
+                    );
                 }
             }
             "btrfs" => {
                 let sup = run("btrfs", &["inspect-internal", "dump-super", s(&img)]);
-                let got = field(&sup, "total_bytes").split_whitespace().next().unwrap().to_string();
-                assert_eq!(got, p.content.get("total_bytes").and_then(Value::as_u64).unwrap().to_string(), "btrfs: total_bytes");
+                let got = field(&sup, "total_bytes")
+                    .split_whitespace()
+                    .next()
+                    .unwrap()
+                    .to_string();
+                assert_eq!(
+                    got,
+                    p.content
+                        .get("total_bytes")
+                        .and_then(Value::as_u64)
+                        .unwrap()
+                        .to_string(),
+                    "btrfs: total_bytes"
+                );
             }
             _ => {}
         }
@@ -904,27 +1533,63 @@ fn fit_largest_keeps_xfs_allocation_groups_whole() {
     let root = 4 * GIB / 512;
     let total = 2048 + root + 34;
     let img = image_bytes(&dir, "src", root * 512);
-    run("mkfs.xfs", &["-q", "-f", "-d", "agsize=1073741824", s(&img)]);
+    run(
+        "mkfs.xfs",
+        &["-q", "-f", "-d", "agsize=1073741824", s(&img)],
+    );
     let c = probe::content_json(&probe_file(&img));
     assert_eq!(c.get("ag_count").and_then(Value::as_u64), Some(4));
-    let v = fit_dump(total, &[(1, 2048, root, c.clone())], "vda1", root * 512, 256 << 20);
+    let v = fit_dump(
+        total,
+        &[(1, 2048, root, c.clone())],
+        "vda1",
+        root * 512,
+        256 << 20,
+    );
     // A GiB less 8 MiB: three whole groups and 8 MiB, which mkfs.xfs won't
     // make, so the fit asks for three groups.
     let (_, d) = fit_disk(&v, (total - 2 * 1024 * 1024 + 16384) * 512, 30);
     let p = &d.parts[0];
     assert_eq!(p.content.get("ag_count").and_then(Value::as_u64), Some(3));
-    assert_eq!(p.content.get("blocks").and_then(Value::as_u64), Some(3 * GIB / 4096));
+    assert_eq!(
+        p.content.get("blocks").and_then(Value::as_u64),
+        Some(3 * GIB / 4096)
+    );
     let newimg = image_bytes(&dir, "fitted", p.sectors * 512);
     run_cmds(&mkfs_cmds(s(&newimg), &p.content));
-    let db = run("xfs_db", &["-r", "-c", "sb 0", "-c", "p dblocks agblocks agcount", s(&newimg)]);
+    let db = run(
+        "xfs_db",
+        &[
+            "-r",
+            "-c",
+            "sb 0",
+            "-c",
+            "p dblocks agblocks agcount",
+            s(&newimg),
+        ],
+    );
     assert_eq!(field(&db, "dblocks ="), (3 * GIB / 4096).to_string());
     assert_eq!(field(&db, "agcount ="), "3");
     // The stub really is one mkfs.xfs drops: asked for the 8 MiB too, it
     // makes the same three groups, and the dump would then be wrong.
     let stub = image_bytes(&dir, "stub", p.sectors * 512);
     let size = 3 * GIB + (8 << 20);
-    run("mkfs.xfs", &["-q", "-f", "-b", "size=4096", "-d", &format!("size={size},agsize=1073741824"), s(&stub)]);
-    let db = run("xfs_db", &["-r", "-c", "sb 0", "-c", "p dblocks agcount", s(&stub)]);
+    run(
+        "mkfs.xfs",
+        &[
+            "-q",
+            "-f",
+            "-b",
+            "size=4096",
+            "-d",
+            &format!("size={size},agsize=1073741824"),
+            s(&stub),
+        ],
+    );
+    let db = run(
+        "xfs_db",
+        &["-r", "-c", "sb 0", "-c", "p dblocks agcount", s(&stub)],
+    );
     assert_eq!(field(&db, "dblocks ="), (3 * GIB / 4096).to_string());
 }
 
@@ -944,10 +1609,29 @@ fn fit_largest_keeps_the_luks_payload_offset() {
     let img = image_bytes(&dir, "src", root * 512);
     run(
         "cryptsetup",
-        &["luksFormat", "-q", "--key-file", s(&key), "--type", "luks2", "--pbkdf", "pbkdf2", "--pbkdf-force-iterations", "1000", s(&img)],
+        &[
+            "luksFormat",
+            "-q",
+            "--key-file",
+            s(&key),
+            "--type",
+            "luks2",
+            "--pbkdf",
+            "pbkdf2",
+            "--pbkdf-force-iterations",
+            "1000",
+            s(&img),
+        ],
     );
     let lc = probe::content_json(&probe_file(&img));
-    let off = lc.at(&["segments", "0", "offset"]).and_then(|x| x.as_str().map(|s| s.parse::<u64>().unwrap()).or_else(|| x.as_u64())).unwrap();
+    let off = lc
+        .at(&["segments", "0", "offset"])
+        .and_then(|x| {
+            x.as_str()
+                .map(|s| s.parse::<u64>().unwrap())
+                .or_else(|| x.as_u64())
+        })
+        .unwrap();
     // The plaintext device, as big as the partition less the header.
     let inner = image_bytes(&dir, "inner", root * 512 - off);
     run("mke2fs", &["-q", "-F", "-t", "ext4", s(&inner)]);
@@ -961,8 +1645,18 @@ fn fit_largest_keeps_the_luks_payload_offset() {
         lc.get("uuid").and_then(Value::as_str).unwrap(),
         ic.compact()
     );
-    let v = fit_dump(total, &[(1, 2048, root, lc.clone())], "dm-0", root * 512 - off, 128 << 20);
-    let v = json::parse(&v.compact().replace(r#""dm_devices":[]"#, &format!(r#""dm_devices":[{}]"#, dm))).unwrap();
+    let v = fit_dump(
+        total,
+        &[(1, 2048, root, lc.clone())],
+        "dm-0",
+        root * 512 - off,
+        128 << 20,
+    );
+    let v = json::parse(
+        &v.compact()
+            .replace(r#""dm_devices":[]"#, &format!(r#""dm_devices":[{}]"#, dm)),
+    )
+    .unwrap();
     let (out, d) = fit_disk(&v, (total - 2 * 1024 * 1024) * 512, 60);
     assert_eq!(d.parts[0].sectors, root - 2 * 1024 * 1024);
     // The LUKS header is untouched, offset and all.
@@ -970,11 +1664,20 @@ fn fit_largest_keeps_the_luks_payload_offset() {
     // The filesystem inside is a GiB smaller, and mke2fs makes it so.
     let inner_now = out.at(&["storage", "dm_devices", "0"]).unwrap().clone();
     let want = ic.get("blocks").and_then(Value::as_u64).unwrap() - GIB / 4096;
-    assert_eq!(inner_now.at(&["content", "blocks"]).and_then(Value::as_u64), Some(want));
-    assert_eq!(inner_now.get("size_bytes").and_then(Value::as_u64), Some(d.parts[0].sectors * 512 - off));
+    assert_eq!(
+        inner_now.at(&["content", "blocks"]).and_then(Value::as_u64),
+        Some(want)
+    );
+    assert_eq!(
+        inner_now.get("size_bytes").and_then(Value::as_u64),
+        Some(d.parts[0].sectors * 512 - off)
+    );
     let newinner = image_bytes(&dir, "newinner", d.parts[0].sectors * 512 - off);
     run_cmds(&mkfs_cmds(s(&newinner), inner_now.get("content").unwrap()));
     let out = run("dumpe2fs", &["-h", s(&newinner)]);
     assert_eq!(field(&out, "Block count:"), want.to_string());
-    assert_eq!(field(&out, "Filesystem UUID:"), ic.get("uuid").and_then(Value::as_str).unwrap());
+    assert_eq!(
+        field(&out, "Filesystem UUID:"),
+        ic.get("uuid").and_then(Value::as_str).unwrap()
+    );
 }

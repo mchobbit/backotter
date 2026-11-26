@@ -26,7 +26,8 @@ pub const LAST_RUN: &str = "last-load.json";
 /// Lines kept from each log.
 const LOG_LINES: usize = 3000;
 
-pub const USAGE: &str = "Usage: bko-holt report-bug [--output FILE] [--stderr FILE]... [--attach FILE]...
+pub const USAGE: &str =
+    "Usage: bko-holt report-bug [--output FILE] [--stderr FILE]... [--attach FILE]...
                           [--strip-file FILE]... [--no-redact] [-- LOAD-ARGUMENTS...]
 
 Gathers what a BackOtter bug report needs into one text file to attach to
@@ -97,15 +98,27 @@ pub struct Args {
 
 /// The flags parse_args takes a value after, for `--json`'s first pass
 /// (crate::load::jsonout::find_json_flag); parse_args asserts it.
-pub const VALUE_FLAGS: &[&str] = &["--output", "-o", "--stderr", "--attach", "--strip-file", "--sysroot"];
+pub const VALUE_FLAGS: &[&str] = &[
+    "--output",
+    "-o",
+    "--stderr",
+    "--attach",
+    "--strip-file",
+    "--sysroot",
+];
 
 pub fn parse_args(args: &[String]) -> Result<Option<Args>, String> {
     let mut a = Args::default();
     let mut it = args.iter();
     while let Some(x) = it.next() {
         let mut value = |flag: &str| {
-            debug_assert!(VALUE_FLAGS.contains(&flag), "{flag} takes a value: add it to VALUE_FLAGS");
-            it.next().cloned().ok_or_else(|| format!("{flag} needs a value"))
+            debug_assert!(
+                VALUE_FLAGS.contains(&flag),
+                "{flag} takes a value: add it to VALUE_FLAGS"
+            );
+            it.next()
+                .cloned()
+                .ok_or_else(|| format!("{flag} needs a value"))
         };
         match x.as_str() {
             "-h" | "--help" => return Ok(None),
@@ -119,7 +132,11 @@ pub fn parse_args(args: &[String]) -> Result<Option<Args>, String> {
                 a.load_args = Some(it.cloned().collect());
                 break;
             }
-            other => return Err(format!("unknown argument {other:?} (load's arguments go after --)")),
+            other => {
+                return Err(format!(
+                    "unknown argument {other:?} (load's arguments go after --)"
+                ));
+            }
         }
     }
     Ok(Some(a))
@@ -133,8 +150,14 @@ pub fn main(args: &[String]) -> ExitCode {
             print!("{USAGE}");
             return ExitCode::SUCCESS;
         }
-        let line = format!("bko-holt report-bug: {flag}: the report is text for people; run it without --json");
-        load::jsonout::write_stdout(&load::jsonout::error_doc(2, load::jsonout::ErrorCode::JsonNotHere, &line));
+        let line = format!(
+            "bko-holt report-bug: {flag}: the report is text for people; run it without --json"
+        );
+        load::jsonout::write_stdout(&load::jsonout::error_doc(
+            2,
+            load::jsonout::ErrorCode::JsonNotHere,
+            &line,
+        ));
         eprintln!("{line}");
         return ExitCode::from(2);
     }
@@ -158,7 +181,14 @@ pub fn main(args: &[String]) -> ExitCode {
         None => Sys::host(),
     };
     let now = crate::timestamp();
-    let path = a.output.clone().unwrap_or_else(|| format!("bko-report-{}.txt", now.replace(['-', ':'], "").replace('T', "-").trim_end_matches('Z')));
+    let path = a.output.clone().unwrap_or_else(|| {
+        format!(
+            "bko-report-{}.txt",
+            now.replace(['-', ':'], "")
+                .replace('T', "-")
+                .trim_end_matches('Z')
+        )
+    });
     // A dry run writes only a new file, so a device (or anything else that
     // is there) can't be written over.
     let new_only = load::jsonout::no_commit().is_some();
@@ -177,7 +207,9 @@ pub fn main(args: &[String]) -> ExitCode {
         eprintln!("bko-holt report-bug: {n}");
     }
     print!("{}", b.terminal);
-    let shown = std::fs::canonicalize(&path).map(|p| p.display().to_string()).unwrap_or(path);
+    let shown = std::fs::canonicalize(&path)
+        .map(|p| p.display().to_string())
+        .unwrap_or(path);
     println!("\nWrote {shown} ({} KiB).", b.text.len().div_ceil(1024));
     println!("Read it, then attach it to a new issue at {ISSUES}");
     ExitCode::SUCCESS
@@ -214,8 +246,13 @@ struct Run {
 
 /// The layout at PATH: under SYS's root when it's absolute, else from here.
 fn read_any(sys: &Sys, path: &str) -> std::io::Result<String> {
-    let p = if path.starts_with('/') { sys.p(path) } else { std::path::PathBuf::from(path) };
-    crate::bytes::read_bounded(&p, crate::LAYOUT_MAX).map(|b| String::from_utf8_lossy(&b).into_owned())
+    let p = if path.starts_with('/') {
+        sys.p(path)
+    } else {
+        std::path::PathBuf::from(path)
+    };
+    crate::bytes::read_bounded(&p, crate::LAYOUT_MAX)
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
 }
 
 /// How much of the end of a --stderr file is read: far more than its last
@@ -227,16 +264,32 @@ fn tail(text: &str, n: usize) -> String {
     if lines.len() <= n {
         return text.to_string();
     }
-    format!("[... {} earlier lines left out ...]\n{}\n", lines.len() - n, lines[lines.len() - n..].join("\n"))
+    format!(
+        "[... {} earlier lines left out ...]\n{}\n",
+        lines.len() - n,
+        lines[lines.len() - n..].join("\n")
+    )
 }
 
 fn last_run(sys: &Sys, a: &Args) -> Option<Run> {
     if let Some(args) = &a.load_args {
-        return Some(Run { source: "given after --".into(), args: args.clone(), cwd: None, exit: None, stderr: None, time: None });
+        return Some(Run {
+            source: "given after --".into(),
+            args: args.clone(),
+            cwd: None,
+            exit: None,
+            stderr: None,
+            time: None,
+        });
     }
     let path = format!("{RUN_DIR}/{LAST_RUN}");
     let v = crate::json::parse(&sys.read(&path)?).ok()?;
-    let args = v.get("args")?.as_array()?.iter().filter_map(|x| x.as_str().map(str::to_string)).collect();
+    let args = v
+        .get("args")?
+        .as_array()?
+        .iter()
+        .filter_map(|x| x.as_str().map(str::to_string))
+        .collect();
     Some(Run {
         source: path,
         args,
@@ -260,23 +313,34 @@ fn tail_bytes(text: &str, max: usize) -> &str {
 /// `bko-holt load` records each run (but not --sysroot ones or --help)
 /// for `report-bug`.  It's in RAM, and failing to write it changes nothing.
 pub fn record_load_run(args: &[String], exit: u8, stderr: &str) {
-    if args.iter().any(|a| a == "--sysroot" || a == "-h" || a == "--help") {
+    if args
+        .iter()
+        .any(|a| a == "--sysroot" || a == "-h" || a == "--help")
+    {
         return;
     }
-    let cwd = std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default();
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
     let err = tail_bytes(stderr, 65536);
     let v = Obj::new()
         .set("format", "bko-holt-last-load")
         .set("time", crate::timestamp())
         .set("version", env!("CARGO_PKG_VERSION"))
         .set("cwd", cwd)
-        .set("args", Value::Arr(args.iter().map(|a| Value::Str(a.clone())).collect()))
+        .set(
+            "args",
+            Value::Arr(args.iter().map(|a| Value::Str(a.clone())).collect()),
+        )
         .set("exit", u64::from(exit))
         .set("stderr", err)
         .build();
     {
         use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-        let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(RUN_DIR);
+        let _ = std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(RUN_DIR);
         let _ = std::fs::set_permissions(RUN_DIR, std::fs::Permissions::from_mode(0o700));
     }
     let _ = write_private_file(&format!("{RUN_DIR}/{LAST_RUN}"), &v.pretty());
@@ -287,7 +351,12 @@ pub fn record_load_run(args: &[String], exit: u8, stderr: &str) {
 fn write_private_file(path: &str, text: &str) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
     if f.metadata()?.is_file() {
         let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
     }
@@ -308,18 +377,36 @@ fn write_report(path: &str, text: &str, new_only: bool) -> std::io::Result<()> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     // O_EXCL first, which also refuses a symlink in PATH's last place:
     // whether this run made the file decides whether it may be chowned.
-    let (mut f, created) = match std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path) {
+    let (mut f, created) = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+    {
         Ok(f) => (f, true),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && !new_only => (std::fs::OpenOptions::new().write(true).truncate(true).open(path)?, false),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && !new_only => (
+            std::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(path)?,
+            false,
+        ),
         Err(e) => return Err(e),
     };
     if f.metadata()?.is_file() {
         // Someone else's file, writable by us: it keeps its mode.
         let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
-        let (uid, gid) = (std::env::var("SUDO_UID").ok(), std::env::var("SUDO_GID").ok());
-        if let Some((u, g)) = report_owner(created, crate::sys::euid(), uid.as_deref(), gid.as_deref()) {
+        let (uid, gid) = (
+            std::env::var("SUDO_UID").ok(),
+            std::env::var("SUDO_GID").ok(),
+        );
+        if let Some((u, g)) =
+            report_owner(created, crate::sys::euid(), uid.as_deref(), gid.as_deref())
+        {
             if let Err(e) = std::os::unix::fs::fchown(&f, Some(u), g) {
-                eprintln!("bko-holt report-bug: {path}: can't give it to uid {u} ({e}): it stays root's");
+                eprintln!(
+                    "bko-holt report-bug: {path}: can't give it to uid {u} ({e}): it stays root's"
+                );
             }
         }
     }
@@ -329,7 +416,12 @@ fn write_report(path: &str, text: &str, new_only: bool) -> std::io::Result<()> {
 /// Who a report file is handed to: under sudo (root, SUDO_UID a user's
 /// uid), that user and SUDO_GID's group, for a file this run made only.
 /// None: it stays whose it is.
-fn report_owner(created: bool, euid: u32, sudo_uid: Option<&str>, sudo_gid: Option<&str>) -> Option<(u32, Option<u32>)> {
+fn report_owner(
+    created: bool,
+    euid: u32,
+    sudo_uid: Option<&str>,
+    sudo_gid: Option<&str>,
+) -> Option<(u32, Option<u32>)> {
     if !created || euid != 0 {
         return None;
     }
@@ -353,7 +445,13 @@ fn slim(v: &Value) -> Value {
                     Value::Str(b) if crate::redact::is_b64_key(k) && b.len() > BLOB_MAX => {
                         let raw = crate::bytes::unbase64(b).unwrap_or_default();
                         let crc = format!("{:08x}", crate::bytes::crc32(&raw));
-                        (format!("{k}{}", load::OMITTED), Obj::new().set("bytes", raw.len() as u64).set("crc32", crc).build())
+                        (
+                            format!("{k}{}", load::OMITTED),
+                            Obj::new()
+                                .set("bytes", raw.len() as u64)
+                                .set("crc32", crc)
+                                .build(),
+                        )
                     }
                     _ => (k.clone(), slim(x)),
                 })
@@ -365,14 +463,21 @@ fn slim(v: &Value) -> Value {
 }
 
 /// Where a BackOtter rescue image keeps its marker (stick/marker.py).
-const MARKERS: [&str; 3] = ["/.disk/backotter.json", "/boot/.disk/backotter.json", "/cdrom/.disk/backotter.json"];
+const MARKERS: [&str; 3] = [
+    "/.disk/backotter.json",
+    "/boot/.disk/backotter.json",
+    "/cdrom/.disk/backotter.json",
+];
 
 fn versions(sys: &Sys) -> (String, Vec<String>) {
     let mut s = format!("bko-holt      {}\n", env!("CARGO_PKG_VERSION"));
     let mut notes = Vec::new();
     for (prog, arg) in [("restic-bko", "version"), ("rustic-bko", "--version")] {
         let v = match crate::load::plan::find(sys, prog) {
-            Some(exe) => sys.run_file(&exe, &[arg]).map(|o| format!("{} ({exe})", o.trim())).unwrap_or_else(|| format!("{exe} {arg} failed")),
+            Some(exe) => sys
+                .run_file(&exe, &[arg])
+                .map(|o| format!("{} ({exe})", o.trim()))
+                .unwrap_or_else(|| format!("{exe} {arg} failed")),
             None => "not installed here".to_string(),
         };
         s += &format!("{prog:<13} {v}\n");
@@ -397,13 +502,31 @@ fn versions(sys: &Sys) -> (String, Vec<String>) {
             }
             Err(_) => s += &format!("image         {p} isn't JSON\n"),
         },
-        None => s += "image         none: not running from a BackOtter rescue image (no .disk/backotter.json)\n",
+        None => {
+            s += "image         none: not running from a BackOtter rescue image (no .disk/backotter.json)\n"
+        }
     }
     // As dump reads it: NetBSD, OpenBSD and Haiku have no os-release.
-    let os = if crate::other::Family::current().is_some() { crate::other::os_release(sys) } else { crate::osrel::read(sys) };
-    let osline = os.as_ref().map(|o| format!("{} ({} {})", o.get("PRETTY_NAME").unwrap_or("?"), o.get("ID").unwrap_or("?"), o.get("VERSION_ID").unwrap_or("?")));
-    s += &format!("os            {}\n", osline.unwrap_or_else(|| "no os-release".into()));
-    let un = sys.run("uname", &["-s", "-r", "-v", "-m"]).map(|o| o.trim().to_string());
+    let os = if crate::other::Family::current().is_some() {
+        crate::other::os_release(sys)
+    } else {
+        crate::osrel::read(sys)
+    };
+    let osline = os.as_ref().map(|o| {
+        format!(
+            "{} ({} {})",
+            o.get("PRETTY_NAME").unwrap_or("?"),
+            o.get("ID").unwrap_or("?"),
+            o.get("VERSION_ID").unwrap_or("?")
+        )
+    });
+    s += &format!(
+        "os            {}\n",
+        osline.unwrap_or_else(|| "no os-release".into())
+    );
+    let un = sys
+        .run("uname", &["-s", "-r", "-v", "-m"])
+        .map(|o| o.trim().to_string());
     if un.is_none() {
         notes.push("uname -srvm failed; the kernel isn't in the report".into());
     }
@@ -446,7 +569,11 @@ const STRIP_FILE_MAX: u64 = 1 << 20;
 /// The strings of a --strip-file, one a line (a trailing CR dropped),
 /// empty lines skipped.
 fn strip_lines(text: &str) -> Vec<String> {
-    text.lines().map(|l| l.strip_suffix('\r').unwrap_or(l)).filter(|l| !l.trim().is_empty()).map(str::to_string).collect()
+    text.lines()
+        .map(|l| l.strip_suffix('\r').unwrap_or(l))
+        .filter(|l| !l.trim().is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 /// What an attached file teaches the Collector beyond its text: a
@@ -454,7 +581,12 @@ fn strip_lines(text: &str) -> Vec<String> {
 /// targets: serials, WWIDs, by-id links and labels of this machine's disks,
 /// which no dump may hold), and each event of an events file.
 fn attached_values(text: &str) -> Vec<Value> {
-    let ours = |v: &Value| v.get("format").and_then(Value::as_str).is_some_and(|f| f.starts_with("bko-holt-")) || v.get("event").is_some();
+    let ours = |v: &Value| {
+        v.get("format")
+            .and_then(Value::as_str)
+            .is_some_and(|f| f.starts_with("bko-holt-"))
+            || v.get("event").is_some()
+    };
     if let Ok(v) = crate::json::parse(text) {
         return if ours(&v) { vec![v] } else { Vec::new() };
     }
@@ -510,14 +642,21 @@ fn learn_argv_values(c: &mut Collector, v: &Value) {
 /// A word in capitals is help's placeholder ("--password-file FILE",
 /// "--key-file NAME=FILE"), not a value.
 fn learn_text_flags(c: &mut Collector, text: &str) {
-    let placeholder = |v: &str| v.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b"_-.=".contains(&b));
+    let placeholder = |v: &str| {
+        v.bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b"_-.=".contains(&b))
+    };
     let words: Vec<&str> = text.split_whitespace().collect();
     for w in words.windows(2) {
         let f = w[0].trim_start_matches(['\'', '"']);
         if !(SECRET_FLAGS.contains(&f) || f == "--key-file") {
             continue;
         }
-        let v = w[1].split('\\').next().unwrap_or("").trim_matches(['\'', '"', ',', ';', ')', '`']);
+        let v = w[1]
+            .split('\\')
+            .next()
+            .unwrap_or("")
+            .trim_matches(['\'', '"', ',', ';', ')', '`']);
         if !placeholder(v) && !placeholder(v.split_once('=').map_or(v, |(_, x)| x)) {
             learn_flag(c, f, v);
         }
@@ -540,15 +679,25 @@ pub fn learn_attachment(c: &mut Collector, text: &str) {
 /// have replaced, from Kind::plural (its first words, without what a
 /// parenthesis adds), so it can't drift.
 fn not_redacted_line() -> String {
-    let kinds: Vec<&str> = crate::redact::Kind::ALL.iter().map(|k| k.plural().split(" (").next().unwrap_or("")).collect();
-    format!("NOT redacted: it holds this machine's {}, as they are.\n", kinds.join(", "))
+    let kinds: Vec<&str> = crate::redact::Kind::ALL
+        .iter()
+        .map(|k| k.plural().split(" (").next().unwrap_or(""))
+        .collect();
+    format!(
+        "NOT redacted: it holds this machine's {}, as they are.\n",
+        kinds.join(", ")
+    )
 }
 
 /// Options with the names in --key-file NAME=FILE redacted, to run against
 /// the redacted layout (a crypttab name such as luks-UUID changes with it).
 fn redacted_opts(o: &Options, r: &Redactor) -> Options {
     let mut o = o.clone();
-    o.key_files = o.key_files.iter().map(|(n, f)| (r.text(n), f.clone())).collect();
+    o.key_files = o
+        .key_files
+        .iter()
+        .map(|(n, f)| (r.text(n), f.clone()))
+        .collect();
     o
 }
 
@@ -558,7 +707,10 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
     let mut c = Collector::new();
     let (vers, n) = versions(sys);
     notes.extend(n);
-    parts.push(Part { title: "versions".into(), body: Body::Text(vers) });
+    parts.push(Part {
+        title: "versions".into(),
+        body: Body::Text(vers),
+    });
 
     // The last load run, its layout, plan and status.
     let mut layout: Option<(String, Value, String)> = None;
@@ -684,9 +836,15 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
     for p in a.strip_files.iter().filter(|_| !a.no_redact) {
         match crate::bytes::read_bounded(std::path::Path::new(p), STRIP_FILE_MAX) {
             Ok(b) => {
-                let short = strip_lines(&String::from_utf8_lossy(&b)).iter().filter(|l| !c.learn_strip(l)).count();
+                let short = strip_lines(&String::from_utf8_lossy(&b))
+                    .iter()
+                    .filter(|l| !c.learn_strip(l))
+                    .count();
                 if short > 0 {
-                    notes.push(format!("--strip-file {p}: {short} line(s) under {} characters left as they are", crate::redact::STRIP_MIN));
+                    notes.push(format!(
+                        "--strip-file {p}: {short} line(s) under {} characters left as they are",
+                        crate::redact::STRIP_MIN
+                    ));
                 }
             }
             // Never the file's text: only that it couldn't be read.
@@ -694,7 +852,11 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
         }
     }
 
-    let r = if a.no_redact { Collector::new().seal() } else { c.seal() };
+    let r = if a.no_redact {
+        Collector::new().seal()
+    } else {
+        c.seal()
+    };
 
     // The plan and status, run against the redacted layout: what a
     // developer gets from the bundle's own layout.  The plan of the
@@ -705,14 +867,29 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
         let ro = redacted_opts(o, &r);
         let (code, out, err) = load::run(&ro, &red_text, sys);
         let shown_args = run.as_ref().map(|x| plan_args(&x.args)).unwrap_or_default();
-        let mut body = format!("bko-holt load {} -- exit {code}\n", shown_args.iter().map(|x| load::shell_quote(x)).collect::<Vec<_>>().join(" "));
-        let (code0, out0, err0) = if a.no_redact { (code, out.clone(), err.clone()) } else { load::run(o, text, sys) };
+        let mut body = format!(
+            "bko-holt load {} -- exit {code}\n",
+            shown_args
+                .iter()
+                .map(|x| load::shell_quote(x))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        let (code0, out0, err0) = if a.no_redact {
+            (code, out.clone(), err.clone())
+        } else {
+            load::run(o, text, sys)
+        };
         if a.no_redact {
             body += &(out + &err);
         } else if code0 == code && r.unredact(&out) == out0 && r.unredact(&err) == err0 {
-            body += "(checked: the plan of the redacted layout is the original's, pseudonyms aside)\n";
+            body +=
+                "(checked: the plan of the redacted layout is the original's, pseudonyms aside)\n";
             body += &(out + &err);
-        } else if code0 == code && sorted_lines(&r.unredact(&(out.clone() + &err))) == sorted_lines(&(out0.clone() + &err0)) {
+        } else if code0 == code
+            && sorted_lines(&r.unredact(&(out.clone() + &err)))
+                == sorted_lines(&(out0.clone() + &err0))
+        {
             // load sorts datasets and mount points by name, and pseudonyms
             // sort differently.
             body += "(checked: the plan of the redacted layout runs the same commands, in another order because pseudonyms sort\ndifferently; this is the original's, redacted)\n";
@@ -724,7 +901,10 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
             notes.push("the redacted layout's plan differs from the original's: please say so in the issue".into());
             body += &(out0 + &err0);
         }
-        parts.push(Part { title: format!("plan for that run, of {path}"), body: Body::Text(body) });
+        parts.push(Part {
+            title: format!("plan for that run, of {path}"),
+            body: Body::Text(body),
+        });
         let mut so = ro.clone();
         so.only = Some(load::Stage::Status);
         so.through = None;
@@ -733,33 +913,72 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
         // as --map instead.
         let mut how = String::new();
         if so.maps.is_empty() && !a.no_redact {
-            so.maps = load::disk_pairs(o, text, sys).into_iter().map(|(src, t)| (r.text(&src), t)).collect();
+            so.maps = load::disk_pairs(o, text, sys)
+                .into_iter()
+                .map(|(src, t)| (r.text(&src), t))
+                .collect();
             if !so.maps.is_empty() {
-                how = format!("(the run matched its disks by WWID or serial; given here as {})\n", so.maps.iter().map(|(s, t)| format!("--map {s}={t}")).collect::<Vec<_>>().join(" "));
+                how = format!(
+                    "(the run matched its disks by WWID or serial; given here as {})\n",
+                    so.maps
+                        .iter()
+                        .map(|(s, t)| format!("--map {s}={t}"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                );
             }
         }
         let (code, out, err) = load::run(&so, &red_text, sys);
-        parts.push(Part { title: "status of the target disks (--only status)".into(), body: Body::Text(format!("exit {code}\n{how}{out}{err}")) });
-        parts.push(Part { title: format!("layout: {path} (the dump that run loaded)"), body: Body::Json(v.clone()) });
+        parts.push(Part {
+            title: "status of the target disks (--only status)".into(),
+            body: Body::Text(format!("exit {code}\n{how}{out}{err}")),
+        });
+        parts.push(Part {
+            title: format!("layout: {path} (the dump that run loaded)"),
+            body: Body::Json(v.clone()),
+        });
     }
     match own {
-        Ok(v) => parts.push(Part { title: "dump of this system (bko-holt dump)".into(), body: Body::Json(v) }),
-        Err(e) => parts.push(Part { title: "dump of this system (bko-holt dump)".into(), body: Body::Text(format!("failed: {e}\n")) }),
+        Ok(v) => parts.push(Part {
+            title: "dump of this system (bko-holt dump)".into(),
+            body: Body::Json(v),
+        }),
+        Err(e) => parts.push(Part {
+            title: "dump of this system (bko-holt dump)".into(),
+            body: Body::Text(format!("failed: {e}\n")),
+        }),
     }
     if logs.is_empty() {
-        parts.push(Part { title: "logs".into(), body: Body::Text(format!("none: no {RUN_DIR}/log/load.log or /var/log/bko-holt/\n")) });
+        parts.push(Part {
+            title: "logs".into(),
+            body: Body::Text(format!(
+                "none: no {RUN_DIR}/log/load.log or /var/log/bko-holt/\n"
+            )),
+        });
     }
     for (p, t) in logs {
-        parts.push(Part { title: format!("log: {p}"), body: Body::Text(t) });
+        parts.push(Part {
+            title: format!("log: {p}"),
+            body: Body::Text(t),
+        });
     }
     for (p, t) in saved {
-        parts.push(Part { title: format!("saved error output: {p}"), body: Body::Text(t) });
+        parts.push(Part {
+            title: format!("saved error output: {p}"),
+            body: Body::Text(t),
+        });
     }
     for (p, t) in attached {
-        parts.push(Part { title: format!("attached: {p}"), body: Body::Text(t) });
+        parts.push(Part {
+            title: format!("attached: {p}"),
+            body: Body::Text(t),
+        });
     }
 
-    let mut text = format!("BackOtter bug report, made by bko-holt report-bug {} at {now}\n", env!("CARGO_PKG_VERSION"));
+    let mut text = format!(
+        "BackOtter bug report, made by bko-holt report-bug {} at {now}\n",
+        env!("CARGO_PKG_VERSION")
+    );
     if a.no_redact {
         text += &not_redacted_line();
     } else {
@@ -784,8 +1003,16 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
         text += &format!("\n==== redaction\n{summary_file}");
     }
     text += "\n==== end\n";
-    let terminal = if a.no_redact { "Not redacted (--no-redact): don't post this file publicly.\n".to_string() } else { r.summary(true) };
-    Bundle { text, terminal, notes }
+    let terminal = if a.no_redact {
+        "Not redacted (--no-redact): don't post this file publicly.\n".to_string()
+    } else {
+        r.summary(true)
+    };
+    Bundle {
+        text,
+        terminal,
+        notes,
+    }
 }
 
 /// What kind of failure check_plan found, for a caller to act on without
@@ -822,7 +1049,10 @@ impl CheckPlanFailure {
 
     /// Whether an identifier got past the redaction.
     pub fn is_leak(self) -> bool {
-        matches!(self, CheckPlanFailure::LeftInDump | CheckPlanFailure::LeftInPlan)
+        matches!(
+            self,
+            CheckPlanFailure::LeftInDump | CheckPlanFailure::LeftInPlan
+        )
     }
 }
 
@@ -839,7 +1069,11 @@ pub struct CheckPlanError {
 
 impl CheckPlanError {
     fn new(kind: CheckPlanFailure, message: String) -> CheckPlanError {
-        debug_assert!(message.starts_with(kind.class()), "{message:?} doesn't start with {:?}", kind.class());
+        debug_assert!(
+            message.starts_with(kind.class()),
+            "{message:?} doesn't start with {:?}",
+            kind.class()
+        );
         CheckPlanError { kind, message }
     }
 }
@@ -877,26 +1111,54 @@ pub fn check_plan(layout_text: &str) -> Result<(usize, usize), CheckPlanError> {
     // Redactor with nothing to redact gives it.
     let v = Collector::new().seal().value(&v);
     if back.compact() != v.compact() {
-        return fail(F::MapBack, format!("the redacted dump doesn't map back to the original: {}", value_diff(&back, &v, "").unwrap_or_default()));
+        return fail(
+            F::MapBack,
+            format!(
+                "the redacted dump doesn't map back to the original: {}",
+                value_diff(&back, &v, "").unwrap_or_default()
+            ),
+        );
     }
     let rtext = rv.pretty();
     let leaks = r.leaks(&rtext);
     if !leaks.is_empty() {
-        return fail(F::LeftInDump, format!("left in the redacted dump: {leaks:?}"));
+        return fail(
+            F::LeftInDump,
+            format!("left in the redacted dump: {leaks:?}"),
+        );
     }
     let t = crate::testutil::Tree::new("redact-plan");
-    t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+    t.file("/proc/self/mountinfo", "")
+        .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
     // A rescue system of the dump's own architecture (crate::arch), which
     // load holds it to.
-    t.file("/proc/sys/kernel/arch", format!("{}\n", crate::arch::dump_machine(&v)));
+    t.file(
+        "/proc/sys/kernel/arch",
+        format!("{}\n", crate::arch::dump_machine(&v)),
+    );
     let mut args = vec!["layout.json".to_string()];
-    let disks = v.at(&["storage", "disks"]).and_then(Value::as_array).cloned().unwrap_or_default();
+    let disks = v
+        .at(&["storage", "disks"])
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     for (i, d) in disks.iter().enumerate() {
-        let Some(name) = d.get("name").and_then(Value::as_str) else { continue };
+        let Some(name) = d.get("name").and_then(Value::as_str) else {
+            continue;
+        };
         let tgt = format!("sd{}", (b'q' + i as u8) as char);
-        let size = d.get("size_bytes").and_then(Value::as_u64).unwrap_or(1 << 34);
-        let ss = d.get("logical_sector_size").and_then(Value::as_u64).unwrap_or(512) as u32;
-        t.disk(&tgt, &format!("8:{}", 16 * i), &[], ss).file(&format!("/sys/block/{tgt}/size"), format!("{}\n", size / 512));
+        let size = d
+            .get("size_bytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(1 << 34);
+        let ss = d
+            .get("logical_sector_size")
+            .and_then(Value::as_u64)
+            .unwrap_or(512) as u32;
+        t.disk(&tgt, &format!("8:{}", 16 * i), &[], ss).file(
+            &format!("/sys/block/{tgt}/size"),
+            format!("{}\n", size / 512),
+        );
         args.push("--map".into());
         args.push(format!("{name}={tgt}"));
     }
@@ -905,17 +1167,40 @@ pub fn check_plan(layout_text: &str) -> Result<(usize, usize), CheckPlanError> {
         Ok(Parsed::Run(o)) => o,
         other => return fail(F::LoadArgs, format!("load's arguments {args:?}: {other:?}")),
     };
-    let sys = || Sys::new(t.root(), Box::new(FakeRunner::default().with("/usr/sbin/rustic-bko --version", "rustic 0.11.4+backotter.4\n")), true);
+    let sys = || {
+        Sys::new(
+            t.root(),
+            Box::new(FakeRunner::default().with(
+                "/usr/sbin/rustic-bko --version",
+                "rustic 0.11.4+backotter.4\n",
+            )),
+            true,
+        )
+    };
     t.file("/usr/sbin/rustic-bko", "");
     // Install every tool the plan asks for, as a rescue system would have.
     let mut orig = load::run(&opts, layout_text, &sys());
     for _ in 0..4 {
-        let missing: Vec<String> = orig.1.lines().filter_map(|l| l.trim_start_matches("#   - ").split_once(" isn't installed here").map(|(p, _)| p.to_string())).collect();
+        let missing: Vec<String> = orig
+            .1
+            .lines()
+            .filter_map(|l| {
+                l.trim_start_matches("#   - ")
+                    .split_once(" isn't installed here")
+                    .map(|(p, _)| p.to_string())
+            })
+            .collect();
         if missing.is_empty() {
             break;
         }
         for m in missing {
-            t.file(&format!("/usr/sbin/{}", m.trim_start_matches('/').rsplit('/').next().unwrap_or(&m)), "");
+            t.file(
+                &format!(
+                    "/usr/sbin/{}",
+                    m.trim_start_matches('/').rsplit('/').next().unwrap_or(&m)
+                ),
+                "",
+            );
         }
         orig = load::run(&opts, layout_text, &sys());
     }
@@ -923,12 +1208,24 @@ pub fn check_plan(layout_text: &str) -> Result<(usize, usize), CheckPlanError> {
     let red = load::run(&ropts, &rtext, &sys());
     let back = (red.0, r.unredact(&red.1), r.unredact(&red.2));
     if back != orig {
-        let what = if back.0 != orig.0 { format!("exit {} vs {}", back.0, orig.0) } else if back.1 != orig.1 { first_diff(&back.1, &orig.1) } else { first_diff(&back.2, &orig.2) };
-        return fail(F::PlanDiffers, format!("the plan of the redacted dump differs: {what}"));
+        let what = if back.0 != orig.0 {
+            format!("exit {} vs {}", back.0, orig.0)
+        } else if back.1 != orig.1 {
+            first_diff(&back.1, &orig.1)
+        } else {
+            first_diff(&back.2, &orig.2)
+        };
+        return fail(
+            F::PlanDiffers,
+            format!("the plan of the redacted dump differs: {what}"),
+        );
     }
     let leaks = r.leaks(&(red.1.clone() + &red.2));
     if !leaks.is_empty() {
-        return fail(F::LeftInPlan, format!("left in the redacted dump's plan: {leaks:?}"));
+        return fail(
+            F::LeftInPlan,
+            format!("left in the redacted dump's plan: {leaks:?}"),
+        );
     }
     Ok((r.entries.len(), orig.1.lines().count()))
 }
@@ -936,27 +1233,45 @@ pub fn check_plan(layout_text: &str) -> Result<(usize, usize), CheckPlanError> {
 /// Where two JSON values first differ; for a blob, the first byte.
 fn value_diff(a: &Value, b: &Value, path: &str) -> Option<String> {
     match (a, b) {
-        (Value::Obj(x), Value::Obj(y)) if x.len() == y.len() => x.iter().zip(y).find_map(|((ka, va), (kb, vb))| {
-            if ka != kb {
-                Some(format!("{path}: key {ka:?} vs {kb:?}"))
-            } else {
-                value_diff(va, vb, &format!("{path}/{ka}"))
-            }
-        }),
-        (Value::Arr(x), Value::Arr(y)) if x.len() == y.len() => x.iter().zip(y).enumerate().find_map(|(i, (p, q))| value_diff(p, q, &format!("{path}/{i}"))),
+        (Value::Obj(x), Value::Obj(y)) if x.len() == y.len() => {
+            x.iter().zip(y).find_map(|((ka, va), (kb, vb))| {
+                if ka != kb {
+                    Some(format!("{path}: key {ka:?} vs {kb:?}"))
+                } else {
+                    value_diff(va, vb, &format!("{path}/{ka}"))
+                }
+            })
+        }
+        (Value::Arr(x), Value::Arr(y)) if x.len() == y.len() => x
+            .iter()
+            .zip(y)
+            .enumerate()
+            .find_map(|(i, (p, q))| value_diff(p, q, &format!("{path}/{i}"))),
         (Value::Str(x), Value::Str(y)) if x != y => {
             if let (Some(p), Some(q)) = (crate::bytes::unbase64(x), crate::bytes::unbase64(y)) {
-                if p.len() == q.len() && crate::redact::is_blob_key(path.rsplit('/').next().unwrap_or("")) {
+                if p.len() == q.len()
+                    && crate::redact::is_blob_key(path.rsplit('/').next().unwrap_or(""))
+                {
                     let i = p.iter().zip(&q).position(|(m, n)| m != n).unwrap_or(0);
-                    let w = |b: &[u8]| crate::bytes::hex(crate::bytes::sub(b, i.saturating_sub(8), 32));
-                    return Some(format!("{path}: byte {i} of {}: {} vs {}", p.len(), w(&p), w(&q)));
+                    let w =
+                        |b: &[u8]| crate::bytes::hex(crate::bytes::sub(b, i.saturating_sub(8), 32));
+                    return Some(format!(
+                        "{path}: byte {i} of {}: {} vs {}",
+                        p.len(),
+                        w(&p),
+                        w(&q)
+                    ));
                 }
             }
             // By chars, not bytes: a byte cut can land inside a multi-byte char.
             let clip = |s: &str| s.chars().take(200).collect::<String>();
             Some(format!("{path}: {:?} vs {:?}", clip(x), clip(y)))
         }
-        _ if a != b => Some(format!("{path}: {} vs {}", a.compact().chars().take(200).collect::<String>(), b.compact().chars().take(200).collect::<String>())),
+        _ if a != b => Some(format!(
+            "{path}: {} vs {}",
+            a.compact().chars().take(200).collect::<String>(),
+            b.compact().chars().take(200).collect::<String>()
+        )),
         _ => None,
     }
 }
@@ -970,7 +1285,10 @@ fn sorted_lines(s: &str) -> Vec<&str> {
 fn first_diff(a: &str, b: &str) -> String {
     for (i, (x, y)) in a.lines().zip(b.lines()).enumerate() {
         if x != y {
-            return format!("line {}: {x:?} (redacted, mapped back) vs {y:?} (original)", i + 1);
+            return format!(
+                "line {}: {x:?} (redacted, mapped back) vs {y:?} (original)",
+                i + 1
+            );
         }
     }
     format!("{} lines vs {}", a.lines().count(), b.lines().count())
@@ -988,14 +1306,46 @@ mod tests {
     #[test]
     fn arguments() {
         assert_eq!(parse_args(&s(&["--help"])).unwrap(), None);
-        let a = parse_args(&s(&["-o", "r.txt", "--stderr", "e1", "--stderr", "e2", "--no-redact", "--", "l.json", "--map", "vda=sdb"])).unwrap().unwrap();
+        let a = parse_args(&s(&[
+            "-o",
+            "r.txt",
+            "--stderr",
+            "e1",
+            "--stderr",
+            "e2",
+            "--no-redact",
+            "--",
+            "l.json",
+            "--map",
+            "vda=sdb",
+        ]))
+        .unwrap()
+        .unwrap();
         assert_eq!(a.output.as_deref(), Some("r.txt"));
         assert_eq!(a.stderr, s(&["e1", "e2"]));
         assert!(a.no_redact);
         assert_eq!(a.load_args, Some(s(&["l.json", "--map", "vda=sdb"])));
-        assert!(parse_args(&s(&["l.json"])).unwrap_err().contains("after --"));
-        assert!(parse_args(&s(&["--output"])).unwrap_err().contains("needs a value"));
-        assert_eq!(plan_args(&s(&["l", "--through", "format", "--commit", "--map", "a=b"])), s(&["l", "--map", "a=b"]));
+        assert!(
+            parse_args(&s(&["l.json"]))
+                .unwrap_err()
+                .contains("after --")
+        );
+        assert!(
+            parse_args(&s(&["--output"]))
+                .unwrap_err()
+                .contains("needs a value")
+        );
+        assert_eq!(
+            plan_args(&s(&[
+                "l",
+                "--through",
+                "format",
+                "--commit",
+                "--map",
+                "a=b"
+            ])),
+            s(&["l", "--map", "a=b"])
+        );
     }
 
     #[test]
@@ -1007,9 +1357,18 @@ mod tests {
     /// has every section, redacted, and finds the run by itself.
     #[test]
     fn report_owner_only_for_sudo_and_new_files() {
-        assert_eq!(report_owner(true, 0, Some("1000"), Some("1000")), Some((1000, Some(1000))));
-        assert_eq!(report_owner(true, 0, Some("1000"), None), Some((1000, None)));
-        assert_eq!(report_owner(true, 0, Some("1000"), Some("x")), Some((1000, None)));
+        assert_eq!(
+            report_owner(true, 0, Some("1000"), Some("1000")),
+            Some((1000, Some(1000)))
+        );
+        assert_eq!(
+            report_owner(true, 0, Some("1000"), None),
+            Some((1000, None))
+        );
+        assert_eq!(
+            report_owner(true, 0, Some("1000"), Some("x")),
+            Some((1000, None))
+        );
         // Not root, not under sudo, root's own sudo, or a file already there.
         assert_eq!(report_owner(true, 1000, Some("1000"), Some("1000")), None);
         assert_eq!(report_owner(true, 0, None, Some("1000")), None);
@@ -1025,18 +1384,27 @@ mod tests {
         let new = t.root().join("new.txt");
         write_report(new.to_str().unwrap(), "one", false).unwrap();
         assert_eq!(std::fs::read_to_string(&new).unwrap(), "one");
-        assert_eq!(std::fs::metadata(&new).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(&new).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         // A regular file already there: rewritten and made 0600.
         let old = t.root().join("old.txt");
         std::fs::write(&old, "a much longer old text").unwrap();
         std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o644)).unwrap();
         write_report(old.to_str().unwrap(), "two", false).unwrap();
         assert_eq!(std::fs::read_to_string(&old).unwrap(), "two");
-        assert_eq!(std::fs::metadata(&old).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(&old).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         // Not a regular file: written to, its mode left alone.
         let before = std::fs::metadata("/dev/null").unwrap().permissions().mode();
         write_report("/dev/null", "three", false).unwrap();
-        assert_eq!(std::fs::metadata("/dev/null").unwrap().permissions().mode(), before);
+        assert_eq!(
+            std::fs::metadata("/dev/null").unwrap().permissions().mode(),
+            before
+        );
         // A dry run's (BKO_HOLT_NO_COMMIT): a new file only.
         let dry = t.root().join("dry.txt");
         write_report(dry.to_str().unwrap(), "four", true).unwrap();
@@ -1044,7 +1412,10 @@ mod tests {
         let e = write_report(dry.to_str().unwrap(), "five", true).unwrap_err();
         assert_eq!(e.kind(), std::io::ErrorKind::AlreadyExists);
         assert_eq!(std::fs::read_to_string(&dry).unwrap(), "four");
-        assert_eq!(write_report("/dev/null", "six", true).unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            write_report("/dev/null", "six", true).unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
     }
 
     #[test]
@@ -1052,7 +1423,12 @@ mod tests {
         // Every flag in the table takes a value, and parse_args's own
         // debug_assert holds the other way.
         for f in VALUE_FLAGS {
-            assert!(parse_args(&[f.to_string()]).unwrap_err().contains("needs a value"), "{f}");
+            assert!(
+                parse_args(&[f.to_string()])
+                    .unwrap_err()
+                    .contains("needs a value"),
+                "{f}"
+            );
         }
     }
 
@@ -1060,8 +1436,10 @@ mod tests {
     fn bundle_from_a_failed_run() {
         let t = Tree::new("report-bug");
         t.debian13();
-        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
-        t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", "33554432\n");
+        t.file("/proc/self/mountinfo", "")
+            .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        t.disk("vdb", "253:16", &[], 512)
+            .file("/sys/block/vdb/size", "33554432\n");
         let layout = crate::load::layout::sample::bios_mbr().replace("\"deb13\"", "\"alice-pc\"");
         t.file("/srv/alice/layout.json", &layout);
         t.file("/.disk/backotter.json", r#"{"format": "backotter-image", "schema": 1, "image_id": "6f1c2c1e-5b0e-4a51-9d8e-2a3c8f4e7b10", "built": "2026-10-29T17:12:39Z", "platform": "linux", "base": {"os": "ubuntu", "release": "26.04.1"}, "kernel": "7.0.0-30-generic", "zfs": {"version": "2.4.0", "features": ["a", "b"]}}"#);
@@ -1074,22 +1452,53 @@ mod tests {
             .build();
         t.file(&format!("{RUN_DIR}/{LAST_RUN}"), last.pretty());
         t.file(&format!("{RUN_DIR}/log/load.log"), "==== stage format\nmkfs.btrfs -U b7b7b7b7-0000-4000-8000-000000000003 /dev/vdb3\nFAILED\n");
-        let sys = Sys::new(t.root(), Box::new(FakeRunner::default().with("uname -s -r -v -m", "Linux 7.0.0-30-generic #30 SMP x86_64\n")), true);
+        let sys = Sys::new(
+            t.root(),
+            Box::new(FakeRunner::default().with(
+                "uname -s -r -v -m",
+                "Linux 7.0.0-30-generic #30 SMP x86_64\n",
+            )),
+            true,
+        );
         let a = Args::default();
         let b = build(&sys, &a, "2026-11-07T03:42:00Z");
         let txt = &b.text;
         let log_hdr = format!("==== log: {RUN_DIR}/log/load.log");
         for sect in [
-            "==== versions", "==== last bko-holt load run", "==== plan for that run, of /srv/alice/layout.json", "==== status of the target disks",
-            "==== layout: /srv/alice/layout.json", "==== dump of this system", log_hdr.as_str(), "==== redaction", "==== end",
+            "==== versions",
+            "==== last bko-holt load run",
+            "==== plan for that run, of /srv/alice/layout.json",
+            "==== status of the target disks",
+            "==== layout: /srv/alice/layout.json",
+            "==== dump of this system",
+            log_hdr.as_str(),
+            "==== redaction",
+            "==== end",
         ] {
             assert!(txt.contains(sect), "no {sect:?} in:\n{txt}");
         }
-        assert!(txt.contains("image         {\"image_id\":\"6f1c2c1e-5b0e-4a51-9d8e-2a3c8f4e7b10\""), "{txt}");
-        assert!(!txt.lines().find(|l| l.starts_with("image ")).unwrap().contains("features"), "{txt}");
+        assert!(
+            txt.contains("image         {\"image_id\":\"6f1c2c1e-5b0e-4a51-9d8e-2a3c8f4e7b10\""),
+            "{txt}"
+        );
+        assert!(
+            !txt.lines()
+                .find(|l| l.starts_with("image "))
+                .unwrap()
+                .contains("features"),
+            "{txt}"
+        );
         assert!(txt.contains("exit status: 1"));
-        assert!(txt.contains("command: bko-holt load layout.json --map vda=vdb --through format --commit"), "{txt}");
-        assert!(txt.contains("(checked: the plan of the redacted layout is the original's"), "{txt}");
+        assert!(
+            txt.contains(
+                "command: bko-holt load layout.json --map vda=vdb --through format --commit"
+            ),
+            "{txt}"
+        );
+        assert!(
+            txt.contains("(checked: the plan of the redacted layout is the original's"),
+            "{txt}"
+        );
         assert!(txt.contains("#   vda (16 GiB) -> /dev/vdb"), "{txt}");
         assert!(txt.contains("# Source: host-1,"), "{txt}");
         for gone in ["alice-pc", "b7b7b7b7", "0b0e2c6e", "1f2e3d4c"] {
@@ -1099,7 +1508,10 @@ mod tests {
         assert!(b.terminal.contains("alice-pc -> host-1"), "{}", b.terminal);
         assert!(!txt.contains("alice-pc -> host-1"));
         // Not redacted on request.
-        let a = Args { no_redact: true, ..Args::default() };
+        let a = Args {
+            no_redact: true,
+            ..Args::default()
+        };
         let b = build(&sys, &a, "2026-11-07T03:42:00Z");
         assert!(b.text.contains("alice-pc") && b.text.contains("NOT redacted"));
         assert!(!b.text.contains("==== redaction"));
@@ -1112,30 +1524,72 @@ mod tests {
     fn identifiers_only_in_free_text() {
         let t = Tree::new("report-bug-text");
         t.debian13();
-        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
-        t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", "33554432\n");
-        t.file("/home/bob/layout.json", crate::load::layout::sample::bios_mbr());
+        t.file("/proc/self/mountinfo", "")
+            .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        t.disk("vdb", "253:16", &[], 512)
+            .file("/sys/block/vdb/size", "33554432\n");
+        t.file(
+            "/home/bob/layout.json",
+            crate::load::layout::sample::bios_mbr(),
+        );
         let last = Obj::new()
             .set("cwd", "/home/bob")
-            .set("args", Value::Arr(s(&["layout.json", "--map", "vda=vdb"]).into_iter().map(Value::Str).collect()))
+            .set(
+                "args",
+                Value::Arr(
+                    s(&["layout.json", "--map", "vda=vdb"])
+                        .into_iter()
+                        .map(Value::Str)
+                        .collect(),
+                ),
+            )
             .set("exit", 1u64)
-            .set("stderr", "bko-holt load: 5d1c0e9a-7b3f-4c2e-9a1d-0e4f3b2a1c9d is busy\n")
+            .set(
+                "stderr",
+                "bko-holt load: 5d1c0e9a-7b3f-4c2e-9a1d-0e4f3b2a1c9d is busy\n",
+            )
             .build();
         t.file(&format!("{RUN_DIR}/{LAST_RUN}"), last.pretty());
-        t.file(&format!("{RUN_DIR}/log/load.log"), "link up on 52:54:00:9c:4e:17\n");
+        t.file(
+            &format!("{RUN_DIR}/log/load.log"),
+            "link up on 52:54:00:9c:4e:17\n",
+        );
         let errs = t.root().join("backup-errors.txt");
-        std::fs::write(&errs, "error: lstat /home/bob/.cache/x: permission denied\n").unwrap();
-        let sys = Sys::new(t.root(), Box::new(FakeRunner::default().with("uname -s -r -v -m", "Linux 7.0.0-30-generic #30 SMP x86_64\n")), true);
-        let a = Args { stderr: vec![errs.display().to_string()], ..Args::default() };
+        std::fs::write(
+            &errs,
+            "error: lstat /home/bob/.cache/x: permission denied\n",
+        )
+        .unwrap();
+        let sys = Sys::new(
+            t.root(),
+            Box::new(FakeRunner::default().with(
+                "uname -s -r -v -m",
+                "Linux 7.0.0-30-generic #30 SMP x86_64\n",
+            )),
+            true,
+        );
+        let a = Args {
+            stderr: vec![errs.display().to_string()],
+            ..Args::default()
+        };
         let b = build(&sys, &a, "2026-11-07T03:42:00Z");
         let txt = &b.text;
         for gone in ["/home/bob", "5d1c0e9a", "52:54:00:9c:4e:17"] {
             assert!(!txt.contains(gone), "{gone} in:\n{txt}");
         }
         assert!(txt.contains("in: /home/user1\n"), "{txt}");
-        assert!(txt.contains("==== plan for that run, of /home/user1/layout.json"), "{txt}");
-        assert!(txt.contains("error: lstat /home/user1/.cache/x: permission denied"), "{txt}");
-        assert!(txt.contains("(checked: the plan of the redacted layout is the original's"), "{txt}");
+        assert!(
+            txt.contains("==== plan for that run, of /home/user1/layout.json"),
+            "{txt}"
+        );
+        assert!(
+            txt.contains("error: lstat /home/user1/.cache/x: permission denied"),
+            "{txt}"
+        );
+        assert!(
+            txt.contains("(checked: the plan of the redacted layout is the original's"),
+            "{txt}"
+        );
         assert!(b.terminal.contains("bob -> user1"), "{}", b.terminal);
     }
 
@@ -1144,17 +1598,54 @@ mod tests {
     /// `--no-redact` line.
     #[test]
     fn rescue_attachments_and_stripped_strings() {
-        let a = parse_args(&s(&["--attach", "ev", "--attach", "plan.json", "--strip-file", "k/strip", "--strip-file", "k/more"])).unwrap().unwrap();
-        assert_eq!((a.attach.clone(), a.strip_files.clone()), (s(&["ev", "plan.json"]), s(&["k/strip", "k/more"])));
+        let a = parse_args(&s(&[
+            "--attach",
+            "ev",
+            "--attach",
+            "plan.json",
+            "--strip-file",
+            "k/strip",
+            "--strip-file",
+            "k/more",
+        ]))
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            (a.attach.clone(), a.strip_files.clone()),
+            (s(&["ev", "plan.json"]), s(&["k/strip", "k/more"]))
+        );
         let t = Tree::new("report-bug-attach");
         t.debian13();
-        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
-        t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", "33554432\n");
-        t.file("/srv/alice/layout.json", crate::load::layout::sample::bios_mbr());
+        t.file("/proc/self/mountinfo", "")
+            .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        t.disk("vdb", "253:16", &[], 512)
+            .file("/sys/block/vdb/size", "33554432\n");
+        t.file(
+            "/srv/alice/layout.json",
+            crate::load::layout::sample::bios_mbr(),
+        );
         // A --json writing run, recorded as load records one.
         let last = Obj::new()
             .set("cwd", "/srv/alice")
-            .set("args", Value::Arr(s(&["layout.json", "--map", "vda=vdb", "--through", "close", "--commit", "--json", "--expect-plan", &"a".repeat(64)]).into_iter().map(Value::Str).collect()))
+            .set(
+                "args",
+                Value::Arr(
+                    s(&[
+                        "layout.json",
+                        "--map",
+                        "vda=vdb",
+                        "--through",
+                        "close",
+                        "--commit",
+                        "--json",
+                        "--expect-plan",
+                        &"a".repeat(64),
+                    ])
+                    .into_iter()
+                    .map(Value::Str)
+                    .collect(),
+                ),
+            )
             .set("exit", 1u64)
             .build();
         t.file(&format!("{RUN_DIR}/{LAST_RUN}"), last.pretty());
@@ -1165,38 +1656,105 @@ mod tests {
         let ev_path = t.root().join("events");
         std::fs::write(&ev_path, "{\"event\":\"start\",\"layout\":{\"hostname\":\"bobs-nas\"}}\n{\"event\":\"progress\",\"bytes\":1}\n{\"event\":\"warning\",\"text\":\"restore /srv/ZA1B2C3D.img: no xattrs\"}\n").unwrap();
         let log_path = t.root().join("rescue.log");
-        std::fs::write(&log_path, "hint shown: Mittens the cat\nlocation: Grandma's attic\n").unwrap();
+        std::fs::write(
+            &log_path,
+            "hint shown: Mittens the cat\nlocation: Grandma's attic\n",
+        )
+        .unwrap();
         let strip = t.root().join("strip");
         std::fs::write(&strip, "Mittens the cat\r\n\nGrandma's attic\nxy\n").unwrap();
-        let sys = Sys::new(t.root(), Box::new(FakeRunner::default().with("uname -s -r -v -m", "Linux 7.0.0-30-generic #30 SMP x86_64\n")), true);
+        let sys = Sys::new(
+            t.root(),
+            Box::new(FakeRunner::default().with(
+                "uname -s -r -v -m",
+                "Linux 7.0.0-30-generic #30 SMP x86_64\n",
+            )),
+            true,
+        );
         let path = |p: &std::path::Path| p.display().to_string();
-        let a = Args { attach: vec![path(&plan_path), path(&ev_path), path(&log_path)], strip_files: vec![path(&strip)], ..Args::default() };
+        let a = Args {
+            attach: vec![path(&plan_path), path(&ev_path), path(&log_path)],
+            strip_files: vec![path(&strip)],
+            ..Args::default()
+        };
         let b = build(&sys, &a, "2026-11-24T12:00:00Z");
         let txt = &b.text;
         for p in [&plan_path, &ev_path, &log_path] {
-            assert!(txt.contains(&format!("==== attached: {}", path(p))), "{txt}");
+            assert!(
+                txt.contains(&format!("==== attached: {}", path(p))),
+                "{txt}"
+            );
         }
-        for gone in ["4C530001150612110384", "holiday-pics", "ZA1B2C3D", "5000c500a1b2c3d4", "bobs-nas", "Mittens", "Grandma"] {
+        for gone in [
+            "4C530001150612110384",
+            "holiday-pics",
+            "ZA1B2C3D",
+            "5000c500a1b2c3d4",
+            "bobs-nas",
+            "Mittens",
+            "Grandma",
+        ] {
             assert!(!txt.contains(gone), "{gone} in:\n{txt}");
-            assert!(!b.terminal.contains(gone) || !["Mittens", "Grandma"].contains(&gone), "{gone} on the terminal:\n{}", b.terminal);
+            assert!(
+                !b.terminal.contains(gone) || !["Mittens", "Grandma"].contains(&gone),
+                "{gone} on the terminal:\n{}",
+                b.terminal
+            );
         }
-        assert!(txt.contains("hint shown: stripped1\n") && txt.contains("location: stripped2\n"), "{txt}");
-        assert!(txt.contains("model\":\"SanDisk Ultra"), "models are kept: {txt}");
-        assert!(b.notes.iter().any(|n| n.contains("1 line(s) under 3 characters")), "{:?}", b.notes);
+        assert!(
+            txt.contains("hint shown: stripped1\n") && txt.contains("location: stripped2\n"),
+            "{txt}"
+        );
+        assert!(
+            txt.contains("model\":\"SanDisk Ultra"),
+            "models are kept: {txt}"
+        );
+        assert!(
+            b.notes
+                .iter()
+                .any(|n| n.contains("1 line(s) under 3 characters")),
+            "{:?}",
+            b.notes
+        );
         // The --json run's plan is a text plan: no --json, no --expect-plan.
         assert!(txt.contains("command: bko-holt load layout.json --map vda=vdb --through close --commit --json --expect-plan"), "{txt}");
-        assert!(txt.contains("bko-holt load layout.json --map vda=vdb -- exit "), "{txt}");
+        assert!(
+            txt.contains("bko-holt load layout.json --map vda=vdb -- exit "),
+            "{txt}"
+        );
         assert!(txt.contains("#   vda (16 GiB) -> /dev/vdb"), "{txt}");
         // --no-redact: the line names every kind; --strip-file is ignored.
-        let a = Args { no_redact: true, strip_files: vec![path(&strip)], ..Args::default() };
+        let a = Args {
+            no_redact: true,
+            strip_files: vec![path(&strip)],
+            ..Args::default()
+        };
         let b = build(&sys, &a, "2026-11-24T12:00:00Z");
         let first = b.text.lines().nth(1).unwrap();
-        assert!(first.starts_with("NOT redacted: it holds this machine's hostnames, machine-ids, UUIDs and GUIDs, "), "{first}");
+        assert!(
+            first.starts_with(
+                "NOT redacted: it holds this machine's hostnames, machine-ids, UUIDs and GUIDs, "
+            ),
+            "{first}"
+        );
         for k in crate::redact::Kind::ALL {
-            assert!(first.contains(k.plural().split(" (").next().unwrap()), "{k:?} not in {first:?}");
+            assert!(
+                first.contains(k.plural().split(" (").next().unwrap()),
+                "{k:?} not in {first:?}"
+            );
         }
-        assert!(first.ends_with("other identifiers, repositories and password-file paths, as they are."), "{first}");
-        assert!(b.notes.iter().any(|n| n.contains("--strip-file is ignored with --no-redact")), "{:?}", b.notes);
+        assert!(
+            first
+                .ends_with("other identifiers, repositories and password-file paths, as they are."),
+            "{first}"
+        );
+        assert!(
+            b.notes
+                .iter()
+                .any(|n| n.contains("--strip-file is ignored with --no-redact")),
+            "{:?}",
+            b.notes
+        );
     }
 
     /// RT10i review: the repository, the password file and the key files
@@ -1208,56 +1766,188 @@ mod tests {
     fn attached_documents_repository_learned() {
         let t = Tree::new("report-bug-attach-repo");
         t.debian13();
-        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        t.file("/proc/self/mountinfo", "")
+            .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
         let repo = "sftp://zelda@zeldas-nas.example.org/srv/bko/zelda";
         let (pw, key) = ("/run/bko-rescue/k/1", "/run/bko-rescue/k/0");
-        let args: Vec<Value> = ["load", "layout.json", "--map", "vda=vdb", "--repo", repo, "--password-file", pw, "--key-file", &format!("cryptroot={key}"), "--json"].iter().map(|x| Value::Str(x.to_string())).collect();
-        let argv = |r: &str| -> Value { Value::Arr(["rustic-bko", "--repository", r, "--password-file", pw, "restore", "latest", "/mnt/bko-target"].iter().map(|x| Value::Str(x.to_string())).collect()) };
-        let cmd = Obj::new().set("kind", "run").set("argv", argv(repo)).set("archiver", true).build();
+        let args: Vec<Value> = [
+            "load",
+            "layout.json",
+            "--map",
+            "vda=vdb",
+            "--repo",
+            repo,
+            "--password-file",
+            pw,
+            "--key-file",
+            &format!("cryptroot={key}"),
+            "--json",
+        ]
+        .iter()
+        .map(|x| Value::Str(x.to_string()))
+        .collect();
+        let argv = |r: &str| -> Value {
+            Value::Arr(
+                [
+                    "rustic-bko",
+                    "--repository",
+                    r,
+                    "--password-file",
+                    pw,
+                    "restore",
+                    "latest",
+                    "/mnt/bko-target",
+                ]
+                .iter()
+                .map(|x| Value::Str(x.to_string()))
+                .collect(),
+            )
+        };
+        let cmd = Obj::new()
+            .set("kind", "run")
+            .set("argv", argv(repo))
+            .set("archiver", true)
+            .build();
         let plan = Obj::new()
             .set("format", "bko-holt-plan")
             .set("schema", 1u64)
             .set("args", Value::Arr(args))
-            .set("stages", vec![Obj::new().set("name", "restore").set("commands", vec![cmd]).build()])
-            .set("problems", vec![Obj::new().set("code", "password_needed").set("text", "--repo: give the repository's password with --password-file FILE").build()])
+            .set(
+                "stages",
+                vec![
+                    Obj::new()
+                        .set("name", "restore")
+                        .set("commands", vec![cmd])
+                        .build(),
+                ],
+            )
+            .set(
+                "problems",
+                vec![
+                    Obj::new()
+                        .set("code", "password_needed")
+                        .set(
+                            "text",
+                            "--repo: give the repository's password with --password-file FILE",
+                        )
+                        .build(),
+                ],
+            )
             .set("text", "# --password-file FILE\n")
             .build();
         // Each document on its own: the events name another repository.
         let other = "rest:https://nas.zelda.example.org:8000/zelda";
-        let ev = [Obj::new().set("event", "cmd").set("stage", "restore").set("argv", argv(other)).build(), Obj::new().set("event", "failed").set("stage", "restore").set("argv", argv("/media/zelda/bko-repo")).build()];
+        let ev = [
+            Obj::new()
+                .set("event", "cmd")
+                .set("stage", "restore")
+                .set("argv", argv(other))
+                .build(),
+            Obj::new()
+                .set("event", "failed")
+                .set("stage", "restore")
+                .set("argv", argv("/media/zelda/bko-repo"))
+                .build(),
+        ];
         let plan_path = t.root().join("plan.json");
         std::fs::write(&plan_path, plan.pretty()).unwrap();
         let ev_path = t.root().join("events");
-        std::fs::write(&ev_path, ev.iter().map(|v| v.compact() + "\n").collect::<String>()).unwrap();
+        std::fs::write(
+            &ev_path,
+            ev.iter().map(|v| v.compact() + "\n").collect::<String>(),
+        )
+        .unwrap();
         let log_path = t.root().join("rescue.log");
         std::fs::write(&log_path, "ran: bko-holt load /run/bko-rescue/layout.json --repo 's3:https://s3.zelda.example.org/bucket' --password-file FILE\n").unwrap();
-        let sys = Sys::new(t.root(), Box::new(FakeRunner::default().with("uname -s -r -v -m", "Linux 7.0.0-30-generic #30 SMP x86_64\n")), true);
+        let sys = Sys::new(
+            t.root(),
+            Box::new(FakeRunner::default().with(
+                "uname -s -r -v -m",
+                "Linux 7.0.0-30-generic #30 SMP x86_64\n",
+            )),
+            true,
+        );
         let path = |p: &std::path::Path| p.display().to_string();
-        let a = Args { attach: vec![path(&plan_path), path(&ev_path), path(&log_path)], ..Args::default() };
+        let a = Args {
+            attach: vec![path(&plan_path), path(&ev_path), path(&log_path)],
+            ..Args::default()
+        };
         let b = build(&sys, &a, "2026-11-24T12:00:00Z");
         let txt = &b.text;
         assert!(txt.contains("none recorded"), "{txt}");
-        for gone in [repo, pw, key, other, "/media/zelda/bko-repo", "s3:https://s3.zelda.example.org/bucket", "zelda"] {
+        for gone in [
+            repo,
+            pw,
+            key,
+            other,
+            "/media/zelda/bko-repo",
+            "s3:https://s3.zelda.example.org/bucket",
+            "zelda",
+        ] {
             assert!(!txt.contains(gone), "{gone} in:\n{txt}");
         }
         assert!(txt.contains("/run/bko-rescue/k/keyfile1"), "{txt}");
-        assert!(txt.contains("--password-file FILE"), "help's placeholder is kept: {txt}");
-        assert!(txt.contains("REDACTED1") && txt.contains("REDACTED5"), "{txt}");
+        assert!(
+            txt.contains("--password-file FILE"),
+            "help's placeholder is kept: {txt}"
+        );
+        assert!(
+            txt.contains("REDACTED1") && txt.contains("REDACTED5"),
+            "{txt}"
+        );
     }
 
     #[test]
     fn plan_args_are_a_text_runs() {
         let sha = "b".repeat(64);
-        assert_eq!(plan_args(&s(&["l", "--json", "--through", "close", "--commit", "--expect-plan", &sha, "--map", "a=b"])), s(&["l", "--map", "a=b"]));
-        assert_eq!(plan_args(&s(&["l", "--json=1", "--only", "status"])), s(&["l"]));
+        assert_eq!(
+            plan_args(&s(&[
+                "l",
+                "--json",
+                "--through",
+                "close",
+                "--commit",
+                "--expect-plan",
+                &sha,
+                "--map",
+                "a=b"
+            ])),
+            s(&["l", "--map", "a=b"])
+        );
+        assert_eq!(
+            plan_args(&s(&["l", "--json=1", "--only", "status"])),
+            s(&["l"])
+        );
         // A value is kept whatever it reads.
-        assert_eq!(plan_args(&s(&["l", "--repo", "/r", "--snapshot", "--json", "--key-file", "--commit"])), s(&["l", "--repo", "/r", "--snapshot", "--json", "--key-file", "--commit"]));
+        assert_eq!(
+            plan_args(&s(&[
+                "l",
+                "--repo",
+                "/r",
+                "--snapshot",
+                "--json",
+                "--key-file",
+                "--commit"
+            ])),
+            s(&[
+                "l",
+                "--repo",
+                "/r",
+                "--snapshot",
+                "--json",
+                "--key-file",
+                "--commit"
+            ])
+        );
     }
 
     #[test]
     fn issues_and_the_help() {
         assert_eq!(ISSUES, "https://github.com/mchobbit/backotter/issues");
-        assert!(USAGE.contains(&format!("an issue at {ISSUES} :")) && !USAGE.contains("/new/choose"), "{USAGE}");
+        assert!(
+            USAGE.contains(&format!("an issue at {ISSUES} :")) && !USAGE.contains("/new/choose"),
+            "{USAGE}"
+        );
         for f in ["--attach FILE", "--strip-file FILE"] {
             assert!(USAGE.contains(f), "{f} not in the help");
         }
@@ -1275,33 +1965,75 @@ mod tests {
     fn linux_image_marker_on_cdrom() {
         let t = Tree::new("report-bug-cdrom");
         t.debian13();
-        t.file("/cdrom/.disk/backotter.json", r#"{"image_id": "6f1c2c1e-5b0e-4a51-9d8e-2a3c8f4e7b10", "platform": "linux"}"#);
-        let sys = Sys::new(t.root(), Box::new(FakeRunner::default().with("uname -s -r -v -m", "Linux 7.0.0-43-generic #43 SMP x86_64\n")), true);
+        t.file(
+            "/cdrom/.disk/backotter.json",
+            r#"{"image_id": "6f1c2c1e-5b0e-4a51-9d8e-2a3c8f4e7b10", "platform": "linux"}"#,
+        );
+        let sys = Sys::new(
+            t.root(),
+            Box::new(FakeRunner::default().with(
+                "uname -s -r -v -m",
+                "Linux 7.0.0-43-generic #43 SMP x86_64\n",
+            )),
+            true,
+        );
         let (v, _) = versions(&sys);
-        assert!(v.contains("\"platform\":\"linux\"") && v.contains("(/cdrom/.disk/backotter.json)"), "{v}");
+        assert!(
+            v.contains("\"platform\":\"linux\"") && v.contains("(/cdrom/.disk/backotter.json)"),
+            "{v}"
+        );
     }
 
     #[test]
     fn status_of_disks_matched_by_serial() {
         let t = Tree::new("report-bug-serial");
         t.debian13();
-        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
-        t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", "33554432\n");
-        t.file("/sys/block/vdb/device/model", "QEMU HARDDISK\n").file("/sys/block/vdb/device/serial", "ALICE-SER-77\n");
+        t.file("/proc/self/mountinfo", "")
+            .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        t.disk("vdb", "253:16", &[], 512)
+            .file("/sys/block/vdb/size", "33554432\n");
+        t.file("/sys/block/vdb/device/model", "QEMU HARDDISK\n")
+            .file("/sys/block/vdb/device/serial", "ALICE-SER-77\n");
         let layout = crate::load::layout::sample::bios_mbr()
             .replace("\"deb13\"", "\"alice-pc\"")
-            .replacen("\"model\": null, \"serial\": null", "\"model\": \"QEMU HARDDISK\", \"serial\": \"ALICE-SER-77\"", 1);
+            .replacen(
+                "\"model\": null, \"serial\": null",
+                "\"model\": \"QEMU HARDDISK\", \"serial\": \"ALICE-SER-77\"",
+                1,
+            );
         assert!(layout.contains("ALICE-SER-77"));
         t.file("/srv/alice/layout.json", &layout);
         let last = Obj::new()
             .set("cwd", "/srv/alice")
-            .set("args", Value::Arr(s(&["layout.json", "--through", "format", "--commit"]).into_iter().map(Value::Str).collect()))
+            .set(
+                "args",
+                Value::Arr(
+                    s(&["layout.json", "--through", "format", "--commit"])
+                        .into_iter()
+                        .map(Value::Str)
+                        .collect(),
+                ),
+            )
             .set("exit", 1u64)
             .build();
         t.file(&format!("{RUN_DIR}/{LAST_RUN}"), last.pretty());
-        let sys = Sys::new(t.root(), Box::new(FakeRunner::default().with("uname -s -r -v -m", "Linux 7.0.0-30-generic #30 SMP x86_64\n")), true);
+        let sys = Sys::new(
+            t.root(),
+            Box::new(FakeRunner::default().with(
+                "uname -s -r -v -m",
+                "Linux 7.0.0-30-generic #30 SMP x86_64\n",
+            )),
+            true,
+        );
         let b = build(&sys, &Args::default(), "2026-11-07T03:42:00Z");
-        let st = b.text.split("==== status of the target disks").nth(1).unwrap().split("\n==== ").next().unwrap();
+        let st = b
+            .text
+            .split("==== status of the target disks")
+            .nth(1)
+            .unwrap()
+            .split("\n==== ")
+            .next()
+            .unwrap();
         assert!(st.contains("given here as --map vda=vdb"), "{st}");
         assert!(!st.contains("has no target"), "{st}");
         assert!(!b.text.contains("ALICE-SER-77"), "{}", b.text);
@@ -1314,25 +2046,56 @@ mod tests {
     fn homes_under_var_and_usr_in_free_text() {
         let t = Tree::new("report-bug-var-home");
         t.debian13();
-        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
-        t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", "33554432\n");
-        t.file("/usr/home/carol/layout.json", crate::load::layout::sample::bios_mbr());
+        t.file("/proc/self/mountinfo", "")
+            .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        t.disk("vdb", "253:16", &[], 512)
+            .file("/sys/block/vdb/size", "33554432\n");
+        t.file(
+            "/usr/home/carol/layout.json",
+            crate::load::layout::sample::bios_mbr(),
+        );
         let last = Obj::new()
             .set("cwd", "/usr/home/carol")
-            .set("args", Value::Arr(s(&["layout.json", "--map", "vda=vdb"]).into_iter().map(Value::Str).collect()))
+            .set(
+                "args",
+                Value::Arr(
+                    s(&["layout.json", "--map", "vda=vdb"])
+                        .into_iter()
+                        .map(Value::Str)
+                        .collect(),
+                ),
+            )
             .set("exit", 1u64)
             .build();
         t.file(&format!("{RUN_DIR}/{LAST_RUN}"), last.pretty());
         let errs = t.root().join("backup-errors.txt");
-        std::fs::write(&errs, "error: lstat /var/home/bob/.cache/x: permission denied\n").unwrap();
-        let sys = Sys::new(t.root(), Box::new(FakeRunner::default().with("uname -s -r -v -m", "Linux 7.0.0-30-generic #30 SMP x86_64\n")), true);
-        let a = Args { stderr: vec![errs.display().to_string()], ..Args::default() };
+        std::fs::write(
+            &errs,
+            "error: lstat /var/home/bob/.cache/x: permission denied\n",
+        )
+        .unwrap();
+        let sys = Sys::new(
+            t.root(),
+            Box::new(FakeRunner::default().with(
+                "uname -s -r -v -m",
+                "Linux 7.0.0-30-generic #30 SMP x86_64\n",
+            )),
+            true,
+        );
+        let a = Args {
+            stderr: vec![errs.display().to_string()],
+            ..Args::default()
+        };
         let b = build(&sys, &a, "2026-11-07T03:42:00Z");
         let txt = &b.text;
         for gone in ["/var/home/bob", "/usr/home/carol", "bob/", "carol/"] {
             assert!(!txt.contains(gone), "{gone} in:\n{txt}");
         }
-        assert!(txt.contains("error: lstat /var/home/user") && txt.contains("/.cache/x: permission denied"), "{txt}");
+        assert!(
+            txt.contains("error: lstat /var/home/user")
+                && txt.contains("/.cache/x: permission denied"),
+            "{txt}"
+        );
         assert!(txt.contains("in: /usr/home/user"), "{txt}");
     }
 
@@ -1340,7 +2103,17 @@ mod tests {
     /// lilo.conf's global items and another in its image's.
     fn lilo_password_layout() -> String {
         let l = include_str!("../tests/corpus/slackware15/src.json");
-        let l = l.replacen("\"disk=/dev/vda\",", "\"password=s3cret\", \"disk=/dev/vda\",", 1).replacen("\"label=Linux\",", "\"label=Linux\", \"password=my img pass\",", 1);
+        let l = l
+            .replacen(
+                "\"disk=/dev/vda\",",
+                "\"password=s3cret\", \"disk=/dev/vda\",",
+                1,
+            )
+            .replacen(
+                "\"label=Linux\",",
+                "\"label=Linux\", \"password=my img pass\",",
+                1,
+            );
         assert!(l.contains("s3cret") && l.contains("my img pass"));
         l
     }
@@ -1353,29 +2126,72 @@ mod tests {
     fn lilo_passwords_reach_no_report() {
         let t = Tree::new("report-bug-lilo-password");
         t.debian13();
-        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
-        t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", "41943040\n");
+        t.file("/proc/self/mountinfo", "")
+            .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        t.disk("vdb", "253:16", &[], 512)
+            .file("/sys/block/vdb/size", "41943040\n");
         t.file("/root/layout.json", lilo_password_layout());
         let last = Obj::new()
             .set("cwd", "/root")
-            .set("args", Value::Arr(s(&["layout.json", "--map", "vda=vdb"]).into_iter().map(Value::Str).collect()))
+            .set(
+                "args",
+                Value::Arr(
+                    s(&["layout.json", "--map", "vda=vdb"])
+                        .into_iter()
+                        .map(Value::Str)
+                        .collect(),
+                ),
+            )
             .set("exit", 1u64)
             .build();
         t.file(&format!("{RUN_DIR}/{LAST_RUN}"), last.pretty());
         let copy = "cat > /mnt/bko-target/etc/lilo.conf.bko-holt <<'EOF'\npassword=\"s3cret\"\nimage=\"/boot/vmlinuz\"\n  password=\"my img pass\"\nEOF\n";
         t.file(&format!("{RUN_DIR}/log/load.log"), copy);
         t.file("/var/log/bko-holt/load.log", copy);
-        let sys = Sys::new(t.root(), Box::new(FakeRunner::default().with("uname -s -r -v -m", "Linux 7.0.0-30-generic #30 SMP x86_64\n")), true);
+        let sys = Sys::new(
+            t.root(),
+            Box::new(FakeRunner::default().with(
+                "uname -s -r -v -m",
+                "Linux 7.0.0-30-generic #30 SMP x86_64\n",
+            )),
+            true,
+        );
         for no_redact in [false, true] {
-            let b = build(&sys, &Args { no_redact, ..Args::default() }, "2026-11-07T03:42:00Z");
+            let b = build(
+                &sys,
+                &Args {
+                    no_redact,
+                    ..Args::default()
+                },
+                "2026-11-07T03:42:00Z",
+            );
             for gone in ["s3cret", "img pass"] {
-                assert!(!b.text.contains(gone), "--no-redact {no_redact}: {gone} in:\n{}", b.text);
+                assert!(
+                    !b.text.contains(gone),
+                    "--no-redact {no_redact}: {gone} in:\n{}",
+                    b.text
+                );
                 assert!(!b.terminal.contains(gone), "{}", b.terminal);
             }
-            let plan = b.text.split("==== plan for that run").nth(1).unwrap().split("\n==== ").next().unwrap();
-            assert!(plan.contains("lilo.conf.bko-holt <<'EOF'\n") && plan.contains("password=\"<password>\"\n"), "{plan}");
+            let plan = b
+                .text
+                .split("==== plan for that run")
+                .nth(1)
+                .unwrap()
+                .split("\n==== ")
+                .next()
+                .unwrap();
+            assert!(
+                plan.contains("lilo.conf.bko-holt <<'EOF'\n")
+                    && plan.contains("password=\"<password>\"\n"),
+                "{plan}"
+            );
             assert!(b.text.contains("\"password=<password>\""), "{}", b.text);
-            let log = b.text.split("==== log: /var/log/bko-holt/load.log").nth(1).unwrap();
+            let log = b
+                .text
+                .split("==== log: /var/log/bko-holt/load.log")
+                .nth(1)
+                .unwrap();
             assert!(log.starts_with("\ncat > /mnt/bko-target/etc/lilo.conf.bko-holt <<'EOF'\npassword=\"<password>\"\n"), "{log}");
         }
     }
@@ -1388,7 +2204,11 @@ mod tests {
         let c = s.at(&["p", "esp_image", "0", "b64_omitted"]).unwrap();
         assert_eq!(c.get("bytes").and_then(Value::as_u64), Some(6000));
         assert!(s.at(&["p", "esp_image", "0", "b64"]).is_none());
-        assert_eq!(s.at(&["p", "boot_code", "code_b64"]).and_then(Value::as_str), Some("QlRY"));
+        assert_eq!(
+            s.at(&["p", "boot_code", "code_b64"])
+                .and_then(Value::as_str),
+            Some("QlRY")
+        );
         assert!(load::has_omitted(&s) && !load::has_omitted(&v));
     }
 
@@ -1397,9 +2217,16 @@ mod tests {
         // Byte 200 falls inside the é and inside the crab.
         let a = Value::from("a".repeat(199) + "é-alpha");
         let b = Value::from("b".repeat(198) + "🦀-beta");
-        let want = format!("/label: {:?} vs {:?}", "a".repeat(199) + "é", "b".repeat(198) + "🦀-");
+        let want = format!(
+            "/label: {:?} vs {:?}",
+            "a".repeat(199) + "é",
+            "b".repeat(198) + "🦀-"
+        );
         assert_eq!(value_diff(&a, &b, "/label").as_deref(), Some(want.as_str()));
-        assert_eq!(value_diff(&Value::from("é1"), &Value::from("é2"), "/x").as_deref(), Some(r#"/x: "é1" vs "é2""#));
+        assert_eq!(
+            value_diff(&Value::from("é1"), &Value::from("é2"), "/x").as_deref(),
+            Some(r#"/x: "é1" vs "é2""#)
+        );
         assert_eq!(value_diff(&a, &a, "/label"), None);
     }
 }

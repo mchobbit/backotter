@@ -15,8 +15,8 @@
 //! and BIOS Boot core.img back, and with --new-machine points the seed's
 //! grubenv at recover mode (Decision 2b).
 
-use super::commands::{Builder, Cmd};
 use super::RUN_DIR;
+use super::commands::{Builder, Cmd};
 use crate::json::Value;
 use crate::snapcore::ROLES;
 
@@ -27,7 +27,9 @@ pub const LOG: &str = "run/mnt/data/system-data/var/log/bko-holt";
 
 /// The layout's boot.snapcore, when the source is Ubuntu Core.
 pub fn of(layout: &Value) -> Option<&Value> {
-    layout.at(&["boot", "snapcore"]).filter(|v| v.as_object().is_some())
+    layout
+        .at(&["boot", "snapcore"])
+        .filter(|v| v.as_object().is_some())
 }
 
 fn s(v: &Value, k: &str) -> Option<String> {
@@ -35,12 +37,20 @@ fn s(v: &Value, k: &str) -> Option<String> {
 }
 
 fn strs(v: Option<&Value>) -> Vec<String> {
-    v.and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect()
+    v.and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect()
 }
 
 /// boot.snapcore's partition of ROLE.
 pub fn part<'a>(sc: &'a Value, r: &str) -> Option<&'a Value> {
-    sc.get("partitions").and_then(Value::as_array)?.iter().find(|p| p.get("role").and_then(Value::as_str) == Some(r))
+    sc.get("partitions")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|p| p.get("role").and_then(Value::as_str) == Some(r))
 }
 
 /// "would be NOW bytes (HOW MUCH smaller or bigger)": exact, so that a change
@@ -48,7 +58,12 @@ pub fn part<'a>(sc: &'a Value, r: &str) -> Option<&'a Value> {
 fn size_change(now: Option<u64>, was: u64) -> String {
     match now {
         None => "would have no size the layout says".into(),
-        Some(n) => format!("would be {n} bytes ({}, {} {})", crate::report::human(n), crate::report::human(n.abs_diff(was)), if n < was { "smaller" } else { "bigger" }),
+        Some(n) => format!(
+            "would be {n} bytes ({}, {} {})",
+            crate::report::human(n),
+            crate::report::human(n.abs_diff(was)),
+            if n < was { "smaller" } else { "bigger" }
+        ),
     }
 }
 
@@ -69,15 +84,34 @@ fn size_change(now: Option<u64>, was: u64) -> String {
 /// device was installed from.
 pub fn recover_system(sc: &Value) -> Result<(String, String), String> {
     let good = strs(sc.at(&["modeenv", "good_recovery_systems"]));
-    let systems: Vec<&Value> = sc.at(&["seed", "systems"]).and_then(Value::as_array).into_iter().flatten().collect();
-    let sys_of = |l: &str| systems.iter().find(|x| x.get("label").and_then(Value::as_str) == Some(l)).copied();
-    let usable: Vec<(&String, &Value)> = good.iter().filter_map(|l| sys_of(l).filter(|x| x.get("model") == Some(&Value::Bool(true))).map(|x| (l, x))).collect();
+    let systems: Vec<&Value> = sc
+        .at(&["seed", "systems"])
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .collect();
+    let sys_of = |l: &str| {
+        systems
+            .iter()
+            .find(|x| x.get("label").and_then(Value::as_str) == Some(l))
+            .copied()
+    };
+    let usable: Vec<(&String, &Value)> = good
+        .iter()
+        .filter_map(|l| {
+            sys_of(l)
+                .filter(|x| x.get("model") == Some(&Value::Bool(true)))
+                .map(|x| (l, x))
+        })
+        .collect();
     let Some((first, fx)) = usable.first() else {
         return Err("Ubuntu Core: --new-machine needs a good recovery system on the seed (modeenv's good_recovery_systems, with its model), and the dump has none".into());
     };
     let why = format!(
         "{first}, the first good recovery system{}: its kernel's initramfs is the one that made the LUKS2 keyslots, and asks for the recovery key in recover mode on a new TPM (a system made later by a newer snapd boots recover mode with ubuntu-data locked: its snap-bootstrap tries the recovery key only on keyslots with LUKS2 tokens)",
-        s(fx, "kernel").map(|k| format!(" (kernel {})", k.trim_start_matches("/snaps/"))).unwrap_or_default()
+        s(fx, "kernel")
+            .map(|k| format!(" (kernel {})", k.trim_start_matches("/snaps/")))
+            .unwrap_or_default()
     );
     Ok(((*first).clone(), why))
 }
@@ -141,19 +175,49 @@ impl Builder<'_> {
         let mut out = Vec::new();
         for r in ROLES {
             let Some(p) = part(sc, r.name) else {
-                self.problems.push(format!("Ubuntu Core: the dump has no {} partition", r.partlabel));
+                self.problems.push(format!(
+                    "Ubuntu Core: the dump has no {} partition",
+                    r.partlabel
+                ));
                 continue;
             };
-            let src = if p.get("encrypted") == Some(&Value::Bool(true)) { p.at(&["luks", "dm_device"]).and_then(Value::as_str).map(str::to_string) } else { s(p, "device") };
+            let src = if p.get("encrypted") == Some(&Value::Bool(true)) {
+                p.at(&["luks", "dm_device"])
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            } else {
+                s(p, "device")
+            };
             let (Some(src), Some(ty)) = (src, s(p, "fstype").filter(|x| !x.is_empty())) else {
-                self.problems.push(format!("Ubuntu Core: the dump doesn't say which filesystem {} holds", r.partlabel));
+                self.problems.push(format!(
+                    "Ubuntu Core: the dump doesn't say which filesystem {} holds",
+                    r.partlabel
+                ));
                 continue;
             };
             let Some(node) = self.names.dev(&src) else {
-                self.problems.push(format!("Ubuntu Core: {} is on {src}, which isn't restored", r.partlabel));
+                self.problems.push(format!(
+                    "Ubuntu Core: {} is on {src}, which isn't restored",
+                    r.partlabel
+                ));
                 continue;
             };
-            out.push((r.at.to_string(), Cmd::new(&["mount", "-t", &ty, "-o", "defaults", &node, &format!("{t}{}", r.at)]).why(format!("Ubuntu Core: {}, at snap-bootstrap's mount point", r.partlabel))));
+            out.push((
+                r.at.to_string(),
+                Cmd::new(&[
+                    "mount",
+                    "-t",
+                    &ty,
+                    "-o",
+                    "defaults",
+                    &node,
+                    &format!("{t}{}", r.at),
+                ])
+                .why(format!(
+                    "Ubuntu Core: {}, at snap-bootstrap's mount point",
+                    r.partlabel
+                )),
+            ));
         }
         out
     }
@@ -162,13 +226,21 @@ impl Builder<'_> {
     /// what the plan should say (notes).
     fn snapcore_problems(&mut self, sc: &Value) {
         for r in strs(sc.get("refusals")) {
-            self.problems.push(format!("the dump refused this system: {r}"));
+            self.problems
+                .push(format!("the dump refused this system: {r}"));
         }
         if self.opts.new_uuids {
             self.problems.push("Ubuntu Core with --new-uuids isn't restored: snap-bootstrap finds the partitions by label and name, the sealed-key objects and the kept LUKS2 headers name their volumes".into());
         }
-        let m = |k: &str| sc.at(&["model", k]).and_then(Value::as_str).map(str::to_string);
-        if m("gadget").as_deref() != Some("pc") || m("architecture").as_deref() != Some("amd64") || m("base").as_deref() != Some("core24") {
+        let m = |k: &str| {
+            sc.at(&["model", k])
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
+        if m("gadget").as_deref() != Some("pc")
+            || m("architecture").as_deref() != Some("amd64")
+            || m("base").as_deref() != Some("core24")
+        {
             self.problems.push(format!(
                 "Ubuntu Core: version 1 restores Ubuntu Core 24 on the amd64 pc gadget only; this model has gadget {}, architecture {}, base {}",
                 m("gadget").unwrap_or("?".into()),
@@ -177,26 +249,44 @@ impl Builder<'_> {
             ));
         }
         if sc.at(&["modeenv", "mode"]).and_then(Value::as_str) != Some("run") {
-            self.problems.push(format!("Ubuntu Core: the dump was made in {} mode, not run mode", sc.at(&["modeenv", "mode"]).and_then(Value::as_str).unwrap_or("an unknown")));
+            self.problems.push(format!(
+                "Ubuntu Core: the dump was made in {} mode, not run mode",
+                sc.at(&["modeenv", "mode"])
+                    .and_then(Value::as_str)
+                    .unwrap_or("an unknown")
+            ));
         }
-        if let Some(k) = sc.at(&["boot", "kernel_status"]).and_then(Value::as_str).filter(|k| matches!(*k, "try" | "trying")) {
+        if let Some(k) = sc
+            .at(&["boot", "kernel_status"])
+            .and_then(Value::as_str)
+            .filter(|k| matches!(*k, "try" | "trying"))
+        {
             self.problems.push(format!("Ubuntu Core: a kernel refresh was being tried when the dump was made (kernel_status={k}): dump and back up again once it has finished"));
         }
         // The gadget's geometry: only ubuntu-data may change size (the fit).
         for r in ROLES {
             let Some(p) = part(sc, r.name) else {
-                self.problems.push(format!("Ubuntu Core: the dump has no {} partition", r.partlabel));
+                self.problems.push(format!(
+                    "Ubuntu Core: the dump has no {} partition",
+                    r.partlabel
+                ));
                 continue;
             };
             let dev = s(p, "device").unwrap_or_default();
             let was = p.get("size_bytes").and_then(Value::as_u64);
-            let now = self.layout.device(&dev).and_then(|v| v.get("size_bytes")).and_then(Value::as_u64);
+            let now = self
+                .layout
+                .device(&dev)
+                .and_then(|v| v.get("size_bytes"))
+                .and_then(Value::as_u64);
             if let (true, Some(was)) = (r.name != "data", was) {
                 if now != Some(was) {
                     self.problems.push(format!("Ubuntu Core: {} ({dev}) {} instead of the gadget's {was} bytes: only ubuntu-data may change size (--fit-largest)", r.partlabel, size_change(now, was)));
                 }
             }
-            if p.get("encrypted") == Some(&Value::Bool(true)) && crate::luksheader::kept(&self.layout.v, &dev).is_none() {
+            if p.get("encrypted") == Some(&Value::Bool(true))
+                && crate::luksheader::kept(&self.layout.v, &dev).is_none()
+            {
                 self.problems.push(format!(
                     "Ubuntu Core: the dump kept no LUKS2 header of {} ({dev}): a new one would have a new volume key, which neither the TPM-sealed keys nor the recovery key open; dump again as root with cryptsetup at hand",
                     r.partlabel
@@ -222,7 +312,11 @@ impl Builder<'_> {
         } else {
             self.notes.push("Ubuntu Core (unencrypted): restored file for file; it boots unattended on any machine by UEFI".into());
         }
-        if sc.at(&["boot_areas", "bios_boot", "image_bytes"]).and_then(Value::as_u64) == Some(0) {
+        if sc
+            .at(&["boot_areas", "bios_boot", "image_bytes"])
+            .and_then(Value::as_u64)
+            == Some(0)
+        {
             self.notes.push("Ubuntu Core: the gadget's BIOS Boot partition is empty (the pc gadget of UC24 boots by UEFI only; its MBR code says \"Please boot in EFI mode\"), so the restored disk boots by UEFI only, as the source did".into());
         }
         if self.opts.no_nvram || self.opts.removable {
@@ -235,7 +329,9 @@ impl Builder<'_> {
     pub(crate) fn snapcore_boot(&mut self, sc: &Value) -> Vec<Cmd> {
         self.snapcore_problems(sc);
         let t = self.opts.target.clone();
-        let mut out = vec![Cmd::note(format!("refuses to start unless {t}/{MARKER} is there: the restored ubuntu-data"))];
+        let mut out = vec![Cmd::note(format!(
+            "refuses to start unless {t}/{MARKER} is there: the restored ubuntu-data"
+        ))];
         out.push(Cmd::new(&["sh", "-c", &self.atimes(&t, "if-missing")]).why("the restored atimes (the restore stage lists them), to put back after this stage's reads"));
         let what = "Ubuntu Core: ubuntu-seed, ubuntu-boot, ubuntu-save and ubuntu-data are restored as they were; no grub-install, no update-grub, no initramfs, no chroot, and no UEFI entry (shim's fallback on the restored seed makes it at the first boot)";
         self.notes.push(what.into());
@@ -279,7 +375,13 @@ impl Builder<'_> {
 /// may run from a stick mounted at a path with a space.
 fn boot_areas_script(exe: &str, layout: &str, disk: &str, dev: &str) -> String {
     let q = super::shell_quote;
-    format!("{} snapcore-boot-areas {} {} {}", q(exe), q(layout), q(disk), q(dev))
+    format!(
+        "{} snapcore-boot-areas {} {} {}",
+        q(exe),
+        q(layout),
+        q(disk),
+        q(dev)
+    )
 }
 
 /// `bko-holt snapcore-boot-areas LAYOUT DISK DEVICE` (not in the usage: run
@@ -294,14 +396,20 @@ pub fn boot_areas_main(args: &[String]) -> u8 {
         return 2;
     };
     let run = || -> Result<String, String> {
-        let text = crate::bytes::read_to_string_bounded(std::path::Path::new(layout), crate::LAYOUT_MAX).map_err(|e| format!("{layout}: {e}"))?;
+        let text =
+            crate::bytes::read_to_string_bounded(std::path::Path::new(layout), crate::LAYOUT_MAX)
+                .map_err(|e| format!("{layout}: {e}"))?;
         let v = crate::json::parse(&text).map_err(|e| format!("{layout}: {e:?}"))?;
         let writes = boot_area_writes(&v, disk)?;
-        let f = std::fs::OpenOptions::new().write(true).open(dev).map_err(|e| format!("{dev}: {e}"))?;
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(dev)
+            .map_err(|e| format!("{dev}: {e}"))?;
         let mut said = Vec::new();
         for (off, b, what) in &writes {
             use std::os::unix::fs::FileExt;
-            f.write_all_at(b, *off).map_err(|e| format!("{dev}: writing {} bytes at {off}: {e}", b.len()))?;
+            f.write_all_at(b, *off)
+                .map_err(|e| format!("{dev}: writing {} bytes at {off}: {e}", b.len()))?;
             said.push(format!("{what} ({} bytes at {off})", b.len()));
         }
         f.sync_all().map_err(|e| format!("{dev}: {e}"))?;
@@ -330,28 +438,46 @@ pub type Write = (u64, Vec<u8>, &'static str);
 /// gadget's: it is UEFI only, and its MBR code says "Please boot in EFI
 /// mode") writes nothing there.
 pub fn boot_area_writes(v: &Value, disk: &str) -> Result<Vec<Write>, String> {
-    let a = of(v).and_then(|sc| sc.get("boot_areas")).filter(|a| !a.is_null()).ok_or("the layout has no boot.snapcore.boot_areas")?;
+    let a = of(v)
+        .and_then(|sc| sc.get("boot_areas"))
+        .filter(|a| !a.is_null())
+        .ok_or("the layout has no boot.snapcore.boot_areas")?;
     if a.get("disk").and_then(Value::as_str) != Some(disk) {
-        return Err(format!("the layout's boot areas are {}'s, not {disk}'s", a.get("disk").and_then(Value::as_str).unwrap_or("no disk")));
+        return Err(format!(
+            "the layout's boot areas are {}'s, not {disk}'s",
+            a.get("disk").and_then(Value::as_str).unwrap_or("no disk")
+        ));
     }
-    let bytes = |b64: Option<&Value>, sha: Option<&Value>, what: &str| -> Result<Option<Vec<u8>>, String> {
-        let Some(t) = b64.and_then(Value::as_str) else { return Ok(None) };
-        let b = crate::bytes::unbase64(t).ok_or(format!("{what}: not base64"))?;
-        if sha.and_then(Value::as_str) != Some(crate::bytes::sha256_hex(&b).as_str()) {
-            return Err(format!("{what}: its bytes aren't the dump's (SHA-256)"));
-        }
-        Ok(Some(b))
-    };
+    let bytes =
+        |b64: Option<&Value>, sha: Option<&Value>, what: &str| -> Result<Option<Vec<u8>>, String> {
+            let Some(t) = b64.and_then(Value::as_str) else {
+                return Ok(None);
+            };
+            let b = crate::bytes::unbase64(t).ok_or(format!("{what}: not base64"))?;
+            if sha.and_then(Value::as_str) != Some(crate::bytes::sha256_hex(&b).as_str()) {
+                return Err(format!("{what}: its bytes aren't the dump's (SHA-256)"));
+            }
+            Ok(Some(b))
+        };
     let mut out = Vec::new();
-    if let Some(code) = bytes(a.get("mbr_code_b64"), a.get("mbr_code_sha256"), "the MBR's boot code")? {
+    if let Some(code) = bytes(
+        a.get("mbr_code_b64"),
+        a.get("mbr_code_sha256"),
+        "the MBR's boot code",
+    )? {
         if code.len() > 440 {
             return Err("the MBR's boot code is over 440 bytes".into());
         }
         out.push((0, code, "the MBR's boot code"));
     }
     if let Some(b) = a.get("bios_boot").filter(|b| !b.is_null()) {
-        if let Some(img) = bytes(b.get("image_b64"), b.get("sha256"), "BIOS Boot's core.img")?.filter(|i| !i.is_empty()) {
-            let start = b.get("start_bytes").and_then(Value::as_u64).ok_or("BIOS Boot has no start")?;
+        if let Some(img) = bytes(b.get("image_b64"), b.get("sha256"), "BIOS Boot's core.img")?
+            .filter(|i| !i.is_empty())
+        {
+            let start = b
+                .get("start_bytes")
+                .and_then(Value::as_u64)
+                .ok_or("BIOS Boot has no start")?;
             let size = b.get("size_bytes").and_then(Value::as_u64).unwrap_or(0);
             if img.len() as u64 > size || start < 512 {
                 return Err("BIOS Boot's core.img doesn't fit where it was".into());
@@ -368,21 +494,45 @@ mod tests {
     use crate::testutil::Tree;
 
     fn run(script: &str) -> (bool, String, String) {
-        let o = std::process::Command::new("sh").arg("-c").arg(script).output().unwrap();
-        (o.status.success(), String::from_utf8_lossy(&o.stdout).into_owned(), String::from_utf8_lossy(&o.stderr).into_owned())
+        let o = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .output()
+            .unwrap();
+        (
+            o.status.success(),
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        )
     }
 
     /// RustAudit1 H8-03: bko-holt run from a path with a space, quotes, $,
     /// a backtick and a newline is still one word; a plain one stays bare.
     #[test]
     fn boot_areas_script_quotes_its_words() {
-        assert_eq!(boot_areas_script("/usr/local/bin/bko-holt", "/run/x/l.json", "vda", "/dev/vdb"), "/usr/local/bin/bko-holt snapcore-boot-areas /run/x/l.json vda /dev/vdb");
+        assert_eq!(
+            boot_areas_script(
+                "/usr/local/bin/bko-holt",
+                "/run/x/l.json",
+                "vda",
+                "/dev/vdb"
+            ),
+            "/usr/local/bin/bko-holt snapcore-boot-areas /run/x/l.json vda /dev/vdb"
+        );
         let t = Tree::new("snapcore-exe");
         let dir = format!("{}/BKO STICK'\"$HOME`id`\nx", t.root().display());
         std::fs::create_dir_all(&dir).unwrap();
         let exe = format!("{dir}/bko-holt");
-        std::fs::write(&exe, "#!/bin/sh\nfor a in \"$@\"; do printf '%s|' \"$a\"; done\n").unwrap();
-        std::process::Command::new("chmod").arg("755").arg(&exe).status().unwrap();
+        std::fs::write(
+            &exe,
+            "#!/bin/sh\nfor a in \"$@\"; do printf '%s|' \"$a\"; done\n",
+        )
+        .unwrap();
+        std::process::Command::new("chmod")
+            .arg("755")
+            .arg(&exe)
+            .status()
+            .unwrap();
         let layout = format!("{dir}/l a.json");
         let (ok, out, err) = run(&boot_areas_script(&exe, &layout, "vda", "/dev/vdb"));
         assert!(ok, "{err}");
@@ -393,16 +543,34 @@ mod tests {
     fn tree() -> Tree {
         let t = Tree::new("snapcore-check");
         let m = "/run/mnt/data/system-data/var/lib/snapd";
-        t.file(&format!("{m}/modeenv"), crate::snapcore::tests::MODEENV_TEXT)
-            .file(&format!("{m}/snaps/core24_2307.snap"), "s")
-            .file(&format!("{m}/snaps/pc_196.snap"), "s")
-            .file("/run/mnt/ubuntu-boot/EFI/ubuntu/pc-kernel_3908.snap/kernel.efi", "k")
-            .file("/run/mnt/ubuntu-boot/EFI/ubuntu/pc-kernel_1803.snap/kernel.efi", "k")
-            .symlink("/run/mnt/ubuntu-boot/EFI/ubuntu/kernel.efi", "pc-kernel_3908.snap/kernel.efi")
-            .file("/run/mnt/ubuntu-boot/EFI/ubuntu/grubenv", crate::snapcore::tests::grubenv(&["kernel_status=", "snapd_extra_cmdline_args="]))
-            .file("/run/mnt/ubuntu-boot/device/model", crate::snapcore::tests::MODEL_TEXT)
-            .file("/run/mnt/ubuntu-seed/systems/20240603/model", "m")
-            .file("/run/mnt/ubuntu-seed/systems/bko-20261114/model", "m");
+        t.file(
+            &format!("{m}/modeenv"),
+            crate::snapcore::tests::MODEENV_TEXT,
+        )
+        .file(&format!("{m}/snaps/core24_2307.snap"), "s")
+        .file(&format!("{m}/snaps/pc_196.snap"), "s")
+        .file(
+            "/run/mnt/ubuntu-boot/EFI/ubuntu/pc-kernel_3908.snap/kernel.efi",
+            "k",
+        )
+        .file(
+            "/run/mnt/ubuntu-boot/EFI/ubuntu/pc-kernel_1803.snap/kernel.efi",
+            "k",
+        )
+        .symlink(
+            "/run/mnt/ubuntu-boot/EFI/ubuntu/kernel.efi",
+            "pc-kernel_3908.snap/kernel.efi",
+        )
+        .file(
+            "/run/mnt/ubuntu-boot/EFI/ubuntu/grubenv",
+            crate::snapcore::tests::grubenv(&["kernel_status=", "snapd_extra_cmdline_args="]),
+        )
+        .file(
+            "/run/mnt/ubuntu-boot/device/model",
+            crate::snapcore::tests::MODEL_TEXT,
+        )
+        .file("/run/mnt/ubuntu-seed/systems/20240603/model", "m")
+        .file("/run/mnt/ubuntu-seed/systems/bko-20261114/model", "m");
         t
     }
 
@@ -410,18 +578,42 @@ mod tests {
     fn check_passes_and_fails() {
         let root = |t: &Tree| t.root().to_string_lossy().into_owned();
         let t = tree();
-        let (ok, out, err) = run(&check_script(&root(&t), "pc-kernel_3908.snap", "20240603 bko-20261114"));
+        let (ok, out, err) = run(&check_script(
+            &root(&t),
+            "pc-kernel_3908.snap",
+            "20240603 bko-20261114",
+        ));
         assert!(ok && err.is_empty(), "{out}{err}");
-        assert!(out.contains("run mode boots pc-kernel_3908.snap; recovery systems 20240603 bko-20261114"), "{out}");
+        assert!(
+            out.contains(
+                "run mode boots pc-kernel_3908.snap; recovery systems 20240603 bko-20261114"
+            ),
+            "{out}"
+        );
         // A backup after a refresh: warned, not failed.
         let (ok, _, err) = run(&check_script(&root(&t), "pc-kernel_1803.snap", "20240603"));
-        assert!(ok && err.contains("warning: the restored modeenv's kernels") && err.contains("warning: the restored recovery systems"), "{err}");
+        assert!(
+            ok && err.contains("warning: the restored modeenv's kernels")
+                && err.contains("warning: the restored recovery systems"),
+            "{err}"
+        );
         // Five things wrong at once.
         std::fs::remove_file(t.p("/run/mnt/ubuntu-seed/systems/bko-20261114/model")).unwrap();
-        std::fs::remove_file(t.p("/run/mnt/data/system-data/var/lib/snapd/snaps/core24_2307.snap")).unwrap();
-        t.symlink("/run/mnt/ubuntu-boot/EFI/ubuntu/kernel.efi", "pc-kernel_1803.snap/kernel.efi");
-        t.file("/run/mnt/ubuntu-boot/EFI/ubuntu/grubenv", crate::snapcore::tests::grubenv(&["kernel_status=try", "snap_kernel=pc-kernel_1.snap"]));
-        let (ok, _, err) = run(&check_script(&root(&t), "pc-kernel_3908.snap", "20240603 bko-20261114"));
+        std::fs::remove_file(t.p("/run/mnt/data/system-data/var/lib/snapd/snaps/core24_2307.snap"))
+            .unwrap();
+        t.symlink(
+            "/run/mnt/ubuntu-boot/EFI/ubuntu/kernel.efi",
+            "pc-kernel_1803.snap/kernel.efi",
+        );
+        t.file(
+            "/run/mnt/ubuntu-boot/EFI/ubuntu/grubenv",
+            crate::snapcore::tests::grubenv(&["kernel_status=try", "snap_kernel=pc-kernel_1.snap"]),
+        );
+        let (ok, _, err) = run(&check_script(
+            &root(&t),
+            "pc-kernel_3908.snap",
+            "20240603 bko-20261114",
+        ));
         assert!(!ok, "{err}");
         for want in [
             "recovery system bko-20261114 has no systems/bko-20261114/model on the restored ubuntu-seed",
@@ -436,10 +628,16 @@ mod tests {
         // No kernel.efi at all, no modeenv at all.
         std::fs::remove_file(t.p("/run/mnt/ubuntu-boot/EFI/ubuntu/kernel.efi")).unwrap();
         let (ok, _, err) = run(&check_script(&root(&t), "", ""));
-        assert!(!ok && err.contains("ubuntu-boot has no EFI/ubuntu/kernel.efi symlink"), "{err}");
+        assert!(
+            !ok && err.contains("ubuntu-boot has no EFI/ubuntu/kernel.efi symlink"),
+            "{err}"
+        );
         std::fs::remove_file(t.p("/run/mnt/data/system-data/var/lib/snapd/modeenv")).unwrap();
         let (ok, _, err) = run(&check_script(&root(&t), "", ""));
-        assert!(!ok && err.contains("modeenv isn't on the restored ubuntu-data"), "{err}");
+        assert!(
+            !ok && err.contains("modeenv isn't on the restored ubuntu-data"),
+            "{err}"
+        );
     }
 
     /// Ubuntu Core's atimes list covers run/mnt (its whole tree), and
@@ -448,17 +646,29 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn atimes_cover_run_mnt() {
         let t = Tree::new("snapcore-atimes");
-        t.file("/run/mnt/data/system-data/var/lib/snapd/modeenv", "m").file("/run/other/x", "x").file("/etc/x", "x");
+        t.file("/run/mnt/data/system-data/var/lib/snapd/modeenv", "m")
+            .file("/run/other/x", "x")
+            .file("/etc/x", "x");
         let root = t.root().to_string_lossy().into_owned();
         let list = |run_mnt: bool| {
             let cmd = super::super::commands::atimes_cmd_in(&root, "before", &[], run_mnt)
                 .replace(&format!("{RUN_DIR}/atimes.before"), &format!("{root}/list"))
                 .replace(&format!("mkdir -p -m 700 {RUN_DIR} && "), "");
             assert!(run(&cmd).0, "{cmd}");
-            std::fs::read(t.p("/list")).unwrap().split(|&b| b == 0).map(|e| String::from_utf8_lossy(e).into_owned()).collect::<Vec<_>>().join("\n")
+            std::fs::read(t.p("/list"))
+                .unwrap()
+                .split(|&b| b == 0)
+                .map(|e| String::from_utf8_lossy(e).into_owned())
+                .collect::<Vec<_>>()
+                .join("\n")
         };
         let l = list(true);
-        assert!(l.contains("/run/mnt/data/system-data/var/lib/snapd/modeenv") && l.contains("/etc/x") && !l.contains("/run/other"), "{l}");
+        assert!(
+            l.contains("/run/mnt/data/system-data/var/lib/snapd/modeenv")
+                && l.contains("/etc/x")
+                && !l.contains("/run/other"),
+            "{l}"
+        );
         let l = list(false);
         assert!(!l.contains("/run/mnt") && l.contains("/etc/x"), "{l}");
     }
@@ -469,18 +679,28 @@ mod tests {
 
     #[test]
     fn recover_system_choice() {
-        let v = sc(r#"{"modeenv": {"good_recovery_systems": ["20240603", "bko-20261114"]}, "seed": {"systems": [
+        let v = sc(
+            r#"{"modeenv": {"good_recovery_systems": ["20240603", "bko-20261114"]}, "seed": {"systems": [
             {"label": "20240603", "model": true, "kernel": "/snaps/pc-kernel_1803.snap"},
-            {"label": "bko-20261114", "model": true, "kernel": "/snaps/pc-kernel_3908.snap"}]}}"#);
+            {"label": "bko-20261114", "model": true, "kernel": "/snaps/pc-kernel_3908.snap"}]}}"#,
+        );
         let (l, why) = recover_system(&v).unwrap();
         assert_eq!(l, "20240603");
         assert!(why.contains("(kernel pc-kernel_1803.snap)"), "{why}");
         // The first good one without its model is passed over.
-        let v = sc(r#"{"modeenv": {"good_recovery_systems": ["20240603", "bko-20261114"]}, "seed": {"systems": [
+        let v = sc(
+            r#"{"modeenv": {"good_recovery_systems": ["20240603", "bko-20261114"]}, "seed": {"systems": [
             {"label": "20240603", "model": false, "kernel": "/snaps/pc-kernel_1803.snap"},
-            {"label": "bko-20261114", "model": true, "kernel": "/snaps/pc-kernel_3908.snap"}]}}"#);
+            {"label": "bko-20261114", "model": true, "kernel": "/snaps/pc-kernel_3908.snap"}]}}"#,
+        );
         assert_eq!(recover_system(&v).unwrap().0, "bko-20261114");
-        assert!(recover_system(&sc(r#"{"modeenv": {"good_recovery_systems": []}, "seed": {"systems": []}}"#)).unwrap_err().contains("no"));
+        assert!(
+            recover_system(&sc(
+                r#"{"modeenv": {"good_recovery_systems": []}, "seed": {"systems": []}}"#
+            ))
+            .unwrap_err()
+            .contains("no")
+        );
     }
 
     #[test]
@@ -495,19 +715,51 @@ mod tests {
             crate::bytes::sha256_hex(&core)
         ));
         let w = boot_area_writes(&v, "vda").unwrap();
-        assert_eq!(w.iter().map(|(o, b, _)| (*o, b.len())).collect::<Vec<_>>(), vec![(0, 440), (1048576, 1024)]);
-        assert!(boot_area_writes(&v, "vdb").unwrap_err().contains("vda's, not vdb's"));
+        assert_eq!(
+            w.iter().map(|(o, b, _)| (*o, b.len())).collect::<Vec<_>>(),
+            vec![(0, 440), (1048576, 1024)]
+        );
+        assert!(
+            boot_area_writes(&v, "vdb")
+                .unwrap_err()
+                .contains("vda's, not vdb's")
+        );
         // UC24's empty BIOS Boot: the MBR code only.
-        let empty = crate::json::parse(&v.compact().replace(&crate::bytes::base64(&core), "").replace(&crate::bytes::sha256_hex(&core), &crate::bytes::sha256_hex(&[]))).unwrap();
+        let empty = crate::json::parse(
+            &v.compact()
+                .replace(&crate::bytes::base64(&core), "")
+                .replace(
+                    &crate::bytes::sha256_hex(&core),
+                    &crate::bytes::sha256_hex(&[]),
+                ),
+        )
+        .unwrap();
         assert_eq!(boot_area_writes(&empty, "vda").unwrap().len(), 1);
-        let bad = crate::json::parse(&v.compact().replace(&crate::bytes::sha256_hex(&core), &"0".repeat(64))).unwrap();
-        assert!(boot_area_writes(&bad, "vda").unwrap_err().contains("core.img: its bytes aren't the dump's"));
+        let bad = crate::json::parse(
+            &v.compact()
+                .replace(&crate::bytes::sha256_hex(&core), &"0".repeat(64)),
+        )
+        .unwrap();
+        assert!(
+            boot_area_writes(&bad, "vda")
+                .unwrap_err()
+                .contains("core.img: its bytes aren't the dump's")
+        );
         // Written to a file standing in for the target disk.
         let t = Tree::new("snapcore-areas");
-        t.file("/layout.json", v.compact()).file("/disk", vec![0u8; 3 << 20]);
+        t.file("/layout.json", v.compact())
+            .file("/disk", vec![0u8; 3 << 20]);
         let p = |x: &str| t.p(x).to_string_lossy().into_owned();
-        assert_eq!(boot_areas_main(&[p("/layout.json"), "vda".into(), p("/disk")]), 0);
+        assert_eq!(
+            boot_areas_main(&[p("/layout.json"), "vda".into(), p("/disk")]),
+            0
+        );
         let d = std::fs::read(t.p("/disk")).unwrap();
-        assert!(d[..440] == code[..] && d[440..1048576].iter().all(|&b| b == 0) && d[1048576..1048576 + 1024] == core[..] && d[1048576 + 1024] == 0);
+        assert!(
+            d[..440] == code[..]
+                && d[440..1048576].iter().all(|&b| b == 0)
+                && d[1048576..1048576 + 1024] == core[..]
+                && d[1048576 + 1024] == 0
+        );
     }
 }

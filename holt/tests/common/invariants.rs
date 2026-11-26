@@ -33,7 +33,10 @@ pub struct Step {
 
 impl Step {
     pub fn text(&self) -> String {
-        std::iter::once(self.cmd.clone()).chain(self.body.iter().cloned()).collect::<Vec<_>>().join("\n")
+        std::iter::once(self.cmd.clone())
+            .chain(self.body.iter().cloned())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
@@ -46,7 +49,11 @@ impl<'a> Sections<'a> {
     }
 
     pub fn lines(&self, name: &str) -> Vec<&'a str> {
-        self.0.iter().filter(|(n, _)| n == name).flat_map(|(_, l)| l.iter().copied()).collect()
+        self.0
+            .iter()
+            .filter(|(n, _)| n == name)
+            .flat_map(|(_, l)| l.iter().copied())
+            .collect()
     }
 
     /// A stage's commands: its lines less the header, comments outside a
@@ -72,7 +79,10 @@ impl<'a> Sections<'a> {
                     in_doc = Some(tag.to_string());
                 }
             }
-            out.push(Step { cmd: l.to_string(), body: Vec::new() });
+            out.push(Step {
+                cmd: l.to_string(),
+                body: Vec::new(),
+            });
         }
         out
     }
@@ -81,15 +91,27 @@ impl<'a> Sections<'a> {
     /// "#   - " lines.
     pub fn list(&self, title: &str) -> Vec<String> {
         let head = self.lines("header");
-        let Some(i) = head.iter().position(|l| l.starts_with(title)) else { return vec![] };
-        head[i + 1..].iter().take_while(|l| l.starts_with("#   - ") || l.starts_with("#     ")).filter_map(|l| l.strip_prefix("#   - ")).map(str::to_string).collect()
+        let Some(i) = head.iter().position(|l| l.starts_with(title)) else {
+            return vec![];
+        };
+        head[i + 1..]
+            .iter()
+            .take_while(|l| l.starts_with("#   - ") || l.starts_with("#     "))
+            .filter_map(|l| l.strip_prefix("#   - "))
+            .map(str::to_string)
+            .collect()
     }
 }
 
 /// A command line's words, as sh reads them (lex), split at `;`, `(` and
 /// `)` too: good enough to find paths and names in it.
 pub fn words(s: &str) -> Vec<String> {
-    lex(s, &[';', '(', ')']).into_iter().flatten().map(|w| w.text).filter(|w| !w.is_empty()).collect()
+    lex(s, &[';', '(', ')'])
+        .into_iter()
+        .flatten()
+        .map(|w| w.text)
+        .filter(|w| !w.is_empty())
+        .collect()
 }
 
 /// One shell word: its text with its quotes and backslashes undone, and
@@ -109,7 +131,10 @@ pub struct Word {
 /// never closes runs to the end.
 pub fn lex(s: &str, seps: &[char]) -> Vec<Option<Word>> {
     fn word(cur: &mut Option<Word>) -> &mut Word {
-        cur.get_or_insert_with(|| Word { text: String::new(), redirect: false })
+        cur.get_or_insert_with(|| Word {
+            text: String::new(),
+            redirect: false,
+        })
     }
     let mut out = Vec::new();
     let mut cur: Option<Word> = None;
@@ -176,7 +201,10 @@ pub fn prog(w: &str) -> &str {
 
 /// Shell words that open or close a compound command, or run the command
 /// after them, without being a command themselves.
-pub const LEADERS: [&str; 18] = ["if", "then", "else", "elif", "fi", "do", "done", "while", "until", "esac", "!", "{", "}", "(", ")", "exec", "time", "command"];
+pub const LEADERS: [&str; 18] = [
+    "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "esac", "!", "{", "}", "(",
+    ")", "exec", "time", "command",
+];
 
 /// The simple commands of a plan line, each as its words (lex: quotes
 /// undone) with redirections (`>FILE`, `2>&1`, `> FILE`) left out: the line
@@ -200,8 +228,17 @@ pub fn commands(line: &str) -> Vec<Vec<String>> {
         let mut out = script_commands(&script);
         if script.contains("\"$@\"") {
             // ARGS is `NAME ARG...`: NAME is $0, ARG... the command.
-            let mut w: Vec<String> = script_commands(args).into_iter().next().unwrap_or_default().into_iter().skip(1).collect();
-            while w.first().is_some_and(|x| LEADERS.contains(&x.as_str()) || is_assignment(x)) {
+            let mut w: Vec<String> = script_commands(args)
+                .into_iter()
+                .next()
+                .unwrap_or_default()
+                .into_iter()
+                .skip(1)
+                .collect();
+            while w
+                .first()
+                .is_some_and(|x| LEADERS.contains(&x.as_str()) || is_assignment(x))
+            {
                 w.remove(0);
             }
             if !w.is_empty() {
@@ -212,7 +249,14 @@ pub fn commands(line: &str) -> Vec<Vec<String>> {
     }
     match bare.strip_prefix("sh -c ") {
         // SCRIPT in double quotes, or bare: its first word.
-        Some(rest) => script_commands(&lex(rest, &[]).into_iter().flatten().next().map(|w| w.text).unwrap_or_default()),
+        Some(rest) => script_commands(
+            &lex(rest, &[])
+                .into_iter()
+                .flatten()
+                .next()
+                .map(|w| w.text)
+                .unwrap_or_default(),
+        ),
         None => script_commands(t),
     }
 }
@@ -250,7 +294,10 @@ fn script_commands(script: &str) -> Vec<Vec<String>> {
     for t in lex(script, &[';', '|', '\n']).into_iter().chain([None]) {
         let Some(x) = t else {
             file_next = false;
-            while w.first().is_some_and(|x| LEADERS.contains(&x.as_str()) || is_assignment(x)) {
+            while w
+                .first()
+                .is_some_and(|x| LEADERS.contains(&x.as_str()) || is_assignment(x))
+            {
                 w.remove(0);
             }
             if w.is_empty() {
@@ -258,7 +305,10 @@ fn script_commands(script: &str) -> Vec<Vec<String>> {
             }
             // `sh -c SCRIPT` inside it (chroot DIR sh -c SCRIPT): SCRIPT's
             // commands too.
-            let inner = w.windows(3).find(|p| matches!(prog(&p[0]), "sh" | "bash") && p[1] == "-c").map(|p| p[2].clone());
+            let inner = w
+                .windows(3)
+                .find(|p| matches!(prog(&p[0]), "sh" | "bash") && p[1] == "-c")
+                .map(|p| p[2].clone());
             out.push(std::mem::take(&mut w));
             if let Some(s) = inner {
                 out.extend(script_commands(&s));
@@ -269,7 +319,11 @@ fn script_commands(script: &str) -> Vec<Vec<String>> {
             file_next = false;
         } else if x.redirect {
             // A redirection; `>` (`2>`, `&>`, `>>`, `<`) on its own takes the next word.
-            file_next = x.text.trim_start_matches(|c: char| c.is_ascii_digit() || c == '&').chars().all(|c| c == '>' || c == '<');
+            file_next = x
+                .text
+                .trim_start_matches(|c: char| c.is_ascii_digit() || c == '&')
+                .chars()
+                .all(|c| c == '>' || c == '<');
         } else if !x.text.is_empty() {
             w.push(x.text);
         }
@@ -282,25 +336,46 @@ fn script_commands(script: &str) -> Vec<Vec<String>> {
 pub fn mounts_at(s: &Step, path: &str) -> bool {
     commands(&s.cmd).iter().any(|c| {
         let p = prog(&c[0]);
-        (p == "mount" || p.starts_with("mount_") || p == "redoxfs") && c.len() >= 3 && c.last().is_some_and(|l| l == path)
+        (p == "mount" || p.starts_with("mount_") || p == "redoxfs")
+            && c.len() >= 3
+            && c.last().is_some_and(|l| l == path)
     })
 }
 
 /// The datasets STEP mounts with `zfs mount DATASET`.
 pub fn zfs_mounted(s: &Step) -> Vec<String> {
-    commands(&s.cmd).into_iter().filter(|c| c.len() >= 3 && prog(&c[0]) == "zfs" && c[1] == "mount").filter_map(|c| c.last().cloned()).collect()
+    commands(&s.cmd)
+        .into_iter()
+        .filter(|c| c.len() >= 3 && prog(&c[0]) == "zfs" && c[1] == "mount")
+        .filter_map(|c| c.last().cloned())
+        .collect()
 }
 
 /// Whether STEP restores the repository into PATH: `rustic-bko ... restore
 /// ... PATH`.
 pub fn restores_into(s: &Step, path: &str) -> bool {
-    commands(&s.cmd).iter().any(|c| prog(&c[0]) == "rustic-bko" && c.iter().skip(1).any(|w| w == "restore") && c.last().is_some_and(|l| l == path))
+    commands(&s.cmd).iter().any(|c| {
+        prog(&c[0]) == "rustic-bko"
+            && c.iter().skip(1).any(|w| w == "restore")
+            && c.last().is_some_and(|l| l == path)
+    })
 }
 
 /// Some(rooted) when STEP is a `zpool create` or `zpool import` of POOL;
 /// rooted when it roots the pool at the target (-R, altroot=).
 pub fn zpool_makes(s: &Step, pool: &str) -> Option<bool> {
-    commands(&s.cmd).into_iter().find(|c| c.len() >= 3 && prog(&c[0]) == "zpool" && (c[1] == "create" || c[1] == "import") && c.iter().skip(2).any(|w| w == pool)).map(|c| c.windows(2).any(|p| p[0] == "-R" && p[1] == TARGET) || c.iter().any(|x| *x == format!("altroot={TARGET}")))
+    commands(&s.cmd)
+        .into_iter()
+        .find(|c| {
+            c.len() >= 3
+                && prog(&c[0]) == "zpool"
+                && (c[1] == "create" || c[1] == "import")
+                && c.iter().skip(2).any(|w| w == pool)
+        })
+        .map(|c| {
+            c.windows(2).any(|p| p[0] == "-R" && p[1] == TARGET)
+                || c.iter().any(|x| *x == format!("altroot={TARGET}"))
+        })
 }
 
 pub fn str_at<'a>(v: &'a Value, k: &str) -> Option<&'a str> {
@@ -308,7 +383,10 @@ pub fn str_at<'a>(v: &'a Value, k: &str) -> Option<&'a str> {
 }
 
 pub fn arr<'a>(v: &'a Value, path: &[&str]) -> &'a [Value] {
-    v.at(path).and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
+    v.at(path)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
 }
 
 // ---- the invariants ----
@@ -317,7 +395,12 @@ pub fn arr<'a>(v: &'a Value, path: &[&str]) -> &'a [Value] {
 pub fn datasets(dump: &Value) -> Vec<(String, String)> {
     arr(dump, &["storage", "zfs", "tools", "datasets"])
         .iter()
-        .filter_map(|d| Some((str_at(d, "name")?.to_string(), str_at(d, "mountpoint").unwrap_or("").to_string())))
+        .filter_map(|d| {
+            Some((
+                str_at(d, "name")?.to_string(),
+                str_at(d, "mountpoint").unwrap_or("").to_string(),
+            ))
+        })
         .collect()
 }
 
@@ -341,7 +424,15 @@ pub fn root_mounted_by(dump: &Value, sec: &Sections) -> Result<&'static str, Str
     // Ubuntu Core has no / of its own, its root being the base snap
     // (docs/design/ubuntu-core.md): its four run-mode roots, each mounted
     // at TARGET/run/mnt as snap-bootstrap mounts them.
-    if dump.at(&["boot", "snapcore"]).is_some() && ["ubuntu-seed", "ubuntu-boot", "ubuntu-save", "data"].iter().all(|r| mount.iter().any(|s| mounts_at(s, &format!("{TARGET}/run/mnt/{r}")))) {
+    if dump.at(&["boot", "snapcore"]).is_some()
+        && ["ubuntu-seed", "ubuntu-boot", "ubuntu-save", "data"]
+            .iter()
+            .all(|r| {
+                mount
+                    .iter()
+                    .any(|s| mounts_at(s, &format!("{TARGET}/run/mnt/{r}")))
+            })
+    {
         return Ok("snapcore");
     }
     // zfs mount of the / dataset, in a pool under -R TARGET.
@@ -349,19 +440,61 @@ pub fn root_mounted_by(dump: &Value, sec: &Sections) -> Result<&'static str, Str
     let assemble = sec.steps("assemble");
     for s in &mount {
         for name in zfs_mounted(s) {
-            if ds.iter().any(|(n, mp)| *n == name && mp == "/") && pool_rooted(&assemble, name.split('/').next().unwrap_or("")) {
+            if ds.iter().any(|(n, mp)| *n == name && mp == "/")
+                && pool_rooted(&assemble, name.split('/').next().unwrap_or(""))
+            {
                 return Ok("zfs mount");
             }
         }
     }
-    Err(format!("/ mounted: the mount stage mounts nothing on {TARGET} (no mount whose last operand it is, no zfs mount of a / dataset in a pool made with -R {TARGET})"))
+    Err(format!(
+        "/ mounted: the mount stage mounts nothing on {TARGET} (no mount whose last operand it is, no zfs mount of a / dataset in a pool made with -R {TARGET})"
+    ))
 }
 
 pub const PSEUDO: [&str; 30] = [
-    "proc", "procfs", "sysfs", "tmpfs", "devtmpfs", "devpts", "devfs", "fdescfs", "linprocfs", "linsysfs", "kernfs", "ptyfs", "mfs", "ramfs", "securityfs", "debugfs",
-    "efivarfs", "hugetlbfs", "mqueue", "pstore", "bpf", "tracefs", "configfs", "fusectl", "binfmt_misc", "autofs", "cgroup", "cgroup2", "overlay", "swap",
+    "proc",
+    "procfs",
+    "sysfs",
+    "tmpfs",
+    "devtmpfs",
+    "devpts",
+    "devfs",
+    "fdescfs",
+    "linprocfs",
+    "linsysfs",
+    "kernfs",
+    "ptyfs",
+    "mfs",
+    "ramfs",
+    "securityfs",
+    "debugfs",
+    "efivarfs",
+    "hugetlbfs",
+    "mqueue",
+    "pstore",
+    "bpf",
+    "tracefs",
+    "configfs",
+    "fusectl",
+    "binfmt_misc",
+    "autofs",
+    "cgroup",
+    "cgroup2",
+    "overlay",
+    "swap",
 ];
-pub const NETWORK: [&str; 9] = ["nfs", "nfs4", "cifs", "smbfs", "smb3", "sshfs", "fuse.sshfs", "9p", "virtiofs"];
+pub const NETWORK: [&str; 9] = [
+    "nfs",
+    "nfs4",
+    "cifs",
+    "smbfs",
+    "smb3",
+    "sshfs",
+    "fuse.sshfs",
+    "9p",
+    "virtiofs",
+];
 pub const BIND: [&str; 2] = ["nullfs", "lofs"];
 
 /// fstab's octal escapes (\040 for a space), undone as mounts::unescape
@@ -373,8 +506,13 @@ pub fn unescape(s: &str) -> String {
     let mut out = Vec::new();
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'\\' && i + 4 <= b.len() && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c)) {
-            let v = b[i + 1..i + 4].iter().fold(0u32, |v, c| v * 8 + u32::from(c - b'0'));
+        if b[i] == b'\\'
+            && i + 4 <= b.len()
+            && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c))
+        {
+            let v = b[i + 1..i + 4]
+                .iter()
+                .fold(0u32, |v, c| v * 8 + u32::from(c - b'0'));
             if let Ok(byte) = u8::try_from(v) {
                 out.push(byte);
                 i += 4;
@@ -411,16 +549,30 @@ pub fn fstab_planned_n(dump: &Value, sec: &Sections) -> (Vec<String>, Vec<String
             Some("noauto")
         } else if ty.split(',').any(|t| PSEUDO.contains(&t)) {
             Some("a pseudo filesystem")
-        } else if ty.split(',').any(|t| NETWORK.contains(&t)) || spec.starts_with("//") || (spec.contains(':') && !spec.starts_with('/') && !spec.contains('=')) {
+        } else if ty.split(',').any(|t| NETWORK.contains(&t))
+            || spec.starts_with("//")
+            || (spec.contains(':') && !spec.starts_with('/') && !spec.contains('='))
+        {
             Some("a network filesystem")
-        } else if opts.iter().any(|o| *o == "bind" || *o == "rbind") || ty.split(',').any(|t| BIND.contains(&t)) {
+        } else if opts.iter().any(|o| *o == "bind" || *o == "rbind")
+            || ty.split(',').any(|t| BIND.contains(&t))
+        {
             Some("a bind mount")
         } else if file == "/" && dump.at(&["boot", "snapcore"]).is_some() {
             // snap-bootstrap's /dev/root: the base snap, a squashfs file on
             // ubuntu-data (docs/design/ubuntu-core.md).
             Some("Ubuntu Core's /, the base snap (a file on ubuntu-data)")
         } else {
-            let device = ["UUID=", "LABEL=", "PARTUUID=", "PARTLABEL=", "NAME=", "/dev/"].iter().any(|p| spec.starts_with(p))
+            let device = [
+                "UUID=",
+                "LABEL=",
+                "PARTUUID=",
+                "PARTLABEL=",
+                "NAME=",
+                "/dev/",
+            ]
+            .iter()
+            .any(|p| spec.starts_with(p))
                 || ty == "zfs"
                 || ds.iter().any(|(n, _)| n == spec)
                 || e.get("resolves_to").is_some_and(|r| !r.is_null());
@@ -431,9 +583,20 @@ pub fn fstab_planned_n(dump: &Value, sec: &Sections) -> (Vec<String>, Vec<String
             continue;
         }
         n += 1;
-        let at = if file == "/" { TARGET.to_string() } else { format!("{TARGET}{}", file.trim_end_matches('/')) };
-        let mounted = mount.iter().any(|s| mounts_at(s, &at)) || mount.iter().any(|s| zfs_mounted(s).iter().any(|d| ds.iter().any(|(n, mp)| n == d && *mp == file)));
-        let noted = notes.iter().any(|n| n.starts_with(&format!("fstab's {file} ")) || n.starts_with(&format!("fstab's {file}:")));
+        let at = if file == "/" {
+            TARGET.to_string()
+        } else {
+            format!("{TARGET}{}", file.trim_end_matches('/'))
+        };
+        let mounted = mount.iter().any(|s| mounts_at(s, &at))
+            || mount.iter().any(|s| {
+                zfs_mounted(s)
+                    .iter()
+                    .any(|d| ds.iter().any(|(n, mp)| n == d && *mp == file))
+            });
+        let noted = notes.iter().any(|n| {
+            n.starts_with(&format!("fstab's {file} ")) || n.starts_with(&format!("fstab's {file}:"))
+        });
         if !mounted && !noted {
             bad.push(format!("every fstab mount planned: fstab's {what} is neither mounted at {at} by the mount stage nor named in a Note"));
         }
@@ -444,12 +607,22 @@ pub fn fstab_planned_n(dump: &Value, sec: &Sections) -> (Vec<String>, Vec<String
 pub fn archiver_found(sec: &Sections) -> Vec<String> {
     let mut bad = Vec::new();
     for p in sec.list("# Problems (") {
-        if p.contains("rustic-bko") || p.contains("archiver") || p.contains("restore can't run") || p.contains("restore needs rustic-bko") {
+        if p.contains("rustic-bko")
+            || p.contains("archiver")
+            || p.contains("restore can't run")
+            || p.contains("restore needs rustic-bko")
+        {
             bad.push(format!("the archiver found: Problem {p:?}"));
         }
     }
-    if !sec.steps("restore").iter().any(|s| restores_into(s, TARGET)) {
-        bad.push(format!("the archiver found: the restore stage runs no `rustic-bko ... restore ... {TARGET}`"));
+    if !sec
+        .steps("restore")
+        .iter()
+        .any(|s| restores_into(s, TARGET))
+    {
+        bad.push(format!(
+            "the archiver found: the restore stage runs no `rustic-bko ... restore ... {TARGET}`"
+        ));
     }
     bad
 }
@@ -468,7 +641,12 @@ pub fn disk_of(dump: &Value, dev: &str) -> Option<String> {
                 if str_at(p, "name") == Some(dev) {
                     return Some(name.to_string());
                 }
-                for q in p.get("label_partitions").and_then(Value::as_array).into_iter().flatten() {
+                for q in p
+                    .get("label_partitions")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
                     if str_at(q, "name") == Some(dev) {
                         return Some(name.to_string());
                     }
@@ -480,14 +658,25 @@ pub fn disk_of(dump: &Value, dev: &str) -> Option<String> {
 }
 
 pub fn target_of<'a>(p: &'a Planned, disk: &str) -> Option<&'a str> {
-    p.maps.iter().find(|(s, _, _)| s == disk).map(|(_, t, _)| t.as_str())
+    p.maps
+        .iter()
+        .find(|(s, _, _)| s == disk)
+        .map(|(_, t, _)| t.as_str())
 }
 
 /// Whether TEXT names a node of target disk TGT (Linux's /dev/sdq1, the
 /// BSDs' /dev/sdqp3 and raw /dev/rsdqc, illumos's /dev/dsk/sdqs1, Haiku's
 /// /dev/disk/sdq/0).
 pub fn names_target(text: &str, tgt: &str) -> bool {
-    [format!("/dev/{tgt}"), format!("/dev/r{tgt}"), format!("/dev/dsk/{tgt}"), format!("/dev/rdsk/{tgt}"), format!("/dev/disk/{tgt}/")].iter().any(|f| text.contains(f.as_str()))
+    [
+        format!("/dev/{tgt}"),
+        format!("/dev/r{tgt}"),
+        format!("/dev/dsk/{tgt}"),
+        format!("/dev/rdsk/{tgt}"),
+        format!("/dev/disk/{tgt}/"),
+    ]
+    .iter()
+    .any(|f| text.contains(f.as_str()))
 }
 
 pub fn pool_disks(dump: &Value, sec: &Sections, p: &Planned) -> Vec<String> {
@@ -499,7 +688,13 @@ pub fn pool_disks_n(dump: &Value, sec: &Sections, p: &Planned) -> (Vec<String>, 
     let mut bad = Vec::new();
     let mut n = 0;
     let (assemble, format) = (sec.steps("assemble"), sec.steps("format"));
-    let text = |steps: &[&Step]| steps.iter().map(|s| s.text()).collect::<Vec<_>>().join("\n");
+    let text = |steps: &[&Step]| {
+        steps
+            .iter()
+            .map(|s| s.text())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     // WHAT's members, each with the text of the commands that must name its
     // disk's target; NONE when no command makes WHAT.
     let mut check = |what: String, members: Vec<(String, String)>, none: bool| {
@@ -509,7 +704,9 @@ pub fn pool_disks_n(dump: &Value, sec: &Sections, p: &Planned) -> (Vec<String>, 
             return;
         }
         for (m, t) in members {
-            let Some(disk) = disk_of(dump, &m) else { continue };
+            let Some(disk) = disk_of(dump, &m) else {
+                continue;
+            };
             match target_of(p, &disk) {
                 None => bad.push(format!("pool disks in use: {what}: member {m}'s disk {disk} has no target")),
                 Some(tg) if !names_target(&t, tg) => bad.push(format!("pool disks in use: {what}: member {m} is on {disk} -> /dev/{tg}, which the command making it doesn't name")),
@@ -519,25 +716,59 @@ pub fn pool_disks_n(dump: &Value, sec: &Sections, p: &Planned) -> (Vec<String>, 
     };
     for a in arr(dump, &["storage", "md_arrays"]) {
         let name = str_at(a, "name").unwrap_or("?");
-        let members: Vec<String> = arr(a, &["md", "members"]).iter().filter_map(|m| str_at(m, "device").map(str::to_string)).collect();
+        let members: Vec<String> = arr(a, &["md", "members"])
+            .iter()
+            .filter_map(|m| str_at(m, "device").map(str::to_string))
+            .collect();
         let uuid = a.at(&["md", "uuid"]).and_then(Value::as_str);
         let makers: Vec<&Step> = assemble
             .iter()
-            .filter(|s| commands(&s.cmd).iter().any(|c| prog(&c[0]) == "mdadm" && c.get(1).is_some_and(|x| x == "--create") && uuid.is_none_or(|u| c.iter().any(|w| *w == format!("--uuid={u}")) || c.windows(2).any(|w| w[0] == "--uuid" && w[1] == u))))
+            .filter(|s| {
+                commands(&s.cmd).iter().any(|c| {
+                    prog(&c[0]) == "mdadm"
+                        && c.get(1).is_some_and(|x| x == "--create")
+                        && uuid.is_none_or(|u| {
+                            c.iter().any(|w| *w == format!("--uuid={u}"))
+                                || c.windows(2).any(|w| w[0] == "--uuid" && w[1] == u)
+                        })
+                })
+            })
             .collect();
         let t = text(&makers);
-        check(format!("md array {name}"), members.into_iter().map(|m| (m, t.clone())).collect(), makers.is_empty());
+        check(
+            format!("md array {name}"),
+            members.into_iter().map(|m| (m, t.clone())).collect(),
+            makers.is_empty(),
+        );
     }
     for pool in arr(dump, &["storage", "zfs", "pools_from_labels"]) {
         let name = str_at(pool, "name").unwrap_or("?");
-        let members: Vec<String> = arr(pool, &["member_devices"]).iter().filter_map(|m| m.as_str().map(str::to_string)).collect();
-        let makers: Vec<&Step> = assemble.iter().filter(|s| zpool_makes(s, name).is_some()).collect();
+        let members: Vec<String> = arr(pool, &["member_devices"])
+            .iter()
+            .filter_map(|m| m.as_str().map(str::to_string))
+            .collect();
+        let makers: Vec<&Step> = assemble
+            .iter()
+            .filter(|s| zpool_makes(s, name).is_some())
+            .collect();
         let t = text(&makers);
-        check(format!("ZFS pool {name}"), members.into_iter().map(|m| (m, t.clone())).collect(), makers.is_empty());
+        check(
+            format!("ZFS pool {name}"),
+            members.into_iter().map(|m| (m, t.clone())).collect(),
+            makers.is_empty(),
+        );
     }
     for vg in arr(dump, &["storage", "lvm", "volume_groups"]) {
         let name = str_at(vg, "name").unwrap_or("?");
-        let pvs: Vec<(String, Option<String>)> = arr(vg, &["physical_volumes"]).iter().filter_map(|pv| Some((str_at(pv, "device")?.to_string(), str_at(pv, "id").map(str::to_string)))).collect();
+        let pvs: Vec<(String, Option<String>)> = arr(vg, &["physical_volumes"])
+            .iter()
+            .filter_map(|pv| {
+                Some((
+                    str_at(pv, "device")?.to_string(),
+                    str_at(pv, "id").map(str::to_string),
+                ))
+            })
+            .collect();
         // PVs on md arrays or LUKS are their containers' to check.
         if pvs.iter().all(|(m, _)| disk_of(dump, m).is_none()) {
             continue;
@@ -559,23 +790,51 @@ pub fn pool_disks_n(dump: &Value, sec: &Sections, p: &Planned) -> (Vec<String>, 
             .map(|(m, id)| {
                 // The PV's own pvcreate, by its --uuid, when the plan has one.
                 let own: Vec<&Step> = match id {
-                    Some(id) => makers.iter().copied().filter(|s| commands(&s.cmd).iter().any(|c| prog(&c[0]) == "pvcreate" && (c.windows(2).any(|w| w[0] == "--uuid" && w[1] == *id) || c.iter().any(|w| *w == format!("--uuid={id}"))))).collect(),
+                    Some(id) => makers
+                        .iter()
+                        .copied()
+                        .filter(|s| {
+                            commands(&s.cmd).iter().any(|c| {
+                                prog(&c[0]) == "pvcreate"
+                                    && (c.windows(2).any(|w| w[0] == "--uuid" && w[1] == *id)
+                                        || c.iter().any(|w| *w == format!("--uuid={id}")))
+                            })
+                        })
+                        .collect(),
                     None => Vec::new(),
                 };
                 (m.clone(), text(if own.is_empty() { &makers } else { &own }))
             })
             .collect();
-        check(format!("LVM volume group {name}"), members, makers.is_empty());
+        check(
+            format!("LVM volume group {name}"),
+            members,
+            makers.is_empty(),
+        );
     }
     for fs in arr(dump, &["storage", "btrfs"]) {
-        let devices: Vec<String> = arr(fs, &["devices"]).iter().filter_map(|d| d.as_str().map(str::to_string)).collect();
+        let devices: Vec<String> = arr(fs, &["devices"])
+            .iter()
+            .filter_map(|d| d.as_str().map(str::to_string))
+            .collect();
         if devices.len() < 2 {
             continue;
         }
         let uuid = str_at(fs, "uuid").unwrap_or("?");
-        let makers: Vec<&Step> = format.iter().filter(|s| commands(&s.cmd).iter().any(|c| prog(&c[0]) == "mkfs.btrfs" && c.iter().any(|w| w.eq_ignore_ascii_case(uuid)))).collect();
+        let makers: Vec<&Step> = format
+            .iter()
+            .filter(|s| {
+                commands(&s.cmd).iter().any(|c| {
+                    prog(&c[0]) == "mkfs.btrfs" && c.iter().any(|w| w.eq_ignore_ascii_case(uuid))
+                })
+            })
+            .collect();
         let t = text(&makers);
-        check(format!("btrfs {uuid}"), devices.into_iter().map(|m| (m, t.clone())).collect(), makers.is_empty());
+        check(
+            format!("btrfs {uuid}"),
+            devices.into_iter().map(|m| (m, t.clone())).collect(),
+            makers.is_empty(),
+        );
     }
     (bad, n)
 }
@@ -604,7 +863,8 @@ impl ByteSource for Sparse<'_> {
             }
             let from = s.max(offset);
             let to = e.min(end);
-            out[(from - offset) as usize..(to - offset) as usize].copy_from_slice(&b[(from - s) as usize..(to - s) as usize]);
+            out[(from - offset) as usize..(to - offset) as usize]
+                .copy_from_slice(&b[(from - s) as usize..(to - s) as usize]);
         }
         out
     }
@@ -622,17 +882,28 @@ pub fn mbr_signature(t: &Value) -> Option<u32> {
 pub fn table_ids(disk: &Value, writes: &[(u64, Vec<u8>)], size: u64) -> Vec<String> {
     let name = str_at(disk, "name").unwrap_or("?");
     let t = disk.get("partition_table").cloned().unwrap_or(Value::Null);
-    let ss = t.get("sector_size").and_then(Value::as_u64).or_else(|| disk.get("logical_sector_size").and_then(Value::as_u64)).unwrap_or(512);
+    let ss = t
+        .get("sector_size")
+        .and_then(Value::as_u64)
+        .or_else(|| disk.get("logical_sector_size").and_then(Value::as_u64))
+        .unwrap_or(512);
     let src = Sparse { size, writes };
     let mut bad = Vec::new();
-    match (str_at(&t, "type"), bko_holt::parttable::read_table(&src, ss)) {
+    match (
+        str_at(&t, "type"),
+        bko_holt::parttable::read_table(&src, ss),
+    ) {
         (Some("gpt"), Some(bko_holt::parttable::Table::Gpt { gpt, .. })) => {
             let want = str_at(&t, "disk_guid").unwrap_or("");
             if !gpt.disk_guid.eq_ignore_ascii_case(want) {
                 bad.push(format!("disk IDs round-tripped: {name}: write-table's GPT reads back with disk GUID {} for {want}", gpt.disk_guid));
             }
             for p in arr(disk, &["partitions"]) {
-                let (Some(n), Some(u)) = (p.get("number").and_then(Value::as_u64), str_at(p, "uuid")) else { continue };
+                let (Some(n), Some(u)) =
+                    (p.get("number").and_then(Value::as_u64), str_at(p, "uuid"))
+                else {
+                    continue;
+                };
                 match gpt.parts.iter().find(|q| u64::from(q.number) == n) {
                     Some(q) if q.uuid.eq_ignore_ascii_case(u) => {}
                     Some(q) => bad.push(format!("disk IDs round-tripped: {name}: write-table's partition {n} reads back as {} for {u}", q.uuid)),
@@ -670,12 +941,16 @@ pub fn disk_ids_n(dump: &Value, sec: &Sections, p: &Planned) -> (Vec<String>, (u
     let (mut nsf, mut nwt) = (0, 0);
     let part = sec.steps("partition");
     for d in arr(dump, &["storage", "disks"]) {
-        let Some(name) = str_at(d, "name") else { continue };
+        let Some(name) = str_at(d, "name") else {
+            continue;
+        };
         let t = match d.get("partition_table") {
             Some(t) if !t.is_null() => t,
             _ => continue,
         };
-        let Some((_, tgt, bytes)) = p.maps.iter().find(|(s, _, _)| s == name) else { continue };
+        let Some((_, tgt, bytes)) = p.maps.iter().find(|(s, _, _)| s == name) else {
+            continue;
+        };
         let kind = str_at(t, "type").unwrap_or("?");
         // A table load writes itself (other/'s platforms):
         // `bko-holt write-table layout.json NAME DEVICE ...`.
@@ -684,7 +959,9 @@ pub fn disk_ids_n(dump: &Value, sec: &Sections, p: &Planned) -> (Vec<String>, (u
             .flat_map(|s| commands(&s.cmd))
             .filter_map(|c| {
                 let i = c.iter().position(|w| w == "write-table")?;
-                (c.get(i + 1).map(String::as_str) == Some(super::LAYOUT) && c.get(i + 2).map(String::as_str) == Some(name)).then(|| c.get(i + 3).cloned().unwrap_or_default())
+                (c.get(i + 1).map(String::as_str) == Some(super::LAYOUT)
+                    && c.get(i + 2).map(String::as_str) == Some(name))
+                .then(|| c.get(i + 3).cloned().unwrap_or_default())
             })
             .collect();
         if !devices.is_empty() {
@@ -695,16 +972,24 @@ pub fn disk_ids_n(dump: &Value, sec: &Sections, p: &Planned) -> (Vec<String>, (u
             }
             match bko_holt::load::writetable::plan(d, *bytes) {
                 Ok(w) => bad.extend(table_ids(d, &w, *bytes)),
-                Err(e) => bad.push(format!("disk IDs round-tripped: {name}: write-table's plan fails: {e}")),
+                Err(e) => bad.push(format!(
+                    "disk IDs round-tripped: {name}: write-table's plan fails: {e}"
+                )),
             }
             continue;
         }
-        let Some(sf) = part.iter().find(|s| s.cmd.starts_with("sfdisk") && words(&s.cmd).iter().any(|w| *w == format!("/dev/{tgt}"))) else {
+        let Some(sf) = part.iter().find(|s| {
+            s.cmd.starts_with("sfdisk") && words(&s.cmd).iter().any(|w| *w == format!("/dev/{tgt}"))
+        }) else {
             bad.push(format!("disk IDs round-tripped: {name} ({kind}) -> /dev/{tgt}: the partition stage writes no table on it"));
             continue;
         };
         nsf += 1;
-        let label_id = sf.body.iter().find_map(|l| l.strip_prefix("label-id: ")).unwrap_or("");
+        let label_id = sf
+            .body
+            .iter()
+            .find_map(|l| l.strip_prefix("label-id: "))
+            .unwrap_or("");
         match kind {
             "dos" | "mbr" => {
                 if let Some(sig) = mbr_signature(t) {
@@ -738,7 +1023,11 @@ pub fn disk_ids_n(dump: &Value, sec: &Sections, p: &Planned) -> (Vec<String>, (u
 pub fn invariants(dump: &Value, p: &Planned) -> Check {
     let mut c = Check::default();
     if p.out.is_empty() {
-        c.violations.push(format!("load made no plan (exit {}): {}", p.code, p.err.lines().next().unwrap_or("")));
+        c.violations.push(format!(
+            "load made no plan (exit {}): {}",
+            p.code,
+            p.err.lines().next().unwrap_or("")
+        ));
         return c;
     }
     let sec = Sections::of(&p.out);
@@ -756,9 +1045,11 @@ pub fn invariants(dump: &Value, p: &Planned) -> Check {
     c.checked.push(format!("{n} pools"));
     let (bad, (nsf, nwt)) = disk_ids_n(dump, &sec, p);
     c.violations.extend(bad);
-    c.checked.push(format!("{} tables ({nsf} sfdisk, {nwt} write-table)", nsf + nwt));
+    c.checked.push(format!(
+        "{} tables ({nsf} sfdisk, {nwt} write-table)",
+        nsf + nwt
+    ));
     c
 }
 
 // ---- the run ----
-

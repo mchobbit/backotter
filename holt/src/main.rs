@@ -48,7 +48,8 @@ Source: https://github.com/mchobbit/backotter
 /// ships its license too.
 const LICENSE: &str = include_str!("../LICENSE");
 
-const DUMP_USAGE: &str = "Usage: bko-holt dump [--compact] [--only-disk NAME...] [--sysroot DIR | --disk DEV...]
+const DUMP_USAGE: &str =
+    "Usage: bko-holt dump [--compact] [--only-disk NAME...] [--sysroot DIR | --disk DEV...]
                      [--keep-luks-header DEV]... [--luks-header-dir DIR]
 
 Writes a JSON description of this system's disk layout and boot
@@ -93,14 +94,35 @@ SOURCE_DATE_EPOCH, when set, fixes the report's timestamp.
 /// under BKO_HOLT_NO_COMMIT they refuse to run at all (load never runs them
 /// without --commit, which the variable refuses, so only a bug or a hand
 /// would).
-const WRITING_HELPERS: [&str; 11] = ["snapcore-boot-areas", "md-lbs", "umount-tree", "efi-dedupe", "grub-prefix", "luks1-digest", "raw-write", "write-table", "rewrite", "fat-set", "clear-restricting-flags"];
+const WRITING_HELPERS: [&str; 11] = [
+    "snapcore-boot-areas",
+    "md-lbs",
+    "umount-tree",
+    "efi-dedupe",
+    "grub-prefix",
+    "luks1-digest",
+    "raw-write",
+    "write-table",
+    "rewrite",
+    "fat-set",
+    "clear-restricting-flags",
+];
 
 /// The flags dump takes a value after, for `--json`'s first pass.
-const DUMP_VALUE_FLAGS: &[&str] = &["--disk", "--only-disk", "--keep-luks-header", "--luks-header-dir", "--sysroot"];
+const DUMP_VALUE_FLAGS: &[&str] = &[
+    "--disk",
+    "--only-disk",
+    "--keep-luks-header",
+    "--luks-header-dir",
+    "--sysroot",
+];
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if let Some(h) = args.first().filter(|a| WRITING_HELPERS.contains(&a.as_str())) {
+    if let Some(h) = args
+        .first()
+        .filter(|a| WRITING_HELPERS.contains(&a.as_str()))
+    {
         if jsonout::no_commit().is_some() {
             eprintln!("{}", jsonout::helper_refusal(h));
             return ExitCode::from(2);
@@ -110,18 +132,25 @@ fn main() -> ExitCode {
         Some("dump") => dump(&args[1..]),
         Some("load") => {
             let code = bko_holt::load::main(&args[1..]);
-            if matches!(code, bko_holt::load::EXIT_FAILED | bko_holt::load::EXIT_UNSUPPORTED) {
+            if matches!(
+                code,
+                bko_holt::load::EXIT_FAILED | bko_holt::load::EXIT_UNSUPPORTED
+            ) {
                 eprint!("{}", report_hint());
             }
             ExitCode::from(code)
         }
         Some("report-bug") => bko_holt::bugreport::main(&args[1..]),
-        Some("recovery-key-file") => ExitCode::from(bko_holt::snapcore::recovery_key_main(&args[1..])),
+        Some("recovery-key-file") => {
+            ExitCode::from(bko_holt::snapcore::recovery_key_main(&args[1..]))
+        }
         Some("stick") => ExitCode::from(bko_holt::stick::main(&args[1..])),
         Some("recovery-words") => ExitCode::from(bko_holt::recoverycmd::main(&args[1..])),
         Some("luks-headers") => ExitCode::from(bko_holt::luksfetch::main(&args[1..])),
         // Not in the usage: run by load's close, partition and boot stages.
-        Some("snapcore-boot-areas") => ExitCode::from(bko_holt::load::snapcore::boot_areas_main(&args[1..])),
+        Some("snapcore-boot-areas") => {
+            ExitCode::from(bko_holt::load::snapcore::boot_areas_main(&args[1..]))
+        }
         Some("md-lbs") => ExitCode::from(bko_holt::mdsb::main(&args[1..])),
         Some("umount-tree") => ExitCode::from(bko_holt::load::umounttree::main(&args[1..])),
         Some("efi-dedupe") => ExitCode::from(bko_holt::load::efidedupe::main(&args[1..])),
@@ -148,7 +177,11 @@ fn main() -> ExitCode {
                 }
                 Err(e) => {
                     let line = format!("bko-holt: {e}");
-                    jsonout::write_stdout(&jsonout::error_doc(2, jsonout::ErrorCode::SchemaUnknown, &line));
+                    jsonout::write_stdout(&jsonout::error_doc(
+                        2,
+                        jsonout::ErrorCode::SchemaUnknown,
+                        &line,
+                    ));
                     eprintln!("{line}");
                     ExitCode::from(2)
                 }
@@ -189,8 +222,13 @@ fn dump(args: &[String]) -> ExitCode {
             print!("{DUMP_USAGE}");
             return ExitCode::SUCCESS;
         }
-        let line = format!("bko-holt dump: {flag}: dump writes JSON already; run it without --json");
-        jsonout::write_stdout(&jsonout::error_doc(2, jsonout::ErrorCode::JsonNotHere, &line));
+        let line =
+            format!("bko-holt dump: {flag}: dump writes JSON already; run it without --json");
+        jsonout::write_stdout(&jsonout::error_doc(
+            2,
+            jsonout::ErrorCode::JsonNotHere,
+            &line,
+        ));
         eprintln!("{line}");
         return ExitCode::from(2);
     }
@@ -227,7 +265,9 @@ fn dump(args: &[String]) -> ExitCode {
             "--luks-header-dir" => match args.next() {
                 Some(d) if d.starts_with('/') => luks.dir = Some(d.clone()),
                 _ => {
-                    eprintln!("bko-holt dump: --luks-header-dir needs an absolute directory\n\n{DUMP_USAGE}");
+                    eprintln!(
+                        "bko-holt dump: --luks-header-dir needs an absolute directory\n\n{DUMP_USAGE}"
+                    );
                     return ExitCode::from(2);
                 }
             },
@@ -254,7 +294,11 @@ fn dump(args: &[String]) -> ExitCode {
                 eprintln!("bko-holt dump: --sysroot {d}: not a directory");
                 return ExitCode::from(2);
             }
-            Sys::new(d, Box::new(FakeRunner::default()), bko_holt::sys::euid() == 0)
+            Sys::new(
+                d,
+                Box::new(FakeRunner::default()),
+                bko_holt::sys::euid() == 0,
+            )
         }
         None => Sys::host(),
     };
@@ -267,10 +311,16 @@ fn dump(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     }
     if !disks.is_empty() && (!luks.keep.is_empty() || luks.dir.is_some()) {
-        eprintln!("bko-holt dump: --keep-luks-header and --luks-header-dir don't go with --disk\n\n{DUMP_USAGE}");
+        eprintln!(
+            "bko-holt dump: --keep-luks-header and --luks-header-dir don't go with --disk\n\n{DUMP_USAGE}"
+        );
         return ExitCode::from(2);
     }
-    let result = if disks.is_empty() { bko_holt::dump_with(&sys, &only, &luks) } else { bko_holt::other::offline::report(&sys, &disks, &bko_holt::timestamp()) };
+    let result = if disks.is_empty() {
+        bko_holt::dump_with(&sys, &only, &luks)
+    } else {
+        bko_holt::other::offline::report(&sys, &disks, &bko_holt::timestamp())
+    };
     let report = match result {
         Ok(r) => r,
         Err(e) => {
@@ -279,16 +329,28 @@ fn dump(args: &[String]) -> ExitCode {
             return ExitCode::from(3);
         }
     };
-    let text = if compact { report.compact() + "\n" } else { report.pretty() };
+    let text = if compact {
+        report.compact() + "\n"
+    } else {
+        report.pretty()
+    };
     // Never a recovery key, whatever a file the dump read held.
     let text = bko_holt::redact::scrub_recovery_keys(&text);
     if text.len() as u64 > bko_holt::LAYOUT_MAX {
-        eprintln!("bko-holt dump: the layout is {} bytes, more than load reads ({}): not written", text.len(), bko_holt::LAYOUT_MAX);
+        eprintln!(
+            "bko-holt dump: the layout is {} bytes, more than load reads ({}): not written",
+            text.len(),
+            bko_holt::LAYOUT_MAX
+        );
         eprint!("{}", report_hint());
         return ExitCode::from(3);
     }
     let mut out = std::io::stdout().lock();
-    if out.write_all(text.as_bytes()).and_then(|_| out.flush()).is_err() {
+    if out
+        .write_all(text.as_bytes())
+        .and_then(|_| out.flush())
+        .is_err()
+    {
         return ExitCode::from(1);
     }
     ExitCode::SUCCESS

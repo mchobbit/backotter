@@ -118,10 +118,16 @@ fn one(f: &File, rel: &[u8], ops: &mut impl Flags, w: &mut Walked) {
     match ops.get(f) {
         Ok(Some(fl)) if fl & RESTRICTING != 0 => match ops.set(f, fl & !RESTRICTING) {
             Ok(()) => w.cleared.push((rel.to_vec(), fl & RESTRICTING)),
-            Err(e) => w.errors.push(format!("{}: its flags ({}) not taken off: {e}", show(rel), letters(fl))),
+            Err(e) => w.errors.push(format!(
+                "{}: its flags ({}) not taken off: {e}",
+                show(rel),
+                letters(fl)
+            )),
         },
         Ok(_) => {}
-        Err(e) => w.errors.push(format!("{}: its flags not read: {e}", show(rel))),
+        Err(e) => w
+            .errors
+            .push(format!("{}: its flags not read: {e}", show(rel))),
     }
 }
 
@@ -141,7 +147,9 @@ fn walk(dir: &File, rel: &mut Vec<u8>, ops: &mut impl Flags, w: &mut Walked) {
             for e in rd {
                 match e.and_then(|e| Ok((e.file_name(), e.file_type()?))) {
                     Ok(x) => entries.push(x),
-                    Err(err) => w.errors.push(format!("{}: not read whole: {err}", show(rel))),
+                    Err(err) => w
+                        .errors
+                        .push(format!("{}: not read whole: {err}", show(rel))),
                 }
             }
         }
@@ -170,7 +178,11 @@ fn walk(dir: &File, rel: &mut Vec<u8>, ops: &mut impl Flags, w: &mut Walked) {
                         walk(&f, rel, ops, w);
                     }
                 }
-                Ok(m) => w.errors.push(format!("{}: changed while it was walked (mode {:o})", show(rel), m.mode())),
+                Ok(m) => w.errors.push(format!(
+                    "{}: changed while it was walked (mode {:o})",
+                    show(rel),
+                    m.mode()
+                )),
                 Err(e) => w.errors.push(format!("{}: {e}", show(rel))),
             },
             Err(e) => w.errors.push(format!("{}: not opened: {e}", show(rel))),
@@ -185,12 +197,35 @@ pub struct Kernel;
 
 /// An 'f' ioctl's number in asm-generic's encoding (direction in bits
 /// 30-31: read 2, write 1; the argument's size in 16-29).
-#[cfg(any(test, all(target_os = "linux", any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "arm", target_arch = "riscv64", target_arch = "loongarch64"))))]
+#[cfg(any(
+    test,
+    all(
+        target_os = "linux",
+        any(
+            target_arch = "x86_64",
+            target_arch = "x86",
+            target_arch = "aarch64",
+            target_arch = "arm",
+            target_arch = "riscv64",
+            target_arch = "loongarch64"
+        )
+    )
+))]
 const fn ioc_f(dir: u32, nr: u32, size: usize) -> u32 {
     (dir << 30) | ((size as u32) << 16) | ((b'f' as u32) << 8) | nr
 }
 
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "arm", target_arch = "riscv64", target_arch = "loongarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "arm",
+        target_arch = "riscv64",
+        target_arch = "loongarch64"
+    )
+))]
 mod sys {
     use std::os::raw::{c_int, c_long};
 
@@ -215,14 +250,30 @@ mod sys {
     }
 }
 
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "arm", target_arch = "riscv64", target_arch = "loongarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "arm",
+        target_arch = "riscv64",
+        target_arch = "loongarch64"
+    )
+))]
 impl Flags for Kernel {
     fn get(&mut self, f: &File) -> io::Result<Option<u32>> {
         let mut v: std::os::raw::c_int = 0;
         // SAFETY: f's descriptor is open for the call; FS_IOC_GETFLAGS
         // writes one int (the kernel's, whatever the number's size says)
         // through the pointer, to v, which outlives the call.
-        let rc = unsafe { sys::ioctl(f.as_raw_fd(), sys::GETFLAGS, &mut v as *mut std::os::raw::c_int) };
+        let rc = unsafe {
+            sys::ioctl(
+                f.as_raw_fd(),
+                sys::GETFLAGS,
+                &mut v as *mut std::os::raw::c_int,
+            )
+        };
         if rc == 0 {
             return Ok(Some(v as u32));
         }
@@ -238,15 +289,37 @@ impl Flags for Kernel {
         let v = flags as std::os::raw::c_int;
         // SAFETY: f's descriptor is open for the call; FS_IOC_SETFLAGS reads
         // one int through the pointer, from v, which outlives the call.
-        let rc = unsafe { sys::ioctl(f.as_raw_fd(), sys::SETFLAGS, &v as *const std::os::raw::c_int) };
-        if rc == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+        let rc = unsafe {
+            sys::ioctl(
+                f.as_raw_fd(),
+                sys::SETFLAGS,
+                &v as *const std::os::raw::c_int,
+            )
+        };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
     }
 }
 
-#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "arm", target_arch = "riscv64", target_arch = "loongarch64"))))]
+#[cfg(not(all(
+    target_os = "linux",
+    any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "arm",
+        target_arch = "riscv64",
+        target_arch = "loongarch64"
+    )
+)))]
 impl Flags for Kernel {
     fn get(&mut self, _f: &File) -> io::Result<Option<u32>> {
-        Err(io::Error::other("inode flags are read only on Linux, on an architecture holt knows the ioctl's number of"))
+        Err(io::Error::other(
+            "inode flags are read only on Linux, on an architecture holt knows the ioctl's number of",
+        ))
     }
 
     fn set(&mut self, _f: &File, _flags: u32) -> io::Result<()> {
@@ -331,10 +404,14 @@ mod tests {
         std::fs::write(d.join("etc/plain"), b"").unwrap();
         std::fs::hard_link(d.join("srv/bs2/b/f26"), d.join("etc/link")).unwrap();
         std::os::unix::fs::symlink("../srv/bs2/b/f26", d.join("etc/sym")).unwrap();
-        let fifo = std::process::Command::new("mkfifo").arg(d.join("etc/fifo")).status().unwrap();
+        let fifo = std::process::Command::new("mkfifo")
+            .arg(d.join("etc/fifo"))
+            .status()
+            .unwrap();
         assert!(fifo.success());
         let mut ops = Fake::default();
-        ops.flags.insert(ino(&d.join("srv/bs2/b/f26")), IMMUTABLE | 0x0008_0000);
+        ops.flags
+            .insert(ino(&d.join("srv/bs2/b/f26")), IMMUTABLE | 0x0008_0000);
         ops.flags.insert(ino(&d.join("srv/bs2/b/f31")), APPEND);
         ops.flags.insert(ino(&d.join("srv/bs2")), IMMUTABLE);
         ops.flags.insert(ino(&d.join("etc/plain")), 0x0008_0000);
@@ -342,10 +419,21 @@ mod tests {
         assert!(w.errors.is_empty(), "{:?}", w.errors);
         let got: Vec<(String, u32)> = w.cleared.iter().map(|(r, f)| (show(r), *f)).collect();
         // Depth first by name: etc/link before srv (f26's first name met).
-        assert_eq!(got, vec![("etc/link".to_string(), IMMUTABLE), ("srv/bs2".into(), IMMUTABLE), ("srv/bs2/b/f31".into(), APPEND)]);
+        assert_eq!(
+            got,
+            vec![
+                ("etc/link".to_string(), IMMUTABLE),
+                ("srv/bs2".into(), IMMUTABLE),
+                ("srv/bs2/b/f31".into(), APPEND)
+            ]
+        );
         assert_eq!(ops.flags[&ino(&d.join("srv/bs2/b/f26"))], 0x0008_0000);
         assert_eq!(ops.flags[&ino(&d.join("etc/plain"))], 0x0008_0000);
-        assert_eq!(ops.sets.len(), 3, "only those with a restricting flag are set");
+        assert_eq!(
+            ops.sets.len(),
+            3,
+            "only those with a restricting flag are set"
+        );
         // DIR, etc, link, plain, srv, bs2, b, f26, f31: not sym or fifo.
         assert_eq!(w.seen, 9);
     }
@@ -396,11 +484,24 @@ mod tests {
         ops.flags.insert(ino(&d.join("b")), APPEND);
         ops.refuse = Some(ino(&d.join("a")));
         let w = clear_tree(&d, &mut ops).unwrap();
-        assert_eq!(w.errors, vec!["a: its flags (i) not taken off: Operation not permitted (os error 1)".to_string()]);
+        assert_eq!(
+            w.errors,
+            vec![
+                "a: its flags (i) not taken off: Operation not permitted (os error 1)".to_string()
+            ]
+        );
         assert_eq!(w.cleared, vec![(b"b".to_vec(), APPEND)]);
-        assert!(clear_tree(&d.join("a"), &mut Fake::default()).unwrap_err().ends_with("/a: not a directory"));
+        assert!(
+            clear_tree(&d.join("a"), &mut Fake::default())
+                .unwrap_err()
+                .ends_with("/a: not a directory")
+        );
         std::os::unix::fs::symlink(&d, t.path().join("link")).unwrap();
-        assert!(clear_tree(&t.path().join("link"), &mut Fake::default()).unwrap_err().ends_with("/link: not a directory"));
+        assert!(
+            clear_tree(&t.path().join("link"), &mut Fake::default())
+                .unwrap_err()
+                .ends_with("/link: not a directory")
+        );
     }
 
     #[test]
@@ -420,8 +521,20 @@ mod tests {
         assert_eq!(ioc_f(1, 2, 8), 0x4008_6602);
         assert_eq!(ioc_f(2, 1, 4), 0x8004_6601);
         assert_eq!(ioc_f(1, 2, 4), 0x4004_6602);
-        #[cfg(all(target_os = "linux", target_env = "musl", any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64", target_arch = "loongarch64")))]
-        assert_eq!((sys::GETFLAGS, sys::SETFLAGS), (0x8008_6601_u32 as i32, 0x4008_6602));
+        #[cfg(all(
+            target_os = "linux",
+            target_env = "musl",
+            any(
+                target_arch = "x86_64",
+                target_arch = "aarch64",
+                target_arch = "riscv64",
+                target_arch = "loongarch64"
+            )
+        ))]
+        assert_eq!(
+            (sys::GETFLAGS, sys::SETFLAGS),
+            (0x8008_6601_u32 as i32, 0x4008_6602)
+        );
     }
 
     /// The kernel's own flags, as root on a file system that keeps them
@@ -444,11 +557,17 @@ mod tests {
         let dir = File::open(d.join("dir")).unwrap();
         let mut k = Kernel;
         let Ok(Some(had)) = k.get(&f) else {
-            eprintln!("kernel_flags_cleared_as_root: skipped, no inode flags in {}", t.path().display());
+            eprintln!(
+                "kernel_flags_cleared_as_root: skipped, no inode flags in {}",
+                t.path().display()
+            );
             return;
         };
         if k.set(&f, had | IMMUTABLE).is_err() {
-            eprintln!("kernel_flags_cleared_as_root: skipped, +i refused in {}", t.path().display());
+            eprintln!(
+                "kernel_flags_cleared_as_root: skipped, +i refused in {}",
+                t.path().display()
+            );
             return;
         }
         let dhad = k.get(&dir).unwrap().unwrap();
@@ -456,7 +575,10 @@ mod tests {
         assert!(std::fs::remove_file(d.join("dir/f")).is_err());
         let w = clear_tree(&d, &mut Kernel).unwrap();
         assert!(w.errors.is_empty(), "{:?}", w.errors);
-        assert_eq!(w.cleared, vec![(b"dir".to_vec(), APPEND), (b"dir/f".to_vec(), IMMUTABLE)]);
+        assert_eq!(
+            w.cleared,
+            vec![(b"dir".to_vec(), APPEND), (b"dir/f".to_vec(), IMMUTABLE)]
+        );
         assert_eq!(k.get(&f).unwrap(), Some(had));
         assert_eq!(k.get(&dir).unwrap(), Some(dhad));
         std::fs::remove_file(d.join("dir/f")).unwrap();

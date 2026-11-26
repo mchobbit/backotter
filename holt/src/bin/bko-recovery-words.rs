@@ -38,7 +38,9 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("new") if args.len() == 1 => new(),
-        Some("new" | "check") if matches!(args.get(1).map(String::as_str), Some("-h" | "--help")) => {
+        Some("new" | "check")
+            if matches!(args.get(1).map(String::as_str), Some("-h" | "--help")) =>
+        {
             print!("{USAGE}");
             ExitCode::SUCCESS
         }
@@ -48,7 +50,10 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("-V" | "--version") if args.len() == 1 => {
-            println!("bko-recovery-words (bko-holt {})", env!("CARGO_PKG_VERSION"));
+            println!(
+                "bko-recovery-words (bko-holt {})",
+                env!("CARGO_PKG_VERSION")
+            );
             ExitCode::SUCCESS
         }
         Some("new") => usage_error("new takes no arguments"),
@@ -84,7 +89,12 @@ fn show_new(w: &Words) -> String {
     let mut s = format!("Recovery key: {pw}\n\n");
     recovery::zeroize_string(&mut pw);
     for row in words.chunks(4).enumerate() {
-        let mut line: String = row.1.iter().enumerate().map(|(i, x)| format!("{:>4} {:<10}", 4 * row.0 + i + 1, x)).collect();
+        let mut line: String = row
+            .1
+            .iter()
+            .enumerate()
+            .map(|(i, x)| format!("{:>4} {:<10}", 4 * row.0 + i + 1, x))
+            .collect();
         s += line.trim_end();
         s.push('\n');
         recovery::zeroize_string(&mut line);
@@ -121,7 +131,11 @@ fn check(args: &[String]) -> ExitCode {
                 break;
             }
         }
-    } else if std::io::stdin().take(64 * 1024).read_to_string(&mut text).is_err() {
+    } else if std::io::stdin()
+        .take(64 * 1024)
+        .read_to_string(&mut text)
+        .is_err()
+    {
         recovery::zeroize_string(&mut text);
         eprintln!("bko-recovery-words: couldn't read the words from standard input");
         return ExitCode::from(1);

@@ -8,7 +8,7 @@
 use crate::bootcode::samples as grub;
 use crate::json::Value;
 use crate::load::RUN_DIR;
-use crate::parttable::build::{mbr_entry, write_gpt, GptSpec};
+use crate::parttable::build::{GptSpec, mbr_entry, write_gpt};
 use crate::parttable::{BIOS_BOOT, ESP};
 use crate::probe::{btrfs, ext, fat, luks, lvm, md, misc, zfs};
 use crate::sys::{FakeRunner, Sys};
@@ -36,8 +36,14 @@ fn run_tz(t: &Tree, privileged: bool, runner: FakeRunner, sys_tz: Option<i32>) -
     let v = crate::report::build(&sys, os.as_ref(), "2026-11-04T00:00:00Z");
     // Whatever the scenario, the output is valid JSON that reads back the same.
     // (Compared as text: a positive Int reads back as a UInt.)
-    assert_eq!(crate::json::parse(&v.pretty()).unwrap().compact(), v.compact());
-    assert_eq!(crate::json::parse(&v.compact()).unwrap().compact(), v.compact());
+    assert_eq!(
+        crate::json::parse(&v.pretty()).unwrap().compact(),
+        v.compact()
+    );
+    assert_eq!(
+        crate::json::parse(&v.compact()).unwrap().compact(),
+        v.compact()
+    );
     // Redacted for a bug report, it still plans the same.
     if let Err(e) = crate::bugreport::check_plan(&v.pretty()) {
         panic!("redaction: {e}");
@@ -47,19 +53,29 @@ fn run_tz(t: &Tree, privileged: bool, runner: FakeRunner, sys_tz: Option<i32>) -
 
 /// This test binary, as a plan names bko-holt (its own helpers), quoted.
 fn unflag_exe() -> String {
-    crate::load::shell_quote(&std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into()))
+    crate::load::shell_quote(
+        &std::env::current_exe()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "bko-holt".into()),
+    )
 }
 
 fn s<'a>(v: &'a Value, path: &[&str]) -> &'a str {
-    v.at(path).and_then(Value::as_str).unwrap_or_else(|| panic!("no string at {path:?}"))
+    v.at(path)
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("no string at {path:?}"))
 }
 
 fn u(v: &Value, path: &[&str]) -> u64 {
-    v.at(path).and_then(Value::as_u64).unwrap_or_else(|| panic!("no number at {path:?}"))
+    v.at(path)
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("no number at {path:?}"))
 }
 
 fn arr<'a>(v: &'a Value, path: &[&str]) -> &'a Vec<Value> {
-    v.at(path).and_then(Value::as_array).unwrap_or_else(|| panic!("no array at {path:?}"))
+    v.at(path)
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("no array at {path:?}"))
 }
 
 /// The debian13 test guest: BIOS, MBR, /boot ext4 (1), extended (2) holding
@@ -80,9 +96,22 @@ fn bios_btrfs() -> Tree {
     mbr_entry(&mut img[e1..e1 + 512], 1, 0, 0x05, 8194, 71680);
     let e2 = (18430 + 8194) * 512;
     mbr_entry(&mut img[e2..e2 + 512], 0, 0, 0x83, 2, 71678);
-    put(&mut img, 2048, &ext::sample::image(0x4 | 0x8 | 0x10 | 0x20 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, ""));
+    put(
+        &mut img,
+        2048,
+        &ext::sample::image(
+            0x4 | 0x8 | 0x10 | 0x20 | 0x1000,
+            0x2 | 0x40 | 0x80 | 0x200,
+            0x1 | 0x2 | 0x400,
+            "",
+        ),
+    );
     put(&mut img, 18432, &misc::sample::swap(1024, ""));
-    put(&mut img, 26626, &btrfs::sample::image("", 0x1 | 0x20 | 0x40 | 0x100 | 0x200));
+    put(
+        &mut img,
+        26626,
+        &btrfs::sample::image("", 0x1 | 0x20 | 0x40 | 0x100 | 0x200),
+    );
     let boot_uuid = "10111213-1415-1617-1819-1a1b1c1d1e1f";
     let root_uuid = "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
     let swap_uuid = "c0c1c2c3-c4c5-c6c7-c8c9-cacbcccdcecf";
@@ -132,10 +161,17 @@ fn btrfs_without_its_tools_warns() {
     let b = v.at(&["storage", "btrfs", "0"]).unwrap();
     assert!(b.get("subvolumes").unwrap().is_null());
     assert_eq!(s(b, &["mounted_subvolumes", "0", "subvol"]), "/@rootfs");
-    let w: Vec<&str> = arr(&v, &["warnings"]).iter().filter_map(Value::as_str).collect();
+    let w: Vec<&str> = arr(&v, &["warnings"])
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
     assert!(w.contains(&"btrfs b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf: `btrfs subvolume list /` failed or btrfs isn't installed: its subvolumes aren't listed"), "{w:?}");
     let v = run(&bios_btrfs(), true, bios_btrfs_runner());
-    assert!(!arr(&v, &["warnings"]).iter().any(|x| x.as_str().is_some_and(|x| x.contains("subvolume list"))));
+    assert!(
+        !arr(&v, &["warnings"])
+            .iter()
+            .any(|x| x.as_str().is_some_and(|x| x.contains("subvolume list")))
+    );
 }
 
 #[test]
@@ -151,14 +187,25 @@ fn bios_mbr_btrfs_guest() {
     assert_eq!(s(disk, &["partition_table", "type"]), "dos");
     assert_eq!(s(disk, &["partition_table", "disk_signature"]), "5eed0001");
     assert_eq!(s(disk, &["boot_code", "kind"]), "grub2");
-    assert_eq!(disk.at(&["boot_code", "grub_core_present"]), Some(&Value::Bool(true)));
+    assert_eq!(
+        disk.at(&["boot_code", "grub_core_present"]),
+        Some(&Value::Bool(true))
+    );
     assert_eq!(s(disk, &["boot_code", "grub_core_in"]), "post-mbr-gap");
     assert!(disk.get("content").unwrap().is_null());
     let parts = arr(disk, &["partitions"]);
-    let names: Vec<&str> = parts.iter().map(|p| p.get("name").and_then(Value::as_str).unwrap()).collect();
+    let names: Vec<&str> = parts
+        .iter()
+        .map(|p| p.get("name").and_then(Value::as_str).unwrap())
+        .collect();
     assert_eq!(names, vec!["vda1", "vda2", "vda5", "vda6"]);
     for p in parts {
-        assert_eq!(p.get("matches_kernel"), Some(&Value::Bool(true)), "{}", p.compact());
+        assert_eq!(
+            p.get("matches_kernel"),
+            Some(&Value::Bool(true)),
+            "{}",
+            p.compact()
+        );
     }
     assert_eq!(s(&parts[0], &["content", "type"]), "ext4");
     assert_eq!(parts[0].get("bootable"), Some(&Value::Bool(true)));
@@ -175,8 +222,14 @@ fn bios_mbr_btrfs_guest() {
     assert_eq!(s(b, &["mounted_subvolumes", "0", "subvol"]), "/@rootfs");
     assert_eq!(s(b, &["subvolumes", "0", "path"]), "@rootfs");
     assert_eq!(u(b, &["default_subvolume", "id"]), 5);
-    assert_eq!(b.at(&["subvolumes", "0", "readonly"]), Some(&Value::Bool(false)));
-    assert_eq!(s(b, &["subvolumes", "0", "properties", "compression"]), "zstd");
+    assert_eq!(
+        b.at(&["subvolumes", "0", "readonly"]),
+        Some(&Value::Bool(false))
+    );
+    assert_eq!(
+        s(b, &["subvolumes", "0", "properties", "compression"]),
+        "zstd"
+    );
     assert!(b.get("qgroups").unwrap().is_null());
     // fstab resolves to devices; the CD drive (absent) resolves to nothing.
     let f = arr(&v, &["storage", "fstab"]);
@@ -193,7 +246,10 @@ fn bios_mbr_btrfs_guest() {
     // Not ostree: the backup reads each mount where it is.
     assert_eq!(s(&v, &["storage", "physical_root"]), "/");
     let bs = arr(&v, &["storage", "backup_sources"]);
-    let pairs: Vec<(&str, &str)> = bs.iter().map(|x| (s(x, &["path"]), s(x, &["from"]))).collect();
+    let pairs: Vec<(&str, &str)> = bs
+        .iter()
+        .map(|x| (s(x, &["path"]), s(x, &["from"])))
+        .collect();
     assert_eq!(pairs, vec![("/", "/"), ("/boot", "/boot")]);
     assert_eq!(s(&bs[0], &["subvol"]), "/@rootfs");
     assert!(bs[1].get("subvol").unwrap().is_null());
@@ -201,20 +257,54 @@ fn bios_mbr_btrfs_guest() {
     // Boot.
     assert_eq!(s(&v, &["boot", "loader", "name"]), "grub");
     assert_eq!(s(&v, &["boot", "loader", "package"]), "grub-pc");
-    assert_eq!(s(&v, &["boot", "grub", "debconf", "grub-pc/install_devices"]), "/dev/disk/by-path/pci-0000:00:04.0");
-    assert_eq!(arr(&v, &["boot", "grub", "installed_platforms"])[0].as_str(), Some("i386-pc"));
-    assert_eq!(s(&v, &["boot", "grub", "grub_cfg", "entries", "0"]), "Debian GNU/Linux");
-    assert_eq!(s(&v, &["boot", "grub", "default_grub", "GRUB_CMDLINE_LINUX"]), "console=ttyS0");
-    assert_eq!(s(&v, &["boot", "cmdline", "storage", "rootflags"]), "subvol=@rootfs");
-    assert_eq!(v.at(&["boot", "kernels", "installed", "0", "running"]), Some(&Value::Bool(true)));
-    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "initramfs-tools");
+    assert_eq!(
+        s(&v, &["boot", "grub", "debconf", "grub-pc/install_devices"]),
+        "/dev/disk/by-path/pci-0000:00:04.0"
+    );
+    assert_eq!(
+        arr(&v, &["boot", "grub", "installed_platforms"])[0].as_str(),
+        Some("i386-pc")
+    );
+    assert_eq!(
+        s(&v, &["boot", "grub", "grub_cfg", "entries", "0"]),
+        "Debian GNU/Linux"
+    );
+    assert_eq!(
+        s(&v, &["boot", "grub", "default_grub", "GRUB_CMDLINE_LINUX"]),
+        "console=ttyS0"
+    );
+    assert_eq!(
+        s(&v, &["boot", "cmdline", "storage", "rootflags"]),
+        "subvol=@rootfs"
+    );
+    assert_eq!(
+        v.at(&["boot", "kernels", "installed", "0", "running"]),
+        Some(&Value::Bool(true))
+    );
+    assert_eq!(
+        s(&v, &["boot", "initramfs", "generator"]),
+        "initramfs-tools"
+    );
     assert!(v.at(&["boot", "efi"]).unwrap().is_null());
     // Topology reads as a tree.
     let topo = v.at(&["storage", "topology"]).unwrap().as_object().unwrap();
     assert_eq!(topo.len(), 1);
-    assert!(topo[0].0.starts_with("vda (disk, 48 MiB, dos)"), "{}", topo[0].0);
-    let kids: Vec<&str> = topo[0].1.as_object().unwrap().iter().map(|(k, _)| k.as_str()).collect();
-    assert!(kids[3].starts_with("vda6 (partition, ") && kids[3].ends_with("btrfs on /"), "{kids:?}");
+    assert!(
+        topo[0].0.starts_with("vda (disk, 48 MiB, dos)"),
+        "{}",
+        topo[0].0
+    );
+    let kids: Vec<&str> = topo[0]
+        .1
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(k, _)| k.as_str())
+        .collect();
+    assert!(
+        kids[3].starts_with("vda6 (partition, ") && kids[3].ends_with("btrfs on /"),
+        "{kids:?}"
+    );
     assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
     assert_eq!(s(&v, &["host", "hostname"]), "deb13");
 }
@@ -225,7 +315,13 @@ fn bios_mbr_btrfs_guest() {
 fn chimera_bios() -> Tree {
     let t = bios_btrfs();
     let v = "6.18.62-0-generic";
-    for f in ["/var/lib/dpkg/status", "/var/cache/debconf/config.dat", "/etc/debian_version", "/boot/vmlinuz-6.12.48+deb13-amd64", "/boot/initrd.img-6.12.48+deb13-amd64"] {
+    for f in [
+        "/var/lib/dpkg/status",
+        "/var/cache/debconf/config.dat",
+        "/etc/debian_version",
+        "/boot/vmlinuz-6.12.48+deb13-amd64",
+        "/boot/initrd.img-6.12.48+deb13-amd64",
+    ] {
         std::fs::remove_file(t.p(f)).unwrap();
     }
     let root_uuid = "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
@@ -257,23 +353,63 @@ fn chimera_bios_guest() {
     assert_eq!(s(&v, &["boot", "loader", "firmware"]), "bios");
     assert_eq!(s(&v, &["boot", "loader", "package"]), "grub-i386-pc");
     assert!(v.at(&["boot", "grub", "debconf"]).unwrap().is_null());
-    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "initramfs-tools");
-    assert_eq!(s(&v, &["boot", "kernels", "installed", "0", "version"]), "6.18.62-0-generic");
+    assert_eq!(
+        s(&v, &["boot", "initramfs", "generator"]),
+        "initramfs-tools"
+    );
+    assert_eq!(
+        s(&v, &["boot", "kernels", "installed", "0", "version"]),
+        "6.18.62-0-generic"
+    );
     assert_eq!(arr(&v, &["boot", "kernels", "installed"]).len(), 1);
-    assert_eq!(v.at(&["boot", "kernels", "installed", "0", "running"]), Some(&Value::Bool(true)));
-    assert_eq!(v.at(&["boot", "kernels", "installed", "0", "modules_installed"]), Some(&Value::Bool(true)));
-    assert_eq!(s(&v, &["boot", "packages", "initramfs-tools"]), "0.148.3-r2");
+    assert_eq!(
+        v.at(&["boot", "kernels", "installed", "0", "running"]),
+        Some(&Value::Bool(true))
+    );
+    assert_eq!(
+        v.at(&["boot", "kernels", "installed", "0", "modules_installed"]),
+        Some(&Value::Bool(true))
+    );
+    assert_eq!(
+        s(&v, &["boot", "packages", "initramfs-tools"]),
+        "0.148.3-r2"
+    );
     assert_eq!(s(&v, &["boot", "packages", "linux-lts"]), "6.18.62-r0");
     assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
     // load reads it, and boots it with Chimera's own tools.
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    use crate::load::{Parsed, Stage, commands, layout::Layout, target::Mapping};
     let l = Layout::from_json(v).unwrap();
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-    let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
-    let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
-    assert!(bt.contains(&format!("chroot /mnt/bko-target sh -c {}\n", crate::load::shell_quote(commands::UPDATE_INITRAMFS_RESUME))), "{bt}");
-    assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
-    assert!(bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{bt}");
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+        unreachable!()
+    };
+    let b = commands::build(
+        &l,
+        &o,
+        &Mapping {
+            pairs: vec![("vda".into(), "vdb".into())],
+            ..Mapping::default()
+        },
+    );
+    let bt: String = b
+        .stage(Stage::Boot)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
+    assert!(
+        bt.contains(&format!(
+            "chroot /mnt/bko-target sh -c {}\n",
+            crate::load::shell_quote(commands::UPDATE_INITRAMFS_RESUME)
+        )),
+        "{bt}"
+    );
+    assert!(
+        bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"),
+        "{bt}"
+    );
+    assert!(
+        bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"),
+        "{bt}"
+    );
     assert!(!bt.contains("update-grub"), "{bt}");
 }
 
@@ -290,11 +426,32 @@ fn chimera_uefi() -> Tree {
         512,
         &GptSpec {
             disk_guid: "6f1c2c3d-0000-4000-8000-00000000bbbb",
-            parts: vec![(ESP, "0b5f04ed-e731-4ac6-933e-83ff25657722", 2048, 73727, 0, ""), (LINUX, "11112222-3333-4444-5555-666677778888", 73728, 131038, 0, "")],
+            parts: vec![
+                (
+                    ESP,
+                    "0b5f04ed-e731-4ac6-933e-83ff25657722",
+                    2048,
+                    73727,
+                    0,
+                    "",
+                ),
+                (
+                    LINUX,
+                    "11112222-3333-4444-5555-666677778888",
+                    73728,
+                    131038,
+                    0,
+                    "",
+                ),
+            ],
         },
     );
     put(&mut img, 2048, &fat::sample::fat32(71680, 0x1234_abcd, ""));
-    put(&mut img, 73728, &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""));
+    put(
+        &mut img,
+        73728,
+        &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""),
+    );
     let mut loader_info = vec![6u8, 0, 0, 0];
     for c in "systemd-boot 256.11".encode_utf16().chain([0]) {
         loader_info.extend(c.to_le_bytes());
@@ -341,23 +498,51 @@ fn chimera_uefi_guest() {
     assert_eq!(s(&v, &["boot", "loader", "name"]), "systemd-boot");
     assert_eq!(s(&v, &["boot", "loader", "firmware"]), "uefi");
     assert_eq!(s(&v, &["boot", "loader", "package"]), "systemd-boot");
-    assert_eq!(v.at(&["boot", "loader", "via_shim"]), Some(&Value::Bool(false)));
+    assert_eq!(
+        v.at(&["boot", "loader", "via_shim"]),
+        Some(&Value::Bool(false))
+    );
     assert_eq!(s(&v, &["boot", "packages", "systemd-boot"]), "256.11-r5");
     assert_eq!(s(&v, &["boot", "esps", "0", "mounted_at"]), "/boot");
     assert_eq!(arr(&v, &["boot", "systemd_boot", "entries"]).len(), 2);
-    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "initramfs-tools");
-    assert_eq!(s(&v, &["boot", "kernels", "installed", "0", "version"]), "6.18.62-0-generic");
+    assert_eq!(
+        s(&v, &["boot", "initramfs", "generator"]),
+        "initramfs-tools"
+    );
+    assert_eq!(
+        s(&v, &["boot", "kernels", "installed", "0", "version"]),
+        "6.18.62-0-generic"
+    );
     // load reinstalls systemd-boot, then gen-systemd-boot remakes the
     // entries after the initramfs; nothing GRUB's.
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    use crate::load::{Parsed, Stage, commands, layout::Layout, target::Mapping};
     let l = Layout::from_json(v).unwrap();
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-    let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+        unreachable!()
+    };
+    let b = commands::build(
+        &l,
+        &o,
+        &Mapping {
+            pairs: vec![("vda".into(), "vdb".into())],
+            ..Mapping::default()
+        },
+    );
     assert!(b.problems.is_empty(), "{:?}", b.problems);
-    let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
-    let initramfs = bt.find("chroot /mnt/bko-target update-initramfs -u -k all\n").expect(&bt);
-    let bootctl = bt.find("chroot /mnt/bko-target bootctl install --no-variables\n").expect(&bt);
-    let made = bt.find("chroot /mnt/bko-target sh -c 'gen-systemd-boot; r=$?;").expect(&bt);
+    let bt: String = b
+        .stage(Stage::Boot)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
+    let initramfs = bt
+        .find("chroot /mnt/bko-target update-initramfs -u -k all\n")
+        .expect(&bt);
+    let bootctl = bt
+        .find("chroot /mnt/bko-target bootctl install --no-variables\n")
+        .expect(&bt);
+    let made = bt
+        .find("chroot /mnt/bko-target sh -c 'gen-systemd-boot; r=$?;")
+        .expect(&bt);
     assert!(initramfs < bootctl && bootctl < made, "{bt}");
     assert!(!bt.contains("grub"), "{bt}");
 }
@@ -368,7 +553,11 @@ fn chimera_uefi_guest() {
 /// and, with `loader_info` false, no LoaderInfo either.
 fn limine_fallback(loader_info: bool) -> Tree {
     use crate::efi::{GLOBAL, LOADER};
-    let t = Tree::new(if loader_info { "scn-limine-fallback" } else { "scn-limine-fallback-noinfo" });
+    let t = Tree::new(if loader_info {
+        "scn-limine-fallback"
+    } else {
+        "scn-limine-fallback-noinfo"
+    });
     let v = "7.3.4-2-cachyos";
     let mut img = vec![0u8; 64 * MIB];
     write_gpt(
@@ -376,12 +565,38 @@ fn limine_fallback(loader_info: bool) -> Tree {
         512,
         &GptSpec {
             disk_guid: "6f1c2c3d-0000-4000-8000-00000000cccc",
-            parts: vec![(ESP, "1b5f04ed-e731-4ac6-933e-83ff25657722", 2048, 73727, 0, ""), (LINUX, "21112222-3333-4444-5555-666677778888", 73728, 131038, 0, "")],
+            parts: vec![
+                (
+                    ESP,
+                    "1b5f04ed-e731-4ac6-933e-83ff25657722",
+                    2048,
+                    73727,
+                    0,
+                    "",
+                ),
+                (
+                    LINUX,
+                    "21112222-3333-4444-5555-666677778888",
+                    73728,
+                    131038,
+                    0,
+                    "",
+                ),
+            ],
         },
     );
     put(&mut img, 2048, &fat::sample::fat32(71680, 0x1234_abce, ""));
-    put(&mut img, 73728, &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""));
-    let pkg = |n: &str, ver: &str| (format!("/var/lib/pacman/local/{n}-{ver}/desc"), format!("%NAME%\n{n}\n\n%VERSION%\n{ver}\n\n%ARCH%\nx86_64\n"));
+    put(
+        &mut img,
+        73728,
+        &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""),
+    );
+    let pkg = |n: &str, ver: &str| {
+        (
+            format!("/var/lib/pacman/local/{n}-{ver}/desc"),
+            format!("%NAME%\n{n}\n\n%VERSION%\n{ver}\n\n%ARCH%\nx86_64\n"),
+        )
+    };
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
         .partition("vda", "vda2", "254:2", 2, 73728, 57311, &img)
@@ -402,7 +617,13 @@ fn limine_fallback(loader_info: bool) -> Tree {
         .file("/proc/sys/kernel/osrelease", format!("{v}\n"))
         .file("/proc/sys/kernel/hostname", "cachyos\n")
         .file("/proc/cmdline", "quiet nowatchdog rw root=PARTUUID=21112222-3333-4444-5555-666677778888\n");
-    for (n, ver) in [("limine", "12.9.6-1"), ("limine-mkinitcpio-hook", "1.20.0-1"), ("mkinitcpio", "40-3"), ("linux-cachyos", "7.3.4-2"), ("efibootmgr", "18-3")] {
+    for (n, ver) in [
+        ("limine", "12.9.6-1"),
+        ("limine-mkinitcpio-hook", "1.20.0-1"),
+        ("mkinitcpio", "40-3"),
+        ("linux-cachyos", "7.3.4-2"),
+        ("efibootmgr", "18-3"),
+    ] {
         let (path, desc) = pkg(n, ver);
         t.file(&path, desc);
     }
@@ -411,30 +632,58 @@ fn limine_fallback(loader_info: bool) -> Tree {
         for c in "Limine 12.9.6".encode_utf16().chain([0]) {
             info.extend(c.to_le_bytes());
         }
-        t.file(&format!("/sys/firmware/efi/efivars/LoaderInfo-{LOADER}"), info);
+        t.file(
+            &format!("/sys/firmware/efi/efivars/LoaderInfo-{LOADER}"),
+            info,
+        );
     }
     t
 }
 
 #[test]
 fn limine_booted_at_the_fallback_path() {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    use crate::load::{Parsed, Stage, commands, layout::Layout, target::Mapping};
     for loader_info in [true, false] {
         let v = run(&limine_fallback(loader_info), true, FakeRunner::default());
         assert_eq!(s(&v, &["os", "id"]), "cachyos");
-        assert_eq!(s(&v, &["boot", "loader", "name"]), "limine", "{}", v.at(&["boot", "loader"]).unwrap().compact());
+        assert_eq!(
+            s(&v, &["boot", "loader", "name"]),
+            "limine",
+            "{}",
+            v.at(&["boot", "loader"]).unwrap().compact()
+        );
         assert_eq!(s(&v, &["boot", "loader", "package"]), "limine");
         // load doesn't refuse it: the ESP brings Limine back, mkinitcpio
         // remakes the initramfs (its hook copies it into the machine-id
         // directory limine.conf boots).
         let l = Layout::from_json(v).unwrap();
-        let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-        let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
+        let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+            unreachable!()
+        };
+        let b = commands::build(
+            &l,
+            &o,
+            &Mapping {
+                pairs: vec![("vda".into(), "vdb".into())],
+                ..Mapping::default()
+            },
+        );
         assert!(b.problems.is_empty(), "{loader_info}: {:?}", b.problems);
-        let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
-        assert!(bt.contains("chroot /mnt/bko-target mkinitcpio -P\n"), "{bt}");
+        let bt: String = b
+            .stage(Stage::Boot)
+            .iter()
+            .map(commands::Cmd::shell)
+            .collect();
+        assert!(
+            bt.contains("chroot /mnt/bko-target mkinitcpio -P\n"),
+            "{bt}"
+        );
         assert!(!bt.contains("grub"), "{bt}");
-        assert!(b.notes.iter().any(|n| n.starts_with("Limine: ")), "{:?}", b.notes);
+        assert!(
+            b.notes.iter().any(|n| n.starts_with("Limine: ")),
+            "{:?}",
+            b.notes
+        );
     }
 }
 
@@ -444,7 +693,10 @@ fn unprivileged_falls_back_to_udev() {
     let v = run(&t, false, FakeRunner::default());
     assert_eq!(v.get("privileged"), Some(&Value::Bool(false)));
     let w = arr(&v, &["warnings"]);
-    assert!(w.iter().any(|x| x.as_str().unwrap().contains("not running as root")));
+    assert!(
+        w.iter()
+            .any(|x| x.as_str().unwrap().contains("not running as root"))
+    );
     let disk = v.at(&["storage", "disks", "0"]).unwrap();
     assert_eq!(s(disk, &["partition_table", "type"]), "dos");
     assert_eq!(s(disk, &["partition_table", "source"]), "udev");
@@ -475,15 +727,33 @@ fn uefi_shim() -> Tree {
         &GptSpec {
             disk_guid: "6f1c2c3d-0000-4000-8000-00000000aaaa",
             parts: vec![
-                (ESP, "0b5f04ed-e731-4ac6-933e-83ff25657722", 2048, 73727, 0, "EFI System Partition"),
-                (LINUX, "11112222-3333-4444-5555-666677778888", 73728, 131038, 0, ""),
+                (
+                    ESP,
+                    "0b5f04ed-e731-4ac6-933e-83ff25657722",
+                    2048,
+                    73727,
+                    0,
+                    "EFI System Partition",
+                ),
+                (
+                    LINUX,
+                    "11112222-3333-4444-5555-666677778888",
+                    73728,
+                    131038,
+                    0,
+                    "",
+                ),
             ],
         },
     );
     // 35 MiB: just enough clusters to be FAT32, as mkfs.fat -F 32 needs.
     let esp = fat::sample::fat32(71680, 0x1234_abcd, "");
     put(&mut img, 2048, &esp);
-    put(&mut img, 73728, &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""));
+    put(
+        &mut img,
+        73728,
+        &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""),
+    );
     let v_ = |n: &str, g: &str| format!("/sys/firmware/efi/efivars/{n}-{g}");
     t.disk("nvme1n1", "259:0", &img, 512)
         .partition("nvme1n1", "nvme1n1p1", "259:1", 1, 2048, 71680, &img)
@@ -517,7 +787,10 @@ fn uefi_gpt_nvme_shim() {
     let t = uefi_shim();
     let v = run(&t, true, FakeRunner::default());
     assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
-    assert_eq!(v.at(&["firmware", "secure_boot"]), Some(&Value::Bool(false)));
+    assert_eq!(
+        v.at(&["firmware", "secure_boot"]),
+        Some(&Value::Bool(false))
+    );
     let d = v.at(&["storage", "disks", "0"]).unwrap();
     assert_eq!(s(d, &["model"]), "CT2000P3SSD8");
     assert_eq!(s(d, &["serial"]), "2240E6789ABC");
@@ -532,8 +805,14 @@ fn uefi_gpt_nvme_shim() {
     assert_eq!(s(p1, &["content", "type"]), "vfat");
     assert_eq!(s(p1, &["content", "uuid"]), "1234-ABCD");
     // fstab: UUID= and PARTUUID= both resolve.
-    assert_eq!(s(&v, &["storage", "fstab", "0", "resolves_to"]), "nvme1n1p2");
-    assert_eq!(s(&v, &["storage", "fstab", "1", "resolves_to"]), "nvme1n1p1");
+    assert_eq!(
+        s(&v, &["storage", "fstab", "0", "resolves_to"]),
+        "nvme1n1p2"
+    );
+    assert_eq!(
+        s(&v, &["storage", "fstab", "1", "resolves_to"]),
+        "nvme1n1p1"
+    );
     // The boot entry names the ESP by PARTUUID, which maps to its device.
     let e = v.at(&["boot", "efi", "entries", "0"]).unwrap();
     assert_eq!(s(e, &["partition", "device"]), "nvme1n1p1");
@@ -545,8 +824,14 @@ fn uefi_gpt_nvme_shim() {
     let esp0 = v.at(&["boot", "esps", "0"]).unwrap();
     assert_eq!(s(esp0, &["device"]), "nvme1n1p1");
     assert_eq!(arr(esp0, &["contents", "files"]).len(), 4);
-    assert_eq!(s(esp0, &["contents", "debian_grub_stub", "search_uuids", "0"]), "10111213-1415-1617-1819-1a1b1c1d1e1f");
-    assert_eq!(arr(&v, &["boot", "grub", "installed_platforms"])[0].as_str(), Some("x86_64-efi"));
+    assert_eq!(
+        s(esp0, &["contents", "debian_grub_stub", "search_uuids", "0"]),
+        "10111213-1415-1617-1819-1a1b1c1d1e1f"
+    );
+    assert_eq!(
+        arr(&v, &["boot", "grub", "installed_platforms"])[0].as_str(),
+        Some("x86_64-efi")
+    );
     assert_eq!(s(&v, &["boot", "packages", "shim-signed"]), "1.47+15.8-1");
 }
 
@@ -558,9 +843,17 @@ fn uefi_gpt_nvme_shim() {
 fn sys_tz_recorded() {
     let t = uefi_shim();
     let v = run_tz(&t, true, FakeRunner::default(), Some(-60));
-    assert_eq!(v.at(&["storage", "sys_tz_minuteswest"]).and_then(Value::as_i64), Some(-60));
+    assert_eq!(
+        v.at(&["storage", "sys_tz_minuteswest"])
+            .and_then(Value::as_i64),
+        Some(-60)
+    );
     let (red, _) = crate::redact::redact(&v);
-    assert_eq!(red.at(&["storage", "sys_tz_minuteswest"]).and_then(Value::as_i64), Some(-60));
+    assert_eq!(
+        red.at(&["storage", "sys_tz_minuteswest"])
+            .and_then(Value::as_i64),
+        Some(-60)
+    );
     let v = run(&t, true, FakeRunner::default());
     assert_eq!(v.at(&["storage", "sys_tz_minuteswest"]), None);
 }
@@ -578,14 +871,39 @@ fn luks_lvm_tree() -> Tree {
         &GptSpec {
             disk_guid: "6f1c2c3d-0000-4000-8000-00000000bbbb",
             parts: vec![
-                (ESP, "aaaaaaaa-0000-0000-0000-000000000001", 2048, 34815, 0, ""),
-                (LINUX, "aaaaaaaa-0000-0000-0000-000000000002", 34816, 51199, 0, ""),
-                (LINUX, "aaaaaaaa-0000-0000-0000-000000000003", 51200, 131038, 0, ""),
+                (
+                    ESP,
+                    "aaaaaaaa-0000-0000-0000-000000000001",
+                    2048,
+                    34815,
+                    0,
+                    "",
+                ),
+                (
+                    LINUX,
+                    "aaaaaaaa-0000-0000-0000-000000000002",
+                    34816,
+                    51199,
+                    0,
+                    "",
+                ),
+                (
+                    LINUX,
+                    "aaaaaaaa-0000-0000-0000-000000000003",
+                    51200,
+                    131038,
+                    0,
+                    "",
+                ),
             ],
         },
     );
     put(&mut img, 2048, &fat::sample::fat32(32768, 1, "EFI"));
-    put(&mut img, 34816, &ext::sample::image(0x4, 0x2 | 0x40, 0x1, "boot"));
+    put(
+        &mut img,
+        34816,
+        &ext::sample::image(0x4, 0x2 | 0x40, 0x1, "boot"),
+    );
     put(&mut img, 51200, &luks::sample::luks2(luks_uuid, ""));
     // The opened container (dm-0) holds the PV; the LVs are dm-1 and dm-2.
     let pv = lvm::sample::pv(512, 1 << 20);
@@ -627,7 +945,10 @@ fn luks_lvm() {
     let p3 = v.at(&["storage", "disks", "0", "partitions", "2"]).unwrap();
     assert_eq!(s(p3, &["content", "type"]), "crypto_LUKS");
     assert_eq!(s(p3, &["content", "uuid"]), luks_uuid);
-    assert_eq!(s(p3, &["content", "segments", "0", "encryption"]), "aes-xts-plain64");
+    assert_eq!(
+        s(p3, &["content", "segments", "0", "encryption"]),
+        "aes-xts-plain64"
+    );
     assert_eq!(arr(p3, &["holders"])[0].as_str(), Some("dm-0"));
     // crypttab resolves the LUKS UUID to the partition.
     assert_eq!(s(&v, &["storage", "crypttab", "0", "resolves_to"]), "sda3");
@@ -650,10 +971,23 @@ fn luks_lvm() {
     // The topology nests disk > partition > crypt > LVs.
     let topo = v.get("storage").unwrap().get("topology").unwrap().compact();
     assert!(topo.contains("sda3 (partition"), "{topo}");
-    assert!(topo.contains("dm-0 (dm, 4 MiB, sda3_crypt) LVM2_member"), "{topo}");
-    assert!(topo.contains("dm-1 (dm, 64 KiB, vg0-root) ext4 \\\"root\\\" on /"), "{topo}");
+    assert!(
+        topo.contains("dm-0 (dm, 4 MiB, sda3_crypt) LVM2_member"),
+        "{topo}"
+    );
+    assert!(
+        topo.contains("dm-1 (dm, 64 KiB, vg0-root) ext4 \\\"root\\\" on /"),
+        "{topo}"
+    );
     // dm devices aren't topology roots of their own.
-    assert_eq!(v.at(&["storage", "topology"]).unwrap().as_object().unwrap().len(), 1);
+    assert_eq!(
+        v.at(&["storage", "topology"])
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 /// The VG UUID of lvm::sample::THIN, as device-mapper writes it.
@@ -678,16 +1012,52 @@ fn thin_lvm_tree() -> Tree {
         &GptSpec {
             disk_guid: "7a05e5e5-0000-4000-8000-00000000d15c",
             parts: vec![
-                (LINUX, "7a05e5e5-0000-4000-8000-000000000001", 2048, 18431, 0, "vos-boot"),
+                (
+                    LINUX,
+                    "7a05e5e5-0000-4000-8000-000000000001",
+                    2048,
+                    18431,
+                    0,
+                    "vos-boot",
+                ),
                 (ESP, THIN_ESP, 18432, 90111, 0, "vos-efi"),
-                (LINUX, "7a05e5e5-0000-4000-8000-000000000003", 90112, 131038, 0, "vos-root"),
+                (
+                    LINUX,
+                    "7a05e5e5-0000-4000-8000-000000000003",
+                    90112,
+                    131038,
+                    0,
+                    "vos-root",
+                ),
             ],
         },
     );
-    put(&mut img, 2048, &ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, "vos-boot"));
-    put(&mut img, 18432, &fat::sample::fat32(71680, 0x7a05_e5e5, "vos-efi"));
-    put(&mut img, 90112, &lvm::sample::pv_with(512, 1 << 20, lvm::sample::THIN));
-    let mut init = ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, "vos-init");
+    put(
+        &mut img,
+        2048,
+        &ext::sample::image(
+            0x4 | 0x8 | 0x10 | 0x20,
+            0x2 | 0x40 | 0x80 | 0x200,
+            0x1 | 0x2 | 0x400,
+            "vos-boot",
+        ),
+    );
+    put(
+        &mut img,
+        18432,
+        &fat::sample::fat32(71680, 0x7a05_e5e5, "vos-efi"),
+    );
+    put(
+        &mut img,
+        90112,
+        &lvm::sample::pv_with(512, 1 << 20, lvm::sample::THIN),
+    );
+    let mut init = ext::sample::image(
+        0x4 | 0x8 | 0x10 | 0x20,
+        0x2 | 0x40 | 0x80 | 0x200,
+        0x1 | 0x2 | 0x400,
+        "vos-init",
+    );
     init[1024 + 104] = 0x20;
     let root_a = btrfs::sample::image("vos-a", 0x1 | 0x2 | 0x40 | 0x100 | 0x200);
     let mut root_b = root_a.clone();
@@ -705,15 +1075,67 @@ fn thin_lvm_tree() -> Tree {
         .file("/sys/block/vda/vda3/holders/dm-1", "")
         .file("/sys/block/vda/vda3/holders/dm-2", "");
     for (dm, devno, name, uuid, image, slaves) in [
-        ("dm-0", "253:0", "vos--root-init", lv("1n1t00"), &init, vec!["vda3"]),
-        ("dm-1", "253:1", "vos--root-root_tmeta", lv("tm3ta0") + "-tmeta", &zero, vec!["vda3"]),
-        ("dm-2", "253:2", "vos--root-root_tdata", lv("td4ta0") + "-tdata", &zero, vec!["vda3"]),
-        ("dm-3", "253:3", "vos--root-root-tpool", lv("p00l00") + "-tpool", &zero, vec!["dm-1", "dm-2"]),
-        ("dm-4", "253:4", "vos--root-root--a", lv("r00ta0"), &root_a, vec!["dm-3"]),
-        ("dm-5", "253:5", "vos--root-root--b", lv("r00tb0"), &root_b, vec!["dm-3"]),
-        ("dm-6", "253:6", "vos--root-root", lv("p00l00") + "-pool", &zero, vec!["dm-3"]),
+        (
+            "dm-0",
+            "253:0",
+            "vos--root-init",
+            lv("1n1t00"),
+            &init,
+            vec!["vda3"],
+        ),
+        (
+            "dm-1",
+            "253:1",
+            "vos--root-root_tmeta",
+            lv("tm3ta0") + "-tmeta",
+            &zero,
+            vec!["vda3"],
+        ),
+        (
+            "dm-2",
+            "253:2",
+            "vos--root-root_tdata",
+            lv("td4ta0") + "-tdata",
+            &zero,
+            vec!["vda3"],
+        ),
+        (
+            "dm-3",
+            "253:3",
+            "vos--root-root-tpool",
+            lv("p00l00") + "-tpool",
+            &zero,
+            vec!["dm-1", "dm-2"],
+        ),
+        (
+            "dm-4",
+            "253:4",
+            "vos--root-root--a",
+            lv("r00ta0"),
+            &root_a,
+            vec!["dm-3"],
+        ),
+        (
+            "dm-5",
+            "253:5",
+            "vos--root-root--b",
+            lv("r00tb0"),
+            &root_b,
+            vec!["dm-3"],
+        ),
+        (
+            "dm-6",
+            "253:6",
+            "vos--root-root",
+            lv("p00l00") + "-pool",
+            &zero,
+            vec!["dm-3"],
+        ),
     ] {
-        t.disk(dm, devno, image, 512).file(&format!("/sys/block/{dm}/dm/name"), format!("{name}\n")).file(&format!("/sys/block/{dm}/dm/uuid"), format!("{uuid}\n")).symlink(&format!("/dev/mapper/{name}"), &format!("../{dm}"));
+        t.disk(dm, devno, image, 512)
+            .file(&format!("/sys/block/{dm}/dm/name"), format!("{name}\n"))
+            .file(&format!("/sys/block/{dm}/dm/uuid"), format!("{uuid}\n"))
+            .symlink(&format!("/dev/mapper/{name}"), &format!("../{dm}"));
         for s in slaves {
             t.file(&format!("/sys/block/{dm}/slaves/{s}"), "");
             if s.starts_with("dm-") {
@@ -721,7 +1143,11 @@ fn thin_lvm_tree() -> Tree {
             }
         }
     }
-    let (boot, a, b) = ("10111213-1415-1617-1819-1a1b1c1d1e1f", "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf", "c0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf");
+    let (boot, a, b) = (
+        "10111213-1415-1617-1819-1a1b1c1d1e1f",
+        "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf",
+        "c0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf",
+    );
     t.symlink(&format!("/dev/disk/by-partuuid/{THIN_ESP}"), "../../vda2")
         .file("/sys/firmware/efi/fw_platform_size", "64\n")
         .file(&v_("Boot0001"), efi_load_option("vanilla", 2, 18432, 71680, THIN_ESP, "\\EFI\\vanilla\\shimx64.efi"))
@@ -748,7 +1174,10 @@ fn thin_lvm_runner() -> FakeRunner {
     for m in ["/", "/part-future"] {
         r = r
             .with(&format!("btrfs subvolume list -a -p -u -q {m}"), "")
-            .with(&format!("btrfs subvolume get-default {m}"), "ID 5 (FS_TREE)\n")
+            .with(
+                &format!("btrfs subvolume get-default {m}"),
+                "ID 5 (FS_TREE)\n",
+            )
             .with(&format!("btrfs subvolume list -a -r {m}"), "")
             .with(&format!("btrfs property get -t s {m}"), "ro=false\n")
             .with(&format!("btrfs property get -t i {m}"), "");
@@ -764,7 +1193,7 @@ fn thin_lvm_runner() -> FakeRunner {
 /// dump's UUIDs and labels, and nothing on the pool's own devices.
 #[test]
 fn thin_lvm() {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    use crate::load::{Parsed, Stage, commands, layout::Layout, target::Mapping};
     let v = run(&thin_lvm_tree(), true, thin_lvm_runner());
     assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
     let vg = v.at(&["storage", "lvm", "volume_groups", "0"]).unwrap();
@@ -772,65 +1201,182 @@ fn thin_lvm() {
     assert_eq!(s(vg, &["physical_volumes", "0", "device"]), "vda3");
     assert_eq!(s(vg, &["logical_volumes", "2", "name"]), "root-a");
     assert_eq!(s(vg, &["logical_volumes", "2", "active_device"]), "dm-4");
-    assert_eq!(s(vg, &["logical_volumes", "2", "segments", "0", "type"]), "thin");
+    assert_eq!(
+        s(vg, &["logical_volumes", "2", "segments", "0", "type"]),
+        "thin"
+    );
     let dms = arr(&v, &["storage", "dm_devices"]);
-    let tdata = dms.iter().position(|d| d.at(&["dm", "lv_layer"]).and_then(Value::as_str) == Some("tdata")).unwrap();
+    let tdata = dms
+        .iter()
+        .position(|d| d.at(&["dm", "lv_layer"]).and_then(Value::as_str) == Some("tdata"))
+        .unwrap();
     let plan = |v: Value| {
         let l = Layout::from_json(v).unwrap();
-        let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-        commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() })
+        let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+            unreachable!()
+        };
+        commands::build(
+            &l,
+            &o,
+            &Mapping {
+                pairs: vec![("vda".into(), "vdb".into())],
+                ..Mapping::default()
+            },
+        )
     };
     let b = plan(v.clone());
     assert!(b.problems.is_empty(), "{:?}", b.problems);
-    let asm: String = b.stage(Stage::Assemble).iter().map(commands::Cmd::shell).collect();
+    let asm: String = b
+        .stage(Stage::Assemble)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
     let lvm = |rest: &str| format!("--devicesfile '' --devices /dev/vdb3 {rest}\n");
     let lines = [
-        format!("pvcreate {}", lvm(&format!("--uuid Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff --restorefile {RUN_DIR}/lvm/vos-root.vg /dev/vdb3"))),
-        format!("vgcfgrestore {}", lvm(&format!("--file {RUN_DIR}/lvm/vos-root.vg vos-root"))),
+        format!(
+            "pvcreate {}",
+            lvm(&format!(
+                "--uuid Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff --restorefile {RUN_DIR}/lvm/vos-root.vg /dev/vdb3"
+            ))
+        ),
+        format!(
+            "vgcfgrestore {}",
+            lvm(&format!("--file {RUN_DIR}/lvm/vos-root.vg vos-root"))
+        ),
         format!("vgchange {}", lvm("--activate y vos-root")),
-        format!("lvcreate {}", lvm("--yes --type thin-pool -n root -L 19456m --poolmetadatasize 1024m --chunksize 64k --discards passdown --zero y --poolmetadataspare y vos-root")),
-        format!("lvcreate {}", lvm("--type thin -V 19456m -n root-a --thinpool root vos-root")),
-        format!("lvcreate {}", lvm("--type thin -V 19456m -n root-b --thinpool root vos-root")),
+        format!(
+            "lvcreate {}",
+            lvm(
+                "--yes --type thin-pool -n root -L 19456m --poolmetadatasize 1024m --chunksize 64k --discards passdown --zero y --poolmetadataspare y vos-root"
+            )
+        ),
+        format!(
+            "lvcreate {}",
+            lvm("--type thin -V 19456m -n root-a --thinpool root vos-root")
+        ),
+        format!(
+            "lvcreate {}",
+            lvm("--type thin -V 19456m -n root-b --thinpool root vos-root")
+        ),
     ];
     let mut at = 0;
     for l in &lines {
-        let i = asm[at..].find(l.as_str()).unwrap_or_else(|| panic!("{l} not after {at}: {asm}")) + at;
+        let i = asm[at..]
+            .find(l.as_str())
+            .unwrap_or_else(|| panic!("{l} not after {at}: {asm}"))
+            + at;
         at = i + l.len();
     }
-    assert_eq!(asm.lines().filter(|l| l.starts_with("lvcreate ")).count(), 3, "{asm}");
+    assert_eq!(
+        asm.lines().filter(|l| l.starts_with("lvcreate ")).count(),
+        3,
+        "{asm}"
+    );
     // A pool that queues writes when full, as a new one does: no --errorwhenfull anywhere.
     assert!(!asm.contains("--errorwhenfull"), "{asm}");
     assert!(asm.contains("# volume group vos-root: thin pool root (data 19 GiB, metadata 1 GiB) made again by lvcreate, empty; its LV UUID, its data and metadata LVs', those of its thin LVs (vos-root/root-a, vos-root/root-b) and their device ids are new"), "{asm}");
-    assert!(asm.contains("# thin LV vos-root/root-b: 19 GiB virtual, device id 2 on the source\n"), "{asm}");
-    let vgfile = b.stage(Stage::Assemble).iter().find_map(|c| c.write.as_ref().and(c.stdin.clone())).unwrap();
-    assert!(vgfile.contains("\t\tinit {\n") && !vgfile.contains("root-a") && !vgfile.contains("pmspare") && !vgfile.contains("thin"), "{vgfile}");
-    let fmt: String = b.stage(Stage::Format).iter().map(commands::Cmd::shell).collect();
-    assert!(fmt.contains("-L vos-init") && fmt.contains("-U 20111213-1415-1617-1819-1a1b1c1d1e1f") && fmt.contains("/dev/mapper/vos--root-init\n"), "{fmt}");
-    for (label, uuid, dev) in [("vos-a", "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf", "vos--root-root--a"), ("vos-b", "c0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf", "vos--root-root--b")] {
-        let l = fmt.lines().find(|l| l.starts_with("mkfs.btrfs") && l.ends_with(&format!("/dev/mapper/{dev}"))).unwrap_or_else(|| panic!("{dev}: {fmt}"));
-        assert!(l.contains(&format!("-L {label}")) && l.contains(&format!("-U {uuid}")), "{l}");
+    assert!(
+        asm.contains("# thin LV vos-root/root-b: 19 GiB virtual, device id 2 on the source\n"),
+        "{asm}"
+    );
+    let vgfile = b
+        .stage(Stage::Assemble)
+        .iter()
+        .find_map(|c| c.write.as_ref().and(c.stdin.clone()))
+        .unwrap();
+    assert!(
+        vgfile.contains("\t\tinit {\n")
+            && !vgfile.contains("root-a")
+            && !vgfile.contains("pmspare")
+            && !vgfile.contains("thin"),
+        "{vgfile}"
+    );
+    let fmt: String = b
+        .stage(Stage::Format)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
+    assert!(
+        fmt.contains("-L vos-init")
+            && fmt.contains("-U 20111213-1415-1617-1819-1a1b1c1d1e1f")
+            && fmt.contains("/dev/mapper/vos--root-init\n"),
+        "{fmt}"
+    );
+    for (label, uuid, dev) in [
+        (
+            "vos-a",
+            "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf",
+            "vos--root-root--a",
+        ),
+        (
+            "vos-b",
+            "c0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf",
+            "vos--root-root--b",
+        ),
+    ] {
+        let l = fmt
+            .lines()
+            .find(|l| l.starts_with("mkfs.btrfs") && l.ends_with(&format!("/dev/mapper/{dev}")))
+            .unwrap_or_else(|| panic!("{dev}: {fmt}"));
+        assert!(
+            l.contains(&format!("-L {label}")) && l.contains(&format!("-U {uuid}")),
+            "{l}"
+        );
     }
-    assert!(!fmt.contains("tdata") && !fmt.contains("tmeta") && !fmt.contains("tpool"), "{fmt}");
-    let mnt: String = b.stage(Stage::Mount).iter().map(commands::Cmd::shell).collect();
-    assert!(mnt.contains("/dev/mapper/vos--root-root--a /mnt/bko-target\n"), "{mnt}");
+    assert!(
+        !fmt.contains("tdata") && !fmt.contains("tmeta") && !fmt.contains("tpool"),
+        "{fmt}"
+    );
+    let mnt: String = b
+        .stage(Stage::Mount)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
+    assert!(
+        mnt.contains("/dev/mapper/vos--root-root--a /mnt/bko-target\n"),
+        "{mnt}"
+    );
 
     // A probe that found root-a's filesystem on the pool's data device
     // (where its blocks are): still formatted once, on root-a.
     let mut w = v.clone();
-    let c = dms.iter().find(|d| s(d, &["name"]) == "dm-4").unwrap().get("content").cloned().unwrap();
-    let Some(Value::Arr(all)) = w.get("storage").and_then(|s| s.get("dm_devices")).cloned() else { panic!() };
+    let c = dms
+        .iter()
+        .find(|d| s(d, &["name"]) == "dm-4")
+        .unwrap()
+        .get("content")
+        .cloned()
+        .unwrap();
+    let Some(Value::Arr(all)) = w.get("storage").and_then(|s| s.get("dm_devices")).cloned() else {
+        panic!()
+    };
     let mut all = all;
-    let Value::Obj(o) = &mut all[tdata] else { panic!() };
+    let Value::Obj(o) = &mut all[tdata] else {
+        panic!()
+    };
     o.iter_mut().find(|(k, _)| k == "content").unwrap().1 = c;
     set_at(&mut w, &["storage", "dm_devices"], Value::Arr(all));
-    let fmt: String = plan(w).stage(Stage::Format).iter().map(commands::Cmd::shell).collect();
+    let fmt: String = plan(w)
+        .stage(Stage::Format)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
     assert_eq!(fmt.matches("mkfs.btrfs").count(), 2, "{fmt}");
 
     // Refused: a thin snapshot.
-    let text = v.compact().replacen("\"device_id\":2", "\"device_id\":2,\"origin\":\"root-a\"", 1);
+    let text = v.compact().replacen(
+        "\"device_id\":2",
+        "\"device_id\":2,\"origin\":\"root-a\"",
+        1,
+    );
     let w = crate::json::parse(&text).unwrap();
     assert_ne!(w.compact(), v.compact());
-    assert_eq!(plan(w).problems, vec!["thin snapshot vos-root/root-b (of root-a) holds btrfs, which the dump didn't take as a raw volume (it was mounted, or the dump is older than raw volumes): bko-holt load gives a thin snapshot its content only from a raw image"]);
+    assert_eq!(
+        plan(w).problems,
+        vec![
+            "thin snapshot vos-root/root-b (of root-a) holds btrfs, which the dump didn't take as a raw volume (it was mounted, or the dump is older than raw volumes): bko-holt load gives a thin snapshot its content only from a raw image"
+        ]
+    );
 
     // A pool without zeroing, full-error on, its data striped; root-b
     // read-only, tagged, with ACTIVATION_SKIP: the flags go on at close,
@@ -843,18 +1389,58 @@ fn thin_lvm() {
         .replacen("\"id\":\"r00tb0-aaaa-bbbb-cccc-dddd-eeee-ffffff\",\"status\":[\"READ\",\"WRITE\",\"VISIBLE\"],\"flags\":[]", "\"id\":\"r00tb0-aaaa-bbbb-cccc-dddd-eeee-ffffff\",\"status\":[\"READ\",\"VISIBLE\"],\"flags\":[\"ACTIVATION_SKIP\"],\"tags\":[\"keep\"]", 1);
     let b = plan(crate::json::parse(&text).unwrap());
     assert!(b.problems.is_empty(), "{:?}", b.problems);
-    let asm: String = b.stage(Stage::Assemble).iter().map(commands::Cmd::shell).collect();
+    let asm: String = b
+        .stage(Stage::Assemble)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
     assert!(asm.contains(&format!("lvcreate {}", lvm("--yes --type thin-pool -n root -L 19456m --poolmetadatasize 1024m -i 2 -I 64k --chunksize 64k --discards passdown --zero n --poolmetadataspare y vos-root"))), "{asm}");
-    assert!(asm.contains(&format!("lvchange {}", lvm("--errorwhenfull y vos-root/root"))), "{asm}");
+    assert!(
+        asm.contains(&format!(
+            "lvchange {}",
+            lvm("--errorwhenfull y vos-root/root")
+        )),
+        "{asm}"
+    );
     // (lvm2 2.03's lvcreate refuses --errorwhenfull with --type thin-pool;
     // lvchange fails setting it to what it is already, so a pool queueing
     // writes, as the first plan's, gets no lvchange.)
-    assert!(!asm.lines().any(|l| l.contains("--type thin-pool") && l.contains("--errorwhenfull")), "{asm}");
-    assert!(asm.contains(&format!("lvcreate {}", lvm("--type thin -V 19456m -n root-b --thinpool root --addtag keep vos-root"))), "{asm}");
-    let close: String = b.stage(Stage::Close).iter().map(commands::Cmd::shell).collect();
-    let (skip, ro) = (close.find(&format!("lvchange {}", lvm("--setactivationskip y vos-root/root-b"))).expect(&close), close.find(&format!("lvchange {}", lvm("--permission r vos-root/root-b"))).expect(&close));
+    assert!(
+        !asm.lines()
+            .any(|l| l.contains("--type thin-pool") && l.contains("--errorwhenfull")),
+        "{asm}"
+    );
+    assert!(
+        asm.contains(&format!(
+            "lvcreate {}",
+            lvm("--type thin -V 19456m -n root-b --thinpool root --addtag keep vos-root")
+        )),
+        "{asm}"
+    );
+    let close: String = b
+        .stage(Stage::Close)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
+    let (skip, ro) = (
+        close
+            .find(&format!(
+                "lvchange {}",
+                lvm("--setactivationskip y vos-root/root-b")
+            ))
+            .expect(&close),
+        close
+            .find(&format!(
+                "lvchange {}",
+                lvm("--permission r vos-root/root-b")
+            ))
+            .expect(&close),
+    );
     let off = close.find("--activate n vos-root").expect(&close);
-    assert!(skip < off && ro < off && !close.contains("root-a"), "{close}");
+    assert!(
+        skip < off && ro < off && !close.contains("root-a"),
+        "{close}"
+    );
 }
 
 /// Vanilla OS's VG `vos-var` on vda4: one linear LV `var` (btrfs vos-var).
@@ -946,20 +1532,63 @@ fn vanilla_tree(b_used: bool) -> Tree {
         &GptSpec {
             disk_guid: "7a05e5e5-0000-4000-8000-00000000d15d",
             parts: vec![
-                (LINUX, "7a05e5e5-0000-4000-8000-000000000001", 2048, 18431, 0, "vos-boot"),
+                (
+                    LINUX,
+                    "7a05e5e5-0000-4000-8000-000000000001",
+                    2048,
+                    18431,
+                    0,
+                    "vos-boot",
+                ),
                 (ESP, THIN_ESP, 18432, 90111, 0, "vos-efi"),
-                (LINUX, "7a05e5e5-0000-4000-8000-000000000003", 90112, 131071, 0, "vos-root"),
-                (LINUX, "7a05e5e5-0000-4000-8000-000000000004", 131072, 163806, 0, "vos-var"),
+                (
+                    LINUX,
+                    "7a05e5e5-0000-4000-8000-000000000003",
+                    90112,
+                    131071,
+                    0,
+                    "vos-root",
+                ),
+                (
+                    LINUX,
+                    "7a05e5e5-0000-4000-8000-000000000004",
+                    131072,
+                    163806,
+                    0,
+                    "vos-var",
+                ),
             ],
         },
     );
-    put(&mut img, 2048, &ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, "vos-boot"));
-    put(&mut img, 18432, &fat::sample::fat32(71680, 0x7a05_e5e5, "vos-efi"));
-    put(&mut img, 90112, &lvm::sample::pv_with(512, 1 << 20, lvm::sample::THIN));
+    put(
+        &mut img,
+        2048,
+        &ext::sample::image(
+            0x4 | 0x8 | 0x10 | 0x20,
+            0x2 | 0x40 | 0x80 | 0x200,
+            0x1 | 0x2 | 0x400,
+            "vos-boot",
+        ),
+    );
+    put(
+        &mut img,
+        18432,
+        &fat::sample::fat32(71680, 0x7a05_e5e5, "vos-efi"),
+    );
+    put(
+        &mut img,
+        90112,
+        &lvm::sample::pv_with(512, 1 << 20, lvm::sample::THIN),
+    );
     let mut var_pv = lvm::sample::pv_with(512, 1 << 20, VOS_VAR_VG);
     var_pv[544..576].copy_from_slice(b"VaRpv0aaaabbbbccccddddeeeeffffff");
     put(&mut img, 131072, &var_pv);
-    let mut init = ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, "vos-init");
+    let mut init = ext::sample::image(
+        0x4 | 0x8 | 0x10 | 0x20,
+        0x2 | 0x40 | 0x80 | 0x200,
+        0x1 | 0x2 | 0x400,
+        "vos-init",
+    );
     init[1024 + 104] = 0x20;
     let root_a = btrfs::sample::image("vos-a", 0x1 | 0x2 | 0x40 | 0x100 | 0x200);
     let mut root_b = root_a.clone();
@@ -981,16 +1610,75 @@ fn vanilla_tree(b_used: bool) -> Tree {
         .file("/sys/block/vda/vda3/holders/dm-2", "")
         .file("/sys/block/vda/vda4/holders/dm-7", "");
     for (dm, devno, name, uuid, image, slaves) in [
-        ("dm-0", "253:0", "vos--root-init", lv("1n1t00"), &init, vec!["vda3"]),
-        ("dm-1", "253:1", "vos--root-root_tmeta", lv("tm3ta0") + "-tmeta", &zero, vec!["vda3"]),
-        ("dm-2", "253:2", "vos--root-root_tdata", lv("td4ta0") + "-tdata", &zero, vec!["vda3"]),
-        ("dm-3", "253:3", "vos--root-root-tpool", lv("p00l00") + "-tpool", &zero, vec!["dm-1", "dm-2"]),
-        ("dm-4", "253:4", "vos--root-root--a", lv("r00ta0"), &root_a, vec!["dm-3"]),
-        ("dm-5", "253:5", "vos--root-root--b", lv("r00tb0"), &root_b, vec!["dm-3"]),
-        ("dm-6", "253:6", "vos--root-root", lv("p00l00") + "-pool", &zero, vec!["dm-3"]),
-        ("dm-7", "253:7", "vos--var-var", "LVM-VaRvg0AAAABBBBCCCCDDDDEEEEFFFFFFv4r000aaaabbbbccccddddeeeeffffff".to_string(), &var, vec!["vda4"]),
+        (
+            "dm-0",
+            "253:0",
+            "vos--root-init",
+            lv("1n1t00"),
+            &init,
+            vec!["vda3"],
+        ),
+        (
+            "dm-1",
+            "253:1",
+            "vos--root-root_tmeta",
+            lv("tm3ta0") + "-tmeta",
+            &zero,
+            vec!["vda3"],
+        ),
+        (
+            "dm-2",
+            "253:2",
+            "vos--root-root_tdata",
+            lv("td4ta0") + "-tdata",
+            &zero,
+            vec!["vda3"],
+        ),
+        (
+            "dm-3",
+            "253:3",
+            "vos--root-root-tpool",
+            lv("p00l00") + "-tpool",
+            &zero,
+            vec!["dm-1", "dm-2"],
+        ),
+        (
+            "dm-4",
+            "253:4",
+            "vos--root-root--a",
+            lv("r00ta0"),
+            &root_a,
+            vec!["dm-3"],
+        ),
+        (
+            "dm-5",
+            "253:5",
+            "vos--root-root--b",
+            lv("r00tb0"),
+            &root_b,
+            vec!["dm-3"],
+        ),
+        (
+            "dm-6",
+            "253:6",
+            "vos--root-root",
+            lv("p00l00") + "-pool",
+            &zero,
+            vec!["dm-3"],
+        ),
+        (
+            "dm-7",
+            "253:7",
+            "vos--var-var",
+            "LVM-VaRvg0AAAABBBBCCCCDDDDEEEEFFFFFFv4r000aaaabbbbccccddddeeeeffffff".to_string(),
+            &var,
+            vec!["vda4"],
+        ),
     ] {
-        t.disk(dm, devno, image, 512).file(&format!("/sys/block/{dm}/dm/name"), format!("{name}\n")).file(&format!("/sys/block/{dm}/dm/uuid"), format!("{uuid}\n")).symlink(&format!("/dev/mapper/{name}"), &format!("../{dm}"));
+        t.disk(dm, devno, image, 512)
+            .file(&format!("/sys/block/{dm}/dm/name"), format!("{name}\n"))
+            .file(&format!("/sys/block/{dm}/dm/uuid"), format!("{uuid}\n"))
+            .symlink(&format!("/dev/mapper/{name}"), &format!("../{dm}"));
         for s in slaves {
             t.file(&format!("/sys/block/{dm}/slaves/{s}"), "");
             if s.starts_with("dm-") {
@@ -1002,7 +1690,10 @@ fn vanilla_tree(b_used: bool) -> Tree {
     let base_cfg = "{\n    \"maxParallelDownloads\": 2,\n    \"registry\": \"ghcr.io\",\n    \"name\": \"vanilla-os/gnome\",\n    \"tag\": \"main\",\n    \"updateInitramfsCmd\": \"lpkg --unlock && /usr/sbin/update-initramfs -u && lpkg --lock\",\n    \"partLabelVar\": \"vos-var\",\n    \"partLabelA\": \"vos-a\",\n    \"partLabelB\": \"vos-b\",\n    \"partLabelBoot\": \"vos-boot\",\n    \"partLabelEfi\": \"vos-efi\",\n    \"PartCryptVar\": \"/dev/mapper/vos--var-var\",\n\n    \"thinProvisioning\": false,\n    \"thinInitVolume\": \"\"\n}\n";
     // The installer's: the image's with its last line cut, keys appended.
     let cut: Vec<&str> = base_cfg.lines().collect();
-    let etc_cfg = format!("{},\n  \"PartCryptVar\": \"/dev/mapper/vos--var-var\",\n  \"thinProvisioning\": true,\n    \"thinInitVolume\": \"vos-init\"\n}}\n", cut[..cut.len() - 1].join("\n"));
+    let etc_cfg = format!(
+        "{},\n  \"PartCryptVar\": \"/dev/mapper/vos--var-var\",\n  \"thinProvisioning\": true,\n    \"thinInitVolume\": \"vos-init\"\n}}\n",
+        cut[..cut.len() - 1].join("\n")
+    );
     let os = "PRETTY_NAME=\"Vanilla OS 3.0\"\nNAME=\"Vanilla OS\"\nVERSION_ID=\"3.0\"\nVERSION=\"3.0 Reunion\"\nVERSION_CODENAME=reunion\nID=vanilla\nID_LIKE=debian\nHOME_URL=\"https://vanillaos.org/\"\n";
     let init_at = "/run/bko-holt/abroot-vos-init";
     t.file("/etc/os-release", os)
@@ -1070,25 +1761,48 @@ fn vanilla_runner() -> FakeRunner {
     for m in ["/", "/var"] {
         r = r
             .with(&format!("btrfs subvolume list -a -p -u -q {m}"), "")
-            .with(&format!("btrfs subvolume get-default {m}"), "ID 5 (FS_TREE)\n")
+            .with(
+                &format!("btrfs subvolume get-default {m}"),
+                "ID 5 (FS_TREE)\n",
+            )
             .with(&format!("btrfs subvolume list -a -r {m}"), "")
             .with(&format!("btrfs property get -t s {m}"), "ro=false\n")
             .with(&format!("btrfs property get -t i {m}"), "");
     }
-    for (ty, node, label) in [("ext4", "vos--root-init", "vos-init"), ("btrfs", "vos--root-root--b", "vos-b")] {
+    for (ty, node, label) in [
+        ("ext4", "vos--root-init", "vos-init"),
+        ("btrfs", "vos--root-root--b", "vos-b"),
+    ] {
         let at = format!("/run/bko-holt/abroot-{label}");
-        r = r.with(&format!("mount -t {ty} -o {} /dev/mapper/{node} {at}", crate::abroot::ro_options(ty)), "").with(&format!("umount {at}"), "");
+        r = r
+            .with(
+                &format!(
+                    "mount -t {ty} -o {} /dev/mapper/{node} {at}",
+                    crate::abroot::ro_options(ty)
+                ),
+                "",
+            )
+            .with(&format!("umount {at}"), "");
     }
     r
 }
 
 fn vanilla_plan(v: &Value, extra: &[&str]) -> crate::load::commands::Built {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let l = Layout::from_json(v.clone()).unwrap();
     let mut a = vec!["l.json".to_string()];
     a.extend(extra.iter().map(|s| s.to_string()));
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
-    commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() })
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
+        unreachable!()
+    };
+    commands::build(
+        &l,
+        &o,
+        &Mapping {
+            pairs: vec![("vda".into(), "vdb".into())],
+            ..Mapping::default()
+        },
+    )
 }
 
 /// Vanilla OS 3 with both roots used, running from vos-a: boot.abroot
@@ -1102,7 +1816,7 @@ fn vanilla_plan(v: &Value, extra: &[&str]) -> crate::load::commands::Built {
 /// log.
 #[test]
 fn vanilla_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let v = run(&vanilla_tree(true), true, vanilla_runner());
     assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
     assert_eq!(s(&v, &["os", "id"]), "vanilla");
@@ -1111,50 +1825,129 @@ fn vanilla_guest() {
     assert_eq!(s(a, &["future"]), "vos-b");
     assert_eq!(a.get("thin_two_roots"), Some(&Value::Bool(true)));
     assert_eq!(a.get("operation_lock"), Some(&Value::Bool(false)));
-    assert_eq!(a.at(&["config", "thinProvisioning"]), Some(&Value::Bool(true)));
+    assert_eq!(
+        a.at(&["config", "thinProvisioning"]),
+        Some(&Value::Bool(true))
+    );
     assert_eq!(s(a, &["config", "thinInitVolume"]), "vos-init");
-    assert_eq!(s(a, &["config", "PartCryptVar"]), "/dev/mapper/vos--var-var");
+    assert_eq!(
+        s(a, &["config", "PartCryptVar"]),
+        "/dev/mapper/vos--var-var"
+    );
     assert_eq!(arr(a, &["config", "files"]).len(), 2);
     assert_eq!(s(a, &["grub", "default"]), "0");
     assert_eq!(s(a, &["grub", "default_label"]), "vos-a");
-    assert_eq!(s(a, &["grub", "entries", "1", "title"]), "Previous State (B)");
-    assert_eq!(s(a, &["grub", "entries", "1", "configfile"]), "/vos-b/abroot.cfg");
+    assert_eq!(
+        s(a, &["grub", "entries", "1", "title"]),
+        "Previous State (B)"
+    );
+    assert_eq!(
+        s(a, &["grub", "entries", "1", "configfile"]),
+        "/vos-b/abroot.cfg"
+    );
     assert_eq!(a.at(&["grub", "future_cfg"]), Some(&Value::Bool(false)));
     assert_eq!(s(a, &["init", "device"]), "dm-0");
     assert_eq!(s(a, &["init", "uuid"]), VANILLA_INIT);
     assert_eq!(a.at(&["init", "read"]), Some(&Value::Bool(true)));
     assert_eq!(s(a, &["var", "dm_name"]), "vos--var-var");
-    assert_eq!(s(a, &["kargs"]), "quiet splash bgrt_disable $vt_handoff lsm=integrity");
-    let (ra, rb) = (a.at(&["roots", "0"]).unwrap(), a.at(&["roots", "1"]).unwrap());
-    assert_eq!((s(ra, &["label"]), s(ra, &["device"]), s(ra, &["uuid"])), ("vos-a", "dm-4", VANILLA_A));
+    assert_eq!(
+        s(a, &["kargs"]),
+        "quiet splash bgrt_disable $vt_handoff lsm=integrity"
+    );
+    let (ra, rb) = (
+        a.at(&["roots", "0"]).unwrap(),
+        a.at(&["roots", "1"]).unwrap(),
+    );
+    assert_eq!(
+        (s(ra, &["label"]), s(ra, &["device"]), s(ra, &["uuid"])),
+        ("vos-a", "dm-4", VANILLA_A)
+    );
     assert_eq!(ra.get("present"), Some(&Value::Bool(true)));
     assert!(s(ra, &["abimage", "digest"]).starts_with("sha256:a1a1"));
-    assert_eq!(s(ra, &["init", "abroot_cfg", "root"]), format!("UUID={VANILLA_A}"));
+    assert_eq!(
+        s(ra, &["init", "abroot_cfg", "root"]),
+        format!("UUID={VANILLA_A}")
+    );
     assert_eq!(arr(ra, &["init", "kernels"]), &vec![Value::from(VANILLA_K)]);
     assert_eq!((s(rb, &["label"]), s(rb, &["device"])), ("vos-b", "dm-5"));
-    assert_eq!((rb.get("read"), rb.get("empty")), (Some(&Value::Bool(true)), Some(&Value::Bool(false))));
+    assert_eq!(
+        (rb.get("read"), rb.get("empty")),
+        (Some(&Value::Bool(true)), Some(&Value::Bool(false)))
+    );
     assert!(s(rb, &["abimage", "digest"]).starts_with("sha256:b2b2"));
     assert_eq!(s(rb, &["init", "abroot_cfg", "search_uuid"]), VANILLA_INIT);
-    assert_eq!(s(rb, &["init", "abroot_cfg", "root"]), "/dev/mapper/vos--root-root--b");
+    assert_eq!(
+        s(rb, &["init", "abroot_cfg", "root"]),
+        "/dev/mapper/vos--root-root--b"
+    );
     // The init LV's kernels, each marked with its root; nothing in /boot.
     let ks = arr(&v, &["boot", "kernels", "installed"]);
     assert_eq!(ks.len(), 2, "{ks:?}");
-    assert_eq!((s(&ks[0], &["version"]), s(&ks[0], &["dir"]), s(&ks[0], &["root_label"])), (VANILLA_K, "/boot/init/vos-a", "vos-a"));
-    assert_eq!((ks[0].get("running"), ks[0].get("modules_installed")), (Some(&Value::Bool(true)), Some(&Value::Bool(true))));
-    assert_eq!((s(&ks[1], &["version"]), s(&ks[1], &["root_label"])), (VANILLA_KB, "vos-b"));
+    assert_eq!(
+        (
+            s(&ks[0], &["version"]),
+            s(&ks[0], &["dir"]),
+            s(&ks[0], &["root_label"])
+        ),
+        (VANILLA_K, "/boot/init/vos-a", "vos-a")
+    );
+    assert_eq!(
+        (ks[0].get("running"), ks[0].get("modules_installed")),
+        (Some(&Value::Bool(true)), Some(&Value::Bool(true)))
+    );
+    assert_eq!(
+        (s(&ks[1], &["version"]), s(&ks[1], &["root_label"])),
+        (VANILLA_KB, "vos-b")
+    );
     assert_eq!(u(&ks[1], &["vmlinuz_bytes"]), 310);
     // GRUB through shim, as for any Debian.
     assert_eq!(s(&v, &["boot", "loader", "name"]), "grub");
-    assert_eq!(v.at(&["boot", "loader", "via_shim"]), Some(&Value::Bool(true)));
+    assert_eq!(
+        v.at(&["boot", "loader", "via_shim"]),
+        Some(&Value::Bool(true))
+    );
     // backup_sources: ABRoot's tree; the two unmounted ones with no `from`
     // and the mount a backup makes; `/` with the overlay's note.
     let bs = arr(&v, &["storage", "backup_sources"]);
-    let paths: Vec<&str> = bs.iter().map(|b| b.get("path").and_then(Value::as_str).unwrap()).collect();
-    assert_eq!(paths, vec!["/", "/boot", "/boot/efi", "/boot/init", "/part-future", "/var"]);
+    let paths: Vec<&str> = bs
+        .iter()
+        .map(|b| b.get("path").and_then(Value::as_str).unwrap())
+        .collect();
+    assert_eq!(
+        paths,
+        vec![
+            "/",
+            "/boot",
+            "/boot/efi",
+            "/boot/init",
+            "/part-future",
+            "/var"
+        ]
+    );
     assert!(s(&bs[0], &["note"]).contains("mount --bind / DIR"));
-    for (i, node, ty, o) in [(3, "/dev/mapper/vos--root-init", "ext4", "ro,noload,nodev,nosuid,noexec"), (4, "/dev/mapper/vos--root-root--b", "btrfs", "ro,rescue=nologreplay,nodev,nosuid,noexec")] {
+    for (i, node, ty, o) in [
+        (
+            3,
+            "/dev/mapper/vos--root-init",
+            "ext4",
+            "ro,noload,nodev,nosuid,noexec",
+        ),
+        (
+            4,
+            "/dev/mapper/vos--root-root--b",
+            "btrfs",
+            "ro,rescue=nologreplay,nodev,nosuid,noexec",
+        ),
+    ] {
         assert!(bs[i].get("from").is_some_and(Value::is_null), "{:?}", bs[i]);
-        assert_eq!((s(&bs[i], &["mount", "device"]), s(&bs[i], &["mount", "fstype"]), s(&bs[i], &["mount", "options"])), (node, ty, o));
+        assert_eq!(
+            (
+                s(&bs[i], &["mount", "device"]),
+                s(&bs[i], &["mount", "fstype"]),
+                s(&bs[i], &["mount", "options"])
+            ),
+            (node, ty, o)
+        );
         assert!(s(&bs[i], &["note"]).starts_with("not mounted on the running system"));
     }
     assert!(bs[5].get("mount").is_none() && s(&bs[5], &["from"]) == "/var");
@@ -1162,9 +1955,24 @@ fn vanilla_guest() {
     let b = vanilla_plan(&v, &[]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     assert_eq!(crate::other::restored_marker(&v), "abimage.abr");
-    assert!(b.notes.iter().any(|n| n.contains("restored as they were; no initramfs, no grub-install, no update-grub")), "{:?}", b.notes);
-    assert!(b.notes.iter().any(|n| n.contains("detached")), "{:?}", b.notes);
-    assert!(!b.notes.iter().any(|n| n.contains("was empty")), "{:?}", b.notes);
+    assert!(
+        b.notes
+            .iter()
+            .any(|n| n
+                .contains("restored as they were; no initramfs, no grub-install, no update-grub")),
+        "{:?}",
+        b.notes
+    );
+    assert!(
+        b.notes.iter().any(|n| n.contains("detached")),
+        "{:?}",
+        b.notes
+    );
+    assert!(
+        !b.notes.iter().any(|n| n.contains("was empty")),
+        "{:?}",
+        b.notes
+    );
     let text = |st: Stage| b.stage(st).iter().map(Cmd::shell).collect::<String>();
     // Assemble: both VGs, the thin pool and its thin LVs by lvcreate.
     let asm = text(Stage::Assemble);
@@ -1180,20 +1988,42 @@ fn vanilla_guest() {
     }
     // Format: every filesystem with its label and UUID.
     let fmt = text(Stage::Format);
-    let line = |end: &str| fmt.lines().find(|l| l.starts_with("mk") && l.split_whitespace().any(|w| w == end)).unwrap_or_else(|| panic!("{end}: {fmt}")).to_string();
+    let line = |end: &str| {
+        fmt.lines()
+            .find(|l| l.starts_with("mk") && l.split_whitespace().any(|w| w == end))
+            .unwrap_or_else(|| panic!("{end}: {fmt}"))
+            .to_string()
+    };
     for (end, label, uuid) in [
         ("/dev/mapper/vos--root-root--a", "vos-a", VANILLA_A),
         ("/dev/mapper/vos--root-root--b", "vos-b", VANILLA_B),
         ("/dev/mapper/vos--root-init", "vos-init", VANILLA_INIT),
-        ("/dev/mapper/vos--var-var", "vos-var", "d0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf"),
-        ("/dev/vdb1", "vos-boot", "10111213-1415-1617-1819-1a1b1c1d1e1f"),
+        (
+            "/dev/mapper/vos--var-var",
+            "vos-var",
+            "d0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf",
+        ),
+        (
+            "/dev/vdb1",
+            "vos-boot",
+            "10111213-1415-1617-1819-1a1b1c1d1e1f",
+        ),
     ] {
         let l = line(end);
-        assert!(l.contains(&format!("-L {label}")) && l.contains(&format!("-U {uuid}")), "{l}");
+        assert!(
+            l.contains(&format!("-L {label}")) && l.contains(&format!("-U {uuid}")),
+            "{l}"
+        );
     }
     let esp = line("/dev/vdb2");
-    assert!(esp.starts_with("mkfs.fat") && esp.contains("vos-efi") && esp.contains("7A05E5E5"), "{esp}");
-    assert!(!fmt.contains("tdata") && !fmt.contains("tmeta") && !fmt.contains("tpool"), "{fmt}");
+    assert!(
+        esp.starts_with("mkfs.fat") && esp.contains("vos-efi") && esp.contains("7A05E5E5"),
+        "{esp}"
+    );
+    assert!(
+        !fmt.contains("tdata") && !fmt.contains("tmeta") && !fmt.contains("tpool"),
+        "{fmt}"
+    );
     // Mount: fstab's tree, then ABRoot's three, each made first.
     let m = text(Stage::Mount);
     let order = [
@@ -1206,27 +2036,71 @@ fn vanilla_guest() {
     ];
     let mut at = 0;
     for l in order {
-        let i = m[at..].find(l).unwrap_or_else(|| panic!("{l} not after {at}: {m}")) + at;
+        let i = m[at..]
+            .find(l)
+            .unwrap_or_else(|| panic!("{l} not after {at}: {m}"))
+            + at;
         at = i + l.len();
     }
-    assert!(b.mount_points.iter().any(|p| p == "/mnt/bko-target/boot/init") && b.mount_points.iter().any(|p| p == "/mnt/bko-target/part-future"), "{:?}", b.mount_points);
+    assert!(
+        b.mount_points
+            .iter()
+            .any(|p| p == "/mnt/bko-target/boot/init")
+            && b.mount_points
+                .iter()
+                .any(|p| p == "/mnt/bko-target/part-future"),
+        "{:?}",
+        b.mount_points
+    );
     // Boot: nothing regenerated, nothing chrooted.
     let bt = text(Stage::Boot);
-    let run: String = bt.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("\n");
-    for no in ["chroot", "update-initramfs", "grub-install", "update-grub", "grub-mkconfig", "--rbind", "dracut", "lvm-devices", "os-prober"] {
+    let run: String = bt
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for no in [
+        "chroot",
+        "update-initramfs",
+        "grub-install",
+        "update-grub",
+        "grub-mkconfig",
+        "--rbind",
+        "dracut",
+        "lvm-devices",
+        "os-prober",
+    ] {
         assert!(!run.contains(no), "{no}: {bt}");
     }
     let pos = |x: &str| bt.find(x).unwrap_or_else(|| panic!("{x}: {bt}"));
     let listed = pos("atimes.before");
-    let check = pos("t=$(readlink -f /mnt/bko-target) || exit 1; want=vos-a; ilv=vos--root-init; iuuid=20111213-1415-1617-1819-1a1b1c1d1e1f;");
+    let check = pos(
+        "t=$(readlink -f /mnt/bko-target) || exit 1; want=vos-a; ilv=vos--root-init; iuuid=20111213-1415-1617-1819-1a1b1c1d1e1f;",
+    );
     assert!(bt.contains(&format!("chk vos-a 0 {VANILLA_A} vos--root-root--a /dev/vos-root/root-a\nchk vos-b 0 {VANILLA_B} vos--root-root--b /dev/vos-root/root-b\n")), "{bt}");
-    let nvram = pos("efibootmgr --quiet --create --disk /dev/vdb --part 2 --label vanilla --loader '\\EFI\\vanilla\\shimx64.efi'\n");
+    let nvram = pos(
+        "efibootmgr --quiet --create --disk /dev/vdb --part 2 --label vanilla --loader '\\EFI\\vanilla\\shimx64.efi'\n",
+    );
     let log = pos("mkdir -p /mnt/bko-target/var/log/bko-holt\n");
     let back = pos("atimes.after");
-    assert!(listed < check && check < nvram && nvram < log && log < back, "{bt}");
-    assert!(b.stage(Stage::Boot).iter().any(|c| c.warns && c.argv.get(2).is_some_and(|x| x.contains("chk vos-b"))));
+    assert!(
+        listed < check && check < nvram && nvram < log && log < back,
+        "{bt}"
+    );
+    assert!(
+        b.stage(Stage::Boot)
+            .iter()
+            .any(|c| c.warns && c.argv.get(2).is_some_and(|x| x.contains("chk vos-b")))
+    );
     // --no-nvram: no UEFI entry.
-    assert!(!vanilla_plan(&v, &["--no-nvram"]).stage(Stage::Boot).iter().map(Cmd::shell).collect::<String>().contains("efibootmgr"));
+    assert!(
+        !vanilla_plan(&v, &["--no-nvram"])
+            .stage(Stage::Boot)
+            .iter()
+            .map(Cmd::shell)
+            .collect::<String>()
+            .contains("efibootmgr")
+    );
 }
 
 /// The future root's btrfs allocation profiles (V5's open finding): sysfs
@@ -1237,7 +2111,7 @@ fn vanilla_guest() {
 /// the umount, as the kernel does.
 #[test]
 fn vanilla_future_root_btrfs_profiles() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     struct SysfsMounts {
         inner: FakeRunner,
         sysfs: std::path::PathBuf,
@@ -1248,7 +2122,8 @@ fn vanilla_future_root_btrfs_profiles() {
             if out.is_some() && args.last() == Some(&"/run/bko-holt/abroot-vos-b") {
                 if prog == "mount" {
                     for (k, p) in [("data", "single"), ("metadata", "dup"), ("system", "dup")] {
-                        std::fs::create_dir_all(self.sysfs.join(format!("allocation/{k}/{p}"))).unwrap();
+                        std::fs::create_dir_all(self.sysfs.join(format!("allocation/{k}/{p}")))
+                            .unwrap();
                     }
                 } else if prog == "umount" {
                     std::fs::remove_dir_all(&self.sysfs).unwrap();
@@ -1262,24 +2137,61 @@ fn vanilla_future_root_btrfs_profiles() {
         t.dir(&format!("/sys/fs/btrfs/{VANILLA_A}/allocation/{k}"));
     }
     let profiles = |v: &Value, uuid: &str| {
-        arr(v, &["storage", "btrfs"]).iter().find(|b| b.get("uuid").and_then(Value::as_str) == Some(uuid)).and_then(|b| b.get("allocation_profiles")).cloned().unwrap()
+        arr(v, &["storage", "btrfs"])
+            .iter()
+            .find(|b| b.get("uuid").and_then(Value::as_str) == Some(uuid))
+            .and_then(|b| b.get("allocation_profiles"))
+            .cloned()
+            .unwrap()
     };
     // Without the record (sysfs never had vos-b): null, mkfs.btrfs's defaults.
     let v0 = run(&t, true, vanilla_runner());
     assert!(profiles(&v0, VANILLA_B).is_null());
-    let sys = Sys::new(t.root(), Box::new(SysfsMounts { inner: vanilla_runner(), sysfs: t.p(&format!("/sys/fs/btrfs/{VANILLA_B}")) }), true);
-    let v = crate::report::build(&sys, crate::osrel::read(&sys).as_ref(), "2026-11-04T00:00:00Z");
+    let sys = Sys::new(
+        t.root(),
+        Box::new(SysfsMounts {
+            inner: vanilla_runner(),
+            sysfs: t.p(&format!("/sys/fs/btrfs/{VANILLA_B}")),
+        }),
+        true,
+    );
+    let v = crate::report::build(
+        &sys,
+        crate::osrel::read(&sys).as_ref(),
+        "2026-11-04T00:00:00Z",
+    );
     assert!(sys.warnings().is_empty(), "{:?}", sys.warnings());
-    assert!(!t.p(&format!("/sys/fs/btrfs/{VANILLA_B}")).exists(), "dump's mount of vos-b is gone, and its sysfs with it");
+    assert!(
+        !t.p(&format!("/sys/fs/btrfs/{VANILLA_B}")).exists(),
+        "dump's mount of vos-b is gone, and its sysfs with it"
+    );
     for uuid in [VANILLA_A, VANILLA_B] {
         let p = profiles(&v, uuid);
-        assert_eq!((s(&p, &["data", "0"]), s(&p, &["metadata", "0"]), s(&p, &["system", "0"])), ("single", "dup", "dup"), "{uuid}: {p:?}");
+        assert_eq!(
+            (
+                s(&p, &["data", "0"]),
+                s(&p, &["metadata", "0"]),
+                s(&p, &["system", "0"])
+            ),
+            ("single", "dup", "dup"),
+            "{uuid}: {p:?}"
+        );
     }
     let b = vanilla_plan(&v, &[]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
-    let fmt = b.stage(Stage::Format).iter().map(Cmd::shell).collect::<String>();
-    for end in ["/dev/mapper/vos--root-root--a", "/dev/mapper/vos--root-root--b"] {
-        let l = fmt.lines().find(|l| l.starts_with("mkfs.btrfs") && l.split_whitespace().any(|w| w == end)).unwrap_or_else(|| panic!("{end}: {fmt}"));
+    let fmt = b
+        .stage(Stage::Format)
+        .iter()
+        .map(Cmd::shell)
+        .collect::<String>();
+    for end in [
+        "/dev/mapper/vos--root-root--a",
+        "/dev/mapper/vos--root-root--b",
+    ] {
+        let l = fmt
+            .lines()
+            .find(|l| l.starts_with("mkfs.btrfs") && l.split_whitespace().any(|w| w == end))
+            .unwrap_or_else(|| panic!("{end}: {fmt}"));
         assert!(l.contains(" -d single -m dup "), "{l}");
     }
 }
@@ -1294,13 +2206,26 @@ fn vanilla_fresh_install_and_refusals() {
     let v = run(&t, true, vanilla_runner());
     assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
     let rb = v.at(&["boot", "abroot", "roots", "1"]).unwrap();
-    assert_eq!((rb.get("empty"), rb.get("abimage")), (Some(&Value::Bool(true)), Some(&Value::Null)));
+    assert_eq!(
+        (rb.get("empty"), rb.get("abimage")),
+        (Some(&Value::Bool(true)), Some(&Value::Null))
+    );
     assert_eq!(arr(rb, &["init", "kernels"]).len(), 0);
     assert_eq!(arr(&v, &["boot", "kernels", "installed"]).len(), 1);
     let b = vanilla_plan(&v, &[]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
-    assert!(b.notes.iter().any(|n| n.starts_with("ABRoot: vos-b was empty on the source")), "{:?}", b.notes);
-    let bt: String = b.stage(crate::load::Stage::Boot).iter().map(crate::load::commands::Cmd::shell).collect();
+    assert!(
+        b.notes
+            .iter()
+            .any(|n| n.starts_with("ABRoot: vos-b was empty on the source")),
+        "{:?}",
+        b.notes
+    );
+    let bt: String = b
+        .stage(crate::load::Stage::Boot)
+        .iter()
+        .map(crate::load::commands::Cmd::shell)
+        .collect();
     assert!(bt.contains(&format!("chk vos-b 1 {VANILLA_B} ")), "{bt}");
 
     // Refusals.
@@ -1309,29 +2234,65 @@ fn vanilla_fresh_install_and_refusals() {
         assert!(p.iter().any(|x| x.contains(want)), "{want}: {p:?}");
     };
     let mut w = v.clone();
-    set_at(&mut w, &["boot", "abroot", "operation_lock"], Value::Bool(true));
+    set_at(
+        &mut w,
+        &["boot", "abroot", "operation_lock"],
+        Value::Bool(true),
+    );
     has(&w, &[], "operation.lock was there when the dump was made");
     let mut w = v.clone();
-    set_at(&mut w, &["boot", "abroot", "thin_two_roots"], Value::Bool(false));
+    set_at(
+        &mut w,
+        &["boot", "abroot", "thin_two_roots"],
+        Value::Bool(false),
+    );
     has(&w, &[], "ABRoot: not the layout version 1 restores");
     let mut w = v.clone();
     set_at(&mut w, &["boot", "abroot", "v1_system"], Value::Bool(true));
     has(&w, &[], "ABRoot v1's /.system");
     let mut w = v.clone();
-    set_at(&mut w, &["boot", "loader", "firmware"], Value::Str("bios".into()));
+    set_at(
+        &mut w,
+        &["boot", "loader", "firmware"],
+        Value::Str("bios".into()),
+    );
     set_at(&mut w, &["firmware", "mode"], Value::Str("bios".into()));
     has(&w, &[], "ABRoot with BIOS boot isn't restored");
     let mut w = v.clone();
-    set_at(&mut w, &["boot", "abroot", "grub", "default_label"], Value::Null);
-    has(&w, &[], "the dump has no default entry of the master /boot/grub/grub.cfg");
+    set_at(
+        &mut w,
+        &["boot", "abroot", "grub", "default_label"],
+        Value::Null,
+    );
+    has(
+        &w,
+        &[],
+        "the dump has no default entry of the master /boot/grub/grub.cfg",
+    );
     has(&v, &["--new-uuids"], "--new-uuids isn't built yet");
     // The source's grub.cfg after an upgrade, before the reboot into it.
     let mut w = v.clone();
-    set_at(&mut w, &["boot", "abroot", "grub", "default_label"], Value::Str("vos-b".into()));
+    set_at(
+        &mut w,
+        &["boot", "abroot", "grub", "default_label"],
+        Value::Str("vos-b".into()),
+    );
     let b = vanilla_plan(&w, &[]);
-    assert!(b.notes.iter().any(|n| n.contains("grub.cfg boots vos-b next, not vos-a")), "{:?}", b.notes);
+    assert!(
+        b.notes
+            .iter()
+            .any(|n| n.contains("grub.cfg boots vos-b next, not vos-a")),
+        "{:?}",
+        b.notes
+    );
     // ...and here vos-b is empty: refused before anything is written.
-    assert!(b.problems.iter().any(|p| p.contains("grub.cfg boots vos-b by default, and vos-b was empty")), "{:?}", b.problems);
+    assert!(
+        b.problems
+            .iter()
+            .any(|p| p.contains("grub.cfg boots vos-b by default, and vos-b was empty")),
+        "{:?}",
+        b.problems
+    );
     // Without the present root's abimage.abr, the gate is ABRoot's /var state.
     let c = v.compact();
     let at = c.find("\"abimage\":{\"digest\":\"sha256:a1a1").unwrap();
@@ -1349,8 +2310,25 @@ fn md_raid1_tree() -> Tree {
     for (img, g) in [(&mut a, "a"), (&mut b, "b")] {
         let du = format!("6f1c2c3d-0000-4000-8000-00000000000{g}");
         let pu = format!("aaaaaaaa-0000-0000-0000-00000000000{g}");
-        write_gpt(img, 512, &GptSpec { disk_guid: &du, parts: vec![(BIOS_BOOT, &pu, 34, 2047, 0, ""), (RAID, &pu, 2048, 32734, 0, "")] });
-        let member = md::sample::v1(30687 * 512, 4096, "cinqcent:0", 1, if g == "a" { 0 } else { 1 }, if g == "a" { 0 } else { 1 });
+        write_gpt(
+            img,
+            512,
+            &GptSpec {
+                disk_guid: &du,
+                parts: vec![
+                    (BIOS_BOOT, &pu, 34, 2047, 0, ""),
+                    (RAID, &pu, 2048, 32734, 0, ""),
+                ],
+            },
+        );
+        let member = md::sample::v1(
+            30687 * 512,
+            4096,
+            "cinqcent:0",
+            1,
+            if g == "a" { 0 } else { 1 },
+            if g == "a" { 0 } else { 1 },
+        );
         put(img, 2048, &member);
     }
     let array = ext::sample::image(0x4, 0x2 | 0x40 | 0x80, 0x1, "data");
@@ -1386,17 +2364,31 @@ fn md_raid1() {
     let v = run(&t, true, FakeRunner::default());
     let md0 = v.at(&["storage", "md_arrays", "0"]).unwrap();
     assert_eq!(s(md0, &["md", "level"]), "raid1");
-    assert_eq!(s(md0, &["md", "uuid"]), "30313233:34353637:38393a3b:3c3d3e3f");
+    assert_eq!(
+        s(md0, &["md", "uuid"]),
+        "30313233:34353637:38393a3b:3c3d3e3f"
+    );
     assert_eq!(arr(md0, &["md", "members"]).len(), 2);
     assert_eq!(s(md0, &["md", "members", "1", "state"]), "in_sync");
     assert_eq!(s(md0, &["content", "type"]), "ext4");
     assert_eq!(s(md0, &["content", "label"]), "data");
-    let m = v.at(&["storage", "disks", "1", "partitions", "1", "content"]).unwrap();
+    let m = v
+        .at(&["storage", "disks", "1", "partitions", "1", "content"])
+        .unwrap();
     assert_eq!(s(m, &["type"]), "linux_raid_member");
     assert_eq!(s(m, &["mdadm_uuid"]), "30313233:34353637:38393a3b:3c3d3e3f");
     assert_eq!(s(m, &["device_role"]), "active 1");
-    assert_eq!(s(&v, &["storage", "mdadm_conf", "arrays", "0", "name"]), "cinqcent:0");
-    assert_eq!(s(&v, &["storage", "disks", "0", "partitions", "0", "type_name"]), "BIOS boot");
+    assert_eq!(
+        s(&v, &["storage", "mdadm_conf", "arrays", "0", "name"]),
+        "cinqcent:0"
+    );
+    assert_eq!(
+        s(
+            &v,
+            &["storage", "disks", "0", "partitions", "0", "type_name"]
+        ),
+        "BIOS boot"
+    );
     // md0 shows under both members in the topology.
     let topo = v.at(&["storage", "topology"]).unwrap().compact();
     assert_eq!(topo.matches("md0 (md, 64 KiB) ext4").count(), 2, "{topo}");
@@ -1461,31 +2453,109 @@ fn zfs_root() {
     assert_eq!(s(pool, &["pool_guid"]), "777");
     assert_eq!(s(pool, &["top_level_vdevs", "0", "path"]), "/dev/vda3");
     assert_eq!(arr(pool, &["member_devices"])[0].as_str(), Some("vda3"));
-    assert_eq!(u(&v, &["storage", "zfs", "zpool_cache", "rpool", "pool_guid"]), 777);
+    assert_eq!(
+        u(&v, &["storage", "zfs", "zpool_cache", "rpool", "pool_guid"]),
+        777
+    );
     let tools = v.at(&["storage", "zfs", "tools"]).unwrap();
-    assert_eq!(s(tools, &["imported_pools", "0", "properties", "ashift"]), "12");
-    assert!(tools.at(&["imported_pools", "0", "properties", "free"]).is_none());
-    assert_eq!(s(tools, &["imported_pools", "0", "features", "encryption"]), "enabled");
+    assert_eq!(
+        s(tools, &["imported_pools", "0", "properties", "ashift"]),
+        "12"
+    );
+    assert!(
+        tools
+            .at(&["imported_pools", "0", "properties", "free"])
+            .is_none()
+    );
+    assert_eq!(
+        s(tools, &["imported_pools", "0", "features", "encryption"]),
+        "enabled"
+    );
     assert_eq!(s(tools, &["datasets", "1", "name"]), "rpool/ROOT/debian");
     assert_eq!(s(tools, &["datasets", "1", "canmount"]), "noauto");
     assert_eq!(u(tools, &["datasets", "1", "recordsize"]), 131072);
     assert!(tools.at(&["datasets", "1", "volsize"]).unwrap().is_null());
     assert_eq!(s(tools, &["datasets", "1", "casesensitivity"]), "sensitive");
     // Every local property, user properties too, with its source.
-    assert_eq!(s(tools, &["datasets", "1", "properties", "canmount", "value"]), "noauto");
-    assert_eq!(s(tools, &["datasets", "0", "properties", "com.example:tag", "value"]), "x y");
-    assert_eq!(s(tools, &["datasets", "0", "properties", "compression", "source"]), "local");
-    assert!(tools.at(&["datasets", "0", "properties", "canmount"]).is_none());
+    assert_eq!(
+        s(tools, &["datasets", "1", "properties", "canmount", "value"]),
+        "noauto"
+    );
+    assert_eq!(
+        s(
+            tools,
+            &["datasets", "0", "properties", "com.example:tag", "value"]
+        ),
+        "x y"
+    );
+    assert_eq!(
+        s(
+            tools,
+            &["datasets", "0", "properties", "compression", "source"]
+        ),
+        "local"
+    );
+    assert!(
+        tools
+            .at(&["datasets", "0", "properties", "canmount"])
+            .is_none()
+    );
     // The pool's locally set properties, and its vdev tree from zpool status.
-    assert_eq!(s(tools, &["imported_pools", "0", "local_properties", "ashift"]), "12");
-    assert!(tools.at(&["imported_pools", "0", "local_properties", "size"]).is_none());
-    assert_eq!(s(tools, &["imported_pools", "0", "vdevs", "vdevs", "rpool", "vdev_type"]), "root");
-    assert_eq!(s(tools, &["imported_pools", "0", "vdevs", "vdevs", "rpool", "vdevs", "/dev/vda3", "path"]), "/dev/vda3");
-    assert!(tools.at(&["imported_pools", "0", "vdevs", "logs"]).unwrap().is_null());
+    assert_eq!(
+        s(
+            tools,
+            &["imported_pools", "0", "local_properties", "ashift"]
+        ),
+        "12"
+    );
+    assert!(
+        tools
+            .at(&["imported_pools", "0", "local_properties", "size"])
+            .is_none()
+    );
+    assert_eq!(
+        s(
+            tools,
+            &[
+                "imported_pools",
+                "0",
+                "vdevs",
+                "vdevs",
+                "rpool",
+                "vdev_type"
+            ]
+        ),
+        "root"
+    );
+    assert_eq!(
+        s(
+            tools,
+            &[
+                "imported_pools",
+                "0",
+                "vdevs",
+                "vdevs",
+                "rpool",
+                "vdevs",
+                "/dev/vda3",
+                "path"
+            ]
+        ),
+        "/dev/vda3"
+    );
+    assert!(
+        tools
+            .at(&["imported_pools", "0", "vdevs", "logs"])
+            .unwrap()
+            .is_null()
+    );
     let mounts = arr(&v, &["storage", "mounts"]);
     assert_eq!(s(&mounts[0], &["fstype"]), "zfs");
     assert_eq!(s(&mounts[0], &["source"]), "rpool/ROOT/debian");
-    assert_eq!(s(&v, &["boot", "cmdline", "storage", "root"]), "ZFS=rpool/ROOT/debian");
+    assert_eq!(
+        s(&v, &["boot", "cmdline", "storage", "root"]),
+        "ZFS=rpool/ROOT/debian"
+    );
 }
 
 /// The Thinkpad's planned Chimera install, which no test guest has: UEFI,
@@ -1504,8 +2574,22 @@ fn chimera_uefi_zfs() -> (Tree, FakeRunner) {
         &GptSpec {
             disk_guid: "6f1c2c3d-0000-4000-8000-00000000cccc",
             parts: vec![
-                (ESP, "0b5f04ed-e731-4ac6-933e-83ff25657722", 2048, 73727, 0, ""),
-                ("6a898cc3-1dd2-11b2-99a6-080020c9b98d", "21112222-3333-4444-5555-666677778888", 73728, 190463, 0, ""),
+                (
+                    ESP,
+                    "0b5f04ed-e731-4ac6-933e-83ff25657722",
+                    2048,
+                    73727,
+                    0,
+                    "",
+                ),
+                (
+                    "6a898cc3-1dd2-11b2-99a6-080020c9b98d",
+                    "21112222-3333-4444-5555-666677778888",
+                    73728,
+                    190463,
+                    0,
+                    "",
+                ),
             ],
         },
     );
@@ -1597,55 +2681,121 @@ fn chimera_uefi_zfs_thinkpad() {
     assert_eq!(s(&v, &["boot", "loader", "name"]), "systemd-boot");
     assert_eq!(s(&v, &["boot", "packages", "systemd-boot"]), "256.11-r5");
     assert_eq!(s(&v, &["boot", "esps", "0", "mounted_at"]), "/boot");
-    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "initramfs-tools");
-    assert_eq!(s(&v, &["boot", "cmdline", "storage", "root"]), "ZFS=rpool/ROOT/chimera");
-    assert_eq!(s(&v, &["storage", "mounts", "0", "source"]), "rpool/ROOT/chimera");
+    assert_eq!(
+        s(&v, &["boot", "initramfs", "generator"]),
+        "initramfs-tools"
+    );
+    assert_eq!(
+        s(&v, &["boot", "cmdline", "storage", "root"]),
+        "ZFS=rpool/ROOT/chimera"
+    );
+    assert_eq!(
+        s(&v, &["storage", "mounts", "0", "source"]),
+        "rpool/ROOT/chimera"
+    );
     let tools = v.at(&["storage", "zfs", "tools"]).unwrap();
     assert_eq!(s(tools, &["datasets", "0", "encryptionroot"]), "rpool");
     assert_eq!(s(tools, &["datasets", "0", "keyformat"]), "passphrase");
     assert_eq!(s(tools, &["datasets", "0", "keylocation"]), "prompt");
-    assert_eq!(u(&v, &["storage", "zfs", "zpool_cache", "rpool", "pool_guid"]), 888);
+    assert_eq!(
+        u(&v, &["storage", "zfs", "zpool_cache", "rpool", "pool_guid"]),
+        888
+    );
     assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
 
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    use crate::load::{Parsed, Stage, commands, layout::Layout, target::Mapping};
     let l = Layout::from_json(v).unwrap();
     let plan = |extra: &[&str]| {
         let mut a = vec!["l.json".to_string()];
         a.extend(extra.iter().map(|s| s.to_string()));
-        let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
-        commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "nvme0n1".into())], ..Mapping::default() })
+        let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
+            unreachable!()
+        };
+        commands::build(
+            &l,
+            &o,
+            &Mapping {
+                pairs: vec![("vda".into(), "nvme0n1".into())],
+                ..Mapping::default()
+            },
+        )
     };
     // A passphrase can't be made up: load asks for it (BackShot1's
     // layout_keys passes keys/disk-passphrase as --key-file rpool=...).
     let no_key = plan(&[]);
-    assert!(no_key.problems.iter().any(|p| p.contains("ZFS encryption root rpool: give its new key with --key-file rpool=FILE")), "{:?}", no_key.problems);
-    assert!(no_key.coded_problems().iter().any(|p| p.code == crate::load::codes::ProblemCode::KeyNeeded && p.str_field("name") == Some("rpool")), "{:?}", no_key.problems);
+    assert!(
+        no_key.problems.iter().any(|p| p
+            .contains("ZFS encryption root rpool: give its new key with --key-file rpool=FILE")),
+        "{:?}",
+        no_key.problems
+    );
+    assert!(
+        no_key
+            .coded_problems()
+            .iter()
+            .any(|p| p.code == crate::load::codes::ProblemCode::KeyNeeded
+                && p.str_field("name") == Some("rpool")),
+        "{:?}",
+        no_key.problems
+    );
     let b = plan(&["--key-file", "rpool=/run/bs1/disk-passphrase"]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let text = |st: Stage| -> String { b.stage(st).iter().map(commands::Cmd::shell).collect() };
     let asm = text(Stage::Assemble);
-    let create = asm.lines().find(|l| l.starts_with("zpool create ")).expect(&asm);
-    for w in ["-o feature@encryption=enabled", "-o ashift=12", "-O encryption=aes-256-gcm", "-O keyformat=passphrase", "-O keylocation=file:///run/bs1/disk-passphrase", "-R /mnt/bko-target rpool /dev/nvme0n1p2"] {
+    let create = asm
+        .lines()
+        .find(|l| l.starts_with("zpool create "))
+        .expect(&asm);
+    for w in [
+        "-o feature@encryption=enabled",
+        "-o ashift=12",
+        "-O encryption=aes-256-gcm",
+        "-O keyformat=passphrase",
+        "-O keylocation=file:///run/bs1/disk-passphrase",
+        "-R /mnt/bko-target rpool /dev/nvme0n1p2",
+    ] {
         assert!(create.contains(w), "{w}: {create}");
     }
     assert!(asm.contains("zpool reguid -g 888 rpool\n"), "{asm}");
     // Encryption is inherited below the root, never set again.
-    let all: String = [Stage::Assemble, Stage::Format, Stage::Mount].into_iter().map(text).collect();
+    let all: String = [Stage::Assemble, Stage::Format, Stage::Mount]
+        .into_iter()
+        .map(text)
+        .collect();
     for l in all.lines().filter(|l| l.starts_with("zfs create ")) {
-        assert!(!l.contains("encryption") && !l.contains("keyformat") && !l.contains("keylocation"), "{l}");
+        assert!(
+            !l.contains("encryption") && !l.contains("keyformat") && !l.contains("keylocation"),
+            "{l}"
+        );
     }
-    assert!(all.contains("zfs create -u -o mountpoint=/ -o canmount=noauto rpool/ROOT/chimera\n"), "{all}");
+    assert!(
+        all.contains("zfs create -u -o mountpoint=/ -o canmount=noauto rpool/ROOT/chimera\n"),
+        "{all}"
+    );
     let mnt = text(Stage::Mount);
     let root = mnt.find("zfs mount rpool/ROOT/chimera\n").expect(&mnt);
-    let esp = mnt.find("mount -t vfat -o defaults /dev/nvme0n1p1 /mnt/bko-target/boot\n").expect(&mnt);
+    let esp = mnt
+        .find("mount -t vfat -o defaults /dev/nvme0n1p1 /mnt/bko-target/boot\n")
+        .expect(&mnt);
     assert!(root < esp, "{mnt}");
     let bt = text(Stage::Boot);
     let prompt = bt.find("zfs set keylocation=prompt rpool\n").expect(&bt);
-    let cache = bt.find("zpool set cachefile=/mnt/bko-target/etc/zfs/zpool.cache rpool\n").expect(&bt);
-    let initramfs = bt.find("chroot /mnt/bko-target update-initramfs -u -k all\n").expect(&bt);
-    let bootctl = bt.find("chroot /mnt/bko-target bootctl install --no-variables\n").expect(&bt);
-    let made = bt.find("chroot /mnt/bko-target sh -c 'gen-systemd-boot; r=$?;").expect(&bt);
-    assert!(prompt < initramfs && cache < initramfs && initramfs < bootctl && bootctl < made, "{bt}");
+    let cache = bt
+        .find("zpool set cachefile=/mnt/bko-target/etc/zfs/zpool.cache rpool\n")
+        .expect(&bt);
+    let initramfs = bt
+        .find("chroot /mnt/bko-target update-initramfs -u -k all\n")
+        .expect(&bt);
+    let bootctl = bt
+        .find("chroot /mnt/bko-target bootctl install --no-variables\n")
+        .expect(&bt);
+    let made = bt
+        .find("chroot /mnt/bko-target sh -c 'gen-systemd-boot; r=$?;")
+        .expect(&bt);
+    assert!(
+        prompt < initramfs && cache < initramfs && initramfs < bootctl && bootctl < made,
+        "{bt}"
+    );
     assert!(!bt.contains("grub"), "{bt}");
     let close = text(Stage::Close);
     assert!(close.contains("zpool export rpool"), "{close}");
@@ -1665,10 +2815,19 @@ fn no_zfs_tools_no_section() {
 
 /// The debian13-zfs guest's dump onto vdb.
 fn zfs_root_plan(v: Value) -> crate::load::commands::Built {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let l = Layout::from_json(v).unwrap();
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-    commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() })
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+        unreachable!()
+    };
+    commands::build(
+        &l,
+        &o,
+        &Mapping {
+            pairs: vec![("vda".into(), "vdb".into())],
+            ..Mapping::default()
+        },
+    )
 }
 
 /// / on ZFS and no zpool installed: no pools would be a wrong answer, so
@@ -1680,31 +2839,67 @@ fn zfs_mounted_without_zpool_is_refused() {
     let (t, runner) = zfs_root_tree();
     let v = run(&t, true, runner.without("zpool"));
     let e = s(&v, &["storage", "zfs", "tools", "error"]).to_string();
-    assert_eq!(e, "ZFS file systems are mounted, but zpool isn't installed, so the dump records no pools or datasets; bko-holt load refuses this dump: make zpool work and dump again");
-    assert!(arr(&v, &["warnings"]).iter().any(|w| w.as_str() == Some(e.as_str())), "{:?}", v.get("warnings"));
+    assert_eq!(
+        e,
+        "ZFS file systems are mounted, but zpool isn't installed, so the dump records no pools or datasets; bko-holt load refuses this dump: make zpool work and dump again"
+    );
+    assert!(
+        arr(&v, &["warnings"])
+            .iter()
+            .any(|w| w.as_str() == Some(e.as_str())),
+        "{:?}",
+        v.get("warnings")
+    );
     let b = zfs_root_plan(v);
-    assert!(b.problems.contains(&format!("ZFS: {e}")), "{:?}", b.problems);
+    assert!(
+        b.problems.contains(&format!("ZFS: {e}")),
+        "{:?}",
+        b.problems
+    );
 
     let (t, mut runner) = zfs_root_tree();
     runner.answers.remove("zpool list -H -o name");
     let v = run(&t, true, runner);
     let e = s(&v, &["storage", "zfs", "tools", "error"]);
     assert!(e.starts_with("ZFS file systems are mounted, but `zpool list` failed, so the dump records no pools or datasets; "), "{e}");
-    assert!(zfs_root_plan(v.clone()).problems.iter().any(|p| p.starts_with("ZFS: ZFS file systems are mounted, but `zpool list` failed")));
+    assert!(
+        zfs_root_plan(v.clone())
+            .problems
+            .iter()
+            .any(|p| p.starts_with("ZFS: ZFS file systems are mounted, but `zpool list` failed"))
+    );
 
     let (t, runner) = zfs_root_tree();
     let v = run(&t, true, runner.without("zfs"));
-    assert_eq!(s(&v, &["storage", "zfs", "tools", "imported_pools", "0", "name"]), "rpool");
+    assert_eq!(
+        s(
+            &v,
+            &["storage", "zfs", "tools", "imported_pools", "0", "name"]
+        ),
+        "rpool"
+    );
     assert!(arr(&v, &["storage", "zfs", "tools", "datasets"]).is_empty());
     let e = s(&v, &["storage", "zfs", "tools", "error"]);
-    assert_eq!(e, "ZFS pools are imported, but zfs isn't installed, so the dump records none of their datasets; bko-holt load refuses this dump: make zfs work and dump again");
-    assert!(zfs_root_plan(v.clone()).problems.contains(&format!("ZFS: {e}")));
+    assert_eq!(
+        e,
+        "ZFS pools are imported, but zfs isn't installed, so the dump records none of their datasets; bko-holt load refuses this dump: make zfs work and dump again"
+    );
+    assert!(
+        zfs_root_plan(v.clone())
+            .problems
+            .contains(&format!("ZFS: {e}"))
+    );
 
     // With both there, none of it.
     let (t, runner) = zfs_root_tree();
     let v = run(&t, true, runner);
     assert_eq!(v.at(&["storage", "zfs", "tools", "error"]), None);
-    assert!(!zfs_root_plan(v).problems.iter().any(|p| p.starts_with("ZFS: ")));
+    assert!(
+        !zfs_root_plan(v)
+            .problems
+            .iter()
+            .any(|p| p.starts_with("ZFS: "))
+    );
 }
 
 /// No ZFS mounted, and neither zpool nor zfs installed (most Linux
@@ -1713,11 +2908,23 @@ fn zfs_mounted_without_zpool_is_refused() {
 fn no_zfs_mounted_without_zpool_is_fine() {
     let t = Tree::new("scn-nozpool");
     t.debian13();
-    t.file("/proc/self/mountinfo", "26 1 254:6 / / rw,relatime shared:1 - ext4 /dev/vda6 rw\n");
-    let v = run(&t, true, FakeRunner::default().without("zpool").without("zfs"));
+    t.file(
+        "/proc/self/mountinfo",
+        "26 1 254:6 / / rw,relatime shared:1 - ext4 /dev/vda6 rw\n",
+    );
+    let v = run(
+        &t,
+        true,
+        FakeRunner::default().without("zpool").without("zfs"),
+    );
     assert!(v.at(&["storage", "zfs", "tools"]).unwrap().is_null());
     let w = arr(&v, &["warnings"]);
-    assert!(!w.iter().filter_map(Value::as_str).any(|w| w.contains("zpool") || w.contains("ZFS")), "{w:?}");
+    assert!(
+        !w.iter()
+            .filter_map(Value::as_str)
+            .any(|w| w.contains("zpool") || w.contains("ZFS")),
+        "{w:?}"
+    );
 }
 
 /// A disk with a filesystem straight on it (no table), a loop device, a
@@ -1747,12 +2954,21 @@ fn whole_disk_fs_loop_zram() {
     assert!(d.get("partition_table").unwrap().is_null());
     assert_eq!(s(d, &["content", "type"]), "xfs");
     assert_eq!(u(d, &["logical_sector_size"]), 4096);
-    assert_eq!(s(&v, &["storage", "loop_devices", "0", "backing_file"]), "/var/lib/images/a.img");
-    assert_eq!(s(&v, &["storage", "loop_devices", "0", "content", "type"]), "btrfs");
+    assert_eq!(
+        s(&v, &["storage", "loop_devices", "0", "backing_file"]),
+        "/var/lib/images/a.img"
+    );
+    assert_eq!(
+        s(&v, &["storage", "loop_devices", "0", "content", "type"]),
+        "btrfs"
+    );
     let other = arr(&v, &["storage", "other_devices"]);
     // The empty sr0 is left out; sr1 (a disc in it) and the floppy are
     // listed but never read.
-    let kinds: Vec<&str> = other.iter().map(|o| o.get("kind").and_then(Value::as_str).unwrap()).collect();
+    let kinds: Vec<&str> = other
+        .iter()
+        .map(|o| o.get("kind").and_then(Value::as_str).unwrap())
+        .collect();
     assert_eq!(kinds, vec!["floppy", "rom", "zram"]);
     assert!(other[0].get("content").unwrap().is_null());
     assert!(other[1].get("content").unwrap().is_null());
@@ -1762,7 +2978,14 @@ fn whole_disk_fs_loop_zram() {
     assert_eq!(s(&sw[0], &["device"]), "zram0");
     assert!(sw[1].get("device").unwrap().is_null());
     // zram isn't a topology root.
-    let roots: Vec<String> = v.at(&["storage", "topology"]).unwrap().as_object().unwrap().iter().map(|(k, _)| k.clone()).collect();
+    let roots: Vec<String> = v
+        .at(&["storage", "topology"])
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(k, _)| k.clone())
+        .collect();
     assert!(roots.iter().all(|r| !r.starts_with("zram")), "{roots:?}");
     assert_eq!(roots.len(), 2);
 }
@@ -1775,7 +2998,11 @@ fn unreadable_device_warns_and_carries_on() {
     std::fs::remove_file(t.p("/dev/sda")).unwrap();
     let v = run(&t, true, FakeRunner::default());
     let w = arr(&v, &["warnings"]);
-    assert!(w.iter().any(|x| x.as_str().unwrap().starts_with("/dev/sda:")), "{w:?}");
+    assert!(
+        w.iter()
+            .any(|x| x.as_str().unwrap().starts_with("/dev/sda:")),
+        "{w:?}"
+    );
     assert_eq!(s(&v, &["storage", "disks", "0", "name"]), "sda");
 }
 
@@ -1791,8 +3018,8 @@ const KINOITE_KERNEL: &str = "7.3.3-200.fc44.x86_64";
 /// stateroot's var bound beneath it.  Two deployments of one commit: .1
 /// booted and the default (ostree-2.conf), .0 the rollback.
 fn kinoite_ostree() -> Tree {
-    use crate::efi::real::*;
     use crate::efi::GLOBAL;
+    use crate::efi::real::*;
     let (c, b, v) = (KINOITE_CSUM, KINOITE_BOOTCSUM, KINOITE_KERNEL);
     let t = Tree::new("scn-ostree");
     let mut img = vec![0u8; 96 * MIB];
@@ -1802,24 +3029,65 @@ fn kinoite_ostree() -> Tree {
         &GptSpec {
             disk_guid: "6f1c2c3d-0000-4000-8000-00000000cccc",
             parts: vec![
-                (ESP, "e53caff6-0000-4000-8000-000000000001", 2048, 73727, 0, "EFI System Partition"),
-                (LINUX, "e53caff6-0000-4000-8000-000000000002", 73728, 106495, 0, ""),
-                (LINUX, "e53caff6-0000-4000-8000-000000000003", 106496, 196574, 0, ""),
+                (
+                    ESP,
+                    "e53caff6-0000-4000-8000-000000000001",
+                    2048,
+                    73727,
+                    0,
+                    "EFI System Partition",
+                ),
+                (
+                    LINUX,
+                    "e53caff6-0000-4000-8000-000000000002",
+                    73728,
+                    106495,
+                    0,
+                    "",
+                ),
+                (
+                    LINUX,
+                    "e53caff6-0000-4000-8000-000000000003",
+                    106496,
+                    196574,
+                    0,
+                    "",
+                ),
             ],
         },
     );
     put(&mut img, 2048, &fat::sample::fat32(71680, 0x1e3b_f9f2, ""));
-    put(&mut img, 73728, &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""));
-    put(&mut img, 106496, &btrfs::sample::image("fedora", 0x1 | 0x20 | 0x40 | 0x100 | 0x200));
+    put(
+        &mut img,
+        73728,
+        &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""),
+    );
+    put(
+        &mut img,
+        106496,
+        &btrfs::sample::image("fedora", 0x1 | 0x20 | 0x40 | 0x100 | 0x200),
+    );
     let boot_uuid = "10111213-1415-1617-1819-1a1b1c1d1e1f";
     let root_uuid = "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
     // Fedora's shim entry: Debian's from Chopin, renamed (same lengths).
-    let shim = BOOT0001_SHIM.replace("6400 6500 6200 6900 6100 6e00", "4600 6500 6400 6f00 7200 6100").replace("4400 4500 4200 4900 4100 4e00", "6600 6500 6400 6f00 7200 6100");
+    let shim = BOOT0001_SHIM
+        .replace(
+            "6400 6500 6200 6900 6100 6e00",
+            "4600 6500 6400 6f00 7200 6100",
+        )
+        .replace(
+            "4400 4500 4200 4900 4100 4e00",
+            "6600 6500 6400 6f00 7200 6100",
+        );
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
     let dep = |n: u32| format!("/sysroot/ostree/deploy/default/deploy/{c}.{n}");
-    let fstab = format!("# Updated by bootc-fstab-edit.service\nUUID={root_uuid} / btrfs subvol=root,compress=zstd:1,ro 0 0\nUUID={boot_uuid} /boot ext4 defaults 1 2\nUUID=1E3B-F9F2 /boot/efi vfat defaults,uid=0,gid=0,umask=077,shortname=winnt 0 2\nUUID={root_uuid} /home btrfs subvol=home,compress=zstd:1 0 0\nUUID={root_uuid} /var btrfs subvol=var,compress=zstd:1 0 0\n");
+    let fstab = format!(
+        "# Updated by bootc-fstab-edit.service\nUUID={root_uuid} / btrfs subvol=root,compress=zstd:1,ro 0 0\nUUID={boot_uuid} /boot ext4 defaults 1 2\nUUID=1E3B-F9F2 /boot/efi vfat defaults,uid=0,gid=0,umask=077,shortname=winnt 0 2\nUUID={root_uuid} /home btrfs subvol=home,compress=zstd:1 0 0\nUUID={root_uuid} /var btrfs subvol=var,compress=zstd:1 0 0\n"
+    );
     let bls = |n: u32, ser: u32, extra: &str| {
-        format!("title Fedora Linux 44.20261111.0 (Kinoite) (ostree:{ser})\nversion {n}\noptions ostree=/ostree/boot.1/default/{b}/{ser} console=tty0 console=ttyS0,115200n8 root=UUID={root_uuid} rootflags=subvol=root rw{extra}\nlinux /ostree/default-{b}/vmlinuz-{v}\ninitrd /ostree/default-{b}/initramfs-{v}.img\n")
+        format!(
+            "title Fedora Linux 44.20261111.0 (Kinoite) (ostree:{ser})\nversion {n}\noptions ostree=/ostree/boot.1/default/{b}/{ser} console=tty0 console=ttyS0,115200n8 root=UUID={root_uuid} rootflags=subvol=root rw{extra}\nlinux /ostree/default-{b}/vmlinuz-{v}\ninitrd /ostree/default-{b}/initramfs-{v}.img\n"
+        )
     };
     t.disk("vda", "253:0", &img, 512)
         .partition("vda", "vda1", "253:1", 1, 2048, 71680, &img)
@@ -1906,7 +3174,9 @@ fn kinoite_runner() -> FakeRunner {
             r#"{"apiVersion": "org.containers.bootc/v1", "kind": "BootcHost", "status": {"staged": null, "booted": {"image": {"image": {"image": "quay.io/fedora/fedora-kinoite:44", "transport": "registry"}, "version": "44.20261111.0", "imageDigest": "sha256:c5e91226b7c92214a5fff04ca2836504663bb8025792ad77c9c70b9c5ace3b19"}, "ostree": {"stateroot": "default", "deploySerial": 1}}}}"#,
         );
     for p in ["/sysroot", "/var", "/var/home"] {
-        r = r.with(&format!("btrfs property get -t s {p}"), "ro=false\n").with(&format!("btrfs property get -t i {p}"), "");
+        r = r
+            .with(&format!("btrfs property get -t s {p}"), "ro=false\n")
+            .with(&format!("btrfs property get -t i {p}"), "");
     }
     r
 }
@@ -1923,28 +3193,93 @@ fn kinoite_ostree_guest() {
     let st = v.get("storage").unwrap();
     assert_eq!(s(st, &["physical_root"]), "/sysroot");
     let ms = arr(st, &["mounts"]);
-    let targets: Vec<&str> = ms.iter().map(|m| m.get("target").and_then(Value::as_str).unwrap()).collect();
-    assert_eq!(targets, vec!["/etc", "/sysroot", "/sysroot/ostree/deploy/default/var", "/var", "/var/home", "/boot", "/boot/efi"]);
-    let alias: Vec<Option<&str>> = ms.iter().map(|m| m.get("alias_of").and_then(Value::as_str)).collect();
-    assert_eq!(alias, vec![Some("/sysroot"), None, Some("/sysroot"), None, None, None, None]);
+    let targets: Vec<&str> = ms
+        .iter()
+        .map(|m| m.get("target").and_then(Value::as_str).unwrap())
+        .collect();
+    assert_eq!(
+        targets,
+        vec![
+            "/etc",
+            "/sysroot",
+            "/sysroot/ostree/deploy/default/var",
+            "/var",
+            "/var/home",
+            "/boot",
+            "/boot/efi"
+        ]
+    );
+    let alias: Vec<Option<&str>> = ms
+        .iter()
+        .map(|m| m.get("alias_of").and_then(Value::as_str))
+        .collect();
+    assert_eq!(
+        alias,
+        vec![
+            Some("/sysroot"),
+            None,
+            Some("/sysroot"),
+            None,
+            None,
+            None,
+            None
+        ]
+    );
     let src: Vec<(&str, &str, &str)> = arr(st, &["backup_sources"])
         .iter()
-        .map(|x| (x.get("path").and_then(Value::as_str).unwrap(), x.get("from").and_then(Value::as_str).unwrap(), x.get("device").and_then(Value::as_str).unwrap()))
+        .map(|x| {
+            (
+                x.get("path").and_then(Value::as_str).unwrap(),
+                x.get("from").and_then(Value::as_str).unwrap(),
+                x.get("device").and_then(Value::as_str).unwrap(),
+            )
+        })
         .collect();
-    assert_eq!(src, vec![("/", "/sysroot", "vda3"), ("/boot", "/boot", "vda2"), ("/boot/efi", "/boot/efi", "vda1"), ("/home", "/var/home", "vda3"), ("/var", "/var", "vda3")]);
+    assert_eq!(
+        src,
+        vec![
+            ("/", "/sysroot", "vda3"),
+            ("/boot", "/boot", "vda2"),
+            ("/boot/efi", "/boot/efi", "vda1"),
+            ("/home", "/var/home", "vda3"),
+            ("/var", "/var", "vda3")
+        ]
+    );
     // Its paths are the mount points fstab gives, as load plans them.
-    let mut fs: Vec<&str> = arr(st, &["fstab"]).iter().map(|e| e.get("file").and_then(Value::as_str).unwrap()).collect();
+    let mut fs: Vec<&str> = arr(st, &["fstab"])
+        .iter()
+        .map(|e| e.get("file").and_then(Value::as_str).unwrap())
+        .collect();
     fs.sort();
     assert_eq!(src.iter().map(|x| x.0).collect::<Vec<_>>(), fs);
     assert_eq!(s(st, &["fstab", "0", "resolves_to"]), "vda3");
     // btrfs: subvolume root's properties from /sysroot (not the /etc bind),
     // and only the subvolumes' own mounts.
     let bt = st.at(&["btrfs", "0"]).unwrap();
-    let msv: Vec<(&str, &str)> = arr(bt, &["mounted_subvolumes"]).iter().map(|x| (x.get("target").and_then(Value::as_str).unwrap(), x.get("subvol").and_then(Value::as_str).unwrap())).collect();
-    assert_eq!(msv, vec![("/sysroot", "/root"), ("/var", "/var"), ("/var/home", "/home")]);
+    let msv: Vec<(&str, &str)> = arr(bt, &["mounted_subvolumes"])
+        .iter()
+        .map(|x| {
+            (
+                x.get("target").and_then(Value::as_str).unwrap(),
+                x.get("subvol").and_then(Value::as_str).unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        msv,
+        vec![
+            ("/sysroot", "/root"),
+            ("/var", "/var"),
+            ("/var/home", "/home")
+        ]
+    );
     for (i, path) in [(0, "var"), (1, "home"), (2, "root")] {
         assert_eq!(s(bt, &["subvolumes", &i.to_string(), "path"]), path);
-        assert_eq!(s(bt, &["subvolumes", &i.to_string(), "properties", "ro"]), "false", "{path}");
+        assert_eq!(
+            s(bt, &["subvolumes", &i.to_string(), "properties", "ro"]),
+            "false",
+            "{path}"
+        );
     }
     // Boot: GRUB through shim from Fedora's packages, bootupd's grub.cfg.
     let bo = v.get("boot").unwrap();
@@ -1953,7 +3288,11 @@ fn kinoite_ostree_guest() {
     assert_eq!(s(bo, &["loader", "package"]), "grub2-efi-x64");
     assert_eq!(s(bo, &["loader", "shim_package"]), "shim-x64");
     assert_eq!(s(bo, &["grub", "dir"]), "/boot/grub2");
-    assert!(bo.get("systemd_boot").unwrap().is_null(), "{}", bo.get("systemd_boot").unwrap().compact());
+    assert!(
+        bo.get("systemd_boot").unwrap().is_null(),
+        "{}",
+        bo.get("systemd_boot").unwrap().compact()
+    );
     assert_eq!(s(bo, &["initramfs", "generator"]), "prebuilt");
     let k = arr(bo, &["kernels", "installed"]);
     assert_eq!(k.len(), 1);
@@ -1968,24 +3307,64 @@ fn kinoite_ostree_guest() {
     assert_eq!(s(o, &["karg"]), format!("/ostree/boot.1/default/{b}/0"));
     assert_eq!(s(o, &["physical_root"]), "/sysroot");
     assert_eq!(s(o, &["stateroot"]), "default");
-    assert_eq!(s(o, &["booted_deployment"]), format!("/ostree/deploy/default/deploy/{c}.1"));
+    assert_eq!(
+        s(o, &["booted_deployment"]),
+        format!("/ostree/deploy/default/deploy/{c}.1")
+    );
     let d = arr(o, &["deployments"]);
     assert_eq!(d.len(), 2);
-    assert_eq!((u(&d[0], &["serial"]), d[0].get("booted")), (0, Some(&Value::Bool(false))));
-    assert_eq!((u(&d[1], &["serial"]), d[1].get("booted")), (1, Some(&Value::Bool(true))));
+    assert_eq!(
+        (u(&d[0], &["serial"]), d[0].get("booted")),
+        (0, Some(&Value::Bool(false)))
+    );
+    assert_eq!(
+        (u(&d[1], &["serial"]), d[1].get("booted")),
+        (1, Some(&Value::Bool(true)))
+    );
     assert_eq!(s(&d[1], &["checksum"]), c);
-    assert_eq!(s(&d[1], &["origin"]), "ostree-unverified-registry:quay.io/fedora/fedora-kinoite:44");
+    assert_eq!(
+        s(&d[1], &["origin"]),
+        "ostree-unverified-registry:quay.io/fedora/fedora-kinoite:44"
+    );
     assert_eq!(d[0].get("has_etc"), Some(&Value::Bool(true)));
     let e = arr(o, &["entries"]);
-    assert_eq!((s(&e[0], &["file"]), s(&e[0], &["version"]), s(&e[0], &["deployment"])), ("ostree-1.conf", "1", format!("/ostree/deploy/default/deploy/{c}.0").as_str()));
-    assert_eq!((s(&e[1], &["file"]), s(&e[1], &["version"]), s(&e[1], &["deployment"])), ("ostree-2.conf", "2", format!("/ostree/deploy/default/deploy/{c}.1").as_str()));
+    assert_eq!(
+        (
+            s(&e[0], &["file"]),
+            s(&e[0], &["version"]),
+            s(&e[0], &["deployment"])
+        ),
+        (
+            "ostree-1.conf",
+            "1",
+            format!("/ostree/deploy/default/deploy/{c}.0").as_str()
+        )
+    );
+    assert_eq!(
+        (
+            s(&e[1], &["file"]),
+            s(&e[1], &["version"]),
+            s(&e[1], &["deployment"])
+        ),
+        (
+            "ostree-2.conf",
+            "2",
+            format!("/ostree/deploy/default/deploy/{c}.1").as_str()
+        )
+    );
     assert!(s(&e[1], &["options"]).ends_with(" rw bko.rollback=1"));
-    assert_eq!(s(&e[1], &["linux"]), format!("/ostree/default-{b}/vmlinuz-{kv}"));
+    assert_eq!(
+        s(&e[1], &["linux"]),
+        format!("/ostree/default-{b}/vmlinuz-{kv}")
+    );
     assert_eq!(s(o, &["boot_loader"]), "loader.1");
     assert_eq!(s(o, &["boot_links", "boot.1"]), "boot.1.1");
     assert_eq!(s(o, &["prepare_root", "composefs"]), "yes");
     assert_eq!(s(o, &["prepare_root", "readonly"]), "true");
-    assert_eq!(s(o, &["prepare_root", "files", "0"]), "/usr/lib/ostree/prepare-root.conf");
+    assert_eq!(
+        s(o, &["prepare_root", "files", "0"]),
+        "/usr/lib/ostree/prepare-root.conf"
+    );
     assert_eq!(s(o, &["repo", "mode"]), "bare");
     assert_eq!(s(o, &["repo", "sysroot_readonly"]), "true");
     assert_eq!(s(o, &["repo", "sysroot_bootloader"]), "none");
@@ -1993,8 +3372,14 @@ fn kinoite_ostree_guest() {
     assert_eq!(o.get("bootupd_state"), Some(&Value::Bool(true)));
     assert_eq!(s(o, &["grubenv", "boot_success"]), "1");
     assert!(o.at(&["grubenv", "boot_counter"]).unwrap().is_null());
-    assert_eq!(s(o, &["image", "image"]), "quay.io/fedora/fedora-kinoite:44");
-    assert_eq!(s(o, &["image", "digest"]), "sha256:c5e91226b7c92214a5fff04ca2836504663bb8025792ad77c9c70b9c5ace3b19");
+    assert_eq!(
+        s(o, &["image", "image"]),
+        "quay.io/fedora/fedora-kinoite:44"
+    );
+    assert_eq!(
+        s(o, &["image", "digest"]),
+        "sha256:c5e91226b7c92214a5fff04ca2836504663bb8025792ad77c9c70b9c5ace3b19"
+    );
 }
 
 /// The same tree as Bazzite names itself, and with composefs left to
@@ -2006,9 +3391,18 @@ fn bazzite_ostree_guest() {
     let t = kinoite_ostree();
     std::fs::remove_file(t.p("/run/ostree-booted")).unwrap();
     std::fs::remove_file(t.p("/usr/lib/os-release")).unwrap();
-    t.file("/usr/lib/os-release", "NAME=\"Bazzite\"\nID=bazzite\nID_LIKE=\"fedora\"\nVERSION_ID=44\nVARIANT_ID=bazzite\n")
-        .file("/etc/ostree/prepare-root.conf", "[composefs]\nenabled = verity\n")
-        .file("/sysroot/ostree/repo/config", "[core]\nmode=bare\n[ex-fsverity]\nrequired=true\n");
+    t.file(
+        "/usr/lib/os-release",
+        "NAME=\"Bazzite\"\nID=bazzite\nID_LIKE=\"fedora\"\nVERSION_ID=44\nVARIANT_ID=bazzite\n",
+    )
+    .file(
+        "/etc/ostree/prepare-root.conf",
+        "[composefs]\nenabled = verity\n",
+    )
+    .file(
+        "/sysroot/ostree/repo/config",
+        "[core]\nmode=bare\n[ex-fsverity]\nrequired=true\n",
+    );
     let v = run(&t, true, kinoite_runner());
     assert_eq!(s(&v, &["os", "id"]), "bazzite");
     let o = v.at(&["boot", "ostree"]).unwrap();
@@ -2021,10 +3415,17 @@ fn bazzite_ostree_guest() {
     assert!(o.at(&["repo", "sysroot_bootloader"]).unwrap().is_null());
     // Without ostree's markers, the same tree is an ordinary system.
     std::fs::remove_file(t.p("/proc/self/mountinfo")).unwrap();
-    t.file("/proc/self/mountinfo", "52 1 0:37 /root /sysroot ro - btrfs /dev/vda3 rw,subvolid=258,subvol=/root\n").file("/proc/cmdline", "root=UUID=x rw\n");
+    t.file(
+        "/proc/self/mountinfo",
+        "52 1 0:37 /root /sysroot ro - btrfs /dev/vda3 rw,subvolid=258,subvol=/root\n",
+    )
+    .file("/proc/cmdline", "root=UUID=x rw\n");
     let v = run(&t, true, kinoite_runner());
     assert!(v.at(&["boot", "ostree"]).is_none());
-    assert_eq!(s(&v, &["storage", "backup_sources", "0", "path"]), "/sysroot");
+    assert_eq!(
+        s(&v, &["storage", "backup_sources", "0", "path"]),
+        "/sysroot"
+    );
 }
 
 /// On ostree, a mount no fstab entry matched is said, not left for restore
@@ -2036,30 +3437,70 @@ fn ostree_unmatched_fstab_warns() {
     let t = kinoite_ostree();
     let fstab = std::fs::read_to_string(t.p("/etc/fstab")).unwrap();
     std::fs::remove_file(t.p("/etc/fstab")).unwrap();
-    t.file("/etc/fstab", fstab.replace(" / btrfs subvol=root,", " / btrfs subvol=root2,").replace(" /home btrfs subvol=home,", " /home btrfs subvol=home2,"));
+    t.file(
+        "/etc/fstab",
+        fstab
+            .replace(" / btrfs subvol=root,", " / btrfs subvol=root2,")
+            .replace(" /home btrfs subvol=home,", " /home btrfs subvol=home2,"),
+    );
     let v = run(&t, true, kinoite_runner());
-    let w: Vec<&str> = arr(&v, &["warnings"]).iter().map(|x| x.as_str().unwrap()).collect();
+    let w: Vec<&str> = arr(&v, &["warnings"])
+        .iter()
+        .map(|x| x.as_str().unwrap())
+        .collect();
     assert_eq!(w.len(), 2, "{w:?}");
     assert!(w[0].starts_with("ostree: no running mount matched these fstab entries by device and subvol=: / (UUID=b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf -> vda3), /home (UUID="), "{}", w[0]);
-    assert!(w[1].starts_with("ostree: no running mount matched fstab's `/`, so backup_sources has no `/`"), "{}", w[1]);
+    assert!(
+        w[1].starts_with(
+            "ostree: no running mount matched fstab's `/`, so backup_sources has no `/`"
+        ),
+        "{}",
+        w[1]
+    );
     let st = v.get("storage").unwrap();
     assert!(st.get("physical_root").unwrap().is_null());
-    let paths: Vec<&str> = arr(st, &["backup_sources"]).iter().map(|x| x.get("path").and_then(Value::as_str).unwrap()).collect();
-    assert_eq!(paths, vec!["/boot", "/boot/efi", "/sysroot", "/var", "/var/home"]);
+    let paths: Vec<&str> = arr(st, &["backup_sources"])
+        .iter()
+        .map(|x| x.get("path").and_then(Value::as_str).unwrap())
+        .collect();
+    assert_eq!(
+        paths,
+        vec!["/boot", "/boot/efi", "/sysroot", "/var", "/var/home"]
+    );
     // boot.ostree still reads the physical root at /sysroot.
     assert_eq!(s(&v, &["boot", "ostree", "physical_root"]), "/sysroot");
     assert_eq!(arr(&v, &["boot", "ostree", "deployments"]).len(), 2);
     // No fstab: only the missing `/` is said.
     std::fs::remove_file(t.p("/etc/fstab")).unwrap();
     let v = run(&t, true, kinoite_runner());
-    let w: Vec<&str> = arr(&v, &["warnings"]).iter().map(|x| x.as_str().unwrap()).collect();
-    assert_eq!(w, vec!["ostree: /etc/fstab could not be read, so backup_sources has no `/`, storage.physical_root is null and boot.ostree read /sysroot"]);
+    let w: Vec<&str> = arr(&v, &["warnings"])
+        .iter()
+        .map(|x| x.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        w,
+        vec![
+            "ostree: /etc/fstab could not be read, so backup_sources has no `/`, storage.physical_root is null and boot.ostree read /sysroot"
+        ]
+    );
 }
 
 /// An EFI boot entry as efivarfs gives it: its attributes, then the load
 /// option (active), the description, the ESP's hard-drive node, the file.
-fn efi_load_option(desc: &str, part: u32, start: u64, size: u64, partuuid: &str, file: &str) -> Vec<u8> {
-    let utf16 = |t: &str| -> Vec<u8> { t.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect() };
+fn efi_load_option(
+    desc: &str,
+    part: u32,
+    start: u64,
+    size: u64,
+    partuuid: &str,
+    file: &str,
+) -> Vec<u8> {
+    let utf16 = |t: &str| -> Vec<u8> {
+        t.encode_utf16()
+            .chain([0])
+            .flat_map(u16::to_le_bytes)
+            .collect()
+    };
     let mut path = vec![4u8, 1, 42, 0];
     path.extend(part.to_le_bytes());
     path.extend(start.to_le_bytes());
@@ -2081,13 +3522,23 @@ fn efi_load_option(desc: &str, part: u32, start: u64, size: u64, partuuid: &str,
 
 /// `x` at `path` (object keys only), in place.
 fn set_at(v: &mut Value, path: &[&str], x: Value) {
-    let Some((last, rest)) = path.split_last() else { return };
+    let Some((last, rest)) = path.split_last() else {
+        return;
+    };
     let mut cur = v;
     for p in rest {
-        let Value::Obj(o) = cur else { panic!("no object at {p}") };
-        cur = &mut o.iter_mut().find(|(k, _)| k == p).unwrap_or_else(|| panic!("no {p}")).1;
+        let Value::Obj(o) = cur else {
+            panic!("no object at {p}")
+        };
+        cur = &mut o
+            .iter_mut()
+            .find(|(k, _)| k == p)
+            .unwrap_or_else(|| panic!("no {p}"))
+            .1;
     }
-    let Value::Obj(o) = cur else { panic!("no object for {last}") };
+    let Value::Obj(o) = cur else {
+        panic!("no object for {last}")
+    };
     match o.iter_mut().find(|(k, _)| k == last) {
         Some(slot) => slot.1 = x,
         None => o.push((last.to_string(), x)),
@@ -2115,12 +3566,33 @@ fn gentoo_thinkpad() -> Tree {
         512,
         &GptSpec {
             disk_guid: "6f1c2c3d-0000-4000-8000-00000000eeee",
-            parts: vec![(ESP, GENTOO_ESP, 2048, 73727, 0, ""), (SWAP, "4e5f6a7b-1111-4222-8333-944455557777", 73728, 81919, 0, ""), (LVM_PV, "4e5f6a7b-1111-4222-8333-944455558888", 81920, 90111, 0, "")],
+            parts: vec![
+                (ESP, GENTOO_ESP, 2048, 73727, 0, ""),
+                (
+                    SWAP,
+                    "4e5f6a7b-1111-4222-8333-944455557777",
+                    73728,
+                    81919,
+                    0,
+                    "",
+                ),
+                (
+                    LVM_PV,
+                    "4e5f6a7b-1111-4222-8333-944455558888",
+                    81920,
+                    90111,
+                    0,
+                    "",
+                ),
+            ],
         },
     );
     put(&mut img, 2048, &fat::sample::fat32(71680, 0x1234_abcd, ""));
     put(&mut img, 73728, &misc::sample::swap(1024, ""));
-    let meta = lvm::sample::METADATA.replace("swap_1 {", "home {").replace("sw4p00-", "h0me00-").replace("\"debian\"", "\"thinkpad\"");
+    let meta = lvm::sample::METADATA
+        .replace("swap_1 {", "home {")
+        .replace("sw4p00-", "h0me00-")
+        .replace("\"debian\"", "\"thinkpad\"");
     put(&mut img, 81920, &lvm::sample::pv_with(512, 1 << 20, &meta));
     let vgid = "Yb3kFa0Pz1AbCdEfGhIjKlMnOpQrStUv";
     let root_uuid = "10111213-1415-1617-1819-1a1b1c1d1e1f";
@@ -2190,7 +3662,11 @@ fn gentoo_thinkpad() -> Tree {
         ("sys-boot", "grub-themes-gentoo-1.0-r2", ""),
         ("sys-boot", "efibootmgr-18-r2", ""),
         ("sys-kernel", "dracut-112", ""),
-        ("sys-kernel", "gentoo-kernel-bin-6.18.63", "abi_x86_64 amd64 elibc_glibc initramfs kernel_linux"),
+        (
+            "sys-kernel",
+            "gentoo-kernel-bin-6.18.63",
+            "abi_x86_64 amd64 elibc_glibc initramfs kernel_linux",
+        ),
         ("sys-kernel", "installkernel-70-r1", "dracut grub"),
         ("sys-kernel", "linux-firmware-20261019", ""),
         ("sys-fs", "lvm2-2.03.39", "lvm"),
@@ -2203,10 +3679,16 @@ fn gentoo_thinkpad() -> Tree {
         ("net-dns", "avahi-0.8-r10", ""),
     ] {
         let d = format!("/var/db/pkg/{cat}/{pf}");
-        t.file(&format!("{d}/PF"), format!("{pf}\n")).file(&format!("{d}/CATEGORY"), format!("{cat}\n")).file(&format!("{d}/CHOST"), "x86_64-pc-linux-gnu\n").file(&format!("{d}/USE"), format!("{use_}\n"));
+        t.file(&format!("{d}/PF"), format!("{pf}\n"))
+            .file(&format!("{d}/CATEGORY"), format!("{cat}\n"))
+            .file(&format!("{d}/CHOST"), "x86_64-pc-linux-gnu\n")
+            .file(&format!("{d}/USE"), format!("{use_}\n"));
     }
     // A merge under way isn't installed.
-    t.file("/var/db/pkg/sys-kernel/-MERGING-gentoo-kernel-bin-6.18.64/PF", "gentoo-kernel-bin-6.18.64\n");
+    t.file(
+        "/var/db/pkg/sys-kernel/-MERGING-gentoo-kernel-bin-6.18.64/PF",
+        "gentoo-kernel-bin-6.18.64\n",
+    );
     t
 }
 
@@ -2234,47 +3716,115 @@ fn gentoo_thinkpad_guest() {
     assert_eq!(l.get("via_shim"), Some(&Value::Bool(false)));
     // Not in detect_loader's UEFI list, as on Arch: harmless.
     assert!(l.get("package").unwrap().is_null());
-    assert!(l.get("evidence").unwrap().compact().contains("\\\\EFI\\\\gentoo\\\\grubx64.efi"), "{}", l.compact());
+    assert!(
+        l.get("evidence")
+            .unwrap()
+            .compact()
+            .contains("\\\\EFI\\\\gentoo\\\\grubx64.efi"),
+        "{}",
+        l.compact()
+    );
     assert_eq!(s(&v, &["boot", "esps", "0", "mounted_at"]), "/efi");
     assert_eq!(s(&v, &["boot", "esps", "0", "device"]), "nvme0n1p1");
     let i = v.at(&["boot", "initramfs"]).unwrap();
     assert_eq!(s(i, &["generator"]), "dracut");
-    assert_eq!(s(i, &["installkernel", "conf"]), "/usr/lib/kernel/install.conf");
+    assert_eq!(
+        s(i, &["installkernel", "conf"]),
+        "/usr/lib/kernel/install.conf"
+    );
     assert_eq!(s(i, &["installkernel", "layout"]), "grub");
     assert_eq!(s(i, &["installkernel", "uki_generator"]), "none");
-    let ev: Vec<&str> = arr(i, &["evidence"]).iter().filter_map(Value::as_str).collect();
-    assert_eq!(ev, vec!["/usr/lib/kernel/install.conf says initrd_generator=dracut", "gentoo-kernel-bin-6.18.63 is built with USE=initramfs"]);
+    let ev: Vec<&str> = arr(i, &["evidence"])
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(
+        ev,
+        vec![
+            "/usr/lib/kernel/install.conf says initrd_generator=dracut",
+            "gentoo-kernel-bin-6.18.63 is built with USE=initramfs"
+        ]
+    );
     assert!(arr(i, &["lib_modules_initrd"]).is_empty());
     let kernels = arr(&v, &["boot", "kernels", "installed"]);
-    assert_eq!(kernels.len(), 1, "{}", v.at(&["boot", "kernels"]).unwrap().compact());
+    assert_eq!(
+        kernels.len(),
+        1,
+        "{}",
+        v.at(&["boot", "kernels"]).unwrap().compact()
+    );
     assert_eq!(s(&kernels[0], &["version"]), k);
     assert_eq!(u(&kernels[0], &["initrd_bytes"]), 1);
-    assert_eq!(kernels[0].get("modules_installed"), Some(&Value::Bool(true)));
-    let old: Vec<&str> = arr(&v, &["boot", "kernels", "old_copies"]).iter().filter_map(Value::as_str).collect();
-    assert_eq!(old, vec![format!("System.map-{k}.old"), format!("config-{k}.old"), format!("initramfs-{k}.img.old"), format!("vmlinuz-{k}.old")]);
+    assert_eq!(
+        kernels[0].get("modules_installed"),
+        Some(&Value::Bool(true))
+    );
+    let old: Vec<&str> = arr(&v, &["boot", "kernels", "old_copies"])
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(
+        old,
+        vec![
+            format!("System.map-{k}.old"),
+            format!("config-{k}.old"),
+            format!("initramfs-{k}.img.old"),
+            format!("vmlinuz-{k}.old")
+        ]
+    );
     let vg = v.at(&["storage", "lvm", "volume_groups", "0"]).unwrap();
     assert_eq!(s(vg, &["name"]), "vg0");
     assert_eq!(s(vg, &["logical_volumes", "1", "name"]), "home");
     assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
 
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    use crate::load::{Parsed, Stage, commands, layout::Layout, target::Mapping};
     let plan = |v: Value| {
         let l = Layout::from_json(v).unwrap();
-        let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-        commands::build(&l, &o, &Mapping { pairs: vec![("nvme0n1".into(), "vda".into())], ..Mapping::default() })
+        let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+            unreachable!()
+        };
+        commands::build(
+            &l,
+            &o,
+            &Mapping {
+                pairs: vec![("nvme0n1".into(), "vda".into())],
+                ..Mapping::default()
+            },
+        )
     };
     let b = plan(v.clone());
     assert!(b.problems.is_empty(), "{:?}", b.problems);
-    let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
+    let bt: String = b
+        .stage(Stage::Boot)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
     // With the restored image's modules and resume (DRACUT_ONE_IMAGE).
-    let dracut = bt.find(&format!("chroot /mnt/bko-target sh -c {} sh {k} /boot/initramfs-{k}.img\n", crate::load::shell_quote(commands::DRACUT_ONE_IMAGE))).expect(&bt);
+    let dracut = bt
+        .find(&format!(
+            "chroot /mnt/bko-target sh -c {} sh {k} /boot/initramfs-{k}.img\n",
+            crate::load::shell_quote(commands::DRACUT_ONE_IMAGE)
+        ))
+        .expect(&bt);
     let install = bt.find("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/efi --bootloader-id=gentoo --no-nvram\n").expect(&bt);
-    let cfg = bt.find("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n").expect(&bt);
+    let cfg = bt
+        .find("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n")
+        .expect(&bt);
     let nvram = bt.find("efibootmgr --quiet --create --disk /dev/vda --part 1 --label gentoo --loader '\\EFI\\gentoo\\grubx64.efi'\n").expect(&bt);
     assert!(dracut < install && install < cfg && cfg < nvram, "{bt}");
-    assert!(!bt.contains("update-initramfs") && !bt.contains("update-grub") && !bt.contains("dracut --force --kver") && !bt.contains(".old"), "{bt}");
+    assert!(
+        !bt.contains("update-initramfs")
+            && !bt.contains("update-grub")
+            && !bt.contains("dracut --force --kver")
+            && !bt.contains(".old"),
+        "{bt}"
+    );
     assert!(b.notes.iter().any(|n| n == &format!("Gentoo: installkernel's .old copies in /boot (System.map-{k}.old, config-{k}.old, initramfs-{k}.img.old, vmlinuz-{k}.old) came back as they were: grub-mkconfig lists them, and this stage doesn't remake them")), "{:?}", b.notes);
-    let mnt: String = b.stage(Stage::Mount).iter().map(commands::Cmd::shell).collect();
+    let mnt: String = b
+        .stage(Stage::Mount)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
     assert!(mnt.contains("/mnt/bko-target/efi\n"), "{mnt}");
 
     // Each refusal names what it refuses.
@@ -2284,38 +3834,97 @@ fn gentoo_thinkpad_guest() {
         plan(w).problems
     };
     let p = with(&["boot", "initramfs", "generator"], "genkernel".into());
-    assert_eq!(p, vec!["Gentoo: the initramfs is genkernel's; bko-holt load remakes only dracut's (or none)"]);
+    assert_eq!(
+        p,
+        vec!["Gentoo: the initramfs is genkernel's; bko-holt load remakes only dracut's (or none)"]
+    );
     assert!(with(&["boot", "initramfs", "generator"], "ugrd".into())[0].contains("ugrd's"));
-    assert!(with(&["boot", "initramfs", "generator"], "mkinitcpio".into())[0].contains("initramfs generator mkinitcpio isn't one"));
-    let p = with(&["boot", "initramfs", "installkernel", "uki_generator"], "ukify".into());
-    assert_eq!(p, vec!["Gentoo: /usr/lib/kernel/install.conf says uki_generator=ukify; bko-holt load doesn't make unified kernel images"]);
-    let p = with(&["boot", "initramfs", "installkernel", "layout"], "bls".into());
+    assert!(
+        with(&["boot", "initramfs", "generator"], "mkinitcpio".into())[0]
+            .contains("initramfs generator mkinitcpio isn't one")
+    );
+    let p = with(
+        &["boot", "initramfs", "installkernel", "uki_generator"],
+        "ukify".into(),
+    );
+    assert_eq!(
+        p,
+        vec![
+            "Gentoo: /usr/lib/kernel/install.conf says uki_generator=ukify; bko-holt load doesn't make unified kernel images"
+        ]
+    );
+    let p = with(
+        &["boot", "initramfs", "installkernel", "layout"],
+        "bls".into(),
+    );
     assert!(p.len() == 1 && p[0].contains("says layout=bls; bko-holt load supports only installkernel's grub and compat layouts"), "{p:?}");
-    assert!(with(&["boot", "initramfs", "installkernel", "layout"], "compat".into()).is_empty());
-    assert!(with(&["boot", "initramfs", "installkernel", "layout"], Value::Null)[0].contains("names no layout"));
+    assert!(
+        with(
+            &["boot", "initramfs", "installkernel", "layout"],
+            "compat".into()
+        )
+        .is_empty()
+    );
+    assert!(
+        with(
+            &["boot", "initramfs", "installkernel", "layout"],
+            Value::Null
+        )[0]
+        .contains("names no layout")
+    );
     let p = with(&["boot", "initramfs", "lib_modules_initrd"], vec![k].into());
-    assert_eq!(p, vec![format!("Gentoo: kernel {k} has its initramfs at /lib/modules/{k}/initrd, where bko-holt load doesn't make one")]);
+    assert_eq!(
+        p,
+        vec![format!(
+            "Gentoo: kernel {k} has its initramfs at /lib/modules/{k}/initrd, where bko-holt load doesn't make one"
+        )]
+    );
     let p = with(&["boot", "loader", "via_shim"], true.into());
-    assert!(p.len() == 1 && p[0].starts_with("Gentoo through shim (Secure Boot, grub)"), "{p:?}");
+    assert!(
+        p.len() == 1 && p[0].starts_with("Gentoo through shim (Secure Boot, grub)"),
+        "{p:?}"
+    );
     // none: nothing made, said.
     let mut w = v.clone();
     set_at(&mut w, &["boot", "initramfs", "generator"], "none".into());
     let b = plan(w);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
-    let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
+    let bt: String = b
+        .stage(Stage::Boot)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
     assert!(!bt.contains("dracut"), "{bt}");
-    assert!(b.notes.iter().any(|n| n.starts_with("Gentoo: no initramfs generator")), "{:?}", b.notes);
+    assert!(
+        b.notes
+            .iter()
+            .any(|n| n.starts_with("Gentoo: no initramfs generator")),
+        "{:?}",
+        b.notes
+    );
 }
 
 /// Gentoo's plan for a Thinkpad tree changed by `change`, and its dump.
 fn gentoo_plan(change: impl Fn(&Tree)) -> (Value, crate::load::commands::Built) {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let t = gentoo_thinkpad();
     change(&t);
     let v = run(&t, true, FakeRunner::default());
     let l = Layout::from_json(v.clone()).unwrap();
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-    (v, commands::build(&l, &o, &Mapping { pairs: vec![("nvme0n1".into(), "vda".into())], ..Mapping::default() }))
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+        unreachable!()
+    };
+    (
+        v,
+        commands::build(
+            &l,
+            &o,
+            &Mapping {
+                pairs: vec![("nvme0n1".into(), "vda".into())],
+                ..Mapping::default()
+            },
+        ),
+    )
 }
 
 /// One dracut command per kernel with an initramfs, in version order; a
@@ -2325,19 +3934,43 @@ fn gentoo_plan(change: impl Fn(&Tree)) -> (Value, crate::load::commands::Built) 
 /// refused.
 #[test]
 fn gentoo_dracut_per_kernel() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let k = GENTOO_KV;
     let (k2, k3) = ("6.18.9-gentoo-dist-bin", "6.19.1-gentoo-dist-bin");
-    let no_modules = |kv: &str| format!("Gentoo: kernel {kv} has no /lib/modules/{kv}, so dracut can't remake its initramfs; the restored one stays");
-    let dracut = |b: &crate::load::commands::Built| b.stage(Stage::Boot).iter().map(Cmd::shell).collect::<String>().lines().filter(|l| l.contains(" dracut ")).map(|l| format!("{l}\n")).collect::<Vec<_>>();
-    let line = |kv: &str| format!("chroot /mnt/bko-target sh -c {} sh {kv} /boot/initramfs-{kv}.img\n", crate::load::shell_quote(crate::load::commands::DRACUT_ONE_IMAGE));
+    let no_modules = |kv: &str| {
+        format!(
+            "Gentoo: kernel {kv} has no /lib/modules/{kv}, so dracut can't remake its initramfs; the restored one stays"
+        )
+    };
+    let dracut = |b: &crate::load::commands::Built| {
+        b.stage(Stage::Boot)
+            .iter()
+            .map(Cmd::shell)
+            .collect::<String>()
+            .lines()
+            .filter(|l| l.contains(" dracut "))
+            .map(|l| format!("{l}\n"))
+            .collect::<Vec<_>>()
+    };
+    let line = |kv: &str| {
+        format!(
+            "chroot /mnt/bko-target sh -c {} sh {kv} /boot/initramfs-{kv}.img\n",
+            crate::load::shell_quote(crate::load::commands::DRACUT_ONE_IMAGE)
+        )
+    };
 
     // Three kernels: k2 and k with modules, k3 without.
     let (v, b) = gentoo_plan(|t| {
-        t.file(&format!("/boot/vmlinuz-{k2}"), "k").file(&format!("/boot/initramfs-{k2}.img"), "i").dir(&format!("/usr/lib/modules/{k2}/kernel"));
-        t.file(&format!("/boot/vmlinuz-{k3}"), "k").file(&format!("/boot/initramfs-{k3}.img"), "i");
+        t.file(&format!("/boot/vmlinuz-{k2}"), "k")
+            .file(&format!("/boot/initramfs-{k2}.img"), "i")
+            .dir(&format!("/usr/lib/modules/{k2}/kernel"));
+        t.file(&format!("/boot/vmlinuz-{k3}"), "k")
+            .file(&format!("/boot/initramfs-{k3}.img"), "i");
     });
-    let kernels: Vec<String> = arr(&v, &["boot", "kernels", "installed"]).iter().map(|x| s(x, &["version"]).to_string()).collect();
+    let kernels: Vec<String> = arr(&v, &["boot", "kernels", "installed"])
+        .iter()
+        .map(|x| s(x, &["version"]).to_string())
+        .collect();
     assert_eq!(kernels, vec![k2, k, k3]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     assert_eq!(dracut(&b), vec![line(k2), line(k)]);
@@ -2345,32 +3978,54 @@ fn gentoo_dracut_per_kernel() {
 
     // The only kernel has an initramfs but no modules: it keeps its image,
     // and that isn't a refusal.
-    let (v, b) = gentoo_plan(|t| std::fs::remove_dir_all(t.p(&format!("/usr/lib/modules/{k}"))).unwrap());
-    assert_eq!(arr(&v, &["boot", "kernels", "installed"])[0].get("modules_installed"), Some(&Value::Bool(false)));
+    let (v, b) =
+        gentoo_plan(|t| std::fs::remove_dir_all(t.p(&format!("/usr/lib/modules/{k}"))).unwrap());
+    assert_eq!(
+        arr(&v, &["boot", "kernels", "installed"])[0].get("modules_installed"),
+        Some(&Value::Bool(false))
+    );
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     assert!(dracut(&b).is_empty());
     assert!(b.notes.contains(&no_modules(k)), "{:?}", b.notes);
 
     // install.conf says dracut, but no kernel has an initramfs.
     let (v, b) = gentoo_plan(|t| {
-        for f in [format!("/boot/initramfs-{k}.img"), format!("/boot/initramfs-{k}.img.old")] {
+        for f in [
+            format!("/boot/initramfs-{k}.img"),
+            format!("/boot/initramfs-{k}.img.old"),
+        ] {
             std::fs::remove_file(t.p(&f)).unwrap();
         }
     });
     assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "dracut");
-    assert_eq!(b.problems, vec!["Gentoo: the initramfs generator is dracut, but no kernel in /boot has an initramfs to remake"]);
+    assert_eq!(
+        b.problems,
+        vec![
+            "Gentoo: the initramfs generator is dracut, but no kernel in /boot has an initramfs to remake"
+        ]
+    );
 
     // systemd's kernel-install (installkernel[systemd], layout grub) names
     // the kernel kernel-K: the same kernel, its .old copy apart.
     let (v, b) = gentoo_plan(|t| {
-        for (from, to) in [(format!("/boot/vmlinuz-{k}"), format!("/boot/kernel-{k}")), (format!("/boot/vmlinuz-{k}.old"), format!("/boot/kernel-{k}.old"))] {
+        for (from, to) in [
+            (format!("/boot/vmlinuz-{k}"), format!("/boot/kernel-{k}")),
+            (
+                format!("/boot/vmlinuz-{k}.old"),
+                format!("/boot/kernel-{k}.old"),
+            ),
+        ] {
             std::fs::rename(t.p(&from), t.p(&to)).unwrap();
         }
     });
     let kernels = arr(&v, &["boot", "kernels", "installed"]);
     assert_eq!(kernels.len(), 1);
     assert_eq!(u(&kernels[0], &["vmlinuz_bytes"]), 1);
-    assert!(arr(&v, &["boot", "kernels", "old_copies"]).iter().any(|x| x.as_str() == Some(format!("kernel-{k}.old").as_str())));
+    assert!(
+        arr(&v, &["boot", "kernels", "old_copies"])
+            .iter()
+            .any(|x| x.as_str() == Some(format!("kernel-{k}.old").as_str()))
+    );
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     assert_eq!(dracut(&b), vec![line(k)]);
 
@@ -2378,9 +4033,17 @@ fn gentoo_dracut_per_kernel() {
     let (v, b) = gentoo_plan(|t| {
         t.file(&format!("/usr/lib/modules/{k}/initrd"), "i");
     });
-    let lmi: Vec<&str> = arr(&v, &["boot", "initramfs", "lib_modules_initrd"]).iter().filter_map(Value::as_str).collect();
+    let lmi: Vec<&str> = arr(&v, &["boot", "initramfs", "lib_modules_initrd"])
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
     assert_eq!(lmi, vec![k]);
-    assert_eq!(b.problems, vec![format!("Gentoo: kernel {k} has its initramfs at /lib/modules/{k}/initrd, where bko-holt load doesn't make one")]);
+    assert_eq!(
+        b.problems,
+        vec![format!(
+            "Gentoo: kernel {k} has its initramfs at /lib/modules/{k}/initrd, where bko-holt load doesn't make one"
+        )]
+    );
 }
 
 /// A Gentoo without installkernel's configuration: none when /boot has no
@@ -2394,12 +4057,23 @@ fn gentoo_generator_without_installkernel() {
     let detect = |t: &Tree| {
         let v = run(t, true, FakeRunner::default());
         let i = v.at(&["boot", "initramfs"]).unwrap().clone();
-        (s(&i, &["generator"]).to_string(), arr(&i, &["evidence"]).iter().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>(), i.get("installkernel").unwrap().is_null(), v)
+        (
+            s(&i, &["generator"]).to_string(),
+            arr(&i, &["evidence"])
+                .iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect::<Vec<_>>(),
+            i.get("installkernel").unwrap().is_null(),
+            v,
+        )
     };
     let (g, ev, no_ik, _) = detect(&t);
     assert_eq!(g, "dracut");
     assert!(no_ik);
-    assert_eq!(ev[0], "no installkernel configuration (/etc/kernel/install.conf, /usr/lib/kernel/install.conf)");
+    assert_eq!(
+        ev[0],
+        "no installkernel configuration (/etc/kernel/install.conf, /usr/lib/kernel/install.conf)"
+    );
     assert_eq!(ev[1], "/boot has initramfs-* and genkernel isn't installed");
     // An install.conf that names no initrd_generator: the /boot rules
     // decide, and the file is kept as evidence.
@@ -2407,28 +4081,76 @@ fn gentoo_generator_without_installkernel() {
     let (g, ev, no_ik, v) = detect(&t);
     assert_eq!(g, "dracut");
     assert!(!no_ik);
-    assert_eq!(s(&v, &["boot", "initramfs", "installkernel", "layout"]), "grub");
-    assert!(v.at(&["boot", "initramfs", "installkernel", "initrd_generator"]).unwrap().is_null());
-    assert_eq!(ev[..2], ["/usr/lib/kernel/install.conf names no initrd_generator".to_string(), "/boot has initramfs-* and genkernel isn't installed".to_string()]);
+    assert_eq!(
+        s(&v, &["boot", "initramfs", "installkernel", "layout"]),
+        "grub"
+    );
+    assert!(
+        v.at(&["boot", "initramfs", "installkernel", "initrd_generator"])
+            .unwrap()
+            .is_null()
+    );
+    assert_eq!(
+        ev[..2],
+        [
+            "/usr/lib/kernel/install.conf names no initrd_generator".to_string(),
+            "/boot has initramfs-* and genkernel isn't installed".to_string()
+        ]
+    );
     std::fs::remove_file(t.p("/usr/lib/kernel/install.conf")).unwrap();
-    t.file("/var/db/pkg/sys-kernel/genkernel-4.3.17/PF", "genkernel-4.3.17\n");
+    t.file(
+        "/var/db/pkg/sys-kernel/genkernel-4.3.17/PF",
+        "genkernel-4.3.17\n",
+    );
     assert_eq!(detect(&t).0, "genkernel");
-    for f in [format!("/boot/initramfs-{k}.img"), format!("/boot/initramfs-{k}.img.old")] {
+    for f in [
+        format!("/boot/initramfs-{k}.img"),
+        format!("/boot/initramfs-{k}.img.old"),
+    ] {
         std::fs::remove_file(t.p(&f)).unwrap();
     }
-    std::fs::write(t.p("/var/db/pkg/sys-kernel/gentoo-kernel-bin-6.18.63/USE"), "abi_x86_64 amd64 elibc_glibc kernel_linux\n").unwrap();
+    std::fs::write(
+        t.p("/var/db/pkg/sys-kernel/gentoo-kernel-bin-6.18.63/USE"),
+        "abi_x86_64 amd64 elibc_glibc kernel_linux\n",
+    )
+    .unwrap();
     let (g, ev, _, v) = detect(&t);
     assert_eq!(g, "none");
-    assert_eq!(ev[1..], ["/boot has no initramfs-*".to_string(), "gentoo-kernel-bin-6.18.63 is built without USE=initramfs".to_string()]);
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    assert_eq!(
+        ev[1..],
+        [
+            "/boot has no initramfs-*".to_string(),
+            "gentoo-kernel-bin-6.18.63 is built without USE=initramfs".to_string()
+        ]
+    );
+    use crate::load::{Parsed, Stage, commands, layout::Layout, target::Mapping};
     let l = Layout::from_json(v).unwrap();
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-    let b = commands::build(&l, &o, &Mapping { pairs: vec![("nvme0n1".into(), "vda".into())], ..Mapping::default() });
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+        unreachable!()
+    };
+    let b = commands::build(
+        &l,
+        &o,
+        &Mapping {
+            pairs: vec![("nvme0n1".into(), "vda".into())],
+            ..Mapping::default()
+        },
+    );
     assert!(b.problems.is_empty(), "{:?}", b.problems);
-    let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
-    assert!(!bt.contains("dracut") && !bt.contains("update-initramfs") && bt.contains("grub-install"), "{bt}");
+    let bt: String = b
+        .stage(Stage::Boot)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
+    assert!(
+        !bt.contains("dracut") && !bt.contains("update-initramfs") && bt.contains("grub-install"),
+        "{bt}"
+    );
     // installkernel's install.conf in /etc wins over /usr/lib's.
-    t.file("/etc/kernel/install.conf", "layout=compat\ninitrd_generator=ugrd\nuki_generator=none\n");
+    t.file(
+        "/etc/kernel/install.conf",
+        "layout=compat\ninitrd_generator=ugrd\nuki_generator=none\n",
+    );
     let (g, ev, _, _) = detect(&t);
     assert_eq!(g, "ugrd");
     assert_eq!(ev[0], "/etc/kernel/install.conf says initrd_generator=ugrd");
@@ -2457,12 +4179,47 @@ fn pikaos() -> Tree {
         512,
         &GptSpec {
             disk_guid: "7a1c2c3d-0000-4000-8000-00000000eeee",
-            parts: vec![(ESP, PIKA_ESP, 2048, 34815, 0, "ESP"), (XBOOTLDR, "5a6b7c8d-1111-4222-8333-944455557777", 34816, 67583, 0, "boot"), (LINUX, "5a6b7c8d-1111-4222-8333-944455558888", 67584, 96255, 0, "root")],
+            parts: vec![
+                (ESP, PIKA_ESP, 2048, 34815, 0, "ESP"),
+                (
+                    XBOOTLDR,
+                    "5a6b7c8d-1111-4222-8333-944455557777",
+                    34816,
+                    67583,
+                    0,
+                    "boot",
+                ),
+                (
+                    LINUX,
+                    "5a6b7c8d-1111-4222-8333-944455558888",
+                    67584,
+                    96255,
+                    0,
+                    "root",
+                ),
+            ],
         },
     );
-    put(&mut img, 2048, &fat::sample::fat32(32768, 0x1234_abcd, "EFI"));
-    put(&mut img, 34816, &ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, "PikaBoot"));
-    put(&mut img, 67584, &crate::probe::xfs::sample::image("PikaRoot"));
+    put(
+        &mut img,
+        2048,
+        &fat::sample::fat32(32768, 0x1234_abcd, "EFI"),
+    );
+    put(
+        &mut img,
+        34816,
+        &ext::sample::image(
+            0x4 | 0x8 | 0x10 | 0x20,
+            0x2 | 0x40 | 0x80 | 0x200,
+            0x1 | 0x2 | 0x400,
+            "PikaBoot",
+        ),
+    );
+    put(
+        &mut img,
+        67584,
+        &crate::probe::xfs::sample::image("PikaRoot"),
+    );
     let boot_uuid = "10111213-1415-1617-1819-1a1b1c1d1e1f";
     let v_ = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
     let refind = vec![3u8; 300];
@@ -2523,18 +4280,37 @@ fn pikaos() -> Tree {
         ("e2fsprogs", "1.47.3-1"),
         ("dosfstools", "4.2-1.2"),
     ];
-    let status: String = pkgs.iter().map(|(n, v)| format!("Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n")).collect();
+    let status: String = pkgs
+        .iter()
+        .map(|(n, v)| {
+            format!(
+                "Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n"
+            )
+        })
+        .collect();
     t.file("/var/lib/dpkg/status", status);
     t
 }
 
 /// PikaOS's plan from a tree, the source disk vda going to vdb.
 fn pikaos_plan(t: &Tree) -> (Value, crate::load::commands::Built) {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let v = run(t, true, FakeRunner::default());
     let l = Layout::from_json(v.clone()).unwrap();
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-    (v, commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() }))
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+        unreachable!()
+    };
+    (
+        v,
+        commands::build(
+            &l,
+            &o,
+            &Mapping {
+                pairs: vec![("vda".into(), "vdb".into())],
+                ..Mapping::default()
+            },
+        ),
+    )
 }
 
 /// PikaOS read back and planned (docs/design/pikaos.md): booster over
@@ -2545,16 +4321,27 @@ fn pikaos_plan(t: &Tree) -> (Value, crate::load::commands::Built) {
 /// refind-install nor update-initramfs, and makes rEFInd's boot entry.
 #[test]
 fn pikaos_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let k = PIKA_KV;
     let (v, b) = pikaos_plan(&pikaos());
     assert_eq!(s(&v, &["os", "id"]), "pika");
     assert_eq!(s(&v, &["os", "pretty_name"]), "PikaOS 4");
     assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
-    for (p, ver) in [("booster", "0.12.1-100pika1"), ("kernel-pika", "7.3.3-101pika1"), ("kernel-pika-runtime", "7.3.3-101pika1"), ("pika-refind-theme", "1.0-100pika1"), ("refind-btrfs", "0.6.0-100pika1"), ("zram-tools", "0.3.5-1"), ("refind", "0.14.2-100pika2")] {
+    for (p, ver) in [
+        ("booster", "0.12.1-100pika1"),
+        ("kernel-pika", "7.3.3-101pika1"),
+        ("kernel-pika-runtime", "7.3.3-101pika1"),
+        ("pika-refind-theme", "1.0-100pika1"),
+        ("refind-btrfs", "0.6.0-100pika1"),
+        ("zram-tools", "0.3.5-1"),
+        ("refind", "0.14.2-100pika2"),
+    ] {
         assert_eq!(s(&v, &["boot", "packages", p]), ver, "{p}");
     }
-    assert!(v.at(&["boot", "packages", "linux-image-7.3.3-pikaos"]).is_none());
+    assert!(
+        v.at(&["boot", "packages", "linux-image-7.3.3-pikaos"])
+            .is_none()
+    );
     let i = v.at(&["boot", "initramfs"]).unwrap();
     assert_eq!(s(i, &["generator"]), "booster");
     assert_eq!(
@@ -2562,26 +4349,47 @@ fn pikaos_guest() {
         r#"{"conf":"/etc/booster.yaml","universal":null,"enable_lvm":true,"modules":"usbhid,hid_generic","modules_force_load":"usbhid,hid_generic","compression":"lz4"}"#
     );
     let kernels = arr(&v, &["boot", "kernels", "installed"]);
-    assert_eq!(kernels.len(), 1, "{}", v.at(&["boot", "kernels"]).unwrap().compact());
+    assert_eq!(
+        kernels.len(),
+        1,
+        "{}",
+        v.at(&["boot", "kernels"]).unwrap().compact()
+    );
     assert_eq!(s(&kernels[0], &["version"]), k);
     assert_eq!(u(&kernels[0], &["initrd_bytes"]), 2);
-    assert_eq!(kernels[0].get("modules_installed"), Some(&Value::Bool(true)));
-    let old: Vec<&str> = arr(&v, &["boot", "kernels", "old_copies"]).iter().filter_map(Value::as_str).collect();
+    assert_eq!(
+        kernels[0].get("modules_installed"),
+        Some(&Value::Bool(true))
+    );
+    let old: Vec<&str> = arr(&v, &["boot", "kernels", "old_copies"])
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
     assert_eq!(old, vec![format!("booster.img-{k}.dpkg-bak")]);
     let l = v.at(&["boot", "loader"]).unwrap();
     assert_eq!(s(l, &["name"]), "refind");
     assert_eq!(s(l, &["package"]), "refind");
     assert_eq!(l.get("via_shim"), Some(&Value::Bool(false)));
-    assert!(v.at(&["boot", "systemd_boot"]).unwrap().is_null(), "{}", v.at(&["boot", "systemd_boot"]).unwrap().compact());
+    assert!(
+        v.at(&["boot", "systemd_boot"]).unwrap().is_null(),
+        "{}",
+        v.at(&["boot", "systemd_boot"]).unwrap().compact()
+    );
     assert_eq!(s(&v, &["boot", "esps", "0", "mounted_at"]), "/boot/efi");
     let rc = v.at(&["boot", "refind", "linux_conf"]).unwrap();
     assert_eq!(s(rc, &["path"]), "/boot/refind_linux.conf");
     let lines = arr(rc, &["lines"]);
     assert_eq!(lines.len(), 3);
     assert_eq!(s(&lines[0], &["title"]), "Boot with standard options");
-    assert_eq!(s(&lines[0], &["options"]), format!("nowatchdog rootflags=rw,relatime root=UUID={PIKA_ROOT} quiet splash ---"));
+    assert_eq!(
+        s(&lines[0], &["options"]),
+        format!("nowatchdog rootflags=rw,relatime root=UUID={PIKA_ROOT} quiet splash ---")
+    );
     assert_eq!(s(&lines[2], &["title"]), "Boot with safe graphics");
-    let labels: Vec<&str> = arr(&v, &["storage", "disks", "0", "partitions"]).iter().map(|p| s(p, &["content", "label"])).collect();
+    let labels: Vec<&str> = arr(&v, &["storage", "disks", "0", "partitions"])
+        .iter()
+        .map(|p| s(p, &["content", "label"]))
+        .collect();
     assert_eq!(labels, vec!["EFI", "PikaBoot", "PikaRoot"]);
     assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
 
@@ -2590,15 +4398,27 @@ fn pikaos_guest() {
     let booster: Vec<&str> = bt.lines().filter(|l| l.contains("booster build")).collect();
     assert_eq!(
         booster,
-        vec![r#"chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d "$k/kernel" ] || continue; k=${k##*/}; booster build --force --kernel-version "$k" "/boot/booster.img-$k" || exit; n=$((n + 1)); done; [ "$n" -gt 0 ]'"#],
+        vec![
+            r#"chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d "$k/kernel" ] || continue; k=${k##*/}; booster build --force --kernel-version "$k" "/boot/booster.img-$k" || exit; n=$((n + 1)); done; [ "$n" -gt 0 ]'"#
+        ],
         "{bt}"
     );
-    assert!(!bt.contains("update-initramfs") && !bt.contains("refind-install") && !bt.contains("grub") && !bt.contains("bootctl"), "{bt}");
+    assert!(
+        !bt.contains("update-initramfs")
+            && !bt.contains("refind-install")
+            && !bt.contains("grub")
+            && !bt.contains("bootctl"),
+        "{bt}"
+    );
     let nvram = bt.find("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'rEFInd Boot Manager' --loader '\\EFI\\refind\\refind_x64.efi'\n").expect(&bt);
     assert!(bt.find("booster build").unwrap() < nvram, "{bt}");
     assert!(b.notes.iter().any(|n| n == "rEFInd: its EFI files, drivers, theme and refind.conf came back with the ESP, and refind_linux.conf with /boot; nothing to install"), "{:?}", b.notes);
     let mnt: String = b.stage(Stage::Mount).iter().map(Cmd::shell).collect();
-    assert!(mnt.find("/mnt/bko-target/boot\n").unwrap() < mnt.find("/mnt/bko-target/boot/efi\n").unwrap(), "{mnt}");
+    assert!(
+        mnt.find("/mnt/bko-target/boot\n").unwrap()
+            < mnt.find("/mnt/bko-target/boot/efi\n").unwrap(),
+        "{mnt}"
+    );
 }
 
 /// PikaOS in "BOOTX64 mode" (or OVMF with blank variables): the firmware
@@ -2607,25 +4427,53 @@ fn pikaos_guest() {
 #[test]
 fn pikaos_fallback_boot() {
     use crate::efi::GLOBAL;
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let t = pikaos();
     let v_ = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
     std::fs::remove_file(t.p(&v_("Boot0001"))).unwrap();
-    t.file(&v_("Boot0002"), efi_load_option("UEFI Misc Device", 1, 2048, 32768, PIKA_ESP, "\\EFI\\BOOT\\BOOTX64.EFI"))
-        .file(&v_("BootOrder"), [7u8, 0, 0, 0, 2, 0])
-        .file(&v_("BootCurrent"), [6u8, 0, 0, 0, 2, 0]);
+    t.file(
+        &v_("Boot0002"),
+        efi_load_option(
+            "UEFI Misc Device",
+            1,
+            2048,
+            32768,
+            PIKA_ESP,
+            "\\EFI\\BOOT\\BOOTX64.EFI",
+        ),
+    )
+    .file(&v_("BootOrder"), [7u8, 0, 0, 0, 2, 0])
+    .file(&v_("BootCurrent"), [6u8, 0, 0, 0, 2, 0]);
     let (v, b) = pikaos_plan(&t);
     let l = v.at(&["boot", "loader"]).unwrap();
     assert_eq!(s(l, &["name"]), "refind");
     let ev = l.get("evidence").unwrap().compact();
-    assert!(ev.contains("that is the removable-media fallback path") && ev.contains("an ESP holds rEFInd's refind_x64.efi or refind.conf"), "{ev}");
+    assert!(
+        ev.contains("that is the removable-media fallback path")
+            && ev.contains("an ESP holds rEFInd's refind_x64.efi or refind.conf"),
+        "{ev}"
+    );
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(!bt.contains("refind-install") && !bt.contains("refind_x64.efi"), "{bt}");
+    assert!(
+        !bt.contains("refind-install") && !bt.contains("refind_x64.efi"),
+        "{bt}"
+    );
     assert!(bt.contains("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'UEFI Misc Device' --loader '\\EFI\\BOOT\\BOOTX64.EFI'\n"), "{bt}");
-    assert!(b.notes.iter().any(|n| n.starts_with("rEFInd: its EFI files")), "{:?}", b.notes);
+    assert!(
+        b.notes
+            .iter()
+            .any(|n| n.starts_with("rEFInd: its EFI files")),
+        "{:?}",
+        b.notes
+    );
     // Only the fallback copy (refind.conf beside bootx64.efi) is enough.
-    for f in ["refind_x64.efi", "refind.conf", "drivers_x64/ext4_x64.efi", "refind-dark/refind-dark.conf"] {
+    for f in [
+        "refind_x64.efi",
+        "refind.conf",
+        "drivers_x64/ext4_x64.efi",
+        "refind-dark/refind-dark.conf",
+    ] {
         std::fs::remove_file(t.p(&format!("/boot/efi/EFI/refind/{f}"))).unwrap();
     }
     let (v, _) = pikaos_plan(&t);
@@ -2638,16 +4486,36 @@ fn pikaos_fallback_boot() {
 fn unmounted_esp_warns() {
     let t = gentoo_thinkpad();
     let mi = std::fs::read_to_string(t.p("/proc/self/mountinfo")).unwrap();
-    std::fs::write(t.p("/proc/self/mountinfo"), mi.lines().filter(|l| !l.contains(" /efi ")).map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+    std::fs::write(
+        t.p("/proc/self/mountinfo"),
+        mi.lines()
+            .filter(|l| !l.contains(" /efi "))
+            .map(|l| format!("{l}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
     let v = run(&t, true, FakeRunner::default());
-    let w: Vec<&str> = arr(&v, &["warnings"]).iter().filter_map(Value::as_str).collect();
-    assert_eq!(w, vec!["fstab mounts a vfat /efi (UUID=1234-ABCD), but nothing is mounted there: this dump has no ESP and a backup would have none of its files; mount /efi and dump again"]);
+    let w: Vec<&str> = arr(&v, &["warnings"])
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(
+        w,
+        vec![
+            "fstab mounts a vfat /efi (UUID=1234-ABCD), but nothing is mounted there: this dump has no ESP and a backup would have none of its files; mount /efi and dump again"
+        ]
+    );
     assert!(arr(&v, &["boot", "esps"]).is_empty());
     // A /boot/efi too; a vfat mounted elsewhere, or not vfat, isn't one.
     let fstab = std::fs::read_to_string(t.p("/etc/fstab")).unwrap();
     std::fs::write(t.p("/etc/fstab"), fstab.replace(" /efi ", " /boot/efi ")).unwrap();
     let v = run(&t, true, FakeRunner::default());
-    assert!(arr(&v, &["warnings"])[0].as_str().unwrap().starts_with("fstab mounts a vfat /boot/efi (UUID=1234-ABCD)"));
+    assert!(
+        arr(&v, &["warnings"])[0]
+            .as_str()
+            .unwrap()
+            .starts_with("fstab mounts a vfat /boot/efi (UUID=1234-ABCD)")
+    );
     std::fs::write(t.p("/etc/fstab"), fstab.replace(" /efi ", " /mnt/stick ")).unwrap();
     assert!(arr(&run(&t, true, FakeRunner::default()), &["warnings"]).is_empty());
 }
@@ -2669,14 +4537,33 @@ fn biglinux() -> Tree {
         512,
         &GptSpec {
             disk_guid: "6f1c2c3d-0000-4000-8000-00000000b16b",
-            parts: vec![(ESP, BIGLINUX_ESP, 2048, 73727, 0, ""), (LINUX, "b16b16b1-0000-4000-8000-000000000002", 73728, 196574, 0, "")],
+            parts: vec![
+                (ESP, BIGLINUX_ESP, 2048, 73727, 0, ""),
+                (
+                    LINUX,
+                    "b16b16b1-0000-4000-8000-000000000002",
+                    73728,
+                    196574,
+                    0,
+                    "",
+                ),
+            ],
         },
     );
     put(&mut img, 2048, &fat::sample::fat32(71680, 0x0b16_0b16, ""));
-    put(&mut img, 73728, &btrfs::sample::image("", 0x1 | 0x20 | 0x40 | 0x100 | 0x200));
+    put(
+        &mut img,
+        73728,
+        &btrfs::sample::image("", 0x1 | 0x20 | 0x40 | 0x100 | 0x200),
+    );
     let root_uuid = "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
     let opts = "rw,noatime,compress-force=zstd:3,discard=async,space_cache=v2";
-    let pkg = |n: &str, ver: &str| (format!("/var/lib/pacman/local/{n}-{ver}/desc"), format!("%NAME%\n{n}\n\n%VERSION%\n{ver}\n\n%ARCH%\nx86_64\n"));
+    let pkg = |n: &str, ver: &str| {
+        (
+            format!("/var/lib/pacman/local/{n}-{ver}/desc"),
+            format!("%NAME%\n{n}\n\n%VERSION%\n{ver}\n\n%ARCH%\nx86_64\n"),
+        )
+    };
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
@@ -2765,44 +4652,127 @@ fn biglinux_runner() -> FakeRunner {
 /// and /boot and /usr/share/grub defragmented uncompressed at the end.
 #[test]
 fn biglinux_guest() {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    use crate::load::{Parsed, Stage, commands, layout::Layout, target::Mapping};
     let v = run(&biglinux(), true, biglinux_runner());
     assert_eq!(s(&v, &["os", "id"]), "biglinux");
     assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
     assert_eq!(s(&v, &["boot", "loader", "name"]), "grub");
     assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "mkinitcpio");
-    for (n, ver) in [("grub-btrfs", "4.14-1"), ("grub-btrfs-timeshift", "1.0-1"), ("faster-mkinitcpio", "1.0-1")] {
+    for (n, ver) in [
+        ("grub-btrfs", "4.14-1"),
+        ("grub-btrfs-timeshift", "1.0-1"),
+        ("faster-mkinitcpio", "1.0-1"),
+    ] {
         assert_eq!(s(&v, &["boot", "packages", n]), ver);
     }
     // Names other guests have too stay out, so their fingerprints don't change.
-    for n in ["biglinux-keyring", "timeshift", "plymouth", "install-grub", "update-grub"] {
+    for n in [
+        "biglinux-keyring",
+        "timeshift",
+        "plymouth",
+        "install-grub",
+        "update-grub",
+    ] {
         assert!(v.at(&["boot", "packages", n]).is_none(), "{n}");
     }
     assert_eq!(s(&v, &["boot", "esps", "0", "mounted_at"]), "/boot/efi");
-    let subs: Vec<&str> = arr(&v, &["storage", "btrfs", "0", "subvolumes"]).iter().map(|x| s(x, &["path"])).collect();
-    assert_eq!(subs, vec!["<FS_TREE>/@", "<FS_TREE>/@home", "<FS_TREE>/timeshift-btrfs/snapshots/2026-11-14_10-00-01/@", "<FS_TREE>/timeshift-btrfs/snapshots/2026-11-15_10-00-01/@"]);
+    let subs: Vec<&str> = arr(&v, &["storage", "btrfs", "0", "subvolumes"])
+        .iter()
+        .map(|x| s(x, &["path"]))
+        .collect();
+    assert_eq!(
+        subs,
+        vec![
+            "<FS_TREE>/@",
+            "<FS_TREE>/@home",
+            "<FS_TREE>/timeshift-btrfs/snapshots/2026-11-14_10-00-01/@",
+            "<FS_TREE>/timeshift-btrfs/snapshots/2026-11-15_10-00-01/@"
+        ]
+    );
 
     let l = Layout::from_json(v).unwrap();
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string(), "--repo".into(), "/srv/repo".into(), "--password-file".into(), "/run/pw".into()]) else { unreachable!() };
-    let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&[
+        "l.json".to_string(),
+        "--repo".into(),
+        "/srv/repo".into(),
+        "--password-file".into(),
+        "/run/pw".into(),
+    ]) else {
+        unreachable!()
+    };
+    let b = commands::build(
+        &l,
+        &o,
+        &Mapping {
+            pairs: vec![("vda".into(), "vdb".into())],
+            ..Mapping::default()
+        },
+    );
     assert!(b.problems.is_empty(), "{:?}", b.problems);
-    let all: String = [Stage::Partition, Stage::Assemble, Stage::Format, Stage::Mount, Stage::Restore, Stage::Boot, Stage::Close].iter().flat_map(|st| b.stage(*st)).map(commands::Cmd::shell).collect();
-    let f: String = b.stage(Stage::Format).iter().map(commands::Cmd::shell).collect();
+    let all: String = [
+        Stage::Partition,
+        Stage::Assemble,
+        Stage::Format,
+        Stage::Mount,
+        Stage::Restore,
+        Stage::Boot,
+        Stage::Close,
+    ]
+    .iter()
+    .flat_map(|st| b.stage(*st))
+    .map(commands::Cmd::shell)
+    .collect();
+    let f: String = b
+        .stage(Stage::Format)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
     let top = format!("{RUN_DIR}/btrfs/{}", "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf");
-    assert!(f.contains(&format!("btrfs subvolume create {top}/@\n")) && f.contains(&format!("btrfs subvolume create {top}/@home\n")), "{f}");
+    assert!(
+        f.contains(&format!("btrfs subvolume create {top}/@\n"))
+            && f.contains(&format!("btrfs subvolume create {top}/@home\n")),
+        "{f}"
+    );
     assert!(!all.contains("timeshift-btrfs"), "{all}");
-    assert!(!all.lines().any(|l| l.contains("subvolume snapshot")), "{all}");
+    assert!(
+        !all.lines().any(|l| l.contains("subvolume snapshot")),
+        "{all}"
+    );
     assert!(b.notes.iter().any(|n| n == "btrfs b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf: 2 Timeshift snapshots (2026-11-14_10-00-01, 2026-11-15_10-00-01) are not in the backup; not made"), "{:?}", b.notes);
-    let m: String = b.stage(Stage::Mount).iter().map(commands::Cmd::shell).collect();
-    assert!(m.contains("compress-force=zstd") && m.contains("/mnt/bko-target/boot/efi\n"), "{m}");
-    let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
-    let mk = bt.find("chroot /mnt/bko-target mkinitcpio -P\n").expect(&bt);
+    let m: String = b
+        .stage(Stage::Mount)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
+    assert!(
+        m.contains("compress-force=zstd") && m.contains("/mnt/bko-target/boot/efi\n"),
+        "{m}"
+    );
+    let bt: String = b
+        .stage(Stage::Boot)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
+    let mk = bt
+        .find("chroot /mnt/bko-target mkinitcpio -P\n")
+        .expect(&bt);
     let install = bt.find("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=BigLinux --no-nvram\n").expect(&bt);
-    let cfg = bt.find("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n").expect(&bt);
-    let d1 = bt.find("btrfs filesystem defragment --nocomp -r /mnt/bko-target/boot\n").expect(&bt);
-    let d2 = bt.find("btrfs filesystem defragment --nocomp -r /mnt/bko-target/usr/share/grub\n").expect(&bt);
-    let nvram = bt.find("--label BigLinux --loader '\\EFI\\BigLinux\\grubx64.efi'\n").expect(&bt);
-    assert!(mk < install && install < cfg && cfg < d1 && d1 < d2 && d2 < nvram, "{bt}");
+    let cfg = bt
+        .find("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n")
+        .expect(&bt);
+    let d1 = bt
+        .find("btrfs filesystem defragment --nocomp -r /mnt/bko-target/boot\n")
+        .expect(&bt);
+    let d2 = bt
+        .find("btrfs filesystem defragment --nocomp -r /mnt/bko-target/usr/share/grub\n")
+        .expect(&bt);
+    let nvram = bt
+        .find("--label BigLinux --loader '\\EFI\\BigLinux\\grubx64.efi'\n")
+        .expect(&bt);
+    assert!(
+        mk < install && install < cfg && cfg < d1 && d1 < d2 && d2 < nvram,
+        "{bt}"
+    );
 }
 
 const GARUDA_ESP: &str = "9a2d0da0-0000-4000-8000-000000000001";
@@ -2811,11 +4781,19 @@ const GARUDA_ROOT: &str = "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
 /// Calamares's seven subvolumes, all in the top level, where fstab mounts
 /// them, and the garuda guest's IDs and generations for them
 /// (holt/tests/corpus/garuda/src.json).
-const GARUDA_SUBVOLS: [(&str, &str, u32, u32); 7] =
-    [("@", "/", 256, 167), ("@home", "/home", 257, 21), ("@root", "/root", 258, 164), ("@srv", "/srv", 259, 10), ("@cache", "/var/cache", 260, 164), ("@log", "/var/log", 261, 165), ("@tmp", "/var/tmp", 262, 165)];
+const GARUDA_SUBVOLS: [(&str, &str, u32, u32); 7] = [
+    ("@", "/", 256, 167),
+    ("@home", "/home", 257, 21),
+    ("@root", "/root", 258, 164),
+    ("@srv", "/srv", 259, 10),
+    ("@cache", "/var/cache", 260, 164),
+    ("@log", "/var/log", 261, 165),
+    ("@tmp", "/var/tmp", 262, 165),
+];
 /// snap-pac's four read-only snapshots of @ in snapper's @/.snapshots (the
 /// keyrings' pre/post pair, then the upgrade's): number, ID, generation.
-const GARUDA_SNAPSHOTS: [(u32, u32, u32); 4] = [(1, 264, 42), (2, 265, 78), (3, 266, 91), (4, 267, 156)];
+const GARUDA_SNAPSHOTS: [(u32, u32, u32); 4] =
+    [(1, 264, 42), (2, 265, 78), (3, 266, 91), (4, 267, 156)];
 
 /// Garuda Linux as its Calamares installs it (docs/design/garuda.md, the
 /// layout table and "What GA1 found"), in small: UEFI, GPT with a vfat ESP
@@ -2829,7 +4807,7 @@ const GARUDA_SNAPSHOTS: [(u32, u32, u32); 4] = [(1, 264, 42), (2, 265, 78), (3, 
 /// in the device path), so NVRAM has no Garuda entry, and GRUB says so
 /// through LoaderInfo.
 fn garuda() -> Tree {
-    use crate::efi::{real::unhex, GLOBAL, LOADER};
+    use crate::efi::{GLOBAL, LOADER, real::unhex};
     let t = Tree::new("scn-garuda");
     let mut img = vec![0u8; 96 * MIB];
     write_gpt(
@@ -2837,28 +4815,62 @@ fn garuda() -> Tree {
         512,
         &GptSpec {
             disk_guid: "9a2d0da0-0000-4000-8000-00000000d15c",
-            parts: vec![(ESP, GARUDA_ESP, 2048, 73727, 0, "EFI"), (LINUX, "9a2d0da0-0000-4000-8000-000000000002", 73728, 196574, 0, "garuda")],
+            parts: vec![
+                (ESP, GARUDA_ESP, 2048, 73727, 0, "EFI"),
+                (
+                    LINUX,
+                    "9a2d0da0-0000-4000-8000-000000000002",
+                    73728,
+                    196574,
+                    0,
+                    "garuda",
+                ),
+            ],
         },
     );
-    put(&mut img, 2048, &fat::sample::fat32(71680, 0x9a2d_0001, "EFI"));
-    put(&mut img, 73728, &btrfs::sample::image("", 0x1 | 0x10 | 0x20 | 0x40 | 0x100 | 0x200));
+    put(
+        &mut img,
+        2048,
+        &fat::sample::fat32(71680, 0x9a2d_0001, "EFI"),
+    );
+    put(
+        &mut img,
+        73728,
+        &btrfs::sample::image("", 0x1 | 0x10 | 0x20 | 0x40 | 0x100 | 0x200),
+    );
     let root = GARUDA_ROOT;
-    let pkg = |n: &str, ver: &str| (format!("/var/lib/pacman/local/{n}-{ver}/desc"), format!("%NAME%\n{n}\n\n%VERSION%\n{ver}\n\n%ARCH%\nx86_64\n"));
+    let pkg = |n: &str, ver: &str| {
+        (
+            format!("/var/lib/pacman/local/{n}-{ver}/desc"),
+            format!("%NAME%\n{n}\n\n%VERSION%\n{ver}\n\n%ARCH%\nx86_64\n"),
+        )
+    };
     let var = |n: &str, vendor: &str| format!("/sys/firmware/efi/efivars/{n}-{vendor}");
-    let utf16_var = |s: &str| -> Vec<u8> { [6u8, 0, 0, 0].into_iter().chain(s.encode_utf16().chain([0]).flat_map(u16::to_le_bytes)).collect() };
+    let utf16_var = |s: &str| -> Vec<u8> {
+        [6u8, 0, 0, 0]
+            .into_iter()
+            .chain(s.encode_utf16().chain([0]).flat_map(u16::to_le_bytes))
+            .collect()
+    };
     // The guest's Boot0001 as efivarfs shows it: OVMF's "UEFI Misc Device",
     // PciRoot(0x0)/Pci(0x3,0x0) and its 16 bytes of optional data.
-    let misc = unhex("07000000 010000001600550045004600490020004d006900730063002000440065007600690063006500000002010c00d041030a000000000101060000037fff04004eac0881119f594d850ee21a522c59b2");
+    let misc = unhex(
+        "07000000 010000001600550045004600490020004d006900730063002000440065007600690063006500000002010c00d041030a000000000101060000037fff04004eac0881119f594d850ee21a522c59b2",
+    );
     let opts = "rw,noatime,compress=zstd:3,space_cache=v2";
     let mut mi = String::new();
     for (i, (sv, at, id, _)) in GARUDA_SUBVOLS.iter().enumerate() {
         let parent = if i == 0 { 1 } else { 26 };
         mi.push_str(&format!("{} {parent} 0:25 /{sv} {at} rw,noatime shared:{} - btrfs /dev/vda2 {opts},subvolid={id},subvol=/{sv}\n", 26 + i, 1 + i));
     }
-    mi.push_str("33 26 254:1 / /boot/efi rw,relatime shared:8 - vfat /dev/vda1 rw,fmask=0077,dmask=0077\n");
+    mi.push_str(
+        "33 26 254:1 / /boot/efi rw,relatime shared:8 - vfat /dev/vda1 rw,fmask=0077,dmask=0077\n",
+    );
     let mut fstab = String::new();
     for (sv, at, _, _) in GARUDA_SUBVOLS {
-        fstab.push_str(&format!("UUID={root} {at} btrfs subvol=/{sv},defaults,noatime,compress=zstd 0 0\n"));
+        fstab.push_str(&format!(
+            "UUID={root} {at} btrfs subvol=/{sv},defaults,noatime,compress=zstd 0 0\n"
+        ));
     }
     fstab.push_str("UUID=9A2D-0001 /boot/efi vfat umask=0077 0 2\n");
     t.disk("vda", "254:0", &img, 512)
@@ -2924,11 +4936,16 @@ fn garuda_runner() -> FakeRunner {
     for (sv, _, id, generation) in GARUDA_SUBVOLS {
         list.push_str(&format!("ID {id} gen {generation} parent 5 top level 5 parent_uuid - uuid {} path <FS_TREE>/{sv}\n", u(id)));
     }
-    list.push_str(&format!("ID 263 gen 156 parent 256 top level 256 parent_uuid - uuid {} path @/.snapshots\n", u(263)));
+    list.push_str(&format!(
+        "ID 263 gen 156 parent 256 top level 256 parent_uuid - uuid {} path @/.snapshots\n",
+        u(263)
+    ));
     let mut ro = String::new();
     for (n, id, generation) in GARUDA_SNAPSHOTS {
         list.push_str(&format!("ID {id} gen {generation} parent 263 top level 263 parent_uuid {} uuid {} path <FS_TREE>/@/.snapshots/{n}/snapshot\n", u(256), u(id)));
-        ro.push_str(&format!("ID {id} gen {generation} top level 263 path <FS_TREE>/@/.snapshots/{n}/snapshot\n"));
+        ro.push_str(&format!(
+            "ID {id} gen {generation} top level 263 path <FS_TREE>/@/.snapshots/{n}/snapshot\n"
+        ));
     }
     let mut r = FakeRunner::default()
         .with("btrfs subvolume list -a -p -u -q /", &list)
@@ -2936,10 +4953,14 @@ fn garuda_runner() -> FakeRunner {
         .with("btrfs subvolume list -a -r /", &ro);
     for (n, _, _) in GARUDA_SNAPSHOTS {
         let at = format!("/.snapshots/{n}/snapshot");
-        r = r.with(&format!("btrfs property get -t s {at}"), "ro=true\n").with(&format!("btrfs property get -t i {at}"), "");
+        r = r
+            .with(&format!("btrfs property get -t s {at}"), "ro=true\n")
+            .with(&format!("btrfs property get -t i {at}"), "");
     }
     for at in GARUDA_SUBVOLS.iter().map(|x| x.1).chain(["/.snapshots"]) {
-        r = r.with(&format!("btrfs property get -t s {at}"), "ro=false\n").with(&format!("btrfs property get -t i {at}"), "");
+        r = r
+            .with(&format!("btrfs property get -t s {at}"), "ro=false\n")
+            .with(&format!("btrfs property get -t i {at}"), "");
     }
     r
 }
@@ -2954,75 +4975,199 @@ fn garuda_runner() -> FakeRunner {
 /// source had none of its own.
 #[test]
 fn garuda_guest() {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    use crate::load::{Parsed, Stage, commands, layout::Layout, target::Mapping};
     let v = run(&garuda(), true, garuda_runner());
     assert_eq!(s(&v, &["os", "id"]), "garuda");
     assert_eq!(s(&v, &["os", "pretty_name"]), "Garuda Linux");
-    assert!(v.at(&["os", "version_id"]).and_then(Value::as_str).is_none());
+    assert!(
+        v.at(&["os", "version_id"])
+            .and_then(Value::as_str)
+            .is_none()
+    );
     assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
     let l = v.at(&["boot", "loader"]).unwrap();
     assert_eq!(s(l, &["name"]), "grub");
     assert_eq!(l.get("via_shim"), Some(&Value::Bool(false)));
-    assert!(l.get("evidence").unwrap().compact().contains("LoaderInfo says \\\"GRUB 2.16\\\""), "{}", l.compact());
+    assert!(
+        l.get("evidence")
+            .unwrap()
+            .compact()
+            .contains("LoaderInfo says \\\"GRUB 2.16\\\""),
+        "{}",
+        l.compact()
+    );
     assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "dracut");
-    for (n, ver) in [("garuda-dracut-support", "1.6.1-1"), ("linux-garuda", "7.3.4-1"), ("snap-pac", "3.0.1-3"), ("snapper-support", "1.1.2-4"), ("snapper", "0.13.2-2"), ("grub-btrfs", "4.14-1"), ("dracut", "111-1.1")] {
+    for (n, ver) in [
+        ("garuda-dracut-support", "1.6.1-1"),
+        ("linux-garuda", "7.3.4-1"),
+        ("snap-pac", "3.0.1-3"),
+        ("snapper-support", "1.1.2-4"),
+        ("snapper", "0.13.2-2"),
+        ("grub-btrfs", "4.14-1"),
+        ("dracut", "111-1.1"),
+    ] {
         assert_eq!(s(&v, &["boot", "packages", n]), ver, "{n}");
     }
     // The keyring stays out, as in the guest's dump.
     assert!(v.at(&["boot", "packages", "chaotic-keyring"]).is_none());
     assert!(v.at(&["boot", "packages", "mkinitcpio"]).is_none());
     let kernels = arr(&v, &["boot", "kernels", "installed"]);
-    assert_eq!(kernels.iter().map(|k| s(k, &["version"])).collect::<Vec<_>>(), vec!["linux-garuda"]);
+    assert_eq!(
+        kernels
+            .iter()
+            .map(|k| s(k, &["version"]))
+            .collect::<Vec<_>>(),
+        vec!["linux-garuda"]
+    );
     let esp = v.at(&["boot", "esps", "0"]).unwrap();
     assert_eq!(s(esp, &["mounted_at"]), "/boot/efi");
-    let files: Vec<(&str, Option<&str>)> = arr(esp, &["contents", "files"]).iter().map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str))).collect();
-    assert_eq!(files, vec![("EFI/Garuda/grubx64.efi", Some("EFI/boot/bootx64.efi")), ("EFI/boot/bootx64.efi", Some("EFI/Garuda/grubx64.efi"))]);
-    let subs: Vec<(&str, bool)> = arr(&v, &["storage", "btrfs", "0", "subvolumes"]).iter().map(|x| (s(x, &["path"]), x.get("readonly") == Some(&Value::Bool(true)))).collect();
-    let mut want: Vec<(String, bool)> = GARUDA_SUBVOLS.iter().map(|x| (format!("<FS_TREE>/{}", x.0), false)).collect();
+    let files: Vec<(&str, Option<&str>)> = arr(esp, &["contents", "files"])
+        .iter()
+        .map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str)))
+        .collect();
+    assert_eq!(
+        files,
+        vec![
+            ("EFI/Garuda/grubx64.efi", Some("EFI/boot/bootx64.efi")),
+            ("EFI/boot/bootx64.efi", Some("EFI/Garuda/grubx64.efi"))
+        ]
+    );
+    let subs: Vec<(&str, bool)> = arr(&v, &["storage", "btrfs", "0", "subvolumes"])
+        .iter()
+        .map(|x| {
+            (
+                s(x, &["path"]),
+                x.get("readonly") == Some(&Value::Bool(true)),
+            )
+        })
+        .collect();
+    let mut want: Vec<(String, bool)> = GARUDA_SUBVOLS
+        .iter()
+        .map(|x| (format!("<FS_TREE>/{}", x.0), false))
+        .collect();
     want.push(("@/.snapshots".into(), false));
-    want.extend(GARUDA_SNAPSHOTS.iter().map(|(n, _, _)| (format!("<FS_TREE>/@/.snapshots/{n}/snapshot"), true)));
-    assert_eq!(subs, want.iter().map(|(p, r)| (p.as_str(), *r)).collect::<Vec<_>>());
+    want.extend(
+        GARUDA_SNAPSHOTS
+            .iter()
+            .map(|(n, _, _)| (format!("<FS_TREE>/@/.snapshots/{n}/snapshot"), true)),
+    );
+    assert_eq!(
+        subs,
+        want.iter()
+            .map(|(p, r)| (p.as_str(), *r))
+            .collect::<Vec<_>>()
+    );
     assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
 
     let l = Layout::from_json(v).unwrap();
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string(), "--repo".into(), "/srv/repo".into(), "--password-file".into(), "/run/pw".into()]) else { unreachable!() };
-    let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&[
+        "l.json".to_string(),
+        "--repo".into(),
+        "/srv/repo".into(),
+        "--password-file".into(),
+        "/run/pw".into(),
+    ]) else {
+        unreachable!()
+    };
+    let b = commands::build(
+        &l,
+        &o,
+        &Mapping {
+            pairs: vec![("vda".into(), "vdb".into())],
+            ..Mapping::default()
+        },
+    );
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let top = format!("{RUN_DIR}/btrfs/{GARUDA_ROOT}");
     // The seven subvolumes in the top level, then .snapshots in @; the
     // snapshots themselves wait for the restore.
-    let f: String = b.stage(Stage::Format).iter().map(commands::Cmd::shell).collect();
-    let made: String = GARUDA_SUBVOLS.iter().map(|x| format!("btrfs subvolume create {top}/{}\n", x.0)).collect();
-    assert!(f.contains(&format!("{made}mkdir -p {top}/@\nbtrfs subvolume create {top}/@/.snapshots\n")), "{f}");
+    let f: String = b
+        .stage(Stage::Format)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
+    let made: String = GARUDA_SUBVOLS
+        .iter()
+        .map(|x| format!("btrfs subvolume create {top}/{}\n", x.0))
+        .collect();
+    assert!(
+        f.contains(&format!(
+            "{made}mkdir -p {top}/@\nbtrfs subvolume create {top}/@/.snapshots\n"
+        )),
+        "{f}"
+    );
     assert!(!f.contains("/.snapshots/1"), "{f}");
-    let m: String = b.stage(Stage::Mount).iter().map(commands::Cmd::shell).collect();
-    assert!(m.contains("mount -t btrfs -o subvol=/@,noatime,compress=zstd /dev/vdb2 /mnt/bko-target\n"), "{m}");
+    let m: String = b
+        .stage(Stage::Mount)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
+    assert!(
+        m.contains("mount -t btrfs -o subvol=/@,noatime,compress=zstd /dev/vdb2 /mnt/bko-target\n"),
+        "{m}"
+    );
     assert!(m.contains("mount -t btrfs -o subvol=/@tmp,noatime,compress=zstd /dev/vdb2 /mnt/bko-target/var/tmp\n"), "{m}");
-    assert!(m.contains("mount -t vfat -o umask=0077 /dev/vdb1 /mnt/bko-target/boot/efi\n"), "{m}");
+    assert!(
+        m.contains("mount -t vfat -o umask=0077 /dev/vdb1 /mnt/bko-target/boot/efi\n"),
+        "{m}"
+    );
     // snap-pac's snapshots: left out of the main restore, then each a
     // snapshot of the one before (the first of @), made exact from the
     // backup with its extents shared, then read-only again.
-    let r: String = b.stage(Stage::Restore).iter().map(commands::Cmd::shell).collect();
+    let r: String = b
+        .stage(Stage::Restore)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
     for (n, id, _) in GARUDA_SNAPSHOTS {
         let path = format!("@/.snapshots/{n}/snapshot");
-        let from = if n == 1 { "@".to_string() } else { format!("@/.snapshots/{}/snapshot", n - 1) };
-        assert!(r.contains(&format!("!/.snapshots/{n}/snapshot/**\n")), "{n}: {r}");
+        let from = if n == 1 {
+            "@".to_string()
+        } else {
+            format!("@/.snapshots/{}/snapshot", n - 1)
+        };
+        assert!(
+            r.contains(&format!("!/.snapshots/{n}/snapshot/**\n")),
+            "{n}: {r}"
+        );
         assert!(r.contains(&format!("# {path}: a snapshot of {from}, then made exact from the backup's /.snapshots/{n}/snapshot (ID {id}, as on the source)\n")), "{n}: {r}");
         // Its immutable and append-only entries (of @'s, the one before's)
         // lose those flags first: what the snapshot hasn't got goes in the
         // restore, which gives the rest back theirs (load/unflag.rs).
         assert!(r.contains(&format!("btrfs subvolume snapshot {top}/{from} \"$d\" && {} clear-restricting-flags \"$d\" && RUSTIC_STRICT_EXIT=true ", unflag_exe())), "{n}: {r}");
-        assert!(r.contains(&format!("--exact --clone-from /={top}/@ latest:/.snapshots/{n}/snapshot {top}/{path}")), "{n}: {r}");
-        assert!(r.contains(&format!("btrfs property set -ts {top}/{path} ro true\n")), "{n}: {r}");
+        assert!(
+            r.contains(&format!(
+                "--exact --clone-from /={top}/@ latest:/.snapshots/{n}/snapshot {top}/{path}"
+            )),
+            "{n}: {r}"
+        );
+        assert!(
+            r.contains(&format!("btrfs property set -ts {top}/{path} ro true\n")),
+            "{n}: {r}"
+        );
     }
-    let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
-    let rebuild = bt.find("chroot /mnt/bko-target dracut-rebuild\n").expect(&bt);
+    let bt: String = b
+        .stage(Stage::Boot)
+        .iter()
+        .map(commands::Cmd::shell)
+        .collect();
+    let rebuild = bt
+        .find("chroot /mnt/bko-target dracut-rebuild\n")
+        .expect(&bt);
     let install = bt.find("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Garuda --no-nvram\n").expect(&bt);
     let off = bt.find("[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober").expect(&bt);
-    let cfg = bt.find("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n").expect(&bt);
+    let cfg = bt
+        .find("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n")
+        .expect(&bt);
     assert!(rebuild < install && install < off && off < cfg, "{bt}");
     assert_eq!(bt.matches("grub-install").count(), 1, "{bt}");
-    assert!(!bt.contains("efibootmgr") && !bt.contains("mkinitcpio") && !bt.contains("dracut --force") && !bt.contains("defragment"), "{bt}");
+    assert!(
+        !bt.contains("efibootmgr")
+            && !bt.contains("mkinitcpio")
+            && !bt.contains("dracut --force")
+            && !bt.contains("defragment"),
+        "{bt}"
+    );
 }
 
 const ANDUINOS_KV: &str = "7.0.0-38-generic";
@@ -3030,13 +5175,28 @@ const ANDUINOS_ESP: &str = "a2d00105-0000-4000-8000-000000000001";
 /// The btrfs (btrfs::sample::image's UUID).
 const ANDUINOS_ROOT: &str = "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
 /// The six subvolumes the installer makes, and where fstab mounts them.
-const ANDUINOS_SUBVOLS: [(&str, &str); 6] = [("@root", "/"), ("@home", "/home"), ("@log", "/var/log"), ("@snapshots", "/.snapshots"), ("@containers", "/var/lib/containers"), ("@libvirt", "/var/lib/libvirt/images")];
+const ANDUINOS_SUBVOLS: [(&str, &str); 6] = [
+    ("@root", "/"),
+    ("@home", "/home"),
+    ("@log", "/var/log"),
+    ("@snapshots", "/.snapshots"),
+    ("@containers", "/var/lib/containers"),
+    ("@libvirt", "/var/lib/libvirt/images"),
+];
 /// The Disk Snapshots Manager's two read-only "New OS" baselines, in its own
 /// tree in @snapshots (anduinos2's layout): System's of @root, Home's of
 /// @home, each under a directory named by its record's id.
 const ANDUINOS_BASELINES: [(&str, &str, u32); 2] = [
-    ("@snapshots/anduinos-btrfs-snapshots-manager/deployments/a2d0d3b1-0000-4000-8000-000000000001/root", "@root", 256),
-    ("@snapshots/anduinos-btrfs-snapshots-manager/personal/snapshots/a2d0d3b1-0000-4000-8000-000000000002/home", "@home", 257),
+    (
+        "@snapshots/anduinos-btrfs-snapshots-manager/deployments/a2d0d3b1-0000-4000-8000-000000000001/root",
+        "@root",
+        256,
+    ),
+    (
+        "@snapshots/anduinos-btrfs-snapshots-manager/personal/snapshots/a2d0d3b1-0000-4000-8000-000000000002/home",
+        "@home",
+        257,
+    ),
 ];
 
 /// AnduinOS 2.0.5 as its installer lays it out for "erase disk"
@@ -3062,10 +5222,31 @@ fn anduinos() -> Tree {
         &GptSpec {
             disk_guid: "a2d00105-0000-4000-8000-00000000d15c",
             parts: vec![
-                (BIOS_BOOT, "a2d00105-0000-4000-8000-000000000004", 2048, 6143, 0, "bios-boot"),
+                (
+                    BIOS_BOOT,
+                    "a2d00105-0000-4000-8000-000000000004",
+                    2048,
+                    6143,
+                    0,
+                    "bios-boot",
+                ),
                 (ESP, ANDUINOS_ESP, 6144, 77823, 0, "efi-system"),
-                (SWAP, "a2d00105-0000-4000-8000-000000000002", 77824, 86015, 0, "swap"),
-                (LINUX, "a2d00105-0000-4000-8000-000000000003", 86016, 204766, 0, "root"),
+                (
+                    SWAP,
+                    "a2d00105-0000-4000-8000-000000000002",
+                    77824,
+                    86015,
+                    0,
+                    "swap",
+                ),
+                (
+                    LINUX,
+                    "a2d00105-0000-4000-8000-000000000003",
+                    86016,
+                    204766,
+                    0,
+                    "root",
+                ),
             ],
         },
     );
@@ -3075,7 +5256,11 @@ fn anduinos() -> Tree {
     put(&mut img, 2048, &grub::grub2_diskboot_img());
     put(&mut img, 6144, &fat::sample::fat32(71680, 0xa2d0_0105, ""));
     put(&mut img, 77824, &misc::sample::swap(1024, ""));
-    put(&mut img, 86016, &btrfs::sample::image("", 0x1 | 0x20 | 0x40 | 0x100 | 0x200));
+    put(
+        &mut img,
+        86016,
+        &btrfs::sample::image("", 0x1 | 0x20 | 0x40 | 0x100 | 0x200),
+    );
     let swap_uuid = "c0c1c2c3-c4c5-c6c7-c8c9-cacbcccdcecf";
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
     let mut mountinfo = String::new();
@@ -3083,12 +5268,21 @@ fn anduinos() -> Tree {
     for (i, (sv, at)) in ANDUINOS_SUBVOLS.iter().enumerate() {
         let parent = if *at == "/" { 1 } else { 26 };
         mountinfo.push_str(&format!("{} {parent} 0:25 /{sv} {at} rw,noatime shared:{} - btrfs /dev/vda4 rw,compress=zstd:3,space_cache=v2,subvolid={},subvol=/{sv}\n", 26 + i, i + 1, 256 + i));
-        fstab.push_str(&format!("UUID={ANDUINOS_ROOT} {at} btrfs defaults,subvol={sv},compress=zstd:3,noatime 0 {}\n", if *at == "/" { 1 } else { 2 }));
+        fstab.push_str(&format!(
+            "UUID={ANDUINOS_ROOT} {at} btrfs defaults,subvol={sv},compress=zstd:3,noatime 0 {}\n",
+            if *at == "/" { 1 } else { 2 }
+        ));
     }
-    mountinfo.push_str("40 26 254:2 / /boot/efi rw,relatime shared:9 - vfat /dev/vda2 rw,fmask=0077,dmask=0077\n");
-    fstab.push_str(&format!("UUID=A2D0-0105 /boot/efi vfat umask=0077 0 1\nUUID={swap_uuid} none swap sw 0 0\n"));
+    mountinfo.push_str(
+        "40 26 254:2 / /boot/efi rw,relatime shared:9 - vfat /dev/vda2 rw,fmask=0077,dmask=0077\n",
+    );
+    fstab.push_str(&format!(
+        "UUID=A2D0-0105 /boot/efi vfat umask=0077 0 1\nUUID={swap_uuid} none swap sw 0 0\n"
+    ));
     let (shim, grub, mm) = (vec![1u8; 300], vec![2u8; 400], vec![3u8; 200]);
-    let stub = format!("search.fs_uuid {ANDUINOS_ROOT} root \nset prefix=($root)'/@root/boot/grub'\nconfigfile $prefix/grub.cfg\n");
+    let stub = format!(
+        "search.fs_uuid {ANDUINOS_ROOT} root \nset prefix=($root)'/@root/boot/grub'\nconfigfile $prefix/grub.cfg\n"
+    );
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 2048, 4096, &img)
         .partition("vda", "vda2", "254:2", 2, 6144, 71680, &img)
@@ -3152,7 +5346,14 @@ fn anduinos() -> Tree {
         ("dosfstools", "4.2-1.2"),
         ("e2fsprogs", "1.47.3-1"),
     ];
-    let status: String = pkgs.iter().map(|(n, v)| format!("Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n")).collect();
+    let status: String = pkgs
+        .iter()
+        .map(|(n, v)| {
+            format!(
+                "Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n"
+            )
+        })
+        .collect();
     t.file("/var/lib/dpkg/status", status);
     t
 }
@@ -3165,13 +5366,18 @@ fn anduinos_runner() -> FakeRunner {
     let mut list = String::new();
     for (i, (sv, _)) in ANDUINOS_SUBVOLS.iter().enumerate() {
         let id = 256 + i as u32;
-        list.push_str(&format!("ID {id} gen 900 parent 5 top level 5 parent_uuid - uuid {} path <FS_TREE>/{sv}\n", u(id)));
+        list.push_str(&format!(
+            "ID {id} gen 900 parent 5 top level 5 parent_uuid - uuid {} path <FS_TREE>/{sv}\n",
+            u(id)
+        ));
     }
     let mut ro = String::new();
     for (i, (path, _, parent)) in ANDUINOS_BASELINES.iter().enumerate() {
         let id = 262 + i as u32;
         list.push_str(&format!("ID {id} gen 640 parent 259 top level 259 parent_uuid {} uuid {} path <FS_TREE>/{path}\n", u(*parent), u(id)));
-        ro.push_str(&format!("ID {id} gen 640 top level 259 path <FS_TREE>/{path}\n"));
+        ro.push_str(&format!(
+            "ID {id} gen 640 top level 259 path <FS_TREE>/{path}\n"
+        ));
     }
     let mut r = FakeRunner::default()
         .with("btrfs subvolume list -a -p -u -q /", &list)
@@ -3179,21 +5385,37 @@ fn anduinos_runner() -> FakeRunner {
         .with("btrfs subvolume list -a -r /", &ro);
     for (path, _, _) in ANDUINOS_BASELINES {
         let at = format!("/.snapshots{}", &path["@snapshots".len()..]);
-        r = r.with(&format!("btrfs property get -t s {at}"), "ro=true\n").with(&format!("btrfs property get -t i {at}"), "");
+        r = r
+            .with(&format!("btrfs property get -t s {at}"), "ro=true\n")
+            .with(&format!("btrfs property get -t i {at}"), "");
     }
     for (_, at) in ANDUINOS_SUBVOLS {
-        r = r.with(&format!("btrfs property get -t s {at}"), "ro=false\n").with(&format!("btrfs property get -t i {at}"), "");
+        r = r
+            .with(&format!("btrfs property get -t s {at}"), "ro=false\n")
+            .with(&format!("btrfs property get -t i {at}"), "");
     }
     r
 }
 
 /// AnduinOS's plan from a tree, the source disk vda going to vdb.
 fn anduinos_plan(t: &Tree) -> (Value, crate::load::commands::Built) {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let v = run(t, true, anduinos_runner());
     let l = Layout::from_json(v.clone()).unwrap();
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-    (v, commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() }))
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+        unreachable!()
+    };
+    (
+        v,
+        commands::build(
+            &l,
+            &o,
+            &Mapping {
+                pairs: vec![("vda".into(), "vdb".into())],
+                ..Mapping::default()
+            },
+        ),
+    )
 }
 
 /// AnduinOS read back and planned (docs/design/anduinos.md): supported by
@@ -3205,7 +5427,7 @@ fn anduinos_plan(t: &Tree) -> (Value, crate::load::commands::Built) {
 /// notes the MOK and the snapshot manager's records.
 #[test]
 fn anduinos_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let k = ANDUINOS_KV;
     let (v, b) = anduinos_plan(&anduinos());
     assert_eq!(s(&v, &["os", "id"]), "anduinos");
@@ -3213,7 +5435,14 @@ fn anduinos_guest() {
     assert_eq!(s(&v, &["os", "pretty_name"]), "AnduinOS 2.0.5");
     assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
     assert_eq!(v.at(&["firmware", "secure_boot"]), Some(&Value::Bool(true)));
-    for (p, ver) in [("anduinos-grub", "2.0.5+repack1-2"), ("anduinos-shim-signed", "1.61+15.8-0ubuntu1+anduinos1"), ("anduinos-secureboot-toolkit", "2.0.5-4"), ("anduinos-btrfs-snapshots-manager", "2.0.5-3"), ("mokutil", "0.7.2-1"), ("dracut", "110-11ubuntu0.1")] {
+    for (p, ver) in [
+        ("anduinos-grub", "2.0.5+repack1-2"),
+        ("anduinos-shim-signed", "1.61+15.8-0ubuntu1+anduinos1"),
+        ("anduinos-secureboot-toolkit", "2.0.5-4"),
+        ("anduinos-btrfs-snapshots-manager", "2.0.5-3"),
+        ("mokutil", "0.7.2-1"),
+        ("dracut", "110-11ubuntu0.1"),
+    ] {
         assert_eq!(s(&v, &["boot", "packages", p]), ver, "{p}");
     }
     let l = v.at(&["boot", "loader"]).unwrap();
@@ -3227,24 +5456,53 @@ fn anduinos_guest() {
     assert!(!v.compact().contains("not for the dump"));
     assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "dracut");
     let kernels = arr(&v, &["boot", "kernels", "installed"]);
-    assert_eq!(kernels.len(), 1, "{}", v.at(&["boot", "kernels"]).unwrap().compact());
+    assert_eq!(
+        kernels.len(),
+        1,
+        "{}",
+        v.at(&["boot", "kernels"]).unwrap().compact()
+    );
     assert_eq!(s(&kernels[0], &["version"]), k);
     assert_eq!(u(&kernels[0], &["initrd_bytes"]), 6);
     let esp = v.at(&["boot", "esps", "0"]).unwrap();
     assert_eq!(s(esp, &["mounted_at"]), "/boot/efi");
-    let files: Vec<(&str, Option<&str>)> = arr(esp, &["contents", "files"]).iter().map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str))).collect();
-    assert!(files.contains(&("EFI/BOOT/BOOTX64.EFI", Some("EFI/AnduinOS/shimx64.efi"))), "{files:?}");
+    let files: Vec<(&str, Option<&str>)> = arr(esp, &["contents", "files"])
+        .iter()
+        .map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str)))
+        .collect();
+    assert!(
+        files.contains(&("EFI/BOOT/BOOTX64.EFI", Some("EFI/AnduinOS/shimx64.efi"))),
+        "{files:?}"
+    );
     assert_eq!(files.len(), 7, "{files:?}");
-    let subs: Vec<(String, bool)> = arr(&v, &["storage", "btrfs", "0", "subvolumes"]).iter().map(|x| (s(x, &["path"]).to_string(), x.get("readonly") == Some(&Value::Bool(true)))).collect();
-    let mut want: Vec<(String, bool)> = ANDUINOS_SUBVOLS.iter().map(|(sv, _)| (format!("<FS_TREE>/{sv}"), false)).collect();
-    want.extend(ANDUINOS_BASELINES.iter().map(|(p, _, _)| (format!("<FS_TREE>/{p}"), true)));
+    let subs: Vec<(String, bool)> = arr(&v, &["storage", "btrfs", "0", "subvolumes"])
+        .iter()
+        .map(|x| {
+            (
+                s(x, &["path"]).to_string(),
+                x.get("readonly") == Some(&Value::Bool(true)),
+            )
+        })
+        .collect();
+    let mut want: Vec<(String, bool)> = ANDUINOS_SUBVOLS
+        .iter()
+        .map(|(sv, _)| (format!("<FS_TREE>/{sv}"), false))
+        .collect();
+    want.extend(
+        ANDUINOS_BASELINES
+            .iter()
+            .map(|(p, _, _)| (format!("<FS_TREE>/{p}"), true)),
+    );
     assert_eq!(subs, want);
     // The BIOS boot partition and GRUB's i386-pc core in it: the installer's
     // BIOS install beside the UEFI one.
     let disk = v.at(&["storage", "disks", "0"]).unwrap();
     assert_eq!(s(disk, &["partitions", "0", "type_name"]), "BIOS boot");
     assert_eq!(s(disk, &["boot_code", "kind"]), "grub2");
-    assert_eq!(disk.at(&["boot_code", "grub_core_present"]), Some(&Value::Bool(true)));
+    assert_eq!(
+        disk.at(&["boot_code", "grub_core_present"]),
+        Some(&Value::Bool(true))
+    );
     assert_eq!(s(disk, &["boot_code", "grub_core_in"]), "partition");
     assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
 
@@ -3252,18 +5510,44 @@ fn anduinos_guest() {
     let f: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
     let top = format!("{RUN_DIR}/btrfs/{ANDUINOS_ROOT}");
     for (sv, _) in ANDUINOS_SUBVOLS {
-        assert!(f.contains(&format!("btrfs subvolume create {top}/{sv}\n")), "{sv}: {f}");
+        assert!(
+            f.contains(&format!("btrfs subvolume create {top}/{sv}\n")),
+            "{sv}: {f}"
+        );
     }
     let p: String = b.stage(Stage::Partition).iter().map(Cmd::shell).collect();
-    assert!(p.contains("/dev/vdb1 : start=2048, size=4096, type=21686148-6449-6E6F-744E-656564454649"), "{p}");
+    assert!(
+        p.contains("/dev/vdb1 : start=2048, size=4096, type=21686148-6449-6E6F-744E-656564454649"),
+        "{p}"
+    );
     let m: String = b.stage(Stage::Mount).iter().map(Cmd::shell).collect();
-    assert!(m.contains("subvol=@libvirt,compress=zstd:3,noatime") && m.contains("/mnt/bko-target/var/lib/libvirt/images\n") && m.contains("/mnt/bko-target/boot/efi\n"), "{m}");
+    assert!(
+        m.contains("subvol=@libvirt,compress=zstd:3,noatime")
+            && m.contains("/mnt/bko-target/var/lib/libvirt/images\n")
+            && m.contains("/mnt/bko-target/boot/efi\n"),
+        "{m}"
+    );
     // Both baselines come back as snapshots of their parents, made exact
     // from the backup (extents shared), then read-only again.
     let r: String = {
-        use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
-        let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string(), "--repo".into(), "/srv/repo".into(), "--password-file".into(), "/run/pw".into()]) else { unreachable!() };
-        let rb = commands::build(&Layout::from_json(v.clone()).unwrap(), &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
+        use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
+        let Ok(Parsed::Run(o)) = crate::load::parse_args(&[
+            "l.json".to_string(),
+            "--repo".into(),
+            "/srv/repo".into(),
+            "--password-file".into(),
+            "/run/pw".into(),
+        ]) else {
+            unreachable!()
+        };
+        let rb = commands::build(
+            &Layout::from_json(v.clone()).unwrap(),
+            &o,
+            &Mapping {
+                pairs: vec![("vda".into(), "vdb".into())],
+                ..Mapping::default()
+            },
+        );
         assert!(rb.problems.is_empty(), "{:?}", rb.problems);
         rb.stage(Stage::Restore).iter().map(Cmd::shell).collect()
     };
@@ -3274,20 +5558,47 @@ fn anduinos_guest() {
         // and not in the deployment's snapshot of it: off in the snapshot
         // before its exact restore removes them.
         assert!(r.contains(&format!("btrfs subvolume snapshot {top}/{parent} \"$d\" && {} clear-restricting-flags \"$d\" && RUSTIC_STRICT_EXIT=true ", unflag_exe())), "{parent}: {r}");
-        assert!(r.contains(&format!("--exact --clone-from {from}={top}/{parent} latest:/.snapshots{at} {top}/{path}")), "{path}: {r}");
-        assert!(r.contains(&format!("btrfs property set -ts {top}/{path} ro true\n")), "{path}: {r}");
+        assert!(
+            r.contains(&format!(
+                "--exact --clone-from {from}={top}/{parent} latest:/.snapshots{at} {top}/{path}"
+            )),
+            "{path}: {r}"
+        );
+        assert!(
+            r.contains(&format!("btrfs property set -ts {top}/{path} ro true\n")),
+            "{path}: {r}"
+        );
     }
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    let dracut = bt.find(&format!("chroot /mnt/bko-target sh -c {}\n", crate::load::shell_quote(crate::load::commands::DRACUT_EACH_KERNEL))).expect(&bt);
+    let dracut = bt
+        .find(&format!(
+            "chroot /mnt/bko-target sh -c {}\n",
+            crate::load::shell_quote(crate::load::commands::DRACUT_EACH_KERNEL)
+        ))
+        .expect(&bt);
     let off = bt.find("[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober").expect(&bt);
-    let cfg = bt.find("chroot /mnt/bko-target env LANG=C update-grub\n").expect(&bt);
+    let cfg = bt
+        .find("chroot /mnt/bko-target env LANG=C update-grub\n")
+        .expect(&bt);
     let nvram = bt.find("efibootmgr --quiet --create --disk /dev/vdb --part 2 --label AnduinOS --loader '\\EFI\\AnduinOS\\shimx64.efi'\n").expect(&bt);
     // The BIOS install made again (only the MBR, the BIOS boot partition
     // and /boot/grub/i386-pc), before update-grub; no EFI grub-install.
-    let bios = bt.find("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n").expect(&bt);
-    assert!(dracut < off && off < cfg && cfg < nvram && dracut < bios && bios < cfg, "{bt}");
+    let bios = bt
+        .find("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n")
+        .expect(&bt);
+    assert!(
+        dracut < off && off < cfg && cfg < nvram && dracut < bios && bios < cfg,
+        "{bt}"
+    );
     assert_eq!(bt.matches("grub-install").count(), 1, "{bt}");
-    assert!(!bt.contains("--target=x86_64-efi") && !bt.contains("update-initramfs") && !bt.contains("grub-mkconfig") && !bt.contains("mokutil") && !bt.contains("anduinos-grub-update"), "{bt}");
+    assert!(
+        !bt.contains("--target=x86_64-efi")
+            && !bt.contains("update-initramfs")
+            && !bt.contains("grub-mkconfig")
+            && !bt.contains("mokutil")
+            && !bt.contains("anduinos-grub-update"),
+        "{bt}"
+    );
     assert!(
         b.notes.iter().any(|n| n.starts_with(&format!("AnduinOS: shim, MokManager and AnduinOS's GRUB, signed with the MOK /var/lib/shim-signed/mok/MOK.der (SHA-256 {fp}), are the restored ESP's; grub-install --target=x86_64-efi isn't run"))
             && n.ends_with("enroll it again (`mokutil --import /var/lib/shim-signed/mok/MOK.der`, then confirm it at MokManager on the next boot) or turn Secure Boot off")),
@@ -3304,29 +5615,61 @@ fn anduinos_guest() {
 #[test]
 fn anduinos_fallback_boot() {
     use crate::efi::GLOBAL;
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let t = anduinos();
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
     std::fs::remove_file(t.p(&var("Boot0001"))).unwrap();
-    t.file(&var("Boot0002"), efi_load_option("UEFI Misc Device", 2, 6144, 71680, ANDUINOS_ESP, "\\EFI\\BOOT\\BOOTX64.EFI"))
-        .file(&var("BootOrder"), [7u8, 0, 0, 0, 2, 0])
-        .file(&var("BootCurrent"), [6u8, 0, 0, 0, 2, 0])
-        .file(&var("SecureBoot"), [6u8, 0, 0, 0, 0]);
+    t.file(
+        &var("Boot0002"),
+        efi_load_option(
+            "UEFI Misc Device",
+            2,
+            6144,
+            71680,
+            ANDUINOS_ESP,
+            "\\EFI\\BOOT\\BOOTX64.EFI",
+        ),
+    )
+    .file(&var("BootOrder"), [7u8, 0, 0, 0, 2, 0])
+    .file(&var("BootCurrent"), [6u8, 0, 0, 0, 2, 0])
+    .file(&var("SecureBoot"), [6u8, 0, 0, 0, 0]);
     let (v, b) = anduinos_plan(&t);
     let l = v.at(&["boot", "loader"]).unwrap();
     assert_eq!(s(l, &["name"]), "grub");
     assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
-    assert!(l.get("evidence").unwrap().compact().contains("EFI/BOOT/BOOTX64.EFI is a copy of EFI/AnduinOS/shimx64.efi"), "{}", l.compact());
+    assert!(
+        l.get("evidence")
+            .unwrap()
+            .compact()
+            .contains("EFI/BOOT/BOOTX64.EFI is a copy of EFI/AnduinOS/shimx64.efi"),
+        "{}",
+        l.compact()
+    );
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(!bt.contains("--target=x86_64-efi") && bt.contains("grub-install --target=i386-pc /dev/vdb\n") && bt.contains("update-grub\n"), "{bt}");
+    assert!(
+        !bt.contains("--target=x86_64-efi")
+            && bt.contains("grub-install --target=i386-pc /dev/vdb\n")
+            && bt.contains("update-grub\n"),
+        "{bt}"
+    );
     assert!(bt.contains("efibootmgr --quiet --create --disk /dev/vdb --part 2 --label 'UEFI Misc Device' --loader '\\EFI\\BOOT\\BOOTX64.EFI'\n"), "{bt}");
     std::fs::remove_file(t.p("/var/lib/shim-signed/mok/MOK.der")).unwrap();
     let (v, b) = anduinos_plan(&t);
     assert!(v.at(&["boot", "loader", "mok"]).is_none());
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(!bt.contains("--target=x86_64-efi") && bt.contains("grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
-    assert!(b.notes.iter().any(|n| n.contains("signed with the MOK /var/lib/shim-signed/mok/MOK.der (its fingerprint not in the dump)")), "{:?}", b.notes);
+    assert!(
+        !bt.contains("--target=x86_64-efi")
+            && bt.contains("grub-install --target=i386-pc /dev/vdb\n"),
+        "{bt}"
+    );
+    assert!(
+        b.notes.iter().any(|n| n.contains(
+            "signed with the MOK /var/lib/shim-signed/mok/MOK.der (its fingerprint not in the dump)"
+        )),
+        "{:?}",
+        b.notes
+    );
 }
 
 /// Kali's kernel (linux-image-amd64 7.1.5-1kali1).
@@ -3355,15 +5698,36 @@ fn kali() -> Tree {
             disk_guid: "ca11ca11-0000-4000-8000-00000000d15c",
             parts: vec![
                 (ESP, KALI_ESP, 2048, 73727, 0, ""),
-                (LINUX, "ca11ca11-0000-4000-8000-000000000002", 73728, 196607, 0, ""),
-                (SWAP, "ca11ca11-0000-4000-8000-000000000003", 196608, 204766, 0, ""),
+                (
+                    LINUX,
+                    "ca11ca11-0000-4000-8000-000000000002",
+                    73728,
+                    196607,
+                    0,
+                    "",
+                ),
+                (
+                    SWAP,
+                    "ca11ca11-0000-4000-8000-000000000003",
+                    196608,
+                    204766,
+                    0,
+                    "",
+                ),
             ],
         },
     );
     put(&mut img, 2048, &fat::sample::fat32(71680, 0xca11_0001, ""));
-    put(&mut img, 73728, &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""));
+    put(
+        &mut img,
+        73728,
+        &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""),
+    );
     put(&mut img, 196608, &misc::sample::swap(1024, ""));
-    let (root, swap) = ("10111213-1415-1617-1819-1a1b1c1d1e1f", "c0c1c2c3-c4c5-c6c7-c8c9-cacbcccdcecf");
+    let (root, swap) = (
+        "10111213-1415-1617-1819-1a1b1c1d1e1f",
+        "c0c1c2c3-c4c5-c6c7-c8c9-cacbcccdcecf",
+    );
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
     let grub = vec![2u8; 400];
     t.disk("vda", "254:0", &img, 512)
@@ -3415,24 +5779,51 @@ fn kali() -> Tree {
         ("e2fsprogs", "1.47.3-1"),
         ("dosfstools", "4.2-1.2"),
     ];
-    let status: String = pkgs.iter().map(|(n, v)| format!("Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n")).collect();
+    let status: String = pkgs
+        .iter()
+        .map(|(n, v)| {
+            format!(
+                "Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n"
+            )
+        })
+        .collect();
     t.file("/var/lib/dpkg/status", status);
     t
 }
 
 /// A plan from a tree, the source disk vda going to vdb.
 fn kali_plan(t: &Tree) -> (Value, crate::load::commands::Built) {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let v = run(t, true, FakeRunner::default());
     let l = Layout::from_json(v.clone()).unwrap();
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-    (v, commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() }))
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+        unreachable!()
+    };
+    (
+        v,
+        commands::build(
+            &l,
+            &o,
+            &Mapping {
+                pairs: vec![("vda".into(), "vdb".into())],
+                ..Mapping::default()
+            },
+        ),
+    )
 }
 
 /// Every stage's commands, in order.
 fn plan_text(b: &crate::load::commands::Built) -> String {
-    use crate::load::{commands::Cmd, Stage};
-    Stage::ALL.iter().map(|st| format!("# {st:?}\n{}", b.stage(*st).iter().map(Cmd::shell).collect::<String>())).collect()
+    use crate::load::{Stage, commands::Cmd};
+    Stage::ALL
+        .iter()
+        .map(|st| {
+            format!(
+                "# {st:?}\n{}",
+                b.stage(*st).iter().map(Cmd::shell).collect::<String>()
+            )
+        })
+        .collect()
 }
 
 /// Kali read back and planned (docs/design/kali.md, K2): supported by its
@@ -3443,31 +5834,56 @@ fn plan_text(b: &crate::load::commands::Built) -> String {
 /// entry again.  The plan is the one the same machine gets as Debian 13.
 #[test]
 fn kali_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let k = KALI_KV;
     let (v, b) = kali_plan(&kali());
     assert_eq!(s(&v, &["os", "id"]), "kali");
     assert_eq!(s(&v, &["os", "version_id"]), "2026.3");
     assert_eq!(s(&v, &["os", "version_codename"]), "kali-rolling");
     assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
-    assert_eq!(v.at(&["firmware", "secure_boot"]), Some(&Value::Bool(false)));
+    assert_eq!(
+        v.at(&["firmware", "secure_boot"]),
+        Some(&Value::Bool(false))
+    );
     let l = v.at(&["boot", "loader"]).unwrap();
     assert_eq!(s(l, &["name"]), "grub");
     assert_eq!(l.get("via_shim"), Some(&Value::Bool(false)));
     assert_eq!(s(l, &["package"]), "grub-efi-amd64");
-    assert!(l.get("shim_package").is_none_or(Value::is_null), "{}", l.compact());
-    for (p, ver) in [("grub-efi-amd64", "2.14-2+kali1"), ("linux-image-amd64", "7.1.5-1kali1"), ("initramfs-tools", "0.151")] {
+    assert!(
+        l.get("shim_package").is_none_or(Value::is_null),
+        "{}",
+        l.compact()
+    );
+    for (p, ver) in [
+        ("grub-efi-amd64", "2.14-2+kali1"),
+        ("linux-image-amd64", "7.1.5-1kali1"),
+        ("initramfs-tools", "0.151"),
+    ] {
         assert_eq!(s(&v, &["boot", "packages", p]), ver, "{p}");
     }
     assert!(v.at(&["boot", "packages", "shim-signed"]).is_none());
-    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "initramfs-tools");
+    assert_eq!(
+        s(&v, &["boot", "initramfs", "generator"]),
+        "initramfs-tools"
+    );
     let kernels = arr(&v, &["boot", "kernels", "installed"]);
-    assert_eq!(kernels.len(), 1, "{}", v.at(&["boot", "kernels"]).unwrap().compact());
+    assert_eq!(
+        kernels.len(),
+        1,
+        "{}",
+        v.at(&["boot", "kernels"]).unwrap().compact()
+    );
     assert_eq!(s(&kernels[0], &["version"]), k);
     let esp = v.at(&["boot", "esps", "0"]).unwrap();
     assert_eq!(s(esp, &["mounted_at"]), "/boot/efi");
-    let files: Vec<(&str, Option<&str>)> = arr(esp, &["contents", "files"]).iter().map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str))).collect();
-    assert!(files.contains(&("EFI/BOOT/BOOTX64.EFI", Some("EFI/kali/grubx64.efi"))), "{files:?}");
+    let files: Vec<(&str, Option<&str>)> = arr(esp, &["contents", "files"])
+        .iter()
+        .map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str)))
+        .collect();
+    assert!(
+        files.contains(&("EFI/BOOT/BOOTX64.EFI", Some("EFI/kali/grubx64.efi"))),
+        "{files:?}"
+    );
     assert_eq!(files.len(), 2, "{files:?}");
     let disk = v.at(&["storage", "disks", "0"]).unwrap();
     assert_eq!(s(disk, &["partition_table", "type"]), "gpt");
@@ -3478,16 +5894,32 @@ fn kali_guest() {
 
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let f: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
-    assert!(f.contains("mke2fs ") && f.contains("mkswap ") && f.contains("mkfs.fat "), "{f}");
+    assert!(
+        f.contains("mke2fs ") && f.contains("mkswap ") && f.contains("mkfs.fat "),
+        "{f}"
+    );
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    let i = bt.find(&format!("chroot /mnt/bko-target sh -c {}\n", crate::load::shell_quote(crate::load::commands::UPDATE_INITRAMFS_RESUME))).expect(&bt);
+    let i = bt
+        .find(&format!(
+            "chroot /mnt/bko-target sh -c {}\n",
+            crate::load::shell_quote(crate::load::commands::UPDATE_INITRAMFS_RESUME)
+        ))
+        .expect(&bt);
     let g = bt.find("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=kali --no-nvram\n").expect(&bt);
     let off = bt.find("[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober").expect(&bt);
-    let cfg = bt.find("chroot /mnt/bko-target env LANG=C update-grub\n").expect(&bt);
+    let cfg = bt
+        .find("chroot /mnt/bko-target env LANG=C update-grub\n")
+        .expect(&bt);
     let nvram = bt.find("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label kali --loader '\\EFI\\kali\\grubx64.efi'\n").expect(&bt);
     assert!(i < g && g < off && off < cfg && cfg < nvram, "{bt}");
     assert_eq!(bt.matches("grub-install").count(), 1, "{bt}");
-    assert!(!bt.contains("grub-mkconfig") && !bt.contains("--removable") && !bt.contains("i386-pc") && !bt.contains("dracut"), "{bt}");
+    assert!(
+        !bt.contains("grub-mkconfig")
+            && !bt.contains("--removable")
+            && !bt.contains("i386-pc")
+            && !bt.contains("dracut"),
+        "{bt}"
+    );
 
     // The same machine as Debian 13: the same plan, word for word (the ESP
     // still says EFI/kali, so --bootloader-id is kali there too).
@@ -3509,13 +5941,23 @@ fn kali_guest() {
 #[test]
 fn kali_fallback_boot() {
     use crate::efi::GLOBAL;
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let t = kali();
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
     std::fs::remove_file(t.p(&var("Boot0001"))).unwrap();
-    t.file(&var("Boot0002"), efi_load_option("UEFI Misc Device", 1, 2048, 71680, KALI_ESP, "\\EFI\\BOOT\\BOOTX64.EFI"))
-        .file(&var("BootOrder"), [7u8, 0, 0, 0, 2, 0])
-        .file(&var("BootCurrent"), [6u8, 0, 0, 0, 2, 0]);
+    t.file(
+        &var("Boot0002"),
+        efi_load_option(
+            "UEFI Misc Device",
+            1,
+            2048,
+            71680,
+            KALI_ESP,
+            "\\EFI\\BOOT\\BOOTX64.EFI",
+        ),
+    )
+    .file(&var("BootOrder"), [7u8, 0, 0, 0, 2, 0])
+    .file(&var("BootCurrent"), [6u8, 0, 0, 0, 2, 0]);
     let (v, b) = kali_plan(&t);
     let l = v.at(&["boot", "loader"]).unwrap();
     assert_eq!(s(l, &["name"]), "grub");
@@ -3557,15 +5999,39 @@ fn neon() -> Tree {
         512,
         &GptSpec {
             disk_guid: "bc000000-0000-4000-8000-000000000001",
-            parts: vec![(ESP, NEON_ESP, 2048, 73727, 0, ""), (LINUX, "bc000000-0000-4000-8000-000000000003", 73728, 204766, 0, "")],
+            parts: vec![
+                (ESP, NEON_ESP, 2048, 73727, 0, ""),
+                (
+                    LINUX,
+                    "bc000000-0000-4000-8000-000000000003",
+                    73728,
+                    204766,
+                    0,
+                    "",
+                ),
+            ],
         },
     );
-    put(&mut img, 2048, &fat::sample::fat32(71680, 0xbc00_0001, "EFI"));
-    put(&mut img, 73728, &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""));
+    put(
+        &mut img,
+        2048,
+        &fat::sample::fat32(71680, 0xbc00_0001, "EFI"),
+    );
+    put(
+        &mut img,
+        73728,
+        &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""),
+    );
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
     let (shim, grub, mm) = (vec![1u8; 300], vec![2u8; 400], vec![3u8; 200]);
-    let stub = format!("search.fs_uuid {root} root \nset prefix=($root)'/boot/grub'\nconfigfile $prefix/grub.cfg\n");
-    let entry = |kv: &str| format!("\tlinux\t/boot/vmlinuz-{kv} root=UUID={root} ro quiet splash\n\tinitrd\t/boot/initrd.img-{kv}\n");
+    let stub = format!(
+        "search.fs_uuid {root} root \nset prefix=($root)'/boot/grub'\nconfigfile $prefix/grub.cfg\n"
+    );
+    let entry = |kv: &str| {
+        format!(
+            "\tlinux\t/boot/vmlinuz-{kv} root=UUID={root} ro quiet splash\n\tinitrd\t/boot/initrd.img-{kv}\n"
+        )
+    };
     let grub_cfg = format!(
         "insmod part_gpt\ninsmod ext2\nsearch --no-floppy --fs-uuid --set=root {root}\nmenuentry 'KDE neon User Edition GNU/Linux' {{\n{}}}\nsubmenu 'Advanced options for KDE neon User Edition GNU/Linux' {{\n\tmenuentry 'KDE neon User Edition GNU/Linux, with Linux {k}' {{\n{}\t}}\n\tmenuentry 'KDE neon User Edition GNU/Linux, with Linux {old}' {{\n{}\t}}\n}}\n",
         entry(k),
@@ -3633,7 +6099,14 @@ fn neon() -> Tree {
         ("e2fsprogs", "1.47.0-2.4~exp1ubuntu4.1"),
         ("dosfstools", "4.2-1.1build1"),
     ];
-    let status: String = pkgs.iter().map(|(n, v)| format!("Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n")).collect();
+    let status: String = pkgs
+        .iter()
+        .map(|(n, v)| {
+            format!(
+                "Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n"
+            )
+        })
+        .collect();
     t.file("/var/lib/dpkg/status", status);
     t
 }
@@ -3647,7 +6120,7 @@ fn neon() -> Tree {
 /// tests/corpus/neon24/plan.txt has.
 #[test]
 fn neon_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let (v, b) = kali_plan(&neon());
     assert_eq!(s(&v, &["os", "id"]), "neon");
     assert_eq!(s(&v, &["os", "version_id"]), "24.04");
@@ -3660,19 +6133,52 @@ fn neon_guest() {
     assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
     assert_eq!(s(l, &["package"]), "grub-efi-amd64-signed");
     assert_eq!(s(l, &["shim_package"]), "shim-signed");
-    for (p, ver) in [("grub-efi-amd64-signed", "1.202.5+2.12-1ubuntu7.3"), ("shim-signed", "1.58+15.8-0ubuntu1"), ("initramfs-tools", "0.142ubuntu25.8")] {
+    for (p, ver) in [
+        ("grub-efi-amd64-signed", "1.202.5+2.12-1ubuntu7.3"),
+        ("shim-signed", "1.58+15.8-0ubuntu1"),
+        ("initramfs-tools", "0.142ubuntu25.8"),
+    ] {
         assert_eq!(s(&v, &["boot", "packages", p]), ver, "{p}");
     }
-    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "initramfs-tools");
-    let kernels: Vec<&str> = arr(&v, &["boot", "kernels", "installed"]).iter().map(|x| s(x, &["version"])).collect();
-    assert_eq!(kernels, vec![NEON_KV_OLD, NEON_KV], "{}", v.at(&["boot", "kernels"]).unwrap().compact());
-    assert_eq!(arr(&v, &["boot", "grub", "installed_platforms"])[0].as_str(), Some("x86_64-efi"));
+    assert_eq!(
+        s(&v, &["boot", "initramfs", "generator"]),
+        "initramfs-tools"
+    );
+    let kernels: Vec<&str> = arr(&v, &["boot", "kernels", "installed"])
+        .iter()
+        .map(|x| s(x, &["version"]))
+        .collect();
+    assert_eq!(
+        kernels,
+        vec![NEON_KV_OLD, NEON_KV],
+        "{}",
+        v.at(&["boot", "kernels"]).unwrap().compact()
+    );
+    assert_eq!(
+        arr(&v, &["boot", "grub", "installed_platforms"])[0].as_str(),
+        Some("x86_64-efi")
+    );
     let esp = v.at(&["boot", "esps", "0"]).unwrap();
     assert_eq!(s(esp, &["device"]), "vda1");
     assert_eq!(s(esp, &["mounted_at"]), "/boot/efi");
-    let files: Vec<(&str, Option<&str>)> = arr(esp, &["contents", "files"]).iter().map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str))).collect();
-    assert!(files.contains(&("EFI/BOOT/BOOTX64.EFI", Some("EFI/neon/shimx64.efi"))), "{files:?}");
-    for f in ["EFI/neon/shimx64.efi", "EFI/neon/grubx64.efi", "EFI/neon/mmx64.efi", "EFI/neon/BOOTX64.CSV", "EFI/neon/grub.cfg", "EFI/ubuntu/grub.cfg", "EFI/BOOT/fbx64.efi", "EFI/BOOT/mmx64.efi"] {
+    let files: Vec<(&str, Option<&str>)> = arr(esp, &["contents", "files"])
+        .iter()
+        .map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str)))
+        .collect();
+    assert!(
+        files.contains(&("EFI/BOOT/BOOTX64.EFI", Some("EFI/neon/shimx64.efi"))),
+        "{files:?}"
+    );
+    for f in [
+        "EFI/neon/shimx64.efi",
+        "EFI/neon/grubx64.efi",
+        "EFI/neon/mmx64.efi",
+        "EFI/neon/BOOTX64.CSV",
+        "EFI/neon/grub.cfg",
+        "EFI/ubuntu/grub.cfg",
+        "EFI/BOOT/fbx64.efi",
+        "EFI/BOOT/mmx64.efi",
+    ] {
         assert!(files.iter().any(|(p, _)| *p == f), "{f}: {files:?}");
     }
     assert_eq!(files.len(), 9, "{files:?}");
@@ -3681,7 +6187,10 @@ fn neon_guest() {
     assert_eq!(arr(disk, &["partitions"]).len(), 2);
     assert_eq!(s(disk, &["partitions", "0", "type_name"]), "EFI System");
     assert_eq!(s(disk, &["partitions", "0", "content", "type"]), "vfat");
-    assert_eq!(s(disk, &["partitions", "0", "content", "uuid"]), NEON_ESP_ID);
+    assert_eq!(
+        s(disk, &["partitions", "0", "content", "uuid"]),
+        NEON_ESP_ID
+    );
     assert_eq!(s(disk, &["partitions", "1", "content", "type"]), "ext4");
     let swaps = arr(&v, &["storage", "swaps"]);
     assert_eq!(swaps.len(), 1, "{swaps:?}");
@@ -3695,7 +6204,10 @@ fn neon_guest() {
 
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let f: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
-    assert!(f.contains("mke2fs ") && f.contains("mkfs.fat ") && !f.contains("mkswap "), "{f}");
+    assert!(
+        f.contains("mke2fs ") && f.contains("mkfs.fat ") && !f.contains("mkswap "),
+        "{f}"
+    );
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
     // The corpus plan's boot lines, in its order (/dev/sdq there, /dev/vdb here).
     let lines = [
@@ -3709,12 +6221,21 @@ fn neon_guest() {
     ];
     let mut at = 0;
     for l in lines {
-        let i = bt[at..].find(l).unwrap_or_else(|| panic!("{l} not after {at}: {bt}")) + at;
+        let i = bt[at..]
+            .find(l)
+            .unwrap_or_else(|| panic!("{l} not after {at}: {bt}"))
+            + at;
         at = i + l.len();
     }
     assert_eq!(bt.matches("grub-install").count(), 1, "{bt}");
     assert_eq!(bt.matches("efibootmgr --quiet --create").count(), 1, "{bt}");
-    assert!(!bt.contains("grub-mkconfig") && !bt.contains("--removable") && !bt.contains("i386-pc") && !bt.contains("dracut"), "{bt}");
+    assert!(
+        !bt.contains("grub-mkconfig")
+            && !bt.contains("--removable")
+            && !bt.contains("i386-pc")
+            && !bt.contains("dracut"),
+        "{bt}"
+    );
 }
 
 /// KDE neon under vm-run, as the neon24 dump has it: OVMF booted the disk
@@ -3724,9 +6245,9 @@ fn neon_guest() {
 /// again.
 #[test]
 fn neon_fallback_boot() {
-    use crate::efi::real::unhex;
     use crate::efi::GLOBAL;
-    use crate::load::{commands::Cmd, Stage};
+    use crate::efi::real::unhex;
+    use crate::load::{Stage, commands::Cmd};
     let t = neon();
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
     // Boot0001 of the neon24 dump, its load_option_hex.
@@ -3743,7 +6264,10 @@ fn neon_fallback_boot() {
     assert!(bt.contains("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=neon --no-nvram\n") && bt.contains("env LANG=C update-grub\n"), "{bt}");
     assert!(bt.contains("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'KDE neon User Edition' --loader '\\EFI\\neon\\shimx64.efi'\n"), "{bt}");
     assert_eq!(bt.matches("efibootmgr --quiet --create").count(), 1, "{bt}");
-    assert!(!bt.contains("UEFI Misc Device") && !bt.contains("grub-mkconfig"), "{bt}");
+    assert!(
+        !bt.contains("UEFI Misc Device") && !bt.contains("grub-mkconfig"),
+        "{bt}"
+    );
 }
 
 const ELEMENTARY_KV: &str = "6.14.0-37-generic";
@@ -3771,17 +6295,46 @@ const ELEMENTARY_VG: &str = "Yb3kFa0Pz1AbCdEfGhIjKlMnOpQrStUv";
 /// entry with Secure Boot on.
 fn elementary(luks: bool) -> Tree {
     use crate::efi::GLOBAL;
-    let t = Tree::new(if luks { "scn-elementary-luks" } else { "scn-elementary" });
+    let t = Tree::new(if luks {
+        "scn-elementary-luks"
+    } else {
+        "scn-elementary"
+    });
     let k = ELEMENTARY_KV;
     let luks_uuid = "e1e01005-6b0a-4d6c-9a2e-8f7e1d2c3b4a";
     let mut img = vec![0u8; 100 * MIB];
     let mut parts = vec![(ESP, ELEMENTARY_ESP, 2048, 73727, 0, "")];
     if luks {
-        parts.push((LINUX, "e1e0e1e0-0000-4000-8000-000000000002", 73728, 90111, 0, ""));
+        parts.push((
+            LINUX,
+            "e1e0e1e0-0000-4000-8000-000000000002",
+            73728,
+            90111,
+            0,
+            "",
+        ));
     }
     let pv_start: u64 = if luks { 90112 } else { 73728 };
-    parts.push((LINUX, if luks { "e1e0e1e0-0000-4000-8000-000000000003" } else { "e1e0e1e0-0000-4000-8000-000000000002" }, pv_start, 204766, 0, ""));
-    write_gpt(&mut img, 512, &GptSpec { disk_guid: "e1e0e1e0-0000-4000-8000-00000000d15c", parts });
+    parts.push((
+        LINUX,
+        if luks {
+            "e1e0e1e0-0000-4000-8000-000000000003"
+        } else {
+            "e1e0e1e0-0000-4000-8000-000000000002"
+        },
+        pv_start,
+        204766,
+        0,
+        "",
+    ));
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "e1e0e1e0-0000-4000-8000-00000000d15c",
+            parts,
+        },
+    );
     put(&mut img, 2048, &fat::sample::fat32(71680, 0xe1e0_0008, ""));
     // The root's UUID is ext::sample's (10111213-...); /boot's differs.
     let root = "10111213-1415-1617-1819-1a1b1c1d1e1f";
@@ -3791,21 +6344,39 @@ fn elementary(luks: bool) -> Tree {
     if luks {
         put(&mut img, 73728, &boot_fs);
     }
-    let metadata = lvm::sample::METADATA.replacen("vg0 {", "data {", 1).replace("swap_1 {", "swap {").replace("/dev/vda5", if luks { "/dev/mapper/cryptdata" } else { "/dev/vda2" });
+    let metadata = lvm::sample::METADATA
+        .replacen("vg0 {", "data {", 1)
+        .replace("swap_1 {", "swap {")
+        .replace(
+            "/dev/vda5",
+            if luks {
+                "/dev/mapper/cryptdata"
+            } else {
+                "/dev/vda2"
+            },
+        );
     let pv = lvm::sample::pv_with(512, 1 << 20, &metadata);
     let pv_part = if luks { "vda3" } else { "vda2" };
     if !luks {
         put(&mut img, pv_start as usize, &pv);
     } else {
-        put(&mut img, pv_start as usize, &luks::sample::luks2(luks_uuid, ""));
+        put(
+            &mut img,
+            pv_start as usize,
+            &luks::sample::luks2(luks_uuid, ""),
+        );
     }
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
         .file("/sys/block/vda/device/model", "")
-        .symlink(&format!("/dev/disk/by-partuuid/{ELEMENTARY_ESP}"), "../../vda1");
+        .symlink(
+            &format!("/dev/disk/by-partuuid/{ELEMENTARY_ESP}"),
+            "../../vda1",
+        );
     if luks {
-        t.partition("vda", "vda2", "254:2", 2, 73728, 16384, &img).partition("vda", "vda3", "254:3", 3, pv_start, 204767 - pv_start, &img);
+        t.partition("vda", "vda2", "254:2", 2, 73728, 16384, &img)
+            .partition("vda", "vda3", "254:3", 3, pv_start, 204767 - pv_start, &img);
     } else {
         t.partition("vda", "vda2", "254:2", 2, pv_start, 204767 - pv_start, &img);
     }
@@ -3818,12 +6389,21 @@ fn elementary(luks: bool) -> Tree {
         let hex = luks_uuid.replace('-', "");
         t.disk("dm-0", "253:0", &pv, 512)
             .file("/sys/block/dm-0/dm/name", "cryptdata\n")
-            .file("/sys/block/dm-0/dm/uuid", format!("CRYPT-LUKS2-{hex}-cryptdata\n"))
+            .file(
+                "/sys/block/dm-0/dm/uuid",
+                format!("CRYPT-LUKS2-{hex}-cryptdata\n"),
+            )
             .file("/sys/block/dm-0/slaves/vda3", "")
             .file("/sys/block/vda/vda3/holders/dm-0", "")
             .symlink("/dev/mapper/cryptdata", "../dm-0");
     }
-    for (i, (name, id, image)) in [("data-root", "r00t00", &root_fs), ("data-swap", "sw4p00", &swap_fs)].into_iter().enumerate() {
+    for (i, (name, id, image)) in [
+        ("data-root", "r00t00", &root_fs),
+        ("data-swap", "sw4p00", &swap_fs),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let dm = format!("dm-{}", first_lv + i);
         t.disk(&dm, &format!("253:{}", first_lv + i), image, 512)
             .file(&format!("/sys/block/{dm}/dm/name"), format!("{name}\n"))
@@ -3836,13 +6416,24 @@ fn elementary(luks: bool) -> Tree {
             t.file(&format!("/sys/block/vda/{pv_part}/holders/{dm}"), "");
         }
     }
-    let (root_dm, swap_dm) = if luks { ("253:1", "dm-2") } else { ("253:0", "dm-1") };
-    let mut mountinfo = format!("26 1 {root_dm} / / rw,noatime shared:1 - ext4 /dev/mapper/data-root rw,errors=remount-ro\n");
+    let (root_dm, swap_dm) = if luks {
+        ("253:1", "dm-2")
+    } else {
+        ("253:0", "dm-1")
+    };
+    let mut mountinfo = format!(
+        "26 1 {root_dm} / / rw,noatime shared:1 - ext4 /dev/mapper/data-root rw,errors=remount-ro\n"
+    );
     let mut fstab = format!("UUID={ELEMENTARY_ESP_ID}  /boot/efi  vfat  umask=0077  0  0\n");
     if luks {
         mountinfo.push_str("27 26 254:2 / /boot rw,relatime shared:2 - ext4 /dev/vda2 rw\n28 27 254:1 / /boot/efi rw,relatime shared:3 - vfat /dev/vda1 rw,fmask=0077,dmask=0077\n");
-        fstab.push_str(&format!("UUID={boot}  /boot  ext4  noatime,errors=remount-ro  0  0\n"));
-        t.file("/etc/crypttab", format!("cryptdata UUID={luks_uuid} none luks\n"));
+        fstab.push_str(&format!(
+            "UUID={boot}  /boot  ext4  noatime,errors=remount-ro  0  0\n"
+        ));
+        t.file(
+            "/etc/crypttab",
+            format!("cryptdata UUID={luks_uuid} none luks\n"),
+        );
     } else {
         mountinfo.push_str("27 26 254:1 / /boot/efi rw,relatime shared:2 - vfat /dev/vda1 rw,fmask=0077,dmask=0077\n");
     }
@@ -3906,20 +6497,42 @@ fn elementary(luks: bool) -> Tree {
         ("dosfstools", "4.2-1.1build1"),
     ];
     if luks {
-        pkgs.extend([("cryptsetup", "2:2.7.0-1ubuntu4.2"), ("cryptsetup-initramfs", "2:2.7.0-1ubuntu4.2")]);
+        pkgs.extend([
+            ("cryptsetup", "2:2.7.0-1ubuntu4.2"),
+            ("cryptsetup-initramfs", "2:2.7.0-1ubuntu4.2"),
+        ]);
     }
-    let status: String = pkgs.iter().map(|(n, v)| format!("Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n")).collect();
+    let status: String = pkgs
+        .iter()
+        .map(|(n, v)| {
+            format!(
+                "Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n"
+            )
+        })
+        .collect();
     t.file("/var/lib/dpkg/status", status);
     t
 }
 
 /// elementary OS's plan from a tree, the source disk vda going to vdb.
 fn elementary_plan(t: &Tree) -> (Value, crate::load::commands::Built) {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let v = run(t, true, FakeRunner::default());
     let l = Layout::from_json(v.clone()).unwrap();
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-    (v, commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() }))
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+        unreachable!()
+    };
+    (
+        v,
+        commands::build(
+            &l,
+            &o,
+            &Mapping {
+                pairs: vec![("vda".into(), "vdb".into())],
+                ..Mapping::default()
+            },
+        ),
+    )
 }
 
 /// elementary OS 8 read back and planned (docs/design/elementary.md, E2):
@@ -3932,7 +6545,7 @@ fn elementary_plan(t: &Tree) -> (Value, crate::load::commands::Built) {
 /// grub-mkconfig) with os-prober off, and makes the shim entry again.
 #[test]
 fn elementary_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let k = ELEMENTARY_KV;
     for luks in [false, true] {
         let (v, b) = elementary_plan(&elementary(luks));
@@ -3947,26 +6560,51 @@ fn elementary_guest() {
         assert_eq!(s(l, &["package"]), "grub-efi-amd64-signed");
         assert_eq!(s(l, &["shim_package"]), "shim-signed");
         assert_eq!(s(&v, &["boot", "grub", "dir"]), "/boot/grub");
-        assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "initramfs-tools");
+        assert_eq!(
+            s(&v, &["boot", "initramfs", "generator"]),
+            "initramfs-tools"
+        );
         let kernels = arr(&v, &["boot", "kernels", "installed"]);
-        assert_eq!(kernels.len(), 1, "{}", v.at(&["boot", "kernels"]).unwrap().compact());
+        assert_eq!(
+            kernels.len(),
+            1,
+            "{}",
+            v.at(&["boot", "kernels"]).unwrap().compact()
+        );
         assert_eq!(s(&kernels[0], &["version"]), k);
         let esp = v.at(&["boot", "esps", "0"]).unwrap();
         assert_eq!(s(esp, &["mounted_at"]), "/boot/efi");
-        let files: Vec<(&str, Option<&str>)> = arr(esp, &["contents", "files"]).iter().map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str))).collect();
-        assert!(files.contains(&("EFI/BOOT/BOOTX64.EFI", Some("EFI/ubuntu/shimx64.efi"))), "{files:?}");
-        for f in ["EFI/ubuntu/grub.cfg", "EFI/ubuntu/grub/grub.cfg", "EFI/ubuntu/BOOTX64.CSV", "EFI/BOOT/fbx64.efi"] {
+        let files: Vec<(&str, Option<&str>)> = arr(esp, &["contents", "files"])
+            .iter()
+            .map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str)))
+            .collect();
+        assert!(
+            files.contains(&("EFI/BOOT/BOOTX64.EFI", Some("EFI/ubuntu/shimx64.efi"))),
+            "{files:?}"
+        );
+        for f in [
+            "EFI/ubuntu/grub.cfg",
+            "EFI/ubuntu/grub/grub.cfg",
+            "EFI/ubuntu/BOOTX64.CSV",
+            "EFI/BOOT/fbx64.efi",
+        ] {
             assert!(files.iter().any(|(p, _)| *p == f), "{f}: {files:?}");
         }
         let vg = v.at(&["storage", "lvm", "volume_groups", "0"]).unwrap();
         assert_eq!(s(vg, &["name"]), "data");
-        assert_eq!(s(vg, &["physical_volumes", "0", "device"]), if luks { "dm-0" } else { "vda2" });
+        assert_eq!(
+            s(vg, &["physical_volumes", "0", "device"]),
+            if luks { "dm-0" } else { "vda2" }
+        );
         assert_eq!(s(vg, &["logical_volumes", "0", "name"]), "root");
         assert_eq!(s(vg, &["logical_volumes", "1", "name"]), "swap");
         let fstab = arr(&v, &["storage", "fstab"]);
         let root = fstab.iter().find(|e| s(e, &["file"]) == "/").unwrap();
         assert_eq!(s(root, &["spec"]), "/dev/mapper/data-root");
-        assert_eq!(s(root, &["resolves_to"]), if luks { "dm-1" } else { "dm-0" });
+        assert_eq!(
+            s(root, &["resolves_to"]),
+            if luks { "dm-1" } else { "dm-0" }
+        );
         if luks {
             assert_eq!(s(&v, &["storage", "crypttab", "0", "name"]), "cryptdata");
             assert_eq!(s(&v, &["storage", "crypttab", "0", "resolves_to"]), "vda3");
@@ -3975,33 +6613,73 @@ fn elementary_guest() {
 
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let asm: String = b.stage(Stage::Assemble).iter().map(Cmd::shell).collect();
-        let pv = if luks { "/dev/mapper/cryptdata" } else { "/dev/vdb2" };
+        let pv = if luks {
+            "/dev/mapper/cryptdata"
+        } else {
+            "/dev/vdb2"
+        };
         let lvm = |rest: &str| format!("--devicesfile '' --devices {pv} {rest}\n");
         let lines = [
-            format!("pvcreate {}", lvm(&format!("--uuid Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff --restorefile {RUN_DIR}/lvm/data.vg {pv}"))),
-            format!("vgcfgrestore {}", lvm(&format!("--file {RUN_DIR}/lvm/data.vg data"))),
+            format!(
+                "pvcreate {}",
+                lvm(&format!(
+                    "--uuid Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff --restorefile {RUN_DIR}/lvm/data.vg {pv}"
+                ))
+            ),
+            format!(
+                "vgcfgrestore {}",
+                lvm(&format!("--file {RUN_DIR}/lvm/data.vg data"))
+            ),
             format!("vgchange {}", lvm("--activate y data")),
         ];
         let mut at = 0;
         for l in &lines {
-            let i = asm[at..].find(l.as_str()).unwrap_or_else(|| panic!("{l} not after {at}: {asm}")) + at;
+            let i = asm[at..]
+                .find(l.as_str())
+                .unwrap_or_else(|| panic!("{l} not after {at}: {asm}"))
+                + at;
             at = i + l.len();
         }
         if luks {
-            let open = asm.find("cryptsetup open /dev/vdb3 cryptdata\n").expect(&asm);
-            assert!(asm.contains("cryptsetup luksFormat ") && asm.contains(" --uuid=e1e01005-6b0a-4d6c-9a2e-8f7e1d2c3b4a /dev/vdb3\n") && open < asm.find("pvcreate ").unwrap(), "{asm}");
+            let open = asm
+                .find("cryptsetup open /dev/vdb3 cryptdata\n")
+                .expect(&asm);
+            assert!(
+                asm.contains("cryptsetup luksFormat ")
+                    && asm.contains(" --uuid=e1e01005-6b0a-4d6c-9a2e-8f7e1d2c3b4a /dev/vdb3\n")
+                    && open < asm.find("pvcreate ").unwrap(),
+                "{asm}"
+            );
         }
         let f: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
-        assert!(f.contains("/dev/mapper/data-root\n") && f.contains("mkswap ") && f.contains("mkfs.fat "), "{f}");
+        assert!(
+            f.contains("/dev/mapper/data-root\n")
+                && f.contains("mkswap ")
+                && f.contains("mkfs.fat "),
+            "{f}"
+        );
         let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-        let i = bt.find(&format!("chroot /mnt/bko-target sh -c {}\n", crate::load::shell_quote(crate::load::commands::UPDATE_INITRAMFS_RESUME))).expect(&bt);
+        let i = bt
+            .find(&format!(
+                "chroot /mnt/bko-target sh -c {}\n",
+                crate::load::shell_quote(crate::load::commands::UPDATE_INITRAMFS_RESUME)
+            ))
+            .expect(&bt);
         let g = bt.find("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=ubuntu --no-nvram\n").expect(&bt);
         let off = bt.find("[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober").expect(&bt);
-        let cfg = bt.find("chroot /mnt/bko-target env LANG=C update-grub\n").expect(&bt);
+        let cfg = bt
+            .find("chroot /mnt/bko-target env LANG=C update-grub\n")
+            .expect(&bt);
         let nvram = bt.find("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'elementary OS 8' --loader '\\EFI\\ubuntu\\shimx64.efi'\n").expect(&bt);
         assert!(i < g && g < off && off < cfg && cfg < nvram, "{bt}");
         assert_eq!(bt.matches("grub-install").count(), 1, "{bt}");
-        assert!(!bt.contains("grub-mkconfig") && !bt.contains("--removable") && !bt.contains("i386-pc") && !bt.contains("dracut"), "{bt}");
+        assert!(
+            !bt.contains("grub-mkconfig")
+                && !bt.contains("--removable")
+                && !bt.contains("i386-pc")
+                && !bt.contains("dracut"),
+            "{bt}"
+        );
     }
 }
 
@@ -4016,32 +6694,71 @@ fn elementary_guest() {
 /// device: nothing added.
 #[test]
 fn luks_restored_key_file_with_and_without_key_file() {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    use crate::load::{Parsed, Stage, commands, layout::Layout, target::Mapping};
     let plan = |key: &str, opts: &str, extra: &[&str]| {
         let t = elementary(true);
-        t.file("/etc/crypttab", format!("cryptdata UUID=e1e01005-6b0a-4d6c-9a2e-8f7e1d2c3b4a {key} {opts}\n"));
+        t.file(
+            "/etc/crypttab",
+            format!("cryptdata UUID=e1e01005-6b0a-4d6c-9a2e-8f7e1d2c3b4a {key} {opts}\n"),
+        );
         let v = run(&t, true, FakeRunner::default());
         assert_eq!(s(&v, &["storage", "crypttab", "0", "key_file"]), key);
         let l = Layout::from_json(v).unwrap();
-        let args: Vec<String> = ["l.json"].iter().chain(extra).map(|a| a.to_string()).collect();
-        let Ok(Parsed::Run(o)) = crate::load::parse_args(&args) else { unreachable!() };
-        let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
+        let args: Vec<String> = ["l.json"]
+            .iter()
+            .chain(extra)
+            .map(|a| a.to_string())
+            .collect();
+        let Ok(Parsed::Run(o)) = crate::load::parse_args(&args) else {
+            unreachable!()
+        };
+        let b = commands::build(
+            &l,
+            &o,
+            &Mapping {
+                pairs: vec![("vda".into(), "vdb".into())],
+                ..Mapping::default()
+            },
+        );
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let asm = plan_text_of(b.stage(Stage::Assemble));
         let bt = plan_text_of(b.stage(Stage::Boot));
         (asm, bt)
     };
-    let initramfs = format!("chroot /mnt/bko-target sh -c {}\n", crate::load::shell_quote(commands::UPDATE_INITRAMFS_RESUME));
+    let initramfs = format!(
+        "chroot /mnt/bko-target sh -c {}\n",
+        crate::load::shell_quote(commands::UPDATE_INITRAMFS_RESUME)
+    );
     // No --key-file: the temporary key, replaced.
     let (asm, bt) = plan("/crypto_keyfile.bin", "luks", &[]);
-    assert!(asm.contains(&format!("dd if=/dev/urandom of={RUN_DIR}/keys/cryptdata bs=64 count=1 status=none\n")), "{asm}");
-    assert!(asm.contains(&format!(" --key-file={RUN_DIR}/keys/cryptdata /dev/vdb3\n")), "{asm}");
+    assert!(
+        asm.contains(&format!(
+            "dd if=/dev/urandom of={RUN_DIR}/keys/cryptdata bs=64 count=1 status=none\n"
+        )),
+        "{asm}"
+    );
+    assert!(
+        asm.contains(&format!(" --key-file={RUN_DIR}/keys/cryptdata /dev/vdb3\n")),
+        "{asm}"
+    );
     let add = bt.find(&format!("# cryptdata: the restored key file /crypto_keyfile.bin\ncryptsetup luksAddKey --key-file={RUN_DIR}/keys/cryptdata /dev/vdb3 /mnt/bko-target/crypto_keyfile.bin\ncryptsetup luksRemoveKey /dev/vdb3 {RUN_DIR}/keys/cryptdata\n")).expect(&bt);
     assert!(add < bt.find(&initramfs).expect(&bt), "{bt}");
     // --key-file: its key made it and stays; the restored key file joins it.
-    let (asm, bt) = plan("/crypto_keyfile.bin", "luks", &["--key-file", "cryptdata=/root/disk-passphrase"]);
-    assert!(!asm.contains("/dev/urandom") && !asm.contains(&format!("{RUN_DIR}/keys/")), "{asm}");
-    assert!(asm.contains(" --key-file=/root/disk-passphrase /dev/vdb3\n") && asm.contains("cryptsetup open --key-file=/root/disk-passphrase /dev/vdb3 cryptdata\n"), "{asm}");
+    let (asm, bt) = plan(
+        "/crypto_keyfile.bin",
+        "luks",
+        &["--key-file", "cryptdata=/root/disk-passphrase"],
+    );
+    assert!(
+        !asm.contains("/dev/urandom") && !asm.contains(&format!("{RUN_DIR}/keys/")),
+        "{asm}"
+    );
+    assert!(
+        asm.contains(" --key-file=/root/disk-passphrase /dev/vdb3\n")
+            && asm
+                .contains("cryptsetup open --key-file=/root/disk-passphrase /dev/vdb3 cryptdata\n"),
+        "{asm}"
+    );
     let add = bt
         .find(
             "# cryptdata: the restored key file /crypto_keyfile.bin, a keyslot beside --key-file's, unless it opens /dev/vdb3 already\n\
@@ -4049,18 +6766,45 @@ fn luks_restored_key_file_with_and_without_key_file() {
         )
         .expect(&bt);
     assert!(add < bt.find(&initramfs).expect(&bt), "{bt}");
-    assert!(!bt.contains("luksRemoveKey"), "--key-file's keyslot stays: {bt}");
+    assert!(
+        !bt.contains("luksRemoveKey"),
+        "--key-file's keyslot stays: {bt}"
+    );
     // A key on another device (systemd's path:device): nothing to add.
-    let (_, bt) = plan("/backshot1/keys/disk-passphrase:LABEL=BKOBACKUP", "luks", &["--key-file", "cryptdata=/root/disk-passphrase"]);
-    assert!(!bt.contains("luksAddKey") && !bt.contains("luksRemoveKey") && !bt.contains("--test-passphrase"), "{bt}");
+    let (_, bt) = plan(
+        "/backshot1/keys/disk-passphrase:LABEL=BKOBACKUP",
+        "luks",
+        &["--key-file", "cryptdata=/root/disk-passphrase"],
+    );
+    assert!(
+        !bt.contains("luksAddKey")
+            && !bt.contains("luksRemoveKey")
+            && !bt.contains("--test-passphrase"),
+        "{bt}"
+    );
     // A raw key device (a USB stick's by-id name) isn't in the restored
     // tree either: nothing added, the boot stage doesn't stop on it.
-    let (_, bt) = plan("/dev/disk/by-id/usb-Stick_0001-0:0", "luks,keyfile-size=4096", &["--key-file", "cryptdata=/root/disk-passphrase"]);
-    assert!(!bt.contains("luksAddKey") && !bt.contains("--test-passphrase"), "{bt}");
+    let (_, bt) = plan(
+        "/dev/disk/by-id/usb-Stick_0001-0:0",
+        "luks,keyfile-size=4096",
+        &["--key-file", "cryptdata=/root/disk-passphrase"],
+    );
+    assert!(
+        !bt.contains("luksAddKey") && !bt.contains("--test-passphrase"),
+        "{bt}"
+    );
     // keyfile-offset= and keyfile-size=: the keyslot is those bytes, both ways.
-    let (_, bt) = plan("/etc/keys/root.key", "luks,keyfile-offset=512,keyfile-size=4096", &[]);
+    let (_, bt) = plan(
+        "/etc/keys/root.key",
+        "luks,keyfile-offset=512,keyfile-size=4096",
+        &[],
+    );
     assert!(bt.contains(&format!("cryptsetup luksAddKey --key-file={RUN_DIR}/keys/cryptdata --new-keyfile-offset=512 --new-keyfile-size=4096 /dev/vdb3 /mnt/bko-target/etc/keys/root.key\n")), "{bt}");
-    let (_, bt) = plan("/etc/keys/root.key", "luks,keyfile-offset=512,keyfile-size=4096", &["--key-file", "cryptdata=/root/disk-passphrase"]);
+    let (_, bt) = plan(
+        "/etc/keys/root.key",
+        "luks,keyfile-offset=512,keyfile-size=4096",
+        &["--key-file", "cryptdata=/root/disk-passphrase"],
+    );
     assert!(
         bt.contains("sh -c 'cryptsetup open --test-passphrase --key-file=/mnt/bko-target/etc/keys/root.key --keyfile-offset=512 --keyfile-size=4096 /dev/vdb3 2>/dev/null || cryptsetup luksAddKey --key-file=/root/disk-passphrase --new-keyfile-offset=512 --new-keyfile-size=4096 /dev/vdb3 /mnt/bko-target/etc/keys/root.key'\n"),
         "{bt}"
@@ -4074,31 +6818,63 @@ fn luks_restored_key_file_with_and_without_key_file() {
 /// alike.  With --key-file, no problem.
 #[test]
 fn luks_name_without_a_temporary_key_is_refused() {
-    use crate::load::{codes::ProblemCode, commands, layout::Layout, target::Mapping, Parsed, Stage};
+    use crate::load::{
+        Parsed, Stage, codes::ProblemCode, commands, layout::Layout, target::Mapping,
+    };
     let plan = |v: &Value, extra: &[&str]| {
         let l = Layout::from_json(v.clone()).unwrap();
-        let args: Vec<String> = ["l.json"].iter().chain(extra).map(|a| a.to_string()).collect();
-        let Ok(Parsed::Run(o)) = crate::load::parse_args(&args) else { unreachable!() };
-        let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
+        let args: Vec<String> = ["l.json"]
+            .iter()
+            .chain(extra)
+            .map(|a| a.to_string())
+            .collect();
+        let Ok(Parsed::Run(o)) = crate::load::parse_args(&args) else {
+            unreachable!()
+        };
+        let b = commands::build(
+            &l,
+            &o,
+            &Mapping {
+                pairs: vec![("vda".into(), "vdb".into())],
+                ..Mapping::default()
+            },
+        );
         (b.coded_problems(), plan_text_of(b.stage(Stage::Assemble)))
     };
     let t = elementary(true);
-    t.file("/etc/crypttab", "cryptdata UUID=e1e01005-6b0a-4d6c-9a2e-8f7e1d2c3b4a /etc/keys/root.key luks\n");
+    t.file(
+        "/etc/crypttab",
+        "cryptdata UUID=e1e01005-6b0a-4d6c-9a2e-8f7e1d2c3b4a /etc/keys/root.key luks\n",
+    );
     let v = run(&t, true, FakeRunner::default());
     let want = "..: a LUKS name bko-holt can't keep a temporary key under: give --key-file ..=FILE";
     let check = |problems: &[crate::load::codes::Problem]| {
         assert_eq!(problems.len(), 1, "{problems:?}");
-        assert_eq!((problems[0].code, problems[0].text.as_str(), problems[0].str_field("name")), (ProblemCode::KeyNameUnusable, want, Some("..")));
+        assert_eq!(
+            (
+                problems[0].code,
+                problems[0].text.as_str(),
+                problems[0].str_field("name")
+            ),
+            (ProblemCode::KeyNameUnusable, want, Some(".."))
+        );
     };
     // The container opened as `..`: the format stage refuses its temporary key.
     let dotdot = crate::json::parse(&v.compact().replace("cryptdata", "..")).unwrap();
     let (problems, asm) = plan(&dotdot, &[]);
     check(&problems);
-    assert!(!asm.contains("/dev/urandom") && !asm.contains(&format!("{RUN_DIR}/keys/")), "no temporary key: {asm}");
+    assert!(
+        !asm.contains("/dev/urandom") && !asm.contains(&format!("{RUN_DIR}/keys/")),
+        "no temporary key: {asm}"
+    );
     // crypttab's name for it `..` (found by its UUID): boot's restored key
     // file can't be added in the temporary key's place.
     let mut tab = v.clone();
-    set_in(&mut tab, &["storage", "crypttab", "0", "name"], Value::from(".."));
+    set_in(
+        &mut tab,
+        &["storage", "crypttab", "0", "name"],
+        Value::from(".."),
+    );
     let (problems, _) = plan(&tab, &[]);
     check(&problems);
     // --key-file: nothing temporary, nothing refused.
@@ -4114,34 +6890,99 @@ fn luks_name_without_a_temporary_key_is_refused() {
 /// keyscript name beside it, the plan goes ahead as before.
 #[test]
 fn luks_key_not_restored_needs_key_file() {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    use crate::load::{Parsed, Stage, commands, layout::Layout, target::Mapping};
     let plan = |key: &str, opts: &str, extra: &[&str]| {
         let t = elementary(true);
-        t.file("/etc/crypttab", format!("cryptdata UUID=e1e01005-6b0a-4d6c-9a2e-8f7e1d2c3b4a {key} {opts}\n"));
+        t.file(
+            "/etc/crypttab",
+            format!("cryptdata UUID=e1e01005-6b0a-4d6c-9a2e-8f7e1d2c3b4a {key} {opts}\n"),
+        );
         let v = run(&t, true, FakeRunner::default());
         let l = Layout::from_json(v).unwrap();
-        let args: Vec<String> = ["l.json"].iter().chain(extra).map(|a| a.to_string()).collect();
-        let Ok(Parsed::Run(o)) = crate::load::parse_args(&args) else { unreachable!() };
-        let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
-        (b.coded_problems(), plan_text_of(b.stage(Stage::Assemble)), plan_text_of(b.stage(Stage::Boot)))
+        let args: Vec<String> = ["l.json"]
+            .iter()
+            .chain(extra)
+            .map(|a| a.to_string())
+            .collect();
+        let Ok(Parsed::Run(o)) = crate::load::parse_args(&args) else {
+            unreachable!()
+        };
+        let b = commands::build(
+            &l,
+            &o,
+            &Mapping {
+                pairs: vec![("vda".into(), "vdb".into())],
+                ..Mapping::default()
+            },
+        );
+        (
+            b.coded_problems(),
+            plan_text_of(b.stage(Stage::Assemble)),
+            plan_text_of(b.stage(Stage::Boot)),
+        )
     };
-    for key in ["/backshot1/keys/disk-passphrase:LABEL=BKOBACKUP", "/dev/disk/by-id/usb-Stick_0001-0:0", "/dev/disk/by-label/KEYSTICK", "cryptroot"] {
+    for key in [
+        "/backshot1/keys/disk-passphrase:LABEL=BKOBACKUP",
+        "/dev/disk/by-id/usb-Stick_0001-0:0",
+        "/dev/disk/by-label/KEYSTICK",
+        "cryptroot",
+    ] {
         let (problems, asm, bt) = plan(key, "luks", &[]);
-        assert_eq!(problems, vec![format!("cryptdata: crypttab's key {key:?} isn't a file the restore brings back (it's on another device, or not a path in the restored tree): give --key-file cryptdata=FILE")], "{key}");
-        assert_eq!((problems[0].code, problems[0].str_field("name"), problems[0].str_field("key_file")), (crate::load::codes::ProblemCode::KeyFileUnrestorable, Some("cryptdata"), Some(key)));
-        assert!(!asm.contains("/dev/urandom") && !asm.contains(&format!("{RUN_DIR}/keys/")), "{key}: no temporary key: {asm}");
-        assert!(!bt.contains("luksAddKey") && !bt.contains("luksRemoveKey"), "{bt}");
+        assert_eq!(
+            problems,
+            vec![format!(
+                "cryptdata: crypttab's key {key:?} isn't a file the restore brings back (it's on another device, or not a path in the restored tree): give --key-file cryptdata=FILE"
+            )],
+            "{key}"
+        );
+        assert_eq!(
+            (
+                problems[0].code,
+                problems[0].str_field("name"),
+                problems[0].str_field("key_file")
+            ),
+            (
+                crate::load::codes::ProblemCode::KeyFileUnrestorable,
+                Some("cryptdata"),
+                Some(key)
+            )
+        );
+        assert!(
+            !asm.contains("/dev/urandom") && !asm.contains(&format!("{RUN_DIR}/keys/")),
+            "{key}: no temporary key: {asm}"
+        );
+        assert!(
+            !bt.contains("luksAddKey") && !bt.contains("luksRemoveKey"),
+            "{bt}"
+        );
     }
     // A path that climbs out of the target: refused too.
     let (problems, _, _) = plan("/etc/../../root.key", "luks", &[]);
     assert_eq!(problems.len(), 1, "{problems:?}");
-    let (problems, _, _) = plan("/etc/../../root.key", "luks", &["--key-file", "cryptdata=/root/disk-passphrase"]);
-    assert_eq!(problems, vec!["cryptdata: crypttab key file \"/etc/../../root.key\" isn't a path under the target".to_string()]);
+    let (problems, _, _) = plan(
+        "/etc/../../root.key",
+        "luks",
+        &["--key-file", "cryptdata=/root/disk-passphrase"],
+    );
+    assert_eq!(
+        problems,
+        vec![
+            "cryptdata: crypttab key file \"/etc/../../root.key\" isn't a path under the target"
+                .to_string()
+        ]
+    );
     // Debian's keyscript=decrypt_keyctl: a name, not a file; --key-file's
     // keyslot opens it, nothing added, no problem (as before).
-    let (problems, _, bt) = plan("cryptroot", "luks,keyscript=decrypt_keyctl", &["--key-file", "cryptdata=/root/disk-passphrase"]);
+    let (problems, _, bt) = plan(
+        "cryptroot",
+        "luks,keyscript=decrypt_keyctl",
+        &["--key-file", "cryptdata=/root/disk-passphrase"],
+    );
     assert!(problems.is_empty(), "{problems:?}");
-    assert!(!bt.contains("luksAddKey") && !bt.contains("--test-passphrase"), "{bt}");
+    assert!(
+        !bt.contains("luksAddKey") && !bt.contains("--test-passphrase"),
+        "{bt}"
+    );
 }
 
 fn plan_text_of(cmds: &[crate::load::commands::Cmd]) -> String {
@@ -4150,7 +6991,18 @@ fn plan_text_of(cmds: &[crate::load::commands::Cmd]) -> String {
 
 const PVE_KV: &str = "7.0.4-1-pve";
 /// Each disk's ESP: its PARTUUID and its vfat volume ID (as a serial).
-const PVE_ESPS: [(&str, u32, &str); 2] = [("e5e5e5e5-0000-4000-8000-000000000001", 0x1234_abcd, "1234-ABCD"), ("e5e5e5e5-0000-4000-8000-000000000002", 0x5678_ef01, "5678-EF01")];
+const PVE_ESPS: [(&str, u32, &str); 2] = [
+    (
+        "e5e5e5e5-0000-4000-8000-000000000001",
+        0x1234_abcd,
+        "1234-ABCD",
+    ),
+    (
+        "e5e5e5e5-0000-4000-8000-000000000002",
+        0x5678_ef01,
+        "5678-EF01",
+    ),
+];
 
 /// Proxmox VE 9.2 as its installer lays out ZFS root (docs/design/proxmox.md):
 /// Debian 13's os-release, on each disk a BIOS boot partition, a 32 MiB ESP
@@ -4165,10 +7017,23 @@ fn proxmox(mirror: bool) -> (Tree, FakeRunner) {
     let t = Tree::new(if mirror { "scn-pve-mirror" } else { "scn-pve" });
     t.debian13();
     let k = PVE_KV;
-    let disks: Vec<(&str, &str)> = if mirror { vec![("vda", "254:0"), ("vdb", "254:16")] } else { vec![("vda", "254:0")] };
-    let leaf = |n: &str, i: u64| format!(r#"{{"type": "disk", "id": {i}, "guid": {}, "path": "/dev/{n}3", "whole_disk": 0}}"#, 11 + i);
+    let disks: Vec<(&str, &str)> = if mirror {
+        vec![("vda", "254:0"), ("vdb", "254:16")]
+    } else {
+        vec![("vda", "254:0")]
+    };
+    let leaf = |n: &str, i: u64| {
+        format!(
+            r#"{{"type": "disk", "id": {i}, "guid": {}, "path": "/dev/{n}3", "whole_disk": 0}}"#,
+            11 + i
+        )
+    };
     let tree = if mirror {
-        format!(r#"{{"type": "mirror", "id": 0, "guid": 10, "ashift": 12, "children": [{}, {}]}}"#, leaf("vda", 0), leaf("vdb", 1))
+        format!(
+            r#"{{"type": "mirror", "id": 0, "guid": 10, "ashift": 12, "children": [{}, {}]}}"#,
+            leaf("vda", 0),
+            leaf("vdb", 1)
+        )
     } else {
         r#"{"type": "disk", "id": 0, "guid": 11, "path": "/dev/vda3", "whole_disk": 0, "ashift": 12}"#.to_string()
     };
@@ -4185,11 +7050,37 @@ fn proxmox(mirror: bool) -> (Tree, FakeRunner) {
             &mut img,
             512,
             &GptSpec {
-                disk_guid: if i == 0 { "9e9e9e9e-0000-4000-8000-00000000000a" } else { "9e9e9e9e-0000-4000-8000-00000000000b" },
+                disk_guid: if i == 0 {
+                    "9e9e9e9e-0000-4000-8000-00000000000a"
+                } else {
+                    "9e9e9e9e-0000-4000-8000-00000000000b"
+                },
                 parts: vec![
-                    (BIOS_BOOT, if i == 0 { "9e9e9e9e-1111-4000-8000-00000000000a" } else { "9e9e9e9e-1111-4000-8000-00000000000b" }, 34, 2047, 0, ""),
+                    (
+                        BIOS_BOOT,
+                        if i == 0 {
+                            "9e9e9e9e-1111-4000-8000-00000000000a"
+                        } else {
+                            "9e9e9e9e-1111-4000-8000-00000000000b"
+                        },
+                        34,
+                        2047,
+                        0,
+                        "",
+                    ),
                     (ESP, partuuid, 2048, 67583, 0, ""),
-                    ("6a898cc3-1dd2-11b2-99a6-080020c9b98d", if i == 0 { "9e9e9e9e-3333-4000-8000-00000000000a" } else { "9e9e9e9e-3333-4000-8000-00000000000b" }, 67584, 184319, 0, ""),
+                    (
+                        "6a898cc3-1dd2-11b2-99a6-080020c9b98d",
+                        if i == 0 {
+                            "9e9e9e9e-3333-4000-8000-00000000000a"
+                        } else {
+                            "9e9e9e9e-3333-4000-8000-00000000000b"
+                        },
+                        67584,
+                        184319,
+                        0,
+                        "",
+                    ),
                 ],
             },
         );
@@ -4200,30 +7091,77 @@ fn proxmox(mirror: bool) -> (Tree, FakeRunner) {
             if mirror { 10 } else { 11 },
             11 + i
         );
-        put(&mut img, 67584, &zfs::pack::vdev(116736 * 512, &crate::json::parse(&cfg).unwrap()));
+        put(
+            &mut img,
+            67584,
+            &zfs::pack::vdev(116736 * 512, &crate::json::parse(&cfg).unwrap()),
+        );
         let major = devno.split(':').next().unwrap();
         let minor: u32 = devno.split(':').nth(1).unwrap().parse().unwrap();
         t.disk(d, devno, &img, 512)
-            .partition(d, &format!("{d}1"), &format!("{major}:{}", minor + 1), 1, 34, 2014, &img)
-            .partition(d, &format!("{d}2"), &format!("{major}:{}", minor + 2), 2, 2048, 65536, &img)
-            .partition(d, &format!("{d}3"), &format!("{major}:{}", minor + 3), 3, 67584, 116736, &img)
-            .symlink(&format!("/dev/disk/by-partuuid/{partuuid}"), &format!("../../{d}2"))
+            .partition(
+                d,
+                &format!("{d}1"),
+                &format!("{major}:{}", minor + 1),
+                1,
+                34,
+                2014,
+                &img,
+            )
+            .partition(
+                d,
+                &format!("{d}2"),
+                &format!("{major}:{}", minor + 2),
+                2,
+                2048,
+                65536,
+                &img,
+            )
+            .partition(
+                d,
+                &format!("{d}3"),
+                &format!("{major}:{}", minor + 3),
+                3,
+                67584,
+                116736,
+                &img,
+            )
+            .symlink(
+                &format!("/dev/disk/by-partuuid/{partuuid}"),
+                &format!("../../{d}2"),
+            )
             .symlink(&format!("/dev/disk/by-uuid/{id}"), &format!("../../{d}2"))
-            .file(&var(&format!("Boot000{i}")), efi_load_option("Linux Boot Manager", 2, 2048, 65536, partuuid, "\\EFI\\systemd\\systemd-bootx64.efi"));
+            .file(
+                &var(&format!("Boot000{i}")),
+                efi_load_option(
+                    "Linux Boot Manager",
+                    2,
+                    2048,
+                    65536,
+                    partuuid,
+                    "\\EFI\\systemd\\systemd-bootx64.efi",
+                ),
+            );
         order.extend([i as u8, 0]);
         let esp = format!("/run/bko-holt/esp-{id}");
         t.file(&format!("{esp}/EFI/systemd/systemd-bootx64.efi"), &sd)
             .file(&format!("{esp}/EFI/BOOT/BOOTX64.EFI"), &sd)
             .file(&format!("{esp}/EFI/proxmox/{k}/vmlinuz-{k}"), "k")
             .file(&format!("{esp}/EFI/proxmox/{k}/initrd.img-{k}"), "i")
-            .file(&format!("{esp}/loader/loader.conf"), "timeout 3\ndefault proxmox-*\n")
+            .file(
+                &format!("{esp}/loader/loader.conf"),
+                "timeout 3\ndefault proxmox-*\n",
+            )
             .file(&format!("{esp}/loader/entries/proxmox-{k}.conf"), &entry);
     }
     let mut loader_info = vec![6u8, 0, 0, 0];
     for c in "systemd-boot 257.9-1~deb13u1".encode_utf16().chain([0]) {
         loader_info.extend(c.to_le_bytes());
     }
-    let ids: String = PVE_ESPS[..disks.len()].iter().map(|(_, _, id)| format!("{id}\n")).collect();
+    let ids: String = PVE_ESPS[..disks.len()]
+        .iter()
+        .map(|(_, _, id)| format!("{id}\n"))
+        .collect();
     t.file("/sys/firmware/efi/fw_platform_size", "64\n")
         .file(&var("BootOrder"), order)
         .file(&var("BootCurrent"), [6u8, 0, 0, 0, 0, 0])
@@ -4268,14 +7206,25 @@ fn proxmox(mirror: bool) -> (Tree, FakeRunner) {
         ("efibootmgr", "18-2"),
         ("dosfstools", "4.2-1.2"),
     ];
-    let status: String = pkgs.iter().map(|(n, v)| format!("Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n")).collect();
+    let status: String = pkgs
+        .iter()
+        .map(|(n, v)| {
+            format!(
+                "Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n"
+            )
+        })
+        .collect();
     t.file("/var/lib/dpkg/status", status);
     let vdevs = if mirror {
         r#"{"mirror-0": {"name": "mirror-0", "vdev_type": "mirror", "vdevs": {"/dev/vda3": {"name": "/dev/vda3", "vdev_type": "disk", "path": "/dev/vda3"}, "/dev/vdb3": {"name": "/dev/vdb3", "vdev_type": "disk", "path": "/dev/vdb3"}}}}"#
     } else {
         r#"{"/dev/vda3": {"name": "/dev/vda3", "vdev_type": "disk", "path": "/dev/vda3"}}"#
     };
-    let fs = |name: &str, mp: &str, canmount: &str, mounted: &str| format!("{name}\tfilesystem\t900\t2000\t96\t{mp}\t{canmount}\t{mounted}\toff\t-\tnone\tnone\t-\t-\ton\t131072\t-\t-\tposix\tsa\tauto\tnone\toff\tsensitive\ton\ton\t1\t-\n");
+    let fs = |name: &str, mp: &str, canmount: &str, mounted: &str| {
+        format!(
+            "{name}\tfilesystem\t900\t2000\t96\t{mp}\t{canmount}\t{mounted}\toff\t-\tnone\tnone\t-\t-\ton\t131072\t-\t-\tposix\tsa\tauto\tnone\toff\tsensitive\ton\ton\t1\t-\n"
+        )
+    };
     let mut runner = FakeRunner::default()
         .with("zpool list -H -o name", "rpool\n")
         .with(
@@ -4304,25 +7253,47 @@ fn proxmox(mirror: bool) -> (Tree, FakeRunner) {
         );
     for (i, (d, _)) in disks.iter().enumerate() {
         let at = format!("/run/bko-holt/esp-{}", PVE_ESPS[i].2);
-        runner = runner.with(&format!("mount -t vfat -o ro,noexec,nodev,nosuid /dev/{d}2 {at}"), "").with(&format!("umount {at}"), "");
+        runner = runner
+            .with(
+                &format!("mount -t vfat -o ro,noexec,nodev,nosuid /dev/{d}2 {at}"),
+                "",
+            )
+            .with(&format!("umount {at}"), "");
     }
     (t, runner)
 }
 
 /// Proxmox VE's plan from a tree, the source disks vda (and vdb) going to
 /// sda (and sdb); `extra`, more of load's arguments.
-fn proxmox_plan(t: &Tree, runner: FakeRunner, mirror: bool, extra: &[&str]) -> (Value, crate::load::commands::Built) {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+fn proxmox_plan(
+    t: &Tree,
+    runner: FakeRunner,
+    mirror: bool,
+    extra: &[&str],
+) -> (Value, crate::load::commands::Built) {
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let v = run(t, true, runner);
     let l = Layout::from_json(v.clone()).unwrap();
     let mut a = vec!["l.json".to_string()];
     a.extend(extra.iter().map(|s| s.to_string()));
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
+        unreachable!()
+    };
     let mut pairs = vec![("vda".to_string(), "sda".to_string())];
     if mirror {
         pairs.push(("vdb".into(), "sdb".into()));
     }
-    (v, commands::build(&l, &o, &Mapping { pairs, ..Mapping::default() }))
+    (
+        v,
+        commands::build(
+            &l,
+            &o,
+            &Mapping {
+                pairs,
+                ..Mapping::default()
+            },
+        ),
+    )
 }
 
 /// Proxmox VE 9 on ZFS root, one disk: the unmounted ESP found from
@@ -4330,13 +7301,19 @@ fn proxmox_plan(t: &Tree, runner: FakeRunner, mirror: bool, extra: &[&str]) -> (
 /// files and loader entries; pmxcfs not a backup source; os.product.
 #[test]
 fn proxmox_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let (t, runner) = proxmox(false);
     let (v, b) = proxmox_plan(&t, runner, false, &[]);
     assert_eq!(s(&v, &["os", "id"]), "debian");
     assert_eq!(s(&v, &["os", "version_id"]), "13");
     assert_eq!(s(&v, &["os", "product"]), "Proxmox VE 9.2");
-    for (p, ver) in [("proxmox-kernel-helper", "9.0.4"), ("proxmox-default-kernel", "2.0.0"), ("proxmox-ve", "9.2.0"), ("pve-manager", "9.2.3"), ("zfs-initramfs", "2.4.1-pve1")] {
+    for (p, ver) in [
+        ("proxmox-kernel-helper", "9.0.4"),
+        ("proxmox-default-kernel", "2.0.0"),
+        ("proxmox-ve", "9.2.0"),
+        ("pve-manager", "9.2.3"),
+        ("zfs-initramfs", "2.4.1-pve1"),
+    ] {
         assert_eq!(s(&v, &["boot", "packages", p]), ver, "{p}");
     }
     let pb = v.at(&["boot", "proxmox_boot"]).unwrap();
@@ -4345,8 +7322,16 @@ fn proxmox_guest() {
     assert_eq!(s(e, &["uuid"]), "1234-ABCD");
     assert_eq!(s(e, &["device"]), "vda2");
     assert_eq!(s(e, &["mode"]), "systemd-boot");
-    let files: Vec<&str> = arr(e, &["contents", "files"]).iter().map(|f| s(f, &["path"])).collect();
-    for f in ["EFI/systemd/systemd-bootx64.efi", "EFI/BOOT/BOOTX64.EFI", &format!("EFI/proxmox/{PVE_KV}/vmlinuz-{PVE_KV}"), &format!("loader/entries/proxmox-{PVE_KV}.conf")] {
+    let files: Vec<&str> = arr(e, &["contents", "files"])
+        .iter()
+        .map(|f| s(f, &["path"]))
+        .collect();
+    for f in [
+        "EFI/systemd/systemd-bootx64.efi",
+        "EFI/BOOT/BOOTX64.EFI",
+        &format!("EFI/proxmox/{PVE_KV}/vmlinuz-{PVE_KV}"),
+        &format!("loader/entries/proxmox-{PVE_KV}.conf"),
+    ] {
         assert!(files.contains(&f), "{f}: {files:?}");
     }
     assert_eq!(s(pb, &["cmdline"]), "root=ZFS=rpool/ROOT/pve-1 boot=zfs");
@@ -4357,29 +7342,70 @@ fn proxmox_guest() {
     assert_eq!(s(&esps[0], &["device"]), "vda2");
     assert!(esps[0].get("mounted_at").unwrap().is_null());
     assert_eq!(s(&v, &["boot", "loader", "name"]), "systemd-boot");
-    assert_eq!(s(&v, &["boot", "systemd_boot", "entries", "0", "file"]), format!("proxmox-{PVE_KV}.conf"));
+    assert_eq!(
+        s(&v, &["boot", "systemd_boot", "entries", "0", "file"]),
+        format!("proxmox-{PVE_KV}.conf")
+    );
     // pmxcfs isn't one of the layout's mounts, nor a backup source; lxcfs neither.
-    let paths: Vec<&str> = arr(&v, &["storage", "backup_sources"]).iter().map(|b| s(b, &["path"])).collect();
-    assert!(!paths.contains(&"/etc/pve") && !paths.contains(&"/var/lib/lxcfs") && paths.contains(&"/"), "{paths:?}");
-    assert!(!arr(&v, &["storage", "mounts"]).iter().any(|m| s(m, &["target"]) == "/etc/pve"));
-    let w: Vec<&str> = arr(&v, &["warnings"]).iter().filter_map(Value::as_str).collect();
-    assert_eq!(w, vec!["/etc/pve is Proxmox VE's pmxcfs (FUSE), not a file system to back up: its data is /var/lib/pve-cluster/config.db, a file on /, and comes back with /"]);
+    let paths: Vec<&str> = arr(&v, &["storage", "backup_sources"])
+        .iter()
+        .map(|b| s(b, &["path"]))
+        .collect();
+    assert!(
+        !paths.contains(&"/etc/pve") && !paths.contains(&"/var/lib/lxcfs") && paths.contains(&"/"),
+        "{paths:?}"
+    );
+    assert!(
+        !arr(&v, &["storage", "mounts"])
+            .iter()
+            .any(|m| s(m, &["target"]) == "/etc/pve")
+    );
+    let w: Vec<&str> = arr(&v, &["warnings"])
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(
+        w,
+        vec![
+            "/etc/pve is Proxmox VE's pmxcfs (FUSE), not a file system to back up: its data is /var/lib/pve-cluster/config.db, a file on /, and comes back with /"
+        ]
+    );
 
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let text = |st: Stage| -> String { b.stage(st).iter().map(Cmd::shell).collect() };
     // The ESP, unmounted on the source, made again with its volume ID.
     let fmt = text(Stage::Format);
-    assert_eq!(fmt.lines().filter(|l| l.starts_with("mkfs.fat ")).count(), 1, "{fmt}");
-    assert!(fmt.lines().any(|l| l.starts_with("mkfs.fat ") && l.contains("-i 1234ABCD") && l.ends_with("/dev/sda2")), "{fmt}");
+    assert_eq!(
+        fmt.lines().filter(|l| l.starts_with("mkfs.fat ")).count(),
+        1,
+        "{fmt}"
+    );
+    assert!(
+        fmt.lines().any(|l| l.starts_with("mkfs.fat ")
+            && l.contains("-i 1234ABCD")
+            && l.ends_with("/dev/sda2")),
+        "{fmt}"
+    );
     let bt = text(Stage::Boot);
-    let initramfs = bt.find("chroot /mnt/bko-target update-initramfs -u -k all\n").expect(&bt);
-    let init = bt.find("chroot /mnt/bko-target proxmox-boot-tool init /dev/disk/by-uuid/1234-ABCD\n").expect(&bt);
-    let refresh = bt.find("chroot /mnt/bko-target proxmox-boot-tool refresh\n").expect(&bt);
-    let list = bt.find("cat > /mnt/bko-target/etc/kernel/proxmox-boot-uuids <<'EOF'\n1234-ABCD\nEOF\n").expect(&bt);
+    let initramfs = bt
+        .find("chroot /mnt/bko-target update-initramfs -u -k all\n")
+        .expect(&bt);
+    let init = bt
+        .find("chroot /mnt/bko-target proxmox-boot-tool init /dev/disk/by-uuid/1234-ABCD\n")
+        .expect(&bt);
+    let refresh = bt
+        .find("chroot /mnt/bko-target proxmox-boot-tool refresh\n")
+        .expect(&bt);
+    let list = bt
+        .find("cat > /mnt/bko-target/etc/kernel/proxmox-boot-uuids <<'EOF'\n1234-ABCD\nEOF\n")
+        .expect(&bt);
     assert!(initramfs < init && init < refresh && refresh < list, "{bt}");
     assert_eq!(bt.matches("proxmox-boot-tool init").count(), 1, "{bt}");
     assert_eq!(bt.matches("proxmox-boot-tool refresh").count(), 1, "{bt}");
-    assert!(!bt.contains("bootctl install") && !bt.contains("grub-install"), "{bt}");
+    assert!(
+        !bt.contains("bootctl install") && !bt.contains("grub-install"),
+        "{bt}"
+    );
     // bootctl install (in init) makes "Linux Boot Manager" again.
     assert!(!bt.contains("efibootmgr --quiet --create"), "{bt}");
     assert!(b.notes.iter().any(|n| n == "UEFI entry \"Linux Boot Manager\" (vda2, \\EFI\\systemd\\systemd-bootx64.efi): proxmox-boot-tool init's bootctl install makes it again; not recreated"), "{:?}", b.notes);
@@ -4393,7 +7419,10 @@ fn proxmox_guest() {
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
     assert!(bt.contains("unshare --mount --propagation private sh -c 'mount -t tmpfs -o mode=0755 bko-novars /mnt/bko-target/sys/firmware/efi/efivars && exec chroot /mnt/bko-target proxmox-boot-tool init /dev/disk/by-uuid/1234-ABCD'\n"), "{bt}");
-    assert!(!bt.contains("umount /mnt/bko-target/sys/firmware/efi/efivars"), "{bt}");
+    assert!(
+        !bt.contains("umount /mnt/bko-target/sys/firmware/efi/efivars"),
+        "{bt}"
+    );
     assert!(!bt.contains("efibootmgr"), "{bt}");
 }
 
@@ -4402,31 +7431,61 @@ fn proxmox_guest() {
 /// refresh.
 #[test]
 fn proxmox_mirror_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let (t, runner) = proxmox(true);
     let (v, b) = proxmox_plan(&t, runner, true, &[]);
     let pb = v.at(&["boot", "proxmox_boot"]).unwrap();
-    assert_eq!(pb.get("uuids").unwrap().compact(), r#"["1234-ABCD","5678-EF01"]"#);
-    let devs: Vec<&str> = arr(pb, &["esps"]).iter().map(|e| s(e, &["device"])).collect();
+    assert_eq!(
+        pb.get("uuids").unwrap().compact(),
+        r#"["1234-ABCD","5678-EF01"]"#
+    );
+    let devs: Vec<&str> = arr(pb, &["esps"])
+        .iter()
+        .map(|e| s(e, &["device"]))
+        .collect();
     assert_eq!(devs, vec!["vda2", "vdb2"]);
-    assert!(arr(pb, &["esps"]).iter().all(|e| s(e, &["mode"]) == "systemd-boot"));
+    assert!(
+        arr(pb, &["esps"])
+            .iter()
+            .all(|e| s(e, &["mode"]) == "systemd-boot")
+    );
     assert_eq!(arr(&v, &["boot", "esps"]).len(), 2);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let text = |st: Stage| -> String { b.stage(st).iter().map(Cmd::shell).collect() };
     let asm = text(Stage::Assemble);
-    assert!(asm.lines().any(|l| l.starts_with("zpool create ") && l.contains("rpool mirror /dev/sda3 /dev/sdb3")), "{asm}");
+    assert!(
+        asm.lines()
+            .any(|l| l.starts_with("zpool create ")
+                && l.contains("rpool mirror /dev/sda3 /dev/sdb3")),
+        "{asm}"
+    );
     let fmt = text(Stage::Format);
     let fats: Vec<&str> = fmt.lines().filter(|l| l.starts_with("mkfs.fat ")).collect();
     assert_eq!(fats.len(), 2, "{fmt}");
-    assert!(fats[0].contains("-i 1234ABCD") && fats[0].ends_with("/dev/sda2") && fats[1].contains("-i 5678EF01") && fats[1].ends_with("/dev/sdb2"), "{fats:?}");
+    assert!(
+        fats[0].contains("-i 1234ABCD")
+            && fats[0].ends_with("/dev/sda2")
+            && fats[1].contains("-i 5678EF01")
+            && fats[1].ends_with("/dev/sdb2"),
+        "{fats:?}"
+    );
     let bt = text(Stage::Boot);
-    let a = bt.find("chroot /mnt/bko-target proxmox-boot-tool init /dev/disk/by-uuid/1234-ABCD\n").expect(&bt);
-    let c = bt.find("chroot /mnt/bko-target proxmox-boot-tool init /dev/disk/by-uuid/5678-EF01\n").expect(&bt);
-    let r = bt.find("chroot /mnt/bko-target proxmox-boot-tool refresh\n").expect(&bt);
+    let a = bt
+        .find("chroot /mnt/bko-target proxmox-boot-tool init /dev/disk/by-uuid/1234-ABCD\n")
+        .expect(&bt);
+    let c = bt
+        .find("chroot /mnt/bko-target proxmox-boot-tool init /dev/disk/by-uuid/5678-EF01\n")
+        .expect(&bt);
+    let r = bt
+        .find("chroot /mnt/bko-target proxmox-boot-tool refresh\n")
+        .expect(&bt);
     assert!(a < c && c < r, "{bt}");
     assert_eq!(bt.matches("proxmox-boot-tool refresh").count(), 1, "{bt}");
     assert!(bt.contains("cat > /mnt/bko-target/etc/kernel/proxmox-boot-uuids <<'EOF'\n1234-ABCD\n5678-EF01\nEOF\n"), "{bt}");
-    assert!(!bt.contains("bootctl install") && !bt.contains("efibootmgr --quiet --create"), "{bt}");
+    assert!(
+        !bt.contains("bootctl install") && !bt.contains("efibootmgr --quiet --create"),
+        "{bt}"
+    );
     assert!(b.notes.iter().any(|n| n == "Proxmox: proxmox-boot-tool rebuilt 2 ESPs (systemd-boot); their old content isn't in the archive"), "{:?}", b.notes);
 }
 
@@ -4442,28 +7501,56 @@ fn proxmox_refusals() {
     std::fs::remove_dir_all(t.p(&format!("{esp}/loader"))).unwrap();
     t.dir(&format!("{esp}/grub/i386-pc"));
     let (v, b) = proxmox_plan(&t, runner, false, &[]);
-    assert_eq!(s(&v, &["boot", "proxmox_boot", "esps", "0", "mode"]), "grub-bios");
+    assert_eq!(
+        s(&v, &["boot", "proxmox_boot", "esps", "0", "mode"]),
+        "grub-bios"
+    );
     assert!(b.problems.iter().any(|p| p == "Proxmox: ESP 1234-ABCD (vda2) is in proxmox-boot-tool's GRUB mode (grub-bios); bko-holt load supports only its systemd-boot mode (GRUB's isn't tested)"), "{:?}", b.problems);
-    let bt: String = b.stage(crate::load::Stage::Boot).iter().map(crate::load::commands::Cmd::shell).collect();
-    assert!(bt.contains("chroot /mnt/bko-target proxmox-boot-tool init /dev/disk/by-uuid/1234-ABCD grub\n"), "{bt}");
+    let bt: String = b
+        .stage(crate::load::Stage::Boot)
+        .iter()
+        .map(crate::load::commands::Cmd::shell)
+        .collect();
+    assert!(
+        bt.contains(
+            "chroot /mnt/bko-target proxmox-boot-tool init /dev/disk/by-uuid/1234-ABCD grub\n"
+        ),
+        "{bt}"
+    );
     // GRUB on UEFI.
     let (t, runner) = proxmox(false);
     std::fs::remove_file(t.p(&format!("{esp}/EFI/systemd/systemd-bootx64.efi"))).unwrap();
     t.file(&format!("{esp}/EFI/proxmox/grubx64.efi"), vec![6u8; 200]);
     let (v, b) = proxmox_plan(&t, runner, false, &[]);
-    assert_eq!(s(&v, &["boot", "proxmox_boot", "esps", "0", "mode"]), "grub-efi");
-    assert!(b.problems.iter().any(|p| p.contains("GRUB mode (grub-efi)")), "{:?}", b.problems);
+    assert_eq!(
+        s(&v, &["boot", "proxmox_boot", "esps", "0", "mode"]),
+        "grub-efi"
+    );
+    assert!(
+        b.problems
+            .iter()
+            .any(|p| p.contains("GRUB mode (grub-efi)")),
+        "{:?}",
+        b.problems
+    );
     // An ID in the list that nothing has.
     let (t, runner) = proxmox(false);
     t.file("/etc/kernel/proxmox-boot-uuids", "1234-ABCD\nDEAD-BEEF\n");
     let (v, b) = proxmox_plan(&t, runner, false, &[]);
-    assert!(v.at(&["boot", "proxmox_boot", "esps", "1", "device"]).unwrap().is_null());
+    assert!(
+        v.at(&["boot", "proxmox_boot", "esps", "1", "device"])
+            .unwrap()
+            .is_null()
+    );
     assert!(arr(&v, &["warnings"]).iter().any(|w| w.as_str() == Some("/etc/kernel/proxmox-boot-uuids lists ESP DEAD-BEEF, but no file system here has that volume ID (proxmox-boot-tool status says the same)")));
     assert_eq!(b.problems, vec!["Proxmox: /etc/kernel/proxmox-boot-uuids lists ESP DEAD-BEEF, which no partition on the source has; proxmox-boot-tool couldn't rebuild it".to_string()]);
     // Proxmox VE 8.
     let (t, runner) = proxmox(false);
     let st = std::fs::read_to_string(t.p("/var/lib/dpkg/status")).unwrap();
-    t.file("/var/lib/dpkg/status", st.replace("Version: 9.2.3", "Version: 8.4.1"));
+    t.file(
+        "/var/lib/dpkg/status",
+        st.replace("Version: 9.2.3", "Version: 8.4.1"),
+    );
     let (v, b) = proxmox_plan(&t, runner, false, &[]);
     assert_eq!(s(&v, &["os", "product"]), "Proxmox VE 8.4");
     assert_eq!(b.problems, vec!["Proxmox: the source is Proxmox VE 8.4; bko-holt load rebuilds proxmox-boot-tool's ESPs on Proxmox VE 9 only".to_string()]);
@@ -4473,11 +7560,21 @@ fn proxmox_refusals() {
     let os = crate::osrel::read(&sys);
     let v = crate::report::build(&sys, os.as_ref(), "2026-11-04T00:00:00Z");
     let e = v.at(&["boot", "proxmox_boot", "esps", "0"]).unwrap();
-    assert!(e.get("mode").unwrap().is_null() && e.get("contents").unwrap().is_null(), "{}", e.compact());
+    assert!(
+        e.get("mode").unwrap().is_null() && e.get("contents").unwrap().is_null(),
+        "{}",
+        e.compact()
+    );
     // Without proxmox-kernel-helper the list is nobody's.
     let (t, runner) = proxmox(false);
     let st = std::fs::read_to_string(t.p("/var/lib/dpkg/status")).unwrap();
-    t.file("/var/lib/dpkg/status", st.replace("Package: proxmox-kernel-helper", "Package: proxmox-kernel-helper-gone"));
+    t.file(
+        "/var/lib/dpkg/status",
+        st.replace(
+            "Package: proxmox-kernel-helper",
+            "Package: proxmox-kernel-helper-gone",
+        ),
+    );
     let v = run(&t, true, runner);
     assert!(v.at(&["boot", "proxmox_boot"]).is_none());
     assert!(arr(&v, &["boot", "esps"]).is_empty());
@@ -4502,16 +7599,49 @@ const GUIX_ESP: &str = "9a1c0000-0000-4000-8000-000000000001";
 /// parameters' bootloader-name.  Generation 2's parameters are 1.5.0's
 /// (version 1, only the configuration's kernel arguments); generation 1's
 /// an older Guix's (version 0, with --root=, --system= and --load=).
-fn guix_store(t: &Tree, root: &str, arg: &str, search: &str, prefix: &str, loader: &str, pkgs: &[(&str, &str, &str)]) {
+fn guix_store(
+    t: &Tree,
+    root: &str,
+    arg: &str,
+    search: &str,
+    prefix: &str,
+    loader: &str,
+    pkgs: &[(&str, &str, &str)],
+) {
     let h = |c: char| c.to_string().repeat(32);
-    let manifest: String = pkgs.iter().map(|(n, v, p)| format!("     (\"{n}\" \"{v}\" \"out\" \"{p}\" (propagated-inputs ()) (search-paths ()))\n")).collect();
-    let mut cfg = format!("# This file was generated from your Guix configuration.  Any changes\n# will be lost upon reboot or reconfiguration.\n\n{search}\nserial --unit=0 --speed=115200\nterminal_input console serial\nterminal_output console serial\n# search --file --set /gnu/store/{}-grub-locales/en@quot.mo\n", h('l'));
+    let manifest: String = pkgs
+        .iter()
+        .map(|(n, v, p)| {
+            format!(
+                "     (\"{n}\" \"{v}\" \"out\" \"{p}\" (propagated-inputs ()) (search-paths ()))\n"
+            )
+        })
+        .collect();
+    let mut cfg = format!(
+        "# This file was generated from your Guix configuration.  Any changes\n# will be lost upon reboot or reconfiguration.\n\n{search}\nserial --unit=0 --speed=115200\nterminal_input console serial\nterminal_output console serial\n# search --file --set /gnu/store/{}-grub-locales/en@quot.mo\n",
+        h('l')
+    );
     for (n, k, c) in [(2u32, "6.17.9", 't'), (1, "6.17.7", 's')] {
         let sys = format!("/gnu/store/{}-system", h(c));
-        let kernel = format!("/gnu/store/{}-linux-libre-{k}/bzImage", h(if n == 2 { 'k' } else { 'j' }));
-        let initrd = format!("/gnu/store/{}-raw-initrd/initrd.cpio.gz", h(if n == 2 { 'i' } else { 'h' }));
+        let kernel = format!(
+            "/gnu/store/{}-linux-libre-{k}/bzImage",
+            h(if n == 2 { 'k' } else { 'j' })
+        );
+        let initrd = format!(
+            "/gnu/store/{}-raw-initrd/initrd.cpio.gz",
+            h(if n == 2 { 'i' } else { 'h' })
+        );
         let prof = format!("/gnu/store/{}-profile", h(if n == 2 { 'p' } else { 'q' }));
-        let (version, args) = if n == 2 { (1, "\"console=tty0\" \"console=ttyS0,115200n8\"".to_string()) } else { (0, format!("\"--root={arg}\" \"--system={sys}\" \"--load={sys}/boot\" \"console=ttyS0,115200n8\"")) };
+        let (version, args) = if n == 2 {
+            (1, "\"console=tty0\" \"console=ttyS0,115200n8\"".to_string())
+        } else {
+            (
+                0,
+                format!(
+                    "\"--root={arg}\" \"--system={sys}\" \"--load={sys}/boot\" \"console=ttyS0,115200n8\""
+                ),
+            )
+        };
         t.file(&kernel, "k")
             .file(&initrd, "i")
             .file(&format!("{prof}/manifest"), format!(";; This file was automatically generated.\n(manifest\n  (version 4)\n  (packages\n    (\n{manifest}    )))\n"))
@@ -4522,11 +7652,15 @@ fn guix_store(t: &Tree, root: &str, arg: &str, search: &str, prefix: &str, loade
             .symlink(&format!("{sys}/profile"), &prof)
             .symlink(&format!("{sys}/kernel"), kernel.trim_end_matches("/bzImage"))
             .symlink(&format!("/var/guix/profiles/system-{n}-link"), &sys);
-        let entry = format!("  {search}\n  linux {prefix}{kernel} root={arg} gnu.system={sys} gnu.load={sys}/boot console=tty0 console=ttyS0,115200n8\n  initrd {prefix}{initrd}\n}}\n");
+        let entry = format!(
+            "  {search}\n  linux {prefix}{kernel} root={arg} gnu.system={sys} gnu.load={sys}/boot console=tty0 console=ttyS0,115200n8\n  initrd {prefix}{initrd}\n}}\n"
+        );
         if n == 2 {
             cfg.push_str(&format!("menuentry \"GNU with Linux-Libre {k}\" {{\n{entry}submenu \"GNU system, old configurations...\" {{\n"));
         } else {
-            cfg.push_str(&format!("menuentry \"GNU with Linux-Libre {k} (#1, 2026-11-14 10:00)\" {{\n{entry}}}\n"));
+            cfg.push_str(&format!(
+                "menuentry \"GNU with Linux-Libre {k} (#1, 2026-11-14 10:00)\" {{\n{entry}}}\n"
+            ));
         }
     }
     t.symlink("/var/guix/profiles/system", "system-2-link")
@@ -4544,9 +7678,30 @@ fn guix_uefi() -> Tree {
     use crate::efi::GLOBAL;
     let t = Tree::new("scn-guix-uefi");
     let mut img = vec![0u8; 64 * MIB];
-    write_gpt(&mut img, 512, &GptSpec { disk_guid: "9a1c0000-0000-4000-8000-00000000d15c", parts: vec![(ESP, GUIX_ESP, 2048, 73727, 0, ""), (LINUX, "9a1c0000-0000-4000-8000-000000000002", 73728, 131038, 0, "")] });
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "9a1c0000-0000-4000-8000-00000000d15c",
+            parts: vec![
+                (ESP, GUIX_ESP, 2048, 73727, 0, ""),
+                (
+                    LINUX,
+                    "9a1c0000-0000-4000-8000-000000000002",
+                    73728,
+                    131038,
+                    0,
+                    "",
+                ),
+            ],
+        },
+    );
     put(&mut img, 2048, &fat::sample::fat32(71680, 0x1234_abcd, ""));
-    put(&mut img, 73728, &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""));
+    put(
+        &mut img,
+        73728,
+        &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""),
+    );
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
@@ -4573,7 +7728,18 @@ fn guix_uefi() -> Tree {
         &format!("search --fs-uuid --set {GUIX_ROOT}"),
         "",
         "grub-efi",
-        &[("e2fsprogs", "1.47.2", "/gnu/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-e2fsprogs-1.47.2"), ("shepherd", "1.0.9", "/gnu/store/dddddddddddddddddddddddddddddddd-shepherd-1.0.9")],
+        &[
+            (
+                "e2fsprogs",
+                "1.47.2",
+                "/gnu/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-e2fsprogs-1.47.2",
+            ),
+            (
+                "shepherd",
+                "1.0.9",
+                "/gnu/store/dddddddddddddddddddddddddddddddd-shepherd-1.0.9",
+            ),
+        ],
     );
     t
 }
@@ -4595,20 +7761,62 @@ fn guix_bios() -> Tree {
         512,
         &GptSpec {
             disk_guid: "9a1c0000-0000-4000-8000-00000000b105",
-            parts: vec![(BIOS_BOOT, "9a1c0000-0000-4000-8000-000000000011", 2048, 6143, 0, ""), (SWAP, "9a1c0000-0000-4000-8000-000000000013", 6144, 14335, 0, "swap"), (LINUX, "9a1c0000-0000-4000-8000-000000000012", 14336, 131038, 0, "")],
+            parts: vec![
+                (
+                    BIOS_BOOT,
+                    "9a1c0000-0000-4000-8000-000000000011",
+                    2048,
+                    6143,
+                    0,
+                    "",
+                ),
+                (
+                    SWAP,
+                    "9a1c0000-0000-4000-8000-000000000013",
+                    6144,
+                    14335,
+                    0,
+                    "swap",
+                ),
+                (
+                    LINUX,
+                    "9a1c0000-0000-4000-8000-000000000012",
+                    14336,
+                    131038,
+                    0,
+                    "",
+                ),
+            ],
         },
     );
     img[..440].copy_from_slice(&grub::grub2_boot_img(2048)[..440]);
     put(&mut img, 2048, &grub::grub2_diskboot_img());
     put(&mut img, 6144, &misc::sample::swap(1024, "swap"));
-    put(&mut img, 14336, &btrfs::sample::image(GUIX_LABEL, 0x1 | 0x20 | 0x40 | 0x100 | 0x200));
+    put(
+        &mut img,
+        14336,
+        &btrfs::sample::image(GUIX_LABEL, 0x1 | 0x20 | 0x40 | 0x100 | 0x200),
+    );
     let mut mountinfo = String::new();
-    let mut fstab = String::from("# This file was generated from your Guix configuration.  Any changes\n# will be lost upon reboot or reconfiguration.\n\n");
+    let mut fstab = String::from(
+        "# This file was generated from your Guix configuration.  Any changes\n# will be lost upon reboot or reconfiguration.\n\n",
+    );
     for (i, (sv, at, opt)) in GUIX_SUBVOLS.iter().enumerate() {
         let parent = if *at == "/" { 1 } else { 26 };
-        let kopt = if opt.is_empty() { String::new() } else { format!("{opt}:3,") };
+        let kopt = if opt.is_empty() {
+            String::new()
+        } else {
+            format!("{opt}:3,")
+        };
         mountinfo.push_str(&format!("{} {parent} 0:25 /{sv} {at} rw,noatime shared:{} - btrfs /dev/vda3 rw,{kopt}space_cache=v2,subvolid={},subvol=/{sv}\n", 26 + i, i + 1, 256 + i));
-        fstab.push_str(&format!("LABEL={GUIX_LABEL}\t{at}\tbtrfs\tsubvol={sv}{}\t\n", if opt.is_empty() { String::new() } else { format!(",{opt}") }));
+        fstab.push_str(&format!(
+            "LABEL={GUIX_LABEL}\t{at}\tbtrfs\tsubvol={sv}{}\t\n",
+            if opt.is_empty() {
+                String::new()
+            } else {
+                format!(",{opt}")
+            }
+        ));
     }
     mountinfo.push_str("29 27 0:25 /@gnu/store /gnu/store ro,noatime shared:4 - btrfs /dev/vda3 rw,compress=zstd:3,space_cache=v2,subvolid=257,subvol=/@gnu\n");
     t.disk("vda", "254:0", &img, 512)
@@ -4631,14 +7839,29 @@ fn guix_bios() -> Tree {
         &format!("search --label --set {GUIX_LABEL}"),
         "/@gnu",
         "grub",
-        &[("btrfs-progs", "6.17", "/gnu/store/cccccccccccccccccccccccccccccccc-btrfs-progs-6.17"), ("shepherd", "1.0.9", "/gnu/store/dddddddddddddddddddddddddddddddd-shepherd-1.0.9")],
+        &[
+            (
+                "btrfs-progs",
+                "6.17",
+                "/gnu/store/cccccccccccccccccccccccccccccccc-btrfs-progs-6.17",
+            ),
+            (
+                "shepherd",
+                "1.0.9",
+                "/gnu/store/dddddddddddddddddddddddddddddddd-shepherd-1.0.9",
+            ),
+        ],
     );
     t
 }
 
 /// guix15-bios's subvolumes in fstab's order, where it mounts them, and
 /// their options.
-const GUIX_SUBVOLS: [(&str, &str, &str); 3] = [("@", "/", ""), ("@gnu", "/gnu", "compress=zstd"), ("@home", "/home", "")];
+const GUIX_SUBVOLS: [(&str, &str, &str); 3] = [
+    ("@", "/", ""),
+    ("@gnu", "/gnu", "compress=zstd"),
+    ("@home", "/home", ""),
+];
 
 /// What btrfs answers on guix15-bios (from /run/current-system/profile/sbin).
 fn guix_bios_runner() -> FakeRunner {
@@ -4646,21 +7869,42 @@ fn guix_bios_runner() -> FakeRunner {
     for (i, (sv, _, _)) in GUIX_SUBVOLS.iter().enumerate() {
         list.push_str(&format!("ID {} gen 90 parent 5 top level 5 parent_uuid - uuid 9a1cb7f5-0000-4000-8000-00000000025{i} path <FS_TREE>/{sv}\n", 256 + i));
     }
-    let mut r = FakeRunner::default().with("btrfs subvolume list -a -p -u -q /", &list).with("btrfs subvolume get-default /", "ID 5 (FS_TREE)\n").with("btrfs subvolume list -a -r /", "");
+    let mut r = FakeRunner::default()
+        .with("btrfs subvolume list -a -p -u -q /", &list)
+        .with("btrfs subvolume get-default /", "ID 5 (FS_TREE)\n")
+        .with("btrfs subvolume list -a -r /", "");
     for (_, at, opt) in GUIX_SUBVOLS {
-        r = r.with(&format!("btrfs property get -t s {at}"), "ro=false\n").with(&format!("btrfs property get -t i {at}"), if opt.is_empty() { "" } else { "compression=zstd:3\n" });
+        r = r
+            .with(&format!("btrfs property get -t s {at}"), "ro=false\n")
+            .with(
+                &format!("btrfs property get -t i {at}"),
+                if opt.is_empty() {
+                    ""
+                } else {
+                    "compression=zstd:3\n"
+                },
+            );
     }
     r
 }
 
 /// A Guix dump planned, vda going to vdb, with load's `args`.
 fn guix_plan(v: &Value, args: &[&str]) -> crate::load::commands::Built {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let l = Layout::from_json(v.clone()).unwrap();
     let mut a = vec!["l.json".to_string()];
     a.extend(args.iter().map(|x| x.to_string()));
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
-    commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() })
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
+        unreachable!()
+    };
+    commands::build(
+        &l,
+        &o,
+        &Mapping {
+            pairs: vec![("vda".into(), "vdb".into())],
+            ..Mapping::default()
+        },
+    )
 }
 
 /// guix15 read back and planned (docs/design/guix.md, GX2): supported by
@@ -4670,7 +7914,7 @@ fn guix_plan(v: &Value, args: &[&str]) -> crate::load::commands::Built {
 /// entry (and, with --removable, the fallback copy), and says why.
 #[test]
 fn guix_uefi_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let v = run(&guix_uefi(), true, FakeRunner::default());
     assert_eq!(s(&v, &["os", "id"]), "guix");
     assert!(v.at(&["os", "version_id"]).unwrap().is_null());
@@ -4684,16 +7928,28 @@ fn guix_uefi_guest() {
     assert_eq!(s(st, &["system"]), "guix");
     assert_eq!(u(st, &["current"]), 2);
     let g = arr(st, &["generations"]);
-    assert_eq!(g.iter().map(|x| u(x, &["number"])).collect::<Vec<_>>(), vec![1, 2]);
+    assert_eq!(
+        g.iter().map(|x| u(x, &["number"])).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
     assert_eq!(s(&g[1], &["root_device", "kind"]), "uuid");
     assert_eq!(s(&g[1], &["root_device", "value"]), GUIX_ROOT);
     assert_eq!(s(&g[1], &["bootloader_name"]), "grub-efi");
     assert_eq!(s(&g[1], &["title"]), "GNU with Linux-Libre 6.17.9");
     assert!(s(&g[0], &["kernel"]).ends_with("-linux-libre-6.17.7/bzImage"));
     // 1.5.0's: only the configuration's arguments; the older one's --root=.
-    assert_eq!(arr(&g[1], &["kernel_arguments"]).iter().filter_map(Value::as_str).collect::<Vec<_>>(), vec!["console=tty0", "console=ttyS0,115200n8"]);
+    assert_eq!(
+        arr(&g[1], &["kernel_arguments"])
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>(),
+        vec!["console=tty0", "console=ttyS0,115200n8"]
+    );
     assert_eq!(s(&g[1], &["version"]), "1");
-    assert_eq!(s(&g[0], &["kernel_arguments", "0"]), format!("--root={GUIX_ROOT}"));
+    assert_eq!(
+        s(&g[0], &["kernel_arguments", "0"]),
+        format!("--root={GUIX_ROOT}")
+    );
     assert_eq!(s(&g[1], &["store_device", "value"]), GUIX_ROOT);
     assert!(st.get("grub").unwrap().is_null());
     assert_eq!(s(st, &["grub_cfg", "searches", "0", "kind"]), "fs-uuid");
@@ -4703,25 +7959,67 @@ fn guix_uefi_guest() {
     // The read-only store bind mount is an alias of /, not a file system
     // of its own or a backup source.
     let m = arr(&v, &["storage", "mounts"]);
-    assert!(m.iter().filter(|m| s(m, &["target"]) == "/gnu/store").all(|m| m.get("alias_of").and_then(Value::as_str) == Some("/")), "{}", v.at(&["storage", "mounts"]).unwrap().compact());
-    assert!(!arr(&v, &["storage", "backup_sources"]).iter().any(|x| s(x, &["path"]) == "/gnu/store"));
+    assert!(
+        m.iter()
+            .filter(|m| s(m, &["target"]) == "/gnu/store")
+            .all(|m| m.get("alias_of").and_then(Value::as_str) == Some("/")),
+        "{}",
+        v.at(&["storage", "mounts"]).unwrap().compact()
+    );
+    assert!(
+        !arr(&v, &["storage", "backup_sources"])
+            .iter()
+            .any(|x| s(x, &["path"]) == "/gnu/store")
+    );
 
     let b = guix_plan(&v, &[]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    let others: String = b.stage(Stage::Boot).iter().filter(|c| c.argv.get(1).map(String::as_str) != Some("grub-prefix")).map(Cmd::shell).collect();
-    for no in ["grub-install", "grub-mkconfig", "update-grub", "update-initramfs", "dracut", "mkinitcpio", "setfiles", "BOOTX64.EFI"] {
+    let others: String = b
+        .stage(Stage::Boot)
+        .iter()
+        .filter(|c| c.argv.get(1).map(String::as_str) != Some("grub-prefix"))
+        .map(Cmd::shell)
+        .collect();
+    for no in [
+        "grub-install",
+        "grub-mkconfig",
+        "update-grub",
+        "update-initramfs",
+        "dracut",
+        "mkinitcpio",
+        "setfiles",
+        "BOOTX64.EFI",
+    ] {
         assert!(!others.contains(no), "{no}: {bt}");
     }
     assert!(!bt.contains("grub-install"), "{bt}");
-    assert!(!b.stage(Stage::Boot).iter().any(|c| c.argv.first().map(String::as_str) == Some("chroot") && c.argv.get(2).is_some_and(|x| x.contains("grub"))), "{bt}");
+    assert!(
+        !b.stage(Stage::Boot)
+            .iter()
+            .any(|c| c.argv.first().map(String::as_str) == Some("chroot")
+                && c.argv.get(2).is_some_and(|x| x.contains("grub"))),
+        "{bt}"
+    );
     // The image's prefix, "(,gpt3)/boot/grub" on guix15, set to /'s partition
     // by its number in the layout (load/grubprefix.rs): a no-op here, where /
     // is partition 2 still.  This ESP has no fallback loader: only the image.
-    let pfx: Vec<&Cmd> = b.stage(Stage::Boot).iter().filter(|c| c.argv.get(1).map(String::as_str) == Some("grub-prefix")).collect();
+    let pfx: Vec<&Cmd> = b
+        .stage(Stage::Boot)
+        .iter()
+        .filter(|c| c.argv.get(1).map(String::as_str) == Some("grub-prefix"))
+        .collect();
     assert_eq!(pfx.len(), 1, "{bt}");
-    assert_eq!(pfx[0].argv[2..], ["gpt2", "/mnt/bko-target/boot/efi/EFI/Guix/grubx64.efi"], "{bt}");
-    assert!(pfx[0].why.as_deref().unwrap_or("").contains("by number"), "{:?}", pfx[0].why);
+    assert_eq!(
+        pfx[0].argv[2..],
+        ["gpt2", "/mnt/bko-target/boot/efi/EFI/Guix/grubx64.efi"],
+        "{bt}"
+    );
+    assert!(
+        pfx[0].why.as_deref().unwrap_or("").contains("by number"),
+        "{:?}",
+        pfx[0].why
+    );
     // The fallback loader too when the dump says it is a copy of the image
     // (guix15's, made by grub-install's removable copy); never when it is
     // another file: on an ESP shared with another system it can be that
@@ -4733,35 +8031,88 @@ fn guix_uefi_guest() {
         let v = run(&t, true, FakeRunner::default());
         let b = guix_plan(&v, &[]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
-        let p: Vec<&Cmd> = b.stage(Stage::Boot).iter().filter(|c| c.argv.get(1).map(String::as_str) == Some("grub-prefix")).collect();
+        let p: Vec<&Cmd> = b
+            .stage(Stage::Boot)
+            .iter()
+            .filter(|c| c.argv.get(1).map(String::as_str) == Some("grub-prefix"))
+            .collect();
         assert_eq!(p.len(), 1);
         p[0].argv[2..].to_vec()
     };
-    assert_eq!(pfx_of(vec![2u8; 400]), ["gpt2", "/mnt/bko-target/boot/efi/EFI/Guix/grubx64.efi", "/mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI"]);
-    assert_eq!(pfx_of(vec![3u8; 400]), ["gpt2", "/mnt/bko-target/boot/efi/EFI/Guix/grubx64.efi"]);
+    assert_eq!(
+        pfx_of(vec![2u8; 400]),
+        [
+            "gpt2",
+            "/mnt/bko-target/boot/efi/EFI/Guix/grubx64.efi",
+            "/mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI"
+        ]
+    );
+    assert_eq!(
+        pfx_of(vec![3u8; 400]),
+        ["gpt2", "/mnt/bko-target/boot/efi/EFI/Guix/grubx64.efi"]
+    );
     // / renumbered (BackShot2's guix15 cases): the new number.
-    let ren = crate::json::parse(&v.compact().replace("\"vda2\"", "\"vda7\"").replace("/dev/vda2", "/dev/vda7")).unwrap();
+    let ren = crate::json::parse(
+        &v.compact()
+            .replace("\"vda2\"", "\"vda7\"")
+            .replace("/dev/vda2", "/dev/vda7"),
+    )
+    .unwrap();
     let mut ren = ren;
-    let Some(Value::Arr(disks)) = ren.at(&["storage", "disks"]).cloned() else { panic!() };
+    let Some(Value::Arr(disks)) = ren.at(&["storage", "disks"]).cloned() else {
+        panic!()
+    };
     let mut disks = disks;
     for d in disks.iter_mut() {
-        let Some(Value::Arr(ps)) = d.get("partitions").cloned() else { continue };
-        let ps: Vec<Value> = ps.into_iter().map(|mut p| { if p.get("name").and_then(Value::as_str) == Some("vda7") { set_at(&mut p, &["number"], 7u64.into()); } p }).collect();
+        let Some(Value::Arr(ps)) = d.get("partitions").cloned() else {
+            continue;
+        };
+        let ps: Vec<Value> = ps
+            .into_iter()
+            .map(|mut p| {
+                if p.get("name").and_then(Value::as_str) == Some("vda7") {
+                    set_at(&mut p, &["number"], 7u64.into());
+                }
+                p
+            })
+            .collect();
         set_at(d, &["partitions"], Value::Arr(ps));
     }
     set_at(&mut ren, &["storage", "disks"], Value::Arr(disks));
     let rb = guix_plan(&ren, &[]);
     assert!(rb.problems.is_empty(), "{:?}", rb.problems);
-    let pfx: Vec<String> = rb.stage(Stage::Boot).iter().filter(|c| c.argv.get(1).map(String::as_str) == Some("grub-prefix")).map(|c| c.argv[2].clone()).collect();
+    let pfx: Vec<String> = rb
+        .stage(Stage::Boot)
+        .iter()
+        .filter(|c| c.argv.get(1).map(String::as_str) == Some("grub-prefix"))
+        .map(|c| c.argv[2].clone())
+        .collect();
     assert_eq!(pfx, vec!["gpt7"]);
     assert!(bt.contains("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label Guix --loader '\\EFI\\Guix\\grubx64.efi'\n"), "{bt}");
     assert!(b.notes.iter().any(|n| n == "Guix System: each generation's kernel and initrd are store items, restored with /, where grub.cfg names them; nothing to rebuild"), "{:?}", b.notes);
-    assert!(b.notes.iter().any(|n| n.starts_with("Guix System: UEFI GRUB's EFI image came back with the ESP")), "{:?}", b.notes);
-    assert!(!b.notes.iter().any(|n| n.starts_with("NixOS")), "{:?}", b.notes);
+    assert!(
+        b.notes
+            .iter()
+            .any(|n| n.starts_with("Guix System: UEFI GRUB's EFI image came back with the ESP")),
+        "{:?}",
+        b.notes
+    );
+    assert!(
+        !b.notes.iter().any(|n| n.starts_with("NixOS")),
+        "{:?}",
+        b.notes
+    );
     // --removable: the ESP's GRUB at the fallback path too, outside the chroot.
-    let bt: String = guix_plan(&v, &["--removable"]).stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    let bt: String = guix_plan(&v, &["--removable"])
+        .stage(Stage::Boot)
+        .iter()
+        .map(Cmd::shell)
+        .collect();
     assert!(bt.contains("cp /mnt/bko-target/boot/efi/EFI/Guix/grubx64.efi /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI"), "{bt}");
-    assert!(bt.find(" grub-prefix gpt2 ").unwrap() < bt.find("cp /mnt/bko-target").unwrap(), "the prefix before the copy: {bt}");
+    assert!(
+        bt.find(" grub-prefix gpt2 ").unwrap() < bt.find("cp /mnt/bko-target").unwrap(),
+        "the prefix before the copy: {bt}"
+    );
     assert!(!bt.contains("grub-install"), "{bt}");
 
     // grub.cfg searching for a file system the layout doesn't make, and a
@@ -4769,13 +8120,33 @@ fn guix_uefi_guest() {
     let mut w = v.clone();
     set_at(&mut w, &["boot", "store", "grub_cfg", "searches"], crate::json::parse(r#"[{"kind": "fs-uuid", "value": "deadbeef-0000-4000-8000-000000000000"}, {"kind": "file", "value": "/gnu/store/x/bzImage"}]"#).unwrap());
     let p = guix_plan(&w, &[]).problems;
-    assert_eq!(p, vec!["Guix System: /boot/grub/grub.cfg searches --fs-uuid deadbeef-0000-4000-8000-000000000000, which no file system in the layout has; the restored GRUB couldn't find it"], "{p:?}");
+    assert_eq!(
+        p,
+        vec![
+            "Guix System: /boot/grub/grub.cfg searches --fs-uuid deadbeef-0000-4000-8000-000000000000, which no file system in the layout has; the restored GRUB couldn't find it"
+        ],
+        "{p:?}"
+    );
     let mut w = v.clone();
-    set_at(&mut w, &["boot", "store", "grub_cfg", "roots"], vec!["no-such-label", "/dev/vda2"].into());
-    let Some(Value::Arr(gens)) = w.at(&["boot", "store", "generations"]).cloned() else { panic!() };
+    set_at(
+        &mut w,
+        &["boot", "store", "grub_cfg", "roots"],
+        vec!["no-such-label", "/dev/vda2"].into(),
+    );
+    let Some(Value::Arr(gens)) = w.at(&["boot", "store", "generations"]).cloned() else {
+        panic!()
+    };
     let mut g0 = gens[0].clone();
-    set_at(&mut g0, &["kernel_arguments"], vec!["--root=other-label", "--system=/gnu/store/x"].into());
-    set_at(&mut w, &["boot", "store", "generations"], Value::Arr(vec![g0, gens[1].clone()]));
+    set_at(
+        &mut g0,
+        &["kernel_arguments"],
+        vec!["--root=other-label", "--system=/gnu/store/x"].into(),
+    );
+    set_at(
+        &mut w,
+        &["boot", "store", "generations"],
+        Value::Arr(vec![g0, gens[1].clone()]),
+    );
     let p = guix_plan(&w, &[]).problems;
     assert_eq!(
         p,
@@ -4787,11 +8158,26 @@ fn guix_uefi_guest() {
     );
     // 1.5.0's root: the generation's root device.
     let mut w = v.clone();
-    let Some(Value::Arr(gens)) = w.at(&["boot", "store", "generations"]).cloned() else { panic!() };
+    let Some(Value::Arr(gens)) = w.at(&["boot", "store", "generations"]).cloned() else {
+        panic!()
+    };
     let mut g1 = gens[1].clone();
-    set_at(&mut g1, &["root_device", "value"], "deadbeef-0000-4000-8000-000000000001".into());
-    set_at(&mut w, &["boot", "store", "generations"], Value::Arr(vec![gens[0].clone(), g1]));
-    assert_eq!(guix_plan(&w, &[]).problems, vec!["Guix System: generation 2's root device is UUID deadbeef-0000-4000-8000-000000000001, which no file system in the layout has; its initrd couldn't find its root"]);
+    set_at(
+        &mut g1,
+        &["root_device", "value"],
+        "deadbeef-0000-4000-8000-000000000001".into(),
+    );
+    set_at(
+        &mut w,
+        &["boot", "store", "generations"],
+        Value::Arr(vec![gens[0].clone(), g1]),
+    );
+    assert_eq!(
+        guix_plan(&w, &[]).problems,
+        vec![
+            "Guix System: generation 2's root device is UUID deadbeef-0000-4000-8000-000000000001, which no file system in the layout has; its initrd couldn't find its root"
+        ]
+    );
 }
 
 /// guix15-bios read back and planned: the subvolume list (btrfs from the
@@ -4802,13 +8188,16 @@ fn guix_uefi_guest() {
 /// grub.cfg, and says why.  Without the images, a problem.
 #[test]
 fn guix_bios_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let v = run(&guix_bios(), true, guix_bios_runner());
     assert_eq!(s(&v, &["os", "id"]), "guix");
     assert_eq!(s(&v, &["firmware", "mode"]), "bios");
     assert_eq!(s(&v, &["boot", "loader", "name"]), "grub");
     assert_eq!(s(&v, &["boot", "packages", "btrfs-progs"]), "6.17");
-    assert_eq!(s(&v, &["storage", "disks", "0", "boot_code", "kind"]), "grub2");
+    assert_eq!(
+        s(&v, &["storage", "disks", "0", "boot_code", "kind"]),
+        "grub2"
+    );
     let st = v.at(&["boot", "store"]).unwrap();
     assert!(st.get("grub").unwrap().is_null());
     assert_eq!(st.get("boot_img"), Some(&Value::Bool(true)));
@@ -4825,25 +8214,61 @@ fn guix_bios_guest() {
     assert_eq!(arr(st, &["grub_cfg", "searches"]).len(), 1);
     assert_eq!(s(st, &["grub_cfg", "roots", "0"]), GUIX_LABEL);
     assert_eq!(arr(&v, &["storage", "btrfs", "0", "subvolumes"]).len(), 3);
-    assert!(arr(&v, &["warnings"]).iter().all(|w| !w.as_str().unwrap_or("").contains("subvolume list")), "{:?}", v.get("warnings"));
+    assert!(
+        arr(&v, &["warnings"])
+            .iter()
+            .all(|w| !w.as_str().unwrap_or("").contains("subvolume list")),
+        "{:?}",
+        v.get("warnings")
+    );
     let m = arr(&v, &["storage", "mounts"]);
-    assert!(m.iter().filter(|m| s(m, &["target"]) == "/gnu/store").all(|m| m.get("alias_of").is_some()), "{}", v.at(&["storage", "mounts"]).unwrap().compact());
+    assert!(
+        m.iter()
+            .filter(|m| s(m, &["target"]) == "/gnu/store")
+            .all(|m| m.get("alias_of").is_some()),
+        "{}",
+        v.at(&["storage", "mounts"]).unwrap().compact()
+    );
 
     let b = guix_plan(&v, &[]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let f: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
     for sv in ["@", "@home", "@gnu"] {
-        assert!(f.contains(&format!("btrfs subvolume create {RUN_DIR}/btrfs/b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf/{sv}\n")), "{sv}: {f}");
+        assert!(
+            f.contains(&format!(
+                "btrfs subvolume create {RUN_DIR}/btrfs/b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf/{sv}\n"
+            )),
+            "{sv}: {f}"
+        );
     }
     assert_eq!(f.matches("btrfs subvolume create").count(), 3, "{f}");
-    assert!(f.contains(&format!("mkfs.btrfs")) && f.contains(&format!("-L {GUIX_LABEL}")), "{f}");
+    assert!(
+        f.contains(&format!("mkfs.btrfs")) && f.contains(&format!("-L {GUIX_LABEL}")),
+        "{f}"
+    );
     // The swap partition fstab doesn't name: made from its partition.
-    assert!(f.lines().any(|l| l.starts_with("mkswap ") && l.contains("-L swap") && l.ends_with(" /dev/vdb2")), "{f}");
+    assert!(
+        f.lines().any(|l| l.starts_with("mkswap ")
+            && l.contains("-L swap")
+            && l.ends_with(" /dev/vdb2")),
+        "{f}"
+    );
     let mnt: String = b.stage(Stage::Mount).iter().map(Cmd::shell).collect();
-    assert!(mnt.contains("/mnt/bko-target/gnu\n") && !mnt.contains("/mnt/bko-target/gnu/store"), "{mnt}");
+    assert!(
+        mnt.contains("/mnt/bko-target/gnu\n") && !mnt.contains("/mnt/bko-target/gnu/store"),
+        "{mnt}"
+    );
     let boot = b.stage(Stage::Boot);
-    let setups: Vec<&Cmd> = boot.iter().filter(|c| c.argv.iter().any(|a| a.contains("grub-bios-setup"))).collect();
-    assert_eq!(setups.len(), 1, "{}", boot.iter().map(Cmd::shell).collect::<String>());
+    let setups: Vec<&Cmd> = boot
+        .iter()
+        .filter(|c| c.argv.iter().any(|a| a.contains("grub-bios-setup")))
+        .collect();
+    assert_eq!(
+        setups.len(),
+        1,
+        "{}",
+        boot.iter().map(Cmd::shell).collect::<String>()
+    );
     assert_eq!(
         setups[0].argv,
         vec![
@@ -4852,34 +8277,82 @@ fn guix_bios_guest() {
             "d=/mnt/bko-target/boot/grub/i386-pc; [ -f \"$d/boot.img\" ] && [ -f \"$d/core.img\" ] || { echo \"$d: no boot.img or core.img (the source's, restored with /boot/grub) to write to /dev/vdb\" >&2; exit 1; }; grub-bios-setup --directory=\"$d\" /dev/vdb".into()
         ]
     );
-    assert_eq!(setups[0].why.as_deref(), Some("Guix System's own boot.img and core.img, restored in /boot/grub/i386-pc; the rescue's grub-bios-setup writes them to the new disk"));
+    assert_eq!(
+        setups[0].why.as_deref(),
+        Some(
+            "Guix System's own boot.img and core.img, restored in /boot/grub/i386-pc; the rescue's grub-bios-setup writes them to the new disk"
+        )
+    );
     let bt: String = boot.iter().map(Cmd::shell).collect();
-    for no in ["grub-install", "gnu/store", "grub-mkconfig", "update-grub", "update-initramfs", "dracut", "efibootmgr", "setfiles"] {
+    for no in [
+        "grub-install",
+        "gnu/store",
+        "grub-mkconfig",
+        "update-grub",
+        "update-initramfs",
+        "dracut",
+        "efibootmgr",
+        "setfiles",
+    ] {
         assert!(!bt.contains(no), "{no}: {bt}");
     }
     assert!(b.notes.iter().any(|n| n == "Guix System: each generation's kernel and initrd are store items, restored with /, where grub.cfg names them; nothing to rebuild"), "{:?}", b.notes);
-    assert!(b.notes.iter().any(|n| n.starts_with("Guix System: its store holds no GRUB to install with")), "{:?}", b.notes);
+    assert!(
+        b.notes
+            .iter()
+            .any(|n| n.starts_with("Guix System: its store holds no GRUB to install with")),
+        "{:?}",
+        b.notes
+    );
     // A source without grub-install's images: a problem.
     let mut w = v.clone();
     set_at(&mut w, &["boot", "store", "core_img"], false.into());
     assert_eq!(
         guix_plan(&w, &[]).problems,
-        vec!["Guix System: the source's /boot/grub/i386-pc has no core.img, which grub-install leaves there and bko-holt load writes to the new disk's MBR and BIOS boot partition (its store has no GRUB to install with)"]
+        vec![
+            "Guix System: the source's /boot/grub/i386-pc has no core.img, which grub-install leaves there and bko-holt load writes to the new disk's MBR and BIOS boot partition (its store has no GRUB to install with)"
+        ]
     );
     // A label no file system has: a problem.
     let mut w = v.clone();
-    set_at(&mut w, &["boot", "store", "grub_cfg", "searches"], crate::json::parse(r#"[{"kind": "label", "value": "other-root"}]"#).unwrap());
-    assert_eq!(guix_plan(&w, &[]).problems, vec!["Guix System: /boot/grub/grub.cfg searches --label other-root, which no file system in the layout has; the restored GRUB couldn't find it"]);
+    set_at(
+        &mut w,
+        &["boot", "store", "grub_cfg", "searches"],
+        crate::json::parse(r#"[{"kind": "label", "value": "other-root"}]"#).unwrap(),
+    );
+    assert_eq!(
+        guix_plan(&w, &[]).problems,
+        vec![
+            "Guix System: /boot/grub/grub.cfg searches --label other-root, which no file system in the layout has; the restored GRUB couldn't find it"
+        ]
+    );
     // core.img names / by its number, gpt3, and load writes it back as it
     // is: a layout that renumbers / is refused (it would stop in grub
     // rescue), whether the layout or the core.img moved.
-    let ren = crate::json::parse(&v.compact().replace("\"vda3\"", "\"vda5\"").replace("/dev/vda3", "/dev/vda5")).unwrap();
+    let ren = crate::json::parse(
+        &v.compact()
+            .replace("\"vda3\"", "\"vda5\"")
+            .replace("/dev/vda3", "/dev/vda5"),
+    )
+    .unwrap();
     let mut ren = ren;
-    let Some(Value::Arr(disks)) = ren.at(&["storage", "disks"]).cloned() else { panic!() };
+    let Some(Value::Arr(disks)) = ren.at(&["storage", "disks"]).cloned() else {
+        panic!()
+    };
     let mut disks = disks;
     for d in disks.iter_mut() {
-        let Some(Value::Arr(ps)) = d.get("partitions").cloned() else { continue };
-        let ps: Vec<Value> = ps.into_iter().map(|mut p| { if p.get("name").and_then(Value::as_str) == Some("vda5") { set_at(&mut p, &["number"], 5u64.into()); } p }).collect();
+        let Some(Value::Arr(ps)) = d.get("partitions").cloned() else {
+            continue;
+        };
+        let ps: Vec<Value> = ps
+            .into_iter()
+            .map(|mut p| {
+                if p.get("name").and_then(Value::as_str) == Some("vda5") {
+                    set_at(&mut p, &["number"], 5u64.into());
+                }
+                p
+            })
+            .collect();
         set_at(d, &["partitions"], Value::Arr(ps));
     }
     set_at(&mut ren, &["storage", "disks"], Value::Arr(disks));
@@ -4887,7 +8360,11 @@ fn guix_bios_guest() {
     assert_eq!(guix_plan(&ren, &[]).problems, vec![want.to_string()]);
     let mut w = v.clone();
     set_at(&mut w, &["boot", "store", "core_img_part"], "msdos3".into());
-    assert_eq!(guix_plan(&w, &[]).problems.len(), 1, "a GPT partition isn't msdos3");
+    assert_eq!(
+        guix_plan(&w, &[]).problems.len(),
+        1,
+        "a GPT partition isn't msdos3"
+    );
     // An older dump (no core_img_part), or a prefix by search: no refusal.
     for x in [Value::Null, Value::Str("gpt3".into())] {
         let mut w = ren.clone();
@@ -4897,7 +8374,10 @@ fn guix_bios_guest() {
     }
     // A core.img whose prefix names no partition by number: none recorded.
     let t = guix_bios();
-    t.file("/boot/grub/i386-pc/core.img", include_bytes!("../tests/fixtures/lzma/core-root.img"));
+    t.file(
+        "/boot/grub/i386-pc/core.img",
+        include_bytes!("../tests/fixtures/lzma/core-root.img"),
+    );
     let x = run(&t, true, guix_bios_runner());
     assert!(x.at(&["boot", "store", "core_img_part"]).unwrap().is_null());
     assert!(guix_plan(&x, &[]).problems.is_empty());
@@ -4906,7 +8386,14 @@ fn guix_bios_guest() {
     t.file("/boot/grub/i386-pc/core.img", vec![0u8; 4096]);
     let x = run(&t, true, guix_bios_runner());
     assert!(x.at(&["boot", "store", "core_img_part"]).unwrap().is_null());
-    assert!(arr(&x, &["warnings"]).iter().any(|w| w.as_str().unwrap_or("").starts_with("Guix: /boot/grub/i386-pc/core.img: ")), "{:?}", x.get("warnings"));
+    assert!(
+        arr(&x, &["warnings"]).iter().any(|w| w
+            .as_str()
+            .unwrap_or("")
+            .starts_with("Guix: /boot/grub/i386-pc/core.img: ")),
+        "{:?}",
+        x.get("warnings")
+    );
 }
 
 const SLACK_KV: &str = "5.15.161";
@@ -4938,7 +8425,11 @@ fn slackware_common(t: &Tree, fstab: &str) {
     for f in ["rc.S", "rc.M", "rc.inet1", "rc.sshd", "rc.bind"] {
         t.file(&format!("/etc/rc.d/{f}"), "#!/bin/sh\n");
         let mode = if f == "rc.bind" { 0o644 } else { 0o755 };
-        std::fs::set_permissions(t.p(&format!("/etc/rc.d/{f}")), <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(mode)).unwrap();
+        std::fs::set_permissions(
+            t.p(&format!("/etc/rc.d/{f}")),
+            <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(mode),
+        )
+        .unwrap();
     }
     for p in [
         "aaa_base-15.0-x86_64-3",
@@ -4957,10 +8448,14 @@ fn slackware_common(t: &Tree, fstab: &str) {
         "dosfstools-4.2-x86_64-1",
         "rpm-4.16.1.3-x86_64-3",
     ] {
-        t.file(&format!("/var/lib/pkgtools/packages/{p}"), format!("PACKAGE NAME:     {p}\n"));
+        t.file(
+            &format!("/var/lib/pkgtools/packages/{p}"),
+            format!("PACKAGE NAME:     {p}\n"),
+        );
     }
     // A full install's rpm (series ap) has its directory too.
-    t.symlink("/var/log/packages", "../lib/pkgtools/packages").dir("/var/lib/rpm");
+    t.symlink("/var/log/packages", "../lib/pkgtools/packages")
+        .dir("/var/lib/rpm");
 }
 
 /// The slackware15 guest (docs/design/slackware.md, decision 1), in small:
@@ -4975,7 +8470,16 @@ fn slackware15() -> Tree {
     mbr_entry(&mut img[..512], 0, 0, 0x82, 2048, 8192);
     mbr_entry(&mut img[..512], 1, 0x80, 0x83, 10240, 88064);
     put(&mut img, 2048, &misc::sample::swap(1024, ""));
-    put(&mut img, 10240, &ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, ""));
+    put(
+        &mut img,
+        10240,
+        &ext::sample::image(
+            0x4 | 0x8 | 0x10 | 0x20,
+            0x2 | 0x40 | 0x80 | 0x200,
+            0x1 | 0x2 | 0x400,
+            "",
+        ),
+    );
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 2048, 8192, &img)
         .partition("vda", "vda2", "254:2", 2, 10240, 88064, &img)
@@ -4989,7 +8493,10 @@ fn slackware15() -> Tree {
         )
         .file("/boot/map", "lilo map")
         .file("/boot/boot_message.txt", "Welcome to the LILO Boot Loader!\n");
-    slackware_common(&t, "/dev/vda1        swap             swap        defaults         0   0\n/dev/vda2        /                ext4        defaults         1   1\n");
+    slackware_common(
+        &t,
+        "/dev/vda1        swap             swap        defaults         0   0\n/dev/vda2        /                ext4        defaults         1   1\n",
+    );
     t
 }
 
@@ -5011,14 +8518,36 @@ fn slackware15_uefi() -> Tree {
         512,
         &GptSpec {
             disk_guid: "51ac0000-0000-4000-8000-00000000d15c",
-            parts: vec![(ESP, SLACK_ESP, 2048, 34815, 0, ""), (SWAP, "51ac0000-0000-4000-8000-000000000002", 34816, 43007, 0, ""), (LINUX, "51ac0000-0000-4000-8000-000000000003", 43008, 98270, 0, "")],
+            parts: vec![
+                (ESP, SLACK_ESP, 2048, 34815, 0, ""),
+                (
+                    SWAP,
+                    "51ac0000-0000-4000-8000-000000000002",
+                    34816,
+                    43007,
+                    0,
+                    "",
+                ),
+                (
+                    LINUX,
+                    "51ac0000-0000-4000-8000-000000000003",
+                    43008,
+                    98270,
+                    0,
+                    "",
+                ),
+            ],
         },
     );
     put(&mut img, 2048, &fat::sample::fat32(32768, 0x51ac_0001, ""));
     put(&mut img, 34816, &misc::sample::swap(1024, ""));
     put(&mut img, 43008, &crate::probe::xfs::sample::image(""));
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
-    let (elilo, kernel, initrd) = (vec![5u8; 300], b"generic kernel".to_vec(), b"mkinitrd's initrd".to_vec());
+    let (elilo, kernel, initrd) = (
+        vec![5u8; 300],
+        b"generic kernel".to_vec(),
+        b"mkinitrd's initrd".to_vec(),
+    );
     let conf = "chooser=simple\ndelay=1\ntimeout=1\n#\nimage=vmlinuz\n        label=vmlinuz\n        initrd=initrd.gz\n        read-only\n        append=\"root=/dev/vda3 vga=normal ro\"\n";
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 2048, 32768, &img)
@@ -5040,13 +8569,20 @@ fn slackware15_uefi() -> Tree {
         .file("/boot/initrd-tree/command_line", format!("/sbin/mkinitrd -c -k {k} -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz\n"))
         .file("/boot/initrd-tree/init", "#!/bin/ash\n");
     for d in ["Slackware", "BOOT"] {
-        let efi = if d == "BOOT" { "BOOTX64.EFI" } else { "elilo.efi" };
+        let efi = if d == "BOOT" {
+            "BOOTX64.EFI"
+        } else {
+            "elilo.efi"
+        };
         t.file(&format!("/boot/efi/EFI/{d}/{efi}"), &elilo)
             .file(&format!("/boot/efi/EFI/{d}/elilo.conf"), conf)
             .file(&format!("/boot/efi/EFI/{d}/vmlinuz"), &kernel)
             .file(&format!("/boot/efi/EFI/{d}/initrd.gz"), &initrd);
     }
-    slackware_common(&t, "/dev/vda2        swap             swap        defaults         0   0\n/dev/vda3        /                xfs         defaults         1   1\n/dev/vda1        /boot/efi        vfat        defaults         1   0\n");
+    slackware_common(
+        &t,
+        "/dev/vda2        swap             swap        defaults         0   0\n/dev/vda3        /                xfs         defaults         1   1\n/dev/vda1        /boot/efi        vfat        defaults         1   0\n",
+    );
     // The generic kernel is /boot/vmlinuz here (eliloconfig copied it).
     std::fs::remove_file(t.p("/boot/vmlinuz")).unwrap();
     t.symlink("/boot/vmlinuz", &format!("vmlinuz-generic-{k}"));
@@ -5059,16 +8595,35 @@ fn slackware_plan(t: &Tree, to: &str, args: &[&str]) -> (Value, crate::load::com
 }
 
 /// A Slackware plan with each (source disk, target disk) of `pairs`.
-fn slackware_plan_map(t: &Tree, pairs: &[(&str, &str)], args: &[&str]) -> (Value, crate::load::commands::Built) {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+fn slackware_plan_map(
+    t: &Tree,
+    pairs: &[(&str, &str)],
+    args: &[&str],
+) -> (Value, crate::load::commands::Built) {
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let v = run(t, true, FakeRunner::default());
     let l = Layout::from_json(v.clone()).unwrap();
     let mut a = vec!["l.json".to_string()];
     a.extend(args.iter().map(|x| x.to_string()));
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
+        unreachable!()
+    };
     // --reformat: the layout every stage works from, as load::run edits it.
     let l = crate::load::reformat::edited(&l, &o.reformats).unwrap_or(l);
-    (v, commands::build(&l, &o, &Mapping { pairs: pairs.iter().map(|(s, t)| (s.to_string(), t.to_string())).collect(), ..Mapping::default() }))
+    (
+        v,
+        commands::build(
+            &l,
+            &o,
+            &Mapping {
+                pairs: pairs
+                    .iter()
+                    .map(|(s, t)| (s.to_string(), t.to_string()))
+                    .collect(),
+                ..Mapping::default()
+            },
+        ),
+    )
 }
 
 /// slackware15 read back and planned (docs/design/slackware.md, S2):
@@ -5079,20 +8634,35 @@ fn slackware_plan_map(t: &Tree, pairs: &[(&str, &str)], args: &[&str]) -> (Value
 /// on disks with the same names, a problem on others.
 #[test]
 fn slackware15_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let (v, b) = slackware_plan(&slackware15(), "vda", &[]);
     assert_eq!(s(&v, &["os", "id"]), "slackware");
     assert_eq!(s(&v, &["os", "version_id"]), "15.0");
     assert_eq!(s(&v, &["firmware", "mode"]), "bios");
-    assert_eq!(s(&v, &["storage", "disks", "0", "boot_code", "kind"]), "lilo");
+    assert_eq!(
+        s(&v, &["storage", "disks", "0", "boot_code", "kind"]),
+        "lilo"
+    );
     let l = v.at(&["boot", "loader"]).unwrap();
     assert_eq!(s(l, &["name"]), "lilo");
     assert_eq!(s(l, &["package"]), "lilo");
-    for (p, ver) in [("lilo", "24.2-6"), ("elilo", "3.16-6"), ("mkinitrd", "1.4.11-31"), ("kernel-huge", "5.15.161-1"), ("kernel-modules", "5.15.161-1"), ("slackpkg", "15.0.10-1"), ("grub", "2.06-5_slack15.0")] {
+    for (p, ver) in [
+        ("lilo", "24.2-6"),
+        ("elilo", "3.16-6"),
+        ("mkinitrd", "1.4.11-31"),
+        ("kernel-huge", "5.15.161-1"),
+        ("kernel-modules", "5.15.161-1"),
+        ("slackpkg", "15.0.10-1"),
+        ("grub", "2.06-5_slack15.0"),
+    ] {
         assert_eq!(s(&v, &["boot", "packages", p]), ver, "{p}");
     }
     assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "none");
-    assert!(arr(&v, &["boot", "initramfs", "evidence"]).iter().any(|e| e.as_str() == Some("no /boot/initrd.gz")));
+    assert!(
+        arr(&v, &["boot", "initramfs", "evidence"])
+            .iter()
+            .any(|e| e.as_str() == Some("no /boot/initrd.gz"))
+    );
     assert!(v.at(&["boot", "initramfs", "mkinitrd"]).is_none());
     let lilo = v.at(&["boot", "lilo"]).unwrap();
     assert_eq!(s(lilo, &["conf"]), "/etc/lilo.conf");
@@ -5101,15 +8671,24 @@ fn slackware15_guest() {
     assert_eq!(s(lilo, &["images", "0", "path"]), "/boot/vmlinuz");
     assert_eq!(s(lilo, &["images", "0", "root"]), "/dev/vda2");
     assert_eq!(s(lilo, &["images", "0", "label"]), "Linux");
-    assert_eq!(lilo.at(&["images", "0", "exists"]), Some(&Value::Bool(true)));
+    assert_eq!(
+        lilo.at(&["images", "0", "exists"]),
+        Some(&Value::Bool(true))
+    );
     assert_eq!(lilo.get("map_exists"), Some(&Value::Bool(true)));
     assert!(v.at(&["boot", "elilo"]).is_none());
     let sl = v.at(&["boot", "slackware"]).unwrap();
     assert_eq!(s(sl, &["version"]), "Slackware 15.0");
     assert_eq!(s(sl, &["init"]), "slackware-rc");
-    let rc: Vec<&str> = arr(sl, &["rc_enabled"]).iter().filter_map(Value::as_str).collect();
+    let rc: Vec<&str> = arr(sl, &["rc_enabled"])
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
     assert_eq!(rc, ["rc.M", "rc.S", "rc.inet1", "rc.sshd"]);
-    let ks: Vec<(&str, &str)> = arr(sl, &["kernels"]).iter().map(|k| (s(k, &["flavor"]), s(k, &["version"]))).collect();
+    let ks: Vec<(&str, &str)> = arr(sl, &["kernels"])
+        .iter()
+        .map(|k| (s(k, &["flavor"]), s(k, &["version"])))
+        .collect();
     assert_eq!(ks, [("generic", SLACK_KV), ("huge", SLACK_KV)]);
     assert_eq!(s(sl, &["links", "/boot/vmlinuz"]), "vmlinuz-huge-5.15.161");
     assert_eq!(s(&v, &["storage", "fstab", "0", "resolves_to"]), "vda1");
@@ -5118,7 +8697,10 @@ fn slackware15_guest() {
 
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let m: String = b.stage(Stage::Mount).iter().map(Cmd::shell).collect();
-    assert!(m.contains("mount -t ext4 -o defaults /dev/vda2 /mnt/bko-target\n"), "{m}");
+    assert!(
+        m.contains("mount -t ext4 -o defaults /dev/vda2 /mnt/bko-target\n"),
+        "{m}"
+    );
     let f: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
     assert!(f.contains("mke2fs ") && f.contains("mkswap "), "{f}");
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
@@ -5127,19 +8709,48 @@ fn slackware15_guest() {
     // root= as the source's number for it (the source's command line's
     // root=fe02), then the copy goes; the restored lilo.conf isn't
     // written.  -S /dev/null: no /boot/boot.NNNN backup.
-    let c = bt.find("cat > /mnt/bko-target/etc/lilo.conf.bko-holt <<'EOF'\n").expect(&bt);
-    let t = bt.find("chroot /mnt/bko-target lilo -C /etc/lilo.conf.bko-holt -S /dev/null -t -v\n").expect(&bt);
-    let w = bt.find("chroot /mnt/bko-target lilo -C /etc/lilo.conf.bko-holt -S /dev/null -v\n").expect(&bt);
-    let r = bt.find("rm -f /mnt/bko-target/etc/lilo.conf.bko-holt\n").expect(&bt);
+    let c = bt
+        .find("cat > /mnt/bko-target/etc/lilo.conf.bko-holt <<'EOF'\n")
+        .expect(&bt);
+    let t = bt
+        .find("chroot /mnt/bko-target lilo -C /etc/lilo.conf.bko-holt -S /dev/null -t -v\n")
+        .expect(&bt);
+    let w = bt
+        .find("chroot /mnt/bko-target lilo -C /etc/lilo.conf.bko-holt -S /dev/null -v\n")
+        .expect(&bt);
+    let r = bt
+        .find("rm -f /mnt/bko-target/etc/lilo.conf.bko-holt\n")
+        .expect(&bt);
     assert!(c < t && t < w && w < r, "{bt}");
     // The copy is 0600 when written: lilo.conf can hold password=.
-    assert!(b.stage(Stage::Boot).iter().any(|c| c.write.as_deref() == Some("/mnt/bko-target/etc/lilo.conf.bko-holt") && c.private), "{bt}");
+    assert!(
+        b.stage(Stage::Boot).iter().any(|c| c.write.as_deref()
+            == Some("/mnt/bko-target/etc/lilo.conf.bko-holt")
+            && c.private),
+        "{bt}"
+    );
     assert!(bt.contains("\nimage=\"/boot/vmlinuz\"\n  root=\"0xfe02\"\n  label=\"Linux\"\n  read-only\n  append=\" vt.default_utf8=0 root=/dev/vda2\"\nEOF\n"), "{bt}");
     assert!(bt.contains("with root= as the device number the source's map has (Linux's root=/dev/vda2 as 0xfe02)"), "{bt}");
     assert!(bt.contains("\nappend=\" vt.default_utf8=0\"\nboot=\"/dev/vda\"\nmessage=\"/boot/boot_message.txt\"\nprompt\ntimeout=\"50\"\nchange-rules\nreset\nvga=\"normal\"\nimage="), "{bt}");
-    assert!(!bt.contains("cat > /mnt/bko-target/etc/lilo.conf <<") && !bt.contains("lilo -t -v\n"), "{bt}");
-    assert!(!bt.contains("grub-") && !bt.contains("mkinitrd") && !bt.contains("update-initramfs") && !bt.contains("dracut") && !bt.contains("efibootmgr"), "{bt}");
-    assert!(b.notes.iter().any(|n| n.starts_with("Slackware: no initrd")), "{:?}", b.notes);
+    assert!(
+        !bt.contains("cat > /mnt/bko-target/etc/lilo.conf <<") && !bt.contains("lilo -t -v\n"),
+        "{bt}"
+    );
+    assert!(
+        !bt.contains("grub-")
+            && !bt.contains("mkinitrd")
+            && !bt.contains("update-initramfs")
+            && !bt.contains("dracut")
+            && !bt.contains("efibootmgr"),
+        "{bt}"
+    );
+    assert!(
+        b.notes
+            .iter()
+            .any(|n| n.starts_with("Slackware: no initrd")),
+        "{:?}",
+        b.notes
+    );
     assert!(b.notes.iter().any(|n| n.starts_with("Slackware: lilo.conf, elilo.conf and fstab name devices by their kernel names (/dev/vda, /dev/vda2, /dev/vda1)")), "{:?}", b.notes);
 
     // Onto vdb, the rescue's own disk being vda (HoltTest2's rig): vdb is
@@ -5149,7 +8760,10 @@ fn slackware15_guest() {
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     assert!(b.notes.iter().any(|n| n.starts_with("Slackware: lilo.conf, elilo.conf and fstab name devices by their kernel names (/dev/vda, /dev/vda2, /dev/vda1), which the target's disks have at boot")), "{:?}", b.notes);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(bt.contains("\nboot=\"/dev/vdb\"\n") && !bt.contains("boot=\"/dev/vda\""), "{bt}");
+    assert!(
+        bt.contains("\nboot=\"/dev/vdb\"\n") && !bt.contains("boot=\"/dev/vda\""),
+        "{bt}"
+    );
     assert!(bt.contains("\nimage=\"/boot/vmlinuz\"\n  root=\"0xfe02\"\n  label=\"Linux\"\n  read-only\n  append=\" vt.default_utf8=0 root=/dev/vda2\"\nEOF\n"), "{bt}");
     assert!(bt.contains("# LILO: /etc/lilo.conf copied with root= by name at the end of append= (Linux: root=/dev/vda2): "), "{bt}");
     assert!(bt.contains("and with the target's disks by the names the rescue gives them (boot=/dev/vda as /dev/vdb)"), "{bt}");
@@ -5158,14 +8772,40 @@ fn slackware15_guest() {
     // (its devno, 254:2 here): lilo ran under another kernel there.  With
     // no image of BOOT_IMAGE's label, the devno's.
     let t = slackware15();
-    t.file("/proc/cmdline", "BOOT_IMAGE=Linux ro root=fd02 vt.default_utf8=0\n");
-    let bt: String = slackware_plan(&t, "vdb", &[]).1.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    t.file(
+        "/proc/cmdline",
+        "BOOT_IMAGE=Linux ro root=fd02 vt.default_utf8=0\n",
+    );
+    let bt: String = slackware_plan(&t, "vdb", &[])
+        .1
+        .stage(Stage::Boot)
+        .iter()
+        .map(Cmd::shell)
+        .collect();
     assert!(bt.contains("\n  root=\"0xfd02\"\n"), "{bt}");
-    t.file("/proc/cmdline", "BOOT_IMAGE=Old ro root=fd02 vt.default_utf8=0\n");
-    let bt: String = slackware_plan(&t, "vdb", &[]).1.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    t.file(
+        "/proc/cmdline",
+        "BOOT_IMAGE=Old ro root=fd02 vt.default_utf8=0\n",
+    );
+    let bt: String = slackware_plan(&t, "vdb", &[])
+        .1
+        .stage(Stage::Boot)
+        .iter()
+        .map(Cmd::shell)
+        .collect();
     assert!(bt.contains("\n  root=\"0xfe02\"\n"), "{bt}");
-    assert!(!b.stage(Stage::Boot).iter().any(|c| c.write.as_deref() == Some("/mnt/bko-target/etc/lilo.conf")), "{bt}");
-    assert!(!b.stage(Stage::Boot).iter().any(|c| c.write.as_deref() == Some("/mnt/bko-target/etc/fstab")), "{bt}");
+    assert!(
+        !b.stage(Stage::Boot)
+            .iter()
+            .any(|c| c.write.as_deref() == Some("/mnt/bko-target/etc/lilo.conf")),
+        "{bt}"
+    );
+    assert!(
+        !b.stage(Stage::Boot)
+            .iter()
+            .any(|c| c.write.as_deref() == Some("/mnt/bko-target/etc/fstab")),
+        "{bt}"
+    );
 
     // Onto an NVMe disk: another driver class, so every name is refused.
     let (_, b) = slackware_plan(&slackware15(), "nvme0n1", &[]);
@@ -5175,7 +8815,11 @@ fn slackware15_guest() {
         "fstab's / names /dev/vda2",
         "fstab's swap names /dev/vda1, which is /dev/nvme0n1p1 here",
     ] {
-        assert!(b.problems.iter().any(|p| p.contains(want)), "{want}: {:?}", b.problems);
+        assert!(
+            b.problems.iter().any(|p| p.contains(want)),
+            "{want}: {:?}",
+            b.problems
+        );
     }
     assert!(b.problems.iter().all(|p| p.ends_with("restore onto vd disks in the source's order (a future opt-in to rewrite them, --rename-devices, isn't built)")), "{:?}", b.problems);
     assert_eq!(b.problems.len(), 4, "{:?}", b.problems);
@@ -5183,7 +8827,10 @@ fn slackware15_guest() {
     // LILO in a partition's boot sector: refused by name.
     let t = slackware15();
     let conf = std::fs::read_to_string(t.p("/etc/lilo.conf")).unwrap();
-    t.file("/etc/lilo.conf", conf.replace("boot = /dev/vda\n", "boot = /dev/vda2\n"));
+    t.file(
+        "/etc/lilo.conf",
+        conf.replace("boot = /dev/vda\n", "boot = /dev/vda2\n"),
+    );
     let (_, b) = slackware_plan(&t, "vda", &[]);
     assert!(b.problems.iter().any(|p| p.starts_with("LILO: /etc/lilo.conf has boot=/dev/vda2, partition vda2: LILO in a partition's boot sector")), "{:?}", b.problems);
 }
@@ -5195,14 +8842,37 @@ fn slackware15_two_disks() -> Tree {
     let mut img = vec![0u8; 16 * MIB];
     img[440..444].copy_from_slice(&0x51ac_0016u32.to_le_bytes());
     mbr_entry(&mut img[..512], 0, 0, 0x83, 2048, 30720);
-    put(&mut img, 2048, &ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, ""));
-    t.disk("vdb", "254:16", &img, 512).partition("vdb", "vdb1", "254:17", 1, 2048, 30720, &img).file("/sys/block/vdb/device/model", "");
+    put(
+        &mut img,
+        2048,
+        &ext::sample::image(
+            0x4 | 0x8 | 0x10 | 0x20,
+            0x2 | 0x40 | 0x80 | 0x200,
+            0x1 | 0x2 | 0x400,
+            "",
+        ),
+    );
+    t.disk("vdb", "254:16", &img, 512)
+        .partition("vdb", "vdb1", "254:17", 1, 2048, 30720, &img)
+        .file("/sys/block/vdb/device/model", "");
     let mi = std::fs::read_to_string(t.p("/proc/self/mountinfo")).unwrap();
-    t.file("/proc/self/mountinfo", format!("{mi}27 26 254:17 / /data rw,relatime shared:2 - ext4 /dev/vdb1 rw\n"));
+    t.file(
+        "/proc/self/mountinfo",
+        format!("{mi}27 26 254:17 / /data rw,relatime shared:2 - ext4 /dev/vdb1 rw\n"),
+    );
     let fstab = std::fs::read_to_string(t.p("/etc/fstab")).unwrap();
-    t.file("/etc/fstab", format!("{fstab}/dev/vdb1        /data            ext4        defaults         1   2\n"));
+    t.file(
+        "/etc/fstab",
+        format!("{fstab}/dev/vdb1        /data            ext4        defaults         1   2\n"),
+    );
     let conf = std::fs::read_to_string(t.p("/etc/lilo.conf")).unwrap();
-    t.file("/etc/lilo.conf", conf.replace("boot = /dev/vda\n", "boot = /dev/vda\ndisk = /dev/vda\n  bios = 0x80\n"));
+    t.file(
+        "/etc/lilo.conf",
+        conf.replace(
+            "boot = /dev/vda\n",
+            "boot = /dev/vda\ndisk = /dev/vda\n  bios = 0x80\n",
+        ),
+    );
     t
 }
 
@@ -5214,16 +8884,26 @@ fn slackware15_two_disks() -> Tree {
 /// they boot as each other's names, refused.
 #[test]
 fn slackware15_device_names_at_boot() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let t = slackware15_two_disks();
     let (v, b) = slackware_plan_map(&t, &[("vda", "vdb"), ("vdb", "vdc")], &[]);
     assert_eq!(arr(&v, &["storage", "disks"]).len(), 2);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     assert!(b.notes.iter().any(|n| n.contains("kernel names (/dev/vda, /dev/vda2, /dev/vda1, /dev/vdb1), which the target's disks have at boot")), "{:?}", b.notes);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(bt.contains("\nboot=\"/dev/vdb\"\ndisk=\"/dev/vdb\"\nbios=\"0x80\"\n"), "{bt}");
-    assert!(bt.contains("boot=/dev/vda as /dev/vdb, disk=/dev/vda as /dev/vdb"), "{bt}");
-    assert!(bt.contains("  root=\"0xfe02\"\n") && bt.contains("append=\" vt.default_utf8=0 root=/dev/vda2\""), "{bt}");
+    assert!(
+        bt.contains("\nboot=\"/dev/vdb\"\ndisk=\"/dev/vdb\"\nbios=\"0x80\"\n"),
+        "{bt}"
+    );
+    assert!(
+        bt.contains("boot=/dev/vda as /dev/vdb, disk=/dev/vda as /dev/vdb"),
+        "{bt}"
+    );
+    assert!(
+        bt.contains("  root=\"0xfe02\"\n")
+            && bt.contains("append=\" vt.default_utf8=0 root=/dev/vda2\""),
+        "{bt}"
+    );
     let m: String = b.stage(Stage::Mount).iter().map(Cmd::shell).collect();
     assert!(m.contains("/dev/vdc1 /mnt/bko-target/data\n"), "{m}");
 
@@ -5235,7 +8915,11 @@ fn slackware15_device_names_at_boot() {
         "Slackware: /etc/lilo.conf's disk= names /dev/vda, which is /dev/vdc here",
         "Slackware: /etc/lilo.conf's root= names /dev/vda2, which is /dev/vdc2 here",
     ] {
-        assert!(b.problems.iter().any(|p| p.starts_with(want)), "{want}: {:?}", b.problems);
+        assert!(
+            b.problems.iter().any(|p| p.starts_with(want)),
+            "{want}: {:?}",
+            b.problems
+        );
     }
     assert_eq!(b.problems.len(), 6, "{:?}", b.problems);
 
@@ -5243,7 +8927,11 @@ fn slackware15_device_names_at_boot() {
     let (_, b) = slackware_plan_map(&t, &[("vda", "vda"), ("vdb", "vdb")], &[]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(bt.contains("\nboot=\"/dev/vda\"\ndisk=\"/dev/vda\"\nbios=\"0x80\"\n") && !bt.contains("the names the rescue gives them"), "{bt}");
+    assert!(
+        bt.contains("\nboot=\"/dev/vda\"\ndisk=\"/dev/vda\"\nbios=\"0x80\"\n")
+            && !bt.contains("the names the rescue gives them"),
+        "{bt}"
+    );
 }
 
 /// ELILO under option (d): onto vdb (the rescue's vda left out), nothing
@@ -5251,14 +8939,34 @@ fn slackware15_device_names_at_boot() {
 /// is written to the ESP's elilo.conf.
 #[test]
 fn slackware15_uefi_device_names_at_boot() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let (_, b) = slackware_plan(&slackware15_uefi(), "vdb", &[]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
-    assert!(b.notes.iter().any(|n| n.contains("kernel names (/dev/vda3, /dev/vda2, /dev/vda1), which the target's disks have at boot")), "{:?}", b.notes);
+    assert!(
+        b.notes.iter().any(|n| n.contains(
+            "kernel names (/dev/vda3, /dev/vda2, /dev/vda1), which the target's disks have at boot"
+        )),
+        "{:?}",
+        b.notes
+    );
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(!bt.contains("elilo.conf") && !bt.contains("/dev/vdb3") && !b.stage(Stage::Boot).iter().any(|c| c.write.as_deref().is_some_and(|w| w.ends_with("elilo.conf"))), "{bt}");
+    assert!(
+        !bt.contains("elilo.conf")
+            && !bt.contains("/dev/vdb3")
+            && !b.stage(Stage::Boot).iter().any(|c| c
+                .write
+                .as_deref()
+                .is_some_and(|w| w.ends_with("elilo.conf"))),
+        "{bt}"
+    );
     // vda3 boots as vda3: the restored initrd stays.
-    assert!(!bt.contains("mkinitrd") && b.notes.iter().any(|n| n.starts_with("Slackware: mkinitrd's /boot/initrd.gz came back as the source made it")), "{bt}");
+    assert!(
+        !bt.contains("mkinitrd")
+            && b.notes.iter().any(|n| n.starts_with(
+                "Slackware: mkinitrd's /boot/initrd.gz came back as the source made it"
+            )),
+        "{bt}"
+    );
 }
 
 /// An other= section (a boot sector lilo chain-loads) with its table=:
@@ -5267,21 +8975,31 @@ fn slackware15_uefi_device_names_at_boot() {
 /// onto an NVMe disk, refused.
 #[test]
 fn slackware15_lilo_other() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let t = slackware15();
     let conf = std::fs::read_to_string(t.p("/etc/lilo.conf")).unwrap();
-    t.file("/etc/lilo.conf", format!("{conf}other = /dev/vda1\n  label = Other\n  table = /dev/vda\n"));
+    t.file(
+        "/etc/lilo.conf",
+        format!("{conf}other = /dev/vda1\n  label = Other\n  table = /dev/vda\n"),
+    );
     let (_, b) = slackware_plan(&t, "vdb", &[]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(bt.contains("\nother=\"/dev/vdb1\"\n  label=\"Other\"\n  table=\"/dev/vdb\"\nEOF\n"), "{bt}");
+    assert!(
+        bt.contains("\nother=\"/dev/vdb1\"\n  label=\"Other\"\n  table=\"/dev/vdb\"\nEOF\n"),
+        "{bt}"
+    );
     assert!(bt.contains("(Other's other=/dev/vda1 as /dev/vdb1, Other's table=/dev/vda as /dev/vdb, boot=/dev/vda as /dev/vdb)"), "{bt}");
     let (_, b) = slackware_plan(&t, "nvme0n1", &[]);
     for want in [
         "Slackware: /etc/lilo.conf's other= names /dev/vda1, which is /dev/nvme0n1p1 here, on a disk of the nvme class",
         "Slackware: /etc/lilo.conf's table= names /dev/vda, which is /dev/nvme0n1 here, on a disk of the nvme class",
     ] {
-        assert!(b.problems.iter().any(|p| p.starts_with(want)), "{want}: {:?}", b.problems);
+        assert!(
+            b.problems.iter().any(|p| p.starts_with(want)),
+            "{want}: {:?}",
+            b.problems
+        );
     }
     assert_eq!(b.problems.len(), 6, "{:?}", b.problems);
 }
@@ -5293,10 +9011,25 @@ fn slackware15_lilo_other() {
 fn slackware15_lilo_links() {
     let t = slackware15();
     let conf = std::fs::read_to_string(t.p("/etc/lilo.conf")).unwrap();
-    t.file("/etc/lilo.conf", conf.replace("boot = /dev/vda\n", "boot = /dev/disk/by-id/virtio-src\ndisk = /dev/disk/by-id/virtio-src bios=0x80\n"));
+    t.file(
+        "/etc/lilo.conf",
+        conf.replace(
+            "boot = /dev/vda\n",
+            "boot = /dev/disk/by-id/virtio-src\ndisk = /dev/disk/by-id/virtio-src bios=0x80\n",
+        ),
+    );
     let (_, b) = slackware_plan(&t, "vda", &[]);
-    for n in ["boot=/dev/disk/by-id/virtio-src", "disk=/dev/disk/by-id/virtio-src"] {
-        assert!(b.problems.iter().any(|p| p.starts_with(&format!("LILO: /etc/lilo.conf has {n}, not a kernel device name"))), "{n}: {:?}", b.problems);
+    for n in [
+        "boot=/dev/disk/by-id/virtio-src",
+        "disk=/dev/disk/by-id/virtio-src",
+    ] {
+        assert!(
+            b.problems.iter().any(|p| p.starts_with(&format!(
+                "LILO: /etc/lilo.conf has {n}, not a kernel device name"
+            ))),
+            "{n}: {:?}",
+            b.problems
+        );
     }
 }
 
@@ -5313,33 +9046,61 @@ fn slackware15_fstab_floppy() {
     assert_eq!(s(&v, &["storage", "fstab", "2", "file"]), "/mnt/floppy");
     assert_eq!(s(&v, &["storage", "fstab", "2", "resolves_to"]), "fd0");
     assert!(b.problems.is_empty(), "{:?}", b.problems);
-    assert!(b.notes.iter().any(|n| n == "fstab's /mnt/floppy is on fd0, which isn't restored"), "{:?}", b.notes);
+    assert!(
+        b.notes
+            .iter()
+            .any(|n| n == "fstab's /mnt/floppy is on fd0, which isn't restored"),
+        "{:?}",
+        b.notes
+    );
     assert!(b.notes.iter().any(|n| n.starts_with("Slackware: lilo.conf, elilo.conf and fstab name devices by their kernel names (/dev/vda, /dev/vda2, /dev/vda1)")), "{:?}", b.notes);
 
     let fstab = std::fs::read_to_string(t.p("/etc/fstab")).unwrap();
     t.file("/etc/fstab", fstab.replace("noauto,owner", "owner"));
     let (_, b) = slackware_plan(&t, "vda", &[]);
-    assert_eq!(b.problems, ["Slackware: fstab's /mnt/floppy names /dev/fd0, which isn't on the layout's disks, so the restored system couldn't find it at boot"], "{:?}", b.problems);
+    assert_eq!(
+        b.problems,
+        [
+            "Slackware: fstab's /mnt/floppy names /dev/fd0, which isn't on the layout's disks, so the restored system couldn't find it at boot"
+        ],
+        "{:?}",
+        b.problems
+    );
 }
 
 /// mkinitrd with -C (LUKS, out of scope) is refused by name, as is a root
 /// on /dev/mapper; -h's resume device is checked as -r's root is.
 #[test]
 fn slackware15_uefi_mkinitrd_refusals() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let t = slackware15_uefi();
     t.file("/boot/initrd-tree/command_line", "/sbin/mkinitrd -c -k 5.15.161 -f xfs -r /dev/mapper/cryptroot -C /dev/vda3 -m xfs -u -o /boot/initrd.gz\n");
     let (_, b) = slackware_plan(&t, "vda", &[]);
-    assert!(b.problems.iter().any(|p| p.starts_with("Slackware: mkinitrd's initrd unlocks LUKS (-C /dev/vda3, root /dev/mapper/cryptroot)")), "{:?}", b.problems);
+    assert!(
+        b.problems.iter().any(|p| p.starts_with(
+            "Slackware: mkinitrd's initrd unlocks LUKS (-C /dev/vda3, root /dev/mapper/cryptroot)"
+        )),
+        "{:?}",
+        b.problems
+    );
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
     assert!(!bt.contains("chroot /mnt/bko-target mkinitrd"), "{bt}");
     t.file("/boot/initrd-tree/command_line", "/sbin/mkinitrd -c -k 5.15.161 -f xfs -r /dev/mapper/cryptroot -m xfs -u -o /boot/initrd.gz\n");
     let (_, b) = slackware_plan(&t, "vda", &[]);
-    assert!(b.problems.iter().any(|p| p.starts_with("Slackware: mkinitrd's initrd unlocks LUKS")), "{:?}", b.problems);
+    assert!(
+        b.problems
+            .iter()
+            .any(|p| p.starts_with("Slackware: mkinitrd's initrd unlocks LUKS")),
+        "{:?}",
+        b.problems
+    );
     // Resume from swap: the name kept is a note; another is a problem.
     t.file("/boot/initrd-tree/command_line", "/sbin/mkinitrd -c -k 5.15.161 -f xfs -r /dev/vda3 -h /dev/vda2 -m xfs -u -o /boot/initrd.gz\n");
     let (v, b) = slackware_plan(&t, "vda", &[]);
-    assert_eq!(s(&v, &["boot", "initramfs", "mkinitrd", "resumedev"]), "/dev/vda2");
+    assert_eq!(
+        s(&v, &["boot", "initramfs", "mkinitrd", "resumedev"]),
+        "/dev/vda2"
+    );
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let (_, b) = slackware_plan(&t, "nvme0n1", &[]);
     assert!(b.problems.iter().any(|p| p.contains("mkinitrd's -h (the initrd's resume device) names /dev/vda2, which is /dev/nvme0n1p2 here")), "{:?}", b.problems);
@@ -5349,20 +9110,29 @@ fn slackware15_uefi_mkinitrd_refusals() {
 /// grub-mkconfig (not update-grub), with no guest.
 #[test]
 fn slackware15_grub() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let t = slackware15();
     let mut img = std::fs::read(t.p("/dev/vda")).unwrap();
     img[..440].copy_from_slice(&grub::grub2_boot_img(1)[..440]);
     put(&mut img, 1, &grub::grub2_diskboot_img());
     std::fs::write(t.p("/dev/vda"), &img).unwrap();
     std::fs::remove_file(t.p("/etc/lilo.conf")).unwrap();
-    t.file("/boot/grub/i386-pc/normal.mod", "x").file("/boot/grub/grub.cfg", "menuentry 'Slackware 15.0' {\n\tlinux\t/boot/vmlinuz root=/dev/vda2 ro\n}\n");
+    t.file("/boot/grub/i386-pc/normal.mod", "x").file(
+        "/boot/grub/grub.cfg",
+        "menuentry 'Slackware 15.0' {\n\tlinux\t/boot/vmlinuz root=/dev/vda2 ro\n}\n",
+    );
     let (v, b) = slackware_plan(&t, "vda", &[]);
     assert_eq!(s(&v, &["boot", "loader", "name"]), "grub");
     assert!(v.at(&["boot", "lilo"]).is_none());
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vda\n") && bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{bt}");
+    assert!(
+        bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vda\n")
+            && bt.contains(
+                "chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"
+            ),
+        "{bt}"
+    );
     assert!(!bt.contains("lilo") && !bt.contains("update-grub"), "{bt}");
 }
 
@@ -5374,42 +9144,79 @@ fn slackware15_grub() {
 /// make again for the new type is refused at plan time.
 #[test]
 fn slackware15_uefi_reformat() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let k = SLACK_KV;
     for to in ["ext4", "btrfs"] {
         let t = slackware15_uefi();
-        t.file("/var/lib/pkgtools/packages/btrfs-progs-5.16-x86_64-1", "PACKAGE NAME:     btrfs-progs-5.16-x86_64-1\n");
+        t.file(
+            "/var/lib/pkgtools/packages/btrfs-progs-5.16-x86_64-1",
+            "PACKAGE NAME:     btrfs-progs-5.16-x86_64-1\n",
+        );
         let arg = format!("/={to}");
         let (_, b) = slackware_plan(&t, "vda", &["--reformat", &arg]);
         assert!(b.problems.is_empty(), "{to}: {:?}", b.problems);
         let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-        let rw = bt.find(&format!(" rewrite l.json /mnt/bko-target --reformat /={to}\n")).expect(&bt);
+        let rw = bt
+            .find(&format!(
+                " rewrite l.json /mnt/bko-target --reformat /={to}\n"
+            ))
+            .expect(&bt);
         let mk = bt.find(&format!("chroot /mnt/bko-target mkinitrd -c -k {k} -f {to} -r /dev/vda3 -m {to} -u -o /boot/initrd.gz\n")).expect(&bt);
         assert!(bt.contains(&format!("for kernel {k}, with --reformat's / as {to}: -f {to}, and {to} for xfs in -m; made again because --reformat makes / {to}, and the initrd mounts it as xfs (its -f) with xfs's module\n")), "{bt}");
         let esp = bt.find("cp /mnt/bko-target/boot/initrd.gz /mnt/bko-target/boot/efi/EFI/Slackware/initrd.gz\n").expect(&bt);
-        let check = bt.find(&format!(" rewrite l.json /mnt/bko-target --check --reformat /={to}\n")).expect(&bt);
+        let check = bt
+            .find(&format!(
+                " rewrite l.json /mnt/bko-target --check --reformat /={to}\n"
+            ))
+            .expect(&bt);
         assert!(rw < mk && mk < esp && esp < check, "{bt}");
         assert_eq!(bt.matches("mkinitrd -c").count(), 1, "{bt}");
     }
     // The source's other modules and options stay as they were.
     let t = slackware15_uefi();
     t.file("/boot/initrd-tree/command_line", format!("/sbin/mkinitrd -c -k {k} -f xfs -r /dev/vda3 -m virtio_blk:virtio_pci:xfs -u -w 2 -o /boot/initrd.gz\n"));
-    let bt: String = slackware_plan(&t, "vda", &["--reformat", "/=ext4"]).1.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    let bt: String = slackware_plan(&t, "vda", &["--reformat", "/=ext4"])
+        .1
+        .stage(Stage::Boot)
+        .iter()
+        .map(Cmd::shell)
+        .collect();
     assert!(bt.contains(&format!("chroot /mnt/bko-target mkinitrd -c -k {k} -f ext4 -r /dev/vda3 -m virtio_blk:virtio_pci:ext4 -u -w 2 -o /boot/initrd.gz\n")), "{bt}");
     // Refused: mkinitrd -F (its /etc/mkinitrd.conf names the old type), and
     // an elilo.conf append= with rootfstype= (not rewritten).
     let t = slackware15_uefi();
-    t.file("/boot/initrd-tree/command_line", format!("/sbin/mkinitrd -F -k {k}\n")).file("/etc/mkinitrd.conf", "ROOTFS=\"xfs\"\nMODULE_LIST=\"xfs\"\n");
+    t.file(
+        "/boot/initrd-tree/command_line",
+        format!("/sbin/mkinitrd -F -k {k}\n"),
+    )
+    .file(
+        "/etc/mkinitrd.conf",
+        "ROOTFS=\"xfs\"\nMODULE_LIST=\"xfs\"\n",
+    );
     let b = slackware_plan(&t, "vda", &["--reformat", "/=ext4"]).1;
     assert!(b.problems.iter().any(|p| p.contains("--reformat /=ext4: Slackware's initrd has to be made again for the new type, and its command (mkinitrd -F) reads /etc/mkinitrd.conf")), "{:?}", b.problems);
     let t = slackware15_uefi();
     let conf = "image=vmlinuz\n        label=vmlinuz\n        initrd=initrd.gz\n        read-only\n        append=\"root=/dev/vda3 rootfstype=xfs ro\"\n";
     t.file("/boot/efi/EFI/Slackware/elilo.conf", conf);
     let b = slackware_plan(&t, "vda", &["--reformat", "/=ext4"]).1;
-    assert!(b.problems.iter().any(|p| p.contains("--reformat /=ext4: EFI/Slackware/elilo.conf's append= gives the kernel rootfstype=xfs")), "{:?}", b.problems);
+    assert!(
+        b.problems.iter().any(|p| p.contains(
+            "--reformat /=ext4: EFI/Slackware/elilo.conf's append= gives the kernel rootfstype=xfs"
+        )),
+        "{:?}",
+        b.problems
+    );
     // Without --reformat, as before: the restored initrd stays.
-    let bt: String = slackware_plan(&slackware15_uefi(), "vda", &[]).1.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(!bt.contains("mkinitrd") && !bt.contains(" rewrite "), "{bt}");
+    let bt: String = slackware_plan(&slackware15_uefi(), "vda", &[])
+        .1
+        .stage(Stage::Boot)
+        .iter()
+        .map(Cmd::shell)
+        .collect();
+    assert!(
+        !bt.contains("mkinitrd") && !bt.contains(" rewrite "),
+        "{bt}"
+    );
 }
 
 /// --reformat of slackware15 (BIOS, LILO, an ext4 /): with the huge
@@ -5420,16 +9227,26 @@ fn slackware15_uefi_reformat() {
 /// change, jbd2 and mbcache stay, and lilo maps the new image after it.
 #[test]
 fn slackware15_reformat() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let k = SLACK_KV;
     let t = slackware15();
     let (_, b) = slackware_plan(&t, "vda", &["--reformat", "/=xfs"]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(!bt.contains("mkinitrd") && bt.contains(" rewrite l.json /mnt/bko-target --reformat /=xfs\n") && bt.contains("lilo -C /etc/lilo.conf.bko-holt -S /dev/null -v\n"), "{bt}");
+    assert!(
+        !bt.contains("mkinitrd")
+            && bt.contains(" rewrite l.json /mnt/bko-target --reformat /=xfs\n")
+            && bt.contains("lilo -C /etc/lilo.conf.bko-holt -S /dev/null -v\n"),
+        "{bt}"
+    );
     for to in ["xfs", "btrfs"] {
         let t = slackware15();
-        let lilo = std::fs::read_to_string(t.p("/etc/lilo.conf")).unwrap().replace("  label = Linux\n", "  label = Linux\n  initrd = /boot/initrd.gz\n");
+        let lilo = std::fs::read_to_string(t.p("/etc/lilo.conf"))
+            .unwrap()
+            .replace(
+                "  label = Linux\n",
+                "  label = Linux\n  initrd = /boot/initrd.gz\n",
+            );
         t.file("/etc/lilo.conf", lilo)
             .file("/boot/initrd.gz", "mkinitrd's initrd")
             .file("/boot/initrd-tree/command_line", format!("mkinitrd -c -k {k} -f ext4 -r /dev/vda2 -m mbcache:jbd2:ext4 -u -o /boot/initrd.gz\n"))
@@ -5440,7 +9257,9 @@ fn slackware15_reformat() {
         assert!(b.problems.is_empty(), "{to}: {:?}", b.problems);
         let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
         let mk = bt.find(&format!("chroot /mnt/bko-target mkinitrd -c -k {k} -f {to} -r /dev/vda2 -m mbcache:jbd2:{to} -u -o /boot/initrd.gz\n")).expect(&bt);
-        let lilo = bt.find("lilo -C /etc/lilo.conf.bko-holt -S /dev/null -v\n").expect(&bt);
+        let lilo = bt
+            .find("lilo -C /etc/lilo.conf.bko-holt -S /dev/null -v\n")
+            .expect(&bt);
         assert!(mk < lilo, "{bt}");
     }
 }
@@ -5453,7 +9272,7 @@ fn slackware15_reformat() {
 /// again and then eliloconfig's Slackware entry, first in BootOrder.
 #[test]
 fn slackware15_uefi_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let (v, b) = slackware_plan(&slackware15_uefi(), "vda", &[]);
     assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
     let l = v.at(&["boot", "loader"]).unwrap();
@@ -5462,9 +9281,20 @@ fn slackware15_uefi_guest() {
     assert!(v.at(&["boot", "lilo"]).is_none());
     let ini = v.at(&["boot", "initramfs"]).unwrap();
     assert_eq!(s(ini, &["generator"]), "mkinitrd");
-    let ev: Vec<&str> = arr(ini, &["evidence"]).iter().filter_map(Value::as_str).collect();
-    assert!(ev.contains(&"EFI/BOOT/elilo.conf has initrd=initrd.gz") && ev.contains(&"/boot/initrd.gz exists") && ev.contains(&"no /etc/mkinitrd.conf"), "{ev:?}");
-    assert_eq!(s(ini, &["mkinitrd", "command_line"]), "/sbin/mkinitrd -c -k 5.15.161 -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz");
+    let ev: Vec<&str> = arr(ini, &["evidence"])
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(
+        ev.contains(&"EFI/BOOT/elilo.conf has initrd=initrd.gz")
+            && ev.contains(&"/boot/initrd.gz exists")
+            && ev.contains(&"no /etc/mkinitrd.conf"),
+        "{ev:?}"
+    );
+    assert_eq!(
+        s(ini, &["mkinitrd", "command_line"]),
+        "/sbin/mkinitrd -c -k 5.15.161 -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz"
+    );
     assert_eq!(arr(ini, &["mkinitrd", "kernels"]).len(), 1);
     assert_eq!(s(ini, &["mkinitrd", "kernels", "0"]), SLACK_KV);
     assert_eq!(s(ini, &["mkinitrd", "output"]), "/boot/initrd.gz");
@@ -5472,30 +9302,51 @@ fn slackware15_uefi_guest() {
     assert!(ini.at(&["mkinitrd", "conf"]).unwrap().is_null());
     let confs = arr(&v, &["boot", "elilo", "configs"]);
     assert_eq!(confs.len(), 2);
-    for (c, dir, loader) in [(&confs[0], "EFI/BOOT", "EFI/BOOT/BOOTX64.EFI"), (&confs[1], "EFI/Slackware", "EFI/Slackware/elilo.efi")] {
+    for (c, dir, loader) in [
+        (&confs[0], "EFI/BOOT", "EFI/BOOT/BOOTX64.EFI"),
+        (&confs[1], "EFI/Slackware", "EFI/Slackware/elilo.efi"),
+    ] {
         assert_eq!(s(c, &["dir"]), dir);
         assert_eq!(s(c, &["device"]), "vda1");
         assert_eq!(s(c, &["conf"]), format!("{dir}/elilo.conf"));
         assert_eq!(s(c, &["loader"]), loader);
         assert_eq!(c.get("loader_is_boot_elilo"), Some(&Value::Bool(true)));
         assert_eq!(s(c, &["images", "0", "file"]), format!("{dir}/vmlinuz"));
-        assert_eq!(s(c, &["images", "0", "same_as"]), "/boot/vmlinuz-generic-5.15.161");
-        assert_eq!(s(c, &["images", "0", "initrd_file"]), format!("{dir}/initrd.gz"));
+        assert_eq!(
+            s(c, &["images", "0", "same_as"]),
+            "/boot/vmlinuz-generic-5.15.161"
+        );
+        assert_eq!(
+            s(c, &["images", "0", "initrd_file"]),
+            format!("{dir}/initrd.gz")
+        );
         assert_eq!(s(c, &["images", "0", "initrd_same_as"]), "/boot/initrd.gz");
-        assert_eq!(s(c, &["images", "0", "append"]), "root=/dev/vda3 vga=normal ro");
+        assert_eq!(
+            s(c, &["images", "0", "append"]),
+            "root=/dev/vda3 vga=normal ro"
+        );
     }
     assert_eq!(s(&v, &["storage", "fstab", "1", "resolves_to"]), "vda3");
     assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
 
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let m: String = b.stage(Stage::Mount).iter().map(Cmd::shell).collect();
-    assert!(m.contains("/dev/vda3 /mnt/bko-target\n") && m.contains("/dev/vda1 /mnt/bko-target/boot/efi\n"), "{m}");
+    assert!(
+        m.contains("/dev/vda3 /mnt/bko-target\n")
+            && m.contains("/dev/vda1 /mnt/bko-target/boot/efi\n"),
+        "{m}"
+    );
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
     // Nothing the initrd was made from changes (the root's name at boot,
     // its type, -k's kernel with its modules): the restored initrd.gz, its
     // tree and the ESP's copies stay as the source had them, and
     // mkinitrd's ldconfig doesn't touch the system's ld.so.cache.
-    assert!(!bt.contains("mkinitrd") && !bt.contains("cp /mnt/bko-target/boot/initrd.gz") && !bt.contains("ld.so.cache"), "{bt}");
+    assert!(
+        !bt.contains("mkinitrd")
+            && !bt.contains("cp /mnt/bko-target/boot/initrd.gz")
+            && !bt.contains("ld.so.cache"),
+        "{bt}"
+    );
     assert!(
         b.notes.iter().any(|n| n.starts_with("Slackware: mkinitrd's /boot/initrd.gz came back as the source made it (/sbin/mkinitrd -c -k 5.15.161 -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz), and nothing it was made from changes")),
         "{:?}",
@@ -5511,7 +9362,10 @@ fn slackware15_uefi_guest() {
     // again from the source's /dev, then copied to the ESP.
     let r = crate::load::RUN_DIR;
     let t = slackware15_uefi();
-    t.file("/boot/initrd-tree/command_line", "/sbin/mkinitrd -c -k 5.15.161:5.15.19 -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz\n");
+    t.file(
+        "/boot/initrd-tree/command_line",
+        "/sbin/mkinitrd -c -k 5.15.161:5.15.19 -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz\n",
+    );
     let (_, b) = slackware_plan(&t, "vda", &[]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
@@ -5523,29 +9377,94 @@ fn slackware15_uefi_guest() {
     assert!(bt.contains("cd /boot/initrd-tree && rm -f /boot/initrd.gz && find . | cpio -o -H newc | gzip -9c > /boot/initrd.gz"), "{bt}");
     let back = bt.find(&format!("{{ if [ -e {r}/slackware-initrd/ld.so.cache ]; then cp -a {r}/slackware-initrd/ld.so.cache /mnt/bko-target/etc/ld.so.cache; else rm -f /mnt/bko-target/etc/ld.so.cache; fi; }}")).expect(&bt);
     let c1 = bt.find("cp /mnt/bko-target/boot/initrd.gz /mnt/bko-target/boot/efi/EFI/BOOT/initrd.gz\ntouch -r /mnt/bko-target/boot/initrd.gz /mnt/bko-target/boot/efi/EFI/BOOT/initrd.gz\n").expect(&bt);
-    let c2 = bt.find("cp /mnt/bko-target/boot/initrd.gz /mnt/bko-target/boot/efi/EFI/Slackware/initrd.gz\n").expect(&bt);
-    let fw = bt.find("efibootmgr --quiet --create --disk /dev/vda --part 1 --label 'UEFI Misc Device'").expect(&bt);
-    assert!(keep < mk && mk < dev && dev < back && back < c1 && c1 < c2 && c2 < fw, "{bt}");
-    assert_eq!(bt.matches("chroot /mnt/bko-target mkinitrd").count(), 1, "{bt}");
+    let c2 = bt
+        .find(
+            "cp /mnt/bko-target/boot/initrd.gz /mnt/bko-target/boot/efi/EFI/Slackware/initrd.gz\n",
+        )
+        .expect(&bt);
+    let fw = bt
+        .find("efibootmgr --quiet --create --disk /dev/vda --part 1 --label 'UEFI Misc Device'")
+        .expect(&bt);
+    assert!(
+        keep < mk && mk < dev && dev < back && back < c1 && c1 < c2 && c2 < fw,
+        "{bt}"
+    );
+    assert_eq!(
+        bt.matches("chroot /mnt/bko-target mkinitrd").count(),
+        1,
+        "{bt}"
+    );
     // With -P (a microcode image in front), the tree isn't packed again by
     // load; the ld.so.cache still kept.
     t.file("/boot/initrd-tree/command_line", "/sbin/mkinitrd -c -k 5.15.161:5.15.19 -f xfs -r /dev/vda3 -m xfs -u -P /boot/intel-ucode.cpio -o /boot/initrd.gz\n");
-    let bt: String = slackware_plan(&t, "vda", &[]).1.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(bt.contains("mkinitrd -c -k 5.15.161 ") && !bt.contains("cpio -o -H") && !bt.contains("initrd-tree/dev") && bt.contains(&format!("cp -a {r}/slackware-initrd/ld.so.cache ")), "{bt}");
+    let bt: String = slackware_plan(&t, "vda", &[])
+        .1
+        .stage(Stage::Boot)
+        .iter()
+        .map(Cmd::shell)
+        .collect();
+    assert!(
+        bt.contains("mkinitrd -c -k 5.15.161 ")
+            && !bt.contains("cpio -o -H")
+            && !bt.contains("initrd-tree/dev")
+            && bt.contains(&format!("cp -a {r}/slackware-initrd/ld.so.cache ")),
+        "{bt}"
+    );
     // The restored initrd isn't on record, or --reformat: made again too.
     let t = slackware15_uefi();
     std::fs::remove_file(t.p("/boot/initrd.gz")).unwrap();
-    let bt: String = slackware_plan(&t, "vda", &[]).1.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(bt.contains("made again because the dump doesn't say /boot/initrd.gz was there on the source\n"), "{bt}");
-    assert!(!bt.contains("grub-") && !bt.contains(" lilo") && !bt.contains("update-initramfs") && !bt.contains("dracut") && !bt.contains("BOOTX64.EFI; }"), "{bt}");
-    assert!(b.notes.iter().any(|n| n.starts_with("ELILO: elilo.efi, elilo.conf, the kernel and the initrd came back with the ESP")), "{:?}", b.notes);
-    assert!(b.notes.iter().any(|n| n.contains("kernel names (/dev/vda3, /dev/vda2, /dev/vda1)")), "{:?}", b.notes);
+    let bt: String = slackware_plan(&t, "vda", &[])
+        .1
+        .stage(Stage::Boot)
+        .iter()
+        .map(Cmd::shell)
+        .collect();
+    assert!(
+        bt.contains(
+            "made again because the dump doesn't say /boot/initrd.gz was there on the source\n"
+        ),
+        "{bt}"
+    );
+    assert!(
+        !bt.contains("grub-")
+            && !bt.contains(" lilo")
+            && !bt.contains("update-initramfs")
+            && !bt.contains("dracut")
+            && !bt.contains("BOOTX64.EFI; }"),
+        "{bt}"
+    );
+    assert!(
+        b.notes.iter().any(|n| n.starts_with(
+            "ELILO: elilo.efi, elilo.conf, the kernel and the initrd came back with the ESP"
+        )),
+        "{:?}",
+        b.notes
+    );
+    assert!(
+        b.notes
+            .iter()
+            .any(|n| n.contains("kernel names (/dev/vda3, /dev/vda2, /dev/vda1)")),
+        "{:?}",
+        b.notes
+    );
 
     // --removable: EFI/BOOT is there already, so the copy keeps it; NVRAM
     // with eliloconfig's own entry: made again, and not a second time.
     let t = slackware15_uefi();
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{}", crate::efi::GLOBAL);
-    t.file(&var("Boot0001"), efi_load_option("Slackware", 1, 2048, 32768, SLACK_ESP, "\\EFI\\Slackware\\elilo.efi")).file(&var("BootOrder"), [7u8, 0, 0, 0, 1, 0, 2, 0]).file(&var("BootCurrent"), [6u8, 0, 0, 0, 1, 0]);
+    t.file(
+        &var("Boot0001"),
+        efi_load_option(
+            "Slackware",
+            1,
+            2048,
+            32768,
+            SLACK_ESP,
+            "\\EFI\\Slackware\\elilo.efi",
+        ),
+    )
+    .file(&var("BootOrder"), [7u8, 0, 0, 0, 1, 0, 2, 0])
+    .file(&var("BootCurrent"), [6u8, 0, 0, 0, 1, 0]);
     let (v, b) = slackware_plan(&t, "vda", &["--removable"]);
     assert_eq!(s(&v, &["boot", "loader", "name"]), "elilo");
     assert!(b.problems.is_empty(), "{:?}", b.problems);
@@ -5558,12 +9477,22 @@ fn slackware15_uefi_guest() {
     // the initrd is made again (its -k also names a kernel now gone).
     let t = slackware15_uefi();
     t.file("/boot/efi/EFI/Slackware/vmlinuz", "the old kernel");
-    t.file("/boot/initrd-tree/command_line", "/sbin/mkinitrd -c -k 5.15.161:5.15.19 -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz\n");
+    t.file(
+        "/boot/initrd-tree/command_line",
+        "/sbin/mkinitrd -c -k 5.15.161:5.15.19 -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz\n",
+    );
     let (v, b) = slackware_plan(&t, "vda", &[]);
-    assert!(v.at(&["boot", "elilo", "configs", "1", "images", "0", "same_as"]).unwrap().is_null());
+    assert!(
+        v.at(&["boot", "elilo", "configs", "1", "images", "0", "same_as"])
+            .unwrap()
+            .is_null()
+    );
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(!bt.contains("EFI/Slackware/initrd.gz") && bt.contains("EFI/BOOT/initrd.gz"), "{bt}");
+    assert!(
+        !bt.contains("EFI/Slackware/initrd.gz") && bt.contains("EFI/BOOT/initrd.gz"),
+        "{bt}"
+    );
     assert!(b.notes.iter().any(|n| n.starts_with("ELILO: EFI/Slackware/elilo.conf's image EFI/Slackware/vmlinuz is a copy of no /boot kernel")), "{:?}", b.notes);
 
     // Without the command line, /etc/mkinitrd.conf's (mkinitrd -F); with
@@ -5572,20 +9501,45 @@ fn slackware15_uefi_guest() {
     std::fs::remove_file(t.p("/boot/initrd-tree/command_line")).unwrap();
     t.file("/etc/mkinitrd.conf", "SOURCE_TREE=\"/boot/initrd-tree\"\nKERNEL_VERSION=\"5.15.161\"\nROOTDEV=\"/dev/vda3\"\nROOTFS=\"xfs\"\n");
     let (v, b) = slackware_plan(&t, "vda", &[]);
-    assert_eq!(s(&v, &["boot", "initramfs", "mkinitrd", "conf"]), "/etc/mkinitrd.conf");
+    assert_eq!(
+        s(&v, &["boot", "initramfs", "mkinitrd", "conf"]),
+        "/etc/mkinitrd.conf"
+    );
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(bt.contains("chroot /mnt/bko-target mkinitrd -F -k 5.15.161\n") && bt.contains("EFI/Slackware/initrd.gz"), "{bt}");
+    assert!(
+        bt.contains("chroot /mnt/bko-target mkinitrd -F -k 5.15.161\n")
+            && bt.contains("EFI/Slackware/initrd.gz"),
+        "{bt}"
+    );
     std::fs::remove_file(t.p("/etc/mkinitrd.conf")).unwrap();
     let (_, b) = slackware_plan(&t, "vda", &[]);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(!bt.contains("mkinitrd") && !bt.contains("cp /mnt/bko-target/boot/initrd.gz"), "{bt}");
-    assert!(b.notes.iter().any(|n| n.starts_with("Slackware: mkinitrd's command can't be found")), "{:?}", b.notes);
+    assert!(
+        !bt.contains("mkinitrd") && !bt.contains("cp /mnt/bko-target/boot/initrd.gz"),
+        "{bt}"
+    );
+    assert!(
+        b.notes
+            .iter()
+            .any(|n| n.starts_with("Slackware: mkinitrd's command can't be found")),
+        "{:?}",
+        b.notes
+    );
 
     // Onto an NVMe disk: elilo.conf's root=, mkinitrd's -r and fstab's
     // names are problems.
     let (_, b) = slackware_plan(&slackware15_uefi(), "nvme0n1", &[]);
-    for want in ["EFI/Slackware/elilo.conf's root= in append= names /dev/vda3, which is /dev/nvme0n1p3 here", "EFI/BOOT/elilo.conf's root= in append= names /dev/vda3", "mkinitrd's -r (the initrd's root) names /dev/vda3","fstab's /boot/efi names /dev/vda1, which is /dev/nvme0n1p1 here"] {
-        assert!(b.problems.iter().any(|p| p.contains(want)), "{want}: {:?}", b.problems);
+    for want in [
+        "EFI/Slackware/elilo.conf's root= in append= names /dev/vda3, which is /dev/nvme0n1p3 here",
+        "EFI/BOOT/elilo.conf's root= in append= names /dev/vda3",
+        "mkinitrd's -r (the initrd's root) names /dev/vda3",
+        "fstab's /boot/efi names /dev/vda1, which is /dev/nvme0n1p1 here",
+    ] {
+        assert!(
+            b.problems.iter().any(|p| p.contains(want)),
+            "{want}: {:?}",
+            b.problems
+        );
     }
 }
 
@@ -5617,12 +9571,38 @@ fn slackware_current() -> Tree {
     write_gpt(
         &mut img,
         512,
-        &GptSpec { disk_guid: "51ac0000-0000-4000-8000-0000000cd15c", parts: vec![(ESP, SLACK_CUR_ESP, 2048, 34815, 0, ""), (LINUX, "51ac0000-0000-4000-8000-0000000c0002", 34816, 98270, 0, "")] },
+        &GptSpec {
+            disk_guid: "51ac0000-0000-4000-8000-0000000cd15c",
+            parts: vec![
+                (ESP, SLACK_CUR_ESP, 2048, 34815, 0, ""),
+                (
+                    LINUX,
+                    "51ac0000-0000-4000-8000-0000000c0002",
+                    34816,
+                    98270,
+                    0,
+                    "",
+                ),
+            ],
+        },
     );
     put(&mut img, 2048, &fat::sample::fat32(32768, 0x51ac_00c1, ""));
-    put(&mut img, 34816, &ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, ""));
+    put(
+        &mut img,
+        34816,
+        &ext::sample::image(
+            0x4 | 0x8 | 0x10 | 0x20,
+            0x2 | 0x40 | 0x80 | 0x200,
+            0x1 | 0x2 | 0x400,
+            "",
+        ),
+    );
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
-    let (elilo, kernel, initrd) = (vec![5u8; 300], b"generic 7.3.5 kernel".to_vec(), b"geninitrd's initrd".to_vec());
+    let (elilo, kernel, initrd) = (
+        vec![5u8; 300],
+        b"generic 7.3.5 kernel".to_vec(),
+        b"geninitrd's initrd".to_vec(),
+    );
     let conf = "chooser=simple\ndelay=1\ntimeout=1\n#\nimage=vmlinuz\n        label=vmlinuz\n        initrd=initrd.gz\n        read-only\n        append=\"root=/dev/nvme0n1p2 vga=normal ro\"\n";
     t.disk("nvme0n1", "259:0", &img, 512)
         .partition("nvme0n1", "nvme0n1p1", "259:1", 1, 2048, 32768, &img)
@@ -5667,7 +9647,11 @@ fn slackware_current() -> Tree {
         .file("/proc/sys/kernel/osrelease", format!("{k}\n"))
         .file("/proc/sys/kernel/hostname", "thinkpad\n");
     for d in ["Slackware", "BOOT"] {
-        let efi = if d == "BOOT" { "BOOTX64.EFI" } else { "elilo.efi" };
+        let efi = if d == "BOOT" {
+            "BOOTX64.EFI"
+        } else {
+            "elilo.efi"
+        };
         t.file(&format!("/boot/efi/EFI/{d}/{efi}"), &elilo)
             .file(&format!("/boot/efi/EFI/{d}/elilo.conf"), conf)
             .file(&format!("/boot/efi/EFI/{d}/vmlinuz"), &kernel)
@@ -5676,7 +9660,11 @@ fn slackware_current() -> Tree {
     for f in ["rc.S", "rc.M", "rc.inet1", "rc.sshd", "rc.bind"] {
         t.file(&format!("/etc/rc.d/{f}"), "#!/bin/sh\n");
         let mode = if f == "rc.bind" { 0o644 } else { 0o755 };
-        std::fs::set_permissions(t.p(&format!("/etc/rc.d/{f}")), <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(mode)).unwrap();
+        std::fs::set_permissions(
+            t.p(&format!("/etc/rc.d/{f}")),
+            <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(mode),
+        )
+        .unwrap();
     }
     for p in [
         "aaa_base-16.0-x86_64-3",
@@ -5693,33 +9681,59 @@ fn slackware_current() -> Tree {
         "e2fsprogs-1.47.4-x86_64-1",
         "dosfstools-4.2-x86_64-3",
     ] {
-        t.file(&format!("/var/lib/pkgtools/packages/{p}"), format!("PACKAGE NAME:     {p}\n"));
+        t.file(
+            &format!("/var/lib/pkgtools/packages/{p}"),
+            format!("PACKAGE NAME:     {p}\n"),
+        );
     }
     t.symlink("/var/log/packages", "../lib/pkgtools/packages");
     t
 }
 
 /// A Slackware plan of `t`, its disk `from` going to `to`, with load's `args`.
-fn slackware_plan_from(t: &Tree, from: &str, to: &str, args: &[&str]) -> (Value, crate::load::commands::Built) {
+fn slackware_plan_from(
+    t: &Tree,
+    from: &str,
+    to: &str,
+    args: &[&str],
+) -> (Value, crate::load::commands::Built) {
     let v = run(t, true, FakeRunner::default());
     (v.clone(), slackware_plan_of(v, from, to, args))
 }
 
 /// A Slackware plan of the dump `v`, as slackware_plan_from's.
-fn slackware_plan_of(v: Value, from: &str, to: &str, args: &[&str]) -> crate::load::commands::Built {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+fn slackware_plan_of(
+    v: Value,
+    from: &str,
+    to: &str,
+    args: &[&str],
+) -> crate::load::commands::Built {
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let l = Layout::from_json(v).unwrap();
     let mut a = vec!["l.json".to_string()];
     a.extend(args.iter().map(|x| x.to_string()));
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
-    commands::build(&l, &o, &Mapping { pairs: vec![(from.into(), to.into())], ..Mapping::default() })
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
+        unreachable!()
+    };
+    commands::build(
+        &l,
+        &o,
+        &Mapping {
+            pairs: vec![(from.into(), to.into())],
+            ..Mapping::default()
+        },
+    )
 }
 
 /// `v`'s storage.KEY array with FROM replaced by TO in its JSON (once).
 fn storage_edit(v: &mut Value, key: &str, from: &str, to: &str) {
     let text = v.at(&["storage", key]).unwrap().compact();
     assert_eq!(text.matches(from).count(), 1, "{from} in {text}");
-    set_at(v, &["storage", key], crate::json::parse(&text.replace(from, to)).unwrap());
+    set_at(
+        v,
+        &["storage", key],
+        crate::json::parse(&text.replace(from, to)).unwrap(),
+    );
 }
 
 /// The -current Thinkpad read back: os-release's codename, the kernel by
@@ -5731,7 +9745,7 @@ fn storage_edit(v: &mut Value, key: &str, from: &str, to: &str) {
 /// Slackware entry among them, so not a second one).
 #[test]
 fn slackware_current_thinkpad() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let (v, b) = slackware_plan_from(&slackware_current(), "nvme0n1", "nvme0n1", &[]);
     assert_eq!(s(&v, &["os", "id"]), "slackware");
     assert_eq!(s(&v, &["os", "version_id"]), "16.0");
@@ -5741,12 +9755,25 @@ fn slackware_current_thinkpad() {
     assert_eq!(s(sl, &["version"]), "Slackware 15.0+");
     assert_eq!(s(sl, &["init"]), "slackware-rc");
     assert_eq!(arr(sl, &["kernels"]).len(), 1, "{sl:?}");
-    assert_eq!((s(sl, &["kernels", "0", "file"]), s(sl, &["kernels", "0", "flavor"]), s(sl, &["kernels", "0", "version"])), ("vmlinuz-7.3.5", "generic", "7.3.5"));
-    assert_eq!(sl.at(&["kernels", "0", "modules_installed"]), Some(&Value::Bool(true)));
+    assert_eq!(
+        (
+            s(sl, &["kernels", "0", "file"]),
+            s(sl, &["kernels", "0", "flavor"]),
+            s(sl, &["kernels", "0", "version"])
+        ),
+        ("vmlinuz-7.3.5", "generic", "7.3.5")
+    );
+    assert_eq!(
+        sl.at(&["kernels", "0", "modules_installed"]),
+        Some(&Value::Bool(true))
+    );
     let ini = v.at(&["boot", "initramfs"]).unwrap();
     assert_eq!(s(ini, &["generator"]), "geninitrd");
     assert!(ini.at(&["mkinitrd"]).is_none());
-    let ev: Vec<&str> = arr(ini, &["evidence"]).iter().filter_map(Value::as_str).collect();
+    let ev: Vec<&str> = arr(ini, &["evidence"])
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
     for want in [
         "EFI/Slackware/elilo.conf has initrd=initrd.gz",
         "/usr/sbin/geninitrd exists",
@@ -5763,19 +9790,32 @@ fn slackware_current_thinkpad() {
     assert_eq!(s(g, &["generator"]), "mkinitrd");
     assert_eq!(s(g, &["runs"]), "mkinitrd_command_generator.sh");
     assert_eq!(s(g, &["dracut_opts"]), "--force --hostonly --verbose");
-    assert!(g.at(&["conf"]).unwrap().is_null() && g.at(&["override_script"]).unwrap().is_null() && g.at(&["post_install_script"]).unwrap().is_null());
-    assert_eq!((g.get("named_symlink"), g.get("initrd_gz_symlink")), (Some(&Value::Bool(true)), Some(&Value::Bool(true))));
+    assert!(
+        g.at(&["conf"]).unwrap().is_null()
+            && g.at(&["override_script"]).unwrap().is_null()
+            && g.at(&["post_install_script"]).unwrap().is_null()
+    );
+    assert_eq!(
+        (g.get("named_symlink"), g.get("initrd_gz_symlink")),
+        (Some(&Value::Bool(true)), Some(&Value::Bool(true)))
+    );
     assert_eq!(arr(g, &["images"]).len(), 1);
     assert_eq!(s(g, &["images", "0", "file"]), "/boot/initrd-7.3.5.img");
     assert_eq!(s(g, &["images", "0", "version"]), "7.3.5");
     assert_eq!(s(g, &["images", "0", "kernel"]), "/boot/vmlinuz-7.3.5");
     assert_eq!(s(g, &["links", "/boot/initrd.gz"]), "initrd-7.3.5.img");
-    assert_eq!(s(g, &["links", "/boot/initrd-generic.img"]), "initrd-7.3.5.img");
+    assert_eq!(
+        s(g, &["links", "/boot/initrd-generic.img"]),
+        "initrd-7.3.5.img"
+    );
     let confs = arr(&v, &["boot", "elilo", "configs"]);
     assert_eq!(confs.len(), 2);
     for c in confs {
         assert_eq!(s(c, &["images", "0", "same_as"]), "/boot/vmlinuz-7.3.5");
-        assert_eq!(s(c, &["images", "0", "initrd_same_as"]), "/boot/initrd-7.3.5.img");
+        assert_eq!(
+            s(c, &["images", "0", "initrd_same_as"]),
+            "/boot/initrd-7.3.5.img"
+        );
     }
     assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
 
@@ -5786,21 +9826,60 @@ fn slackware_current_thinkpad() {
         .expect(&bt);
     // setup.01.mkinitrd's AUTO_REMOVE_INITRD_TREE=true: the tree mkinitrd
     // built goes, as on the source (whose /boot has none).
-    let rm = bt.find("rm -rf /mnt/bko-target/boot/initrd-tree\n").expect(&bt);
+    let rm = bt
+        .find("rm -rf /mnt/bko-target/boot/initrd-tree\n")
+        .expect(&bt);
     let c1 = bt.find("cp /mnt/bko-target/boot/initrd-7.3.5.img /mnt/bko-target/boot/efi/EFI/BOOT/initrd.gz\ntouch -r /mnt/bko-target/boot/initrd-7.3.5.img /mnt/bko-target/boot/efi/EFI/BOOT/initrd.gz\n").expect(&bt);
     let c2 = bt.find("cp /mnt/bko-target/boot/initrd-7.3.5.img /mnt/bko-target/boot/efi/EFI/Slackware/initrd.gz\n").expect(&bt);
     let sl = bt.find("efibootmgr --quiet --create --disk /dev/nvme0n1 --part 1 --label Slackware --loader '\\EFI\\Slackware\\elilo.efi'\n").expect(&bt);
     assert!(mk < rm && rm < c1 && c1 < c2 && c2 < sl, "{bt}");
-    assert_eq!(bt.matches("rm -rf /mnt/bko-target/boot/initrd-tree").count(), 1, "{bt}");
-    assert_eq!((g.get("auto_remove_initrd_tree"), g.get("initrd_tree")), (Some(&Value::Bool(true)), Some(&Value::Bool(false))));
+    assert_eq!(
+        bt.matches("rm -rf /mnt/bko-target/boot/initrd-tree")
+            .count(),
+        1,
+        "{bt}"
+    );
+    assert_eq!(
+        (g.get("auto_remove_initrd_tree"), g.get("initrd_tree")),
+        (Some(&Value::Bool(true)), Some(&Value::Bool(false)))
+    );
     assert_eq!(bt.matches("--label Slackware").count(), 1, "{bt}");
-    assert_eq!(bt.matches("chroot /mnt/bko-target /bin/bash -c").count(), 1, "{bt}");
+    assert_eq!(
+        bt.matches("chroot /mnt/bko-target /bin/bash -c").count(),
+        1,
+        "{bt}"
+    );
     // geninitrd itself (its DKMS and lilo scripts, orphan removal,
     // update-grub) isn't run: only the command it would make the image with.
-    let run_lines: String = bt.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("\n");
-    assert!(!run_lines.contains("geninitrd") && !run_lines.contains("setup.01") && !run_lines.contains("grub-") && !run_lines.contains(" lilo") && !run_lines.contains("dracut") && !run_lines.contains("update-grub") && !run_lines.contains("remove-orphaned"), "{bt}");
-    assert!(b.notes.iter().any(|n| n.starts_with("ELILO: elilo.efi, elilo.conf, the kernel and the initrd came back with the ESP")), "{:?}", b.notes);
-    assert!(b.notes.iter().any(|n| n.contains("kernel names (/dev/nvme0n1p2, /dev/nvme0n1p1)")), "{:?}", b.notes);
+    let run_lines: String = bt
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !run_lines.contains("geninitrd")
+            && !run_lines.contains("setup.01")
+            && !run_lines.contains("grub-")
+            && !run_lines.contains(" lilo")
+            && !run_lines.contains("dracut")
+            && !run_lines.contains("update-grub")
+            && !run_lines.contains("remove-orphaned"),
+        "{bt}"
+    );
+    assert!(
+        b.notes.iter().any(|n| n.starts_with(
+            "ELILO: elilo.efi, elilo.conf, the kernel and the initrd came back with the ESP"
+        )),
+        "{:?}",
+        b.notes
+    );
+    assert!(
+        b.notes
+            .iter()
+            .any(|n| n.contains("kernel names (/dev/nvme0n1p2, /dev/nvme0n1p1)")),
+        "{:?}",
+        b.notes
+    );
 
     // Onto another NVMe controller's disk, the target's only one (it boots
     // as nvme0n1): no problem.  The command generator, run here, probes
@@ -5809,25 +9888,44 @@ fn slackware_current_thinkpad() {
     // fstab's; a command with no such -r fails the step.
     let (_, b) = slackware_plan_from(&slackware_current(), "nvme0n1", "nvme1n1", &[]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
-    let gc = b.stage(Stage::Boot).iter().find(|c| c.argv.get(2).map(String::as_str) == Some("/bin/bash")).expect("the generator's step").clone();
+    let gc = b
+        .stage(Stage::Boot)
+        .iter()
+        .find(|c| c.argv.get(2).map(String::as_str) == Some("/bin/bash"))
+        .expect("the generator's step")
+        .clone();
     let line = gc.argv[4].clone();
     assert_eq!(
         line,
         "set -o pipefail; c=$(/usr/share/mkinitrd/mkinitrd_command_generator.sh -k 7.3.5 --rootdev /dev/nvme1n1p2 -a \"-L -R -o /boot/initrd-7.3.5.img\") || exit; grep -Eq -- ' -r /dev/nvme1n1p2( |$)' <<<\"$c\" || { echo '/usr/share/mkinitrd/mkinitrd_command_generator.sh printed no mkinitrd -r /dev/nvme1n1p2' >&2; exit 1; }; sed -E 's# -r /dev/nvme1n1p2( |$)# -r /dev/nvme0n1p2\\1#' <<<\"$c\" | bash"
     );
     let why = gc.shell();
-    assert!(why.contains("given --rootdev /dev/nvme1n1p2, the target's / as the rescue names it"), "{why}");
+    assert!(
+        why.contains("given --rootdev /dev/nvme1n1p2, the target's / as the rescue names it"),
+        "{why}"
+    );
     // The line with a stand-in generator, and cat for bash.
     let dir = std::env::temp_dir().join(format!("bko-gen-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let fake = dir.join("gen");
     let try_with = |printed: &str| {
         std::fs::write(&fake, format!("#!/bin/sh\ncat <<'X'\n{printed}X\n")).unwrap();
-        std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-        let l = line.replace("/usr/share/mkinitrd/mkinitrd_command_generator.sh", &fake.to_string_lossy()).replace("| bash", "| cat");
-        std::process::Command::new("bash").args(["-c", &l]).output().unwrap()
+        std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let l = line
+            .replace(
+                "/usr/share/mkinitrd/mkinitrd_command_generator.sh",
+                &fake.to_string_lossy(),
+            )
+            .replace("| bash", "| cat");
+        std::process::Command::new("bash")
+            .args(["-c", &l])
+            .output()
+            .unwrap()
     };
-    let o = try_with("#\n# A suitable 'mkinitrd' command will be:\n\nmkinitrd -c -k 7.3.5 -f ext4 -r /dev/nvme1n1p2 -m nvme:ext4 -L -R -o /boot/initrd-7.3.5.img\n");
+    let o = try_with(
+        "#\n# A suitable 'mkinitrd' command will be:\n\nmkinitrd -c -k 7.3.5 -f ext4 -r /dev/nvme1n1p2 -m nvme:ext4 -L -R -o /boot/initrd-7.3.5.img\n",
+    );
     assert!(o.status.success(), "{o:?}");
     assert!(String::from_utf8_lossy(&o.stdout).contains("\nmkinitrd -c -k 7.3.5 -f ext4 -r /dev/nvme0n1p2 -m nvme:ext4 -L -R -o /boot/initrd-7.3.5.img\n"), "{o:?}");
     let o = try_with("mkinitrd -c -k 7.3.5 -f ext4 -r /dev/nvme1n1p22 -o /boot/initrd-7.3.5.img\n");
@@ -5836,28 +9934,55 @@ fn slackware_current_thinkpad() {
 
     // With an /etc/mkinitrd.conf, setup.01.mkinitrd runs mkinitrd -F.
     let t = slackware_current();
-    t.file("/etc/mkinitrd.conf", "MODULE_LIST=\"ext4:nvme\"\nROOTDEV=\"/dev/nvme0n1p2\"\n");
+    t.file(
+        "/etc/mkinitrd.conf",
+        "MODULE_LIST=\"ext4:nvme\"\nROOTDEV=\"/dev/nvme0n1p2\"\n",
+    );
     let (v, b) = slackware_plan_from(&t, "nvme0n1", "nvme0n1", &[]);
-    assert_eq!(s(&v, &["boot", "initramfs", "geninitrd", "runs"]), "mkinitrd");
-    assert_eq!(s(&v, &["boot", "initramfs", "geninitrd", "rootdev"]), "/dev/nvme0n1p2");
+    assert_eq!(
+        s(&v, &["boot", "initramfs", "geninitrd", "runs"]),
+        "mkinitrd"
+    );
+    assert_eq!(
+        s(&v, &["boot", "initramfs", "geninitrd", "rootdev"]),
+        "/dev/nvme0n1p2"
+    );
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
     assert!(bt.contains("chroot /mnt/bko-target /sbin/mkinitrd -F /etc/mkinitrd.conf -k 7.3.5 -o /boot/initrd-7.3.5.img\n") && bt.contains("EFI/Slackware/initrd.gz"), "{bt}");
     assert!(!bt.contains("mkinitrd_command_generator"), "{bt}");
-    assert!(bt.find("/sbin/mkinitrd -F").unwrap() < bt.find("rm -rf /mnt/bko-target/boot/initrd-tree\n").expect(&bt), "{bt}");
+    assert!(
+        bt.find("/sbin/mkinitrd -F").unwrap()
+            < bt.find("rm -rf /mnt/bko-target/boot/initrd-tree\n")
+                .expect(&bt),
+        "{bt}"
+    );
     // ... onto a disk named otherwise, mkinitrd.conf's ROOTDEV and
     // RESUMEDEV are problems too (the remade initrd would have them).
-    t.file("/etc/mkinitrd.conf", "MODULE_LIST=\"ext4:nvme\"\nROOTDEV=\"/dev/nvme0n1p2\"\nRESUMEDEV=\"/dev/nvme0n1p1\"\n");
+    t.file(
+        "/etc/mkinitrd.conf",
+        "MODULE_LIST=\"ext4:nvme\"\nROOTDEV=\"/dev/nvme0n1p2\"\nRESUMEDEV=\"/dev/nvme0n1p1\"\n",
+    );
     let (v, b) = slackware_plan_from(&t, "nvme0n1", "sda", &[]);
-    assert_eq!(s(&v, &["boot", "initramfs", "geninitrd", "resumedev"]), "/dev/nvme0n1p1");
+    assert_eq!(
+        s(&v, &["boot", "initramfs", "geninitrd", "resumedev"]),
+        "/dev/nvme0n1p1"
+    );
     for want in [
         "Slackware: /etc/mkinitrd.conf's ROOTDEV (the initrd's root) names /dev/nvme0n1p2, which is /dev/sda2 here, on a disk of the sd class, where the source's was of the nvme class, so the restored kernel will call it /dev/sda2, not /dev/nvme0n1p2; the restored initrd mounts / by the name it was made with (mkinitrd's -r, or the kernel's root=)",
         "Slackware: /etc/mkinitrd.conf's RESUMEDEV (the initrd's resume device) names /dev/nvme0n1p1, which is /dev/sda1 here",
     ] {
-        assert!(b.problems.iter().any(|p| p.starts_with(want)), "{want}: {:?}", b.problems);
+        assert!(
+            b.problems.iter().any(|p| p.starts_with(want)),
+            "{want}: {:?}",
+            b.problems
+        );
     }
     // ... and with LUKSDEV in it, the restore is refused (out of scope).
-    t.file("/etc/mkinitrd.conf", "LUKSDEV=\"/dev/nvme0n1p2\"\nROOTDEV=\"/dev/mapper/cryptroot\"\n");
+    t.file(
+        "/etc/mkinitrd.conf",
+        "LUKSDEV=\"/dev/nvme0n1p2\"\nROOTDEV=\"/dev/mapper/cryptroot\"\n",
+    );
     let (_, b) = slackware_plan_from(&t, "nvme0n1", "nvme0n1", &[]);
     assert!(b.problems.iter().any(|p| p.starts_with("Slackware: geninitrd's initrd unlocks LUKS (/etc/mkinitrd.conf has LUKSDEV=/dev/nvme0n1p2)")), "{:?}", b.problems);
 
@@ -5865,8 +9990,18 @@ fn slackware_current_thinkpad() {
     // /dev/cryptvg/root is an LV on a dm-crypt PV, which the command
     // generator would find and give -C for: refused by the stack under /.
     let mut v = run(&slackware_current(), true, FakeRunner::default());
-    storage_edit(&mut v, "fstab", r#""spec":"/dev/nvme0n1p2","file":"/""#, r#""spec":"/dev/cryptvg/root","file":"/""#);
-    storage_edit(&mut v, "fstab", r#""resolves_to":"nvme0n1p2""#, r#""resolves_to":"dm-1""#);
+    storage_edit(
+        &mut v,
+        "fstab",
+        r#""spec":"/dev/nvme0n1p2","file":"/""#,
+        r#""spec":"/dev/cryptvg/root","file":"/""#,
+    );
+    storage_edit(
+        &mut v,
+        "fstab",
+        r#""resolves_to":"nvme0n1p2""#,
+        r#""resolves_to":"dm-1""#,
+    );
     storage_edit(
         &mut v,
         "dm_devices",
@@ -5879,18 +10014,41 @@ fn slackware_current_thinkpad() {
     assert!(!bt.contains("mkinitrd_command_generator"), "{bt}");
     // ... the same stack on 15.0's mkinitrd arm (no -C recorded) too.
     let mut w = v.clone();
-    set_at(&mut w, &["boot", "initramfs", "generator"], Value::from("mkinitrd"));
+    set_at(
+        &mut w,
+        &["boot", "initramfs", "generator"],
+        Value::from("mkinitrd"),
+    );
     let b = slackware_plan_of(w, "nvme0n1", "nvme0n1", &[]);
     assert!(b.problems.iter().any(|p| p.starts_with("Slackware: mkinitrd's initrd unlocks LUKS (fstab's / (/dev/cryptvg/root) is on dm-crypt luksnvme0n1p2)")), "{:?}", b.problems);
     // An LV with no dm-crypt under it isn't LUKS.
-    storage_edit(&mut v, "dm_devices", r#""target":"crypt""#, r#""target":"linear""#);
+    storage_edit(
+        &mut v,
+        "dm_devices",
+        r#""target":"crypt""#,
+        r#""target":"linear""#,
+    );
     let b = slackware_plan_of(v, "nvme0n1", "nvme0n1", &[]);
-    assert!(!b.problems.iter().any(|p| p.contains("LUKS")), "{:?}", b.problems);
+    assert!(
+        !b.problems.iter().any(|p| p.contains("LUKS")),
+        "{:?}",
+        b.problems
+    );
     // fstab's / on /dev/mapper with nothing resolving it (no device in
     // fstab's line or the mounts): refused by the name.
     let mut v = run(&slackware_current(), true, FakeRunner::default());
-    storage_edit(&mut v, "fstab", r#""spec":"/dev/nvme0n1p2","file":"/""#, r#""spec":"/dev/mapper/cryptroot","file":"/""#);
-    storage_edit(&mut v, "fstab", r#""resolves_to":"nvme0n1p2""#, r#""resolves_to":null"#);
+    storage_edit(
+        &mut v,
+        "fstab",
+        r#""spec":"/dev/nvme0n1p2","file":"/""#,
+        r#""spec":"/dev/mapper/cryptroot","file":"/""#,
+    );
+    storage_edit(
+        &mut v,
+        "fstab",
+        r#""resolves_to":"nvme0n1p2""#,
+        r#""resolves_to":null"#,
+    );
     set_at(&mut v, &["storage", "mounts"], Value::Arr(Vec::new()));
     let b = slackware_plan_of(v, "nvme0n1", "nvme0n1", &[]);
     assert!(b.problems.iter().any(|p| p.starts_with("Slackware: geninitrd's initrd unlocks LUKS (fstab's / is /dev/mapper/cryptroot, on /dev/mapper)")), "{:?}", b.problems);
@@ -5898,45 +10056,93 @@ fn slackware_current_thinkpad() {
     // AUTO_REMOVE_INITRD_TREE=false, or a source that kept a tree: not
     // removed.
     let t = slackware_current();
-    t.file("/etc/default/geninitrd", GENINITRD_DEFAULT.replace("AUTO_REMOVE_INITRD_TREE=true", "AUTO_REMOVE_INITRD_TREE=false"));
+    t.file(
+        "/etc/default/geninitrd",
+        GENINITRD_DEFAULT.replace(
+            "AUTO_REMOVE_INITRD_TREE=true",
+            "AUTO_REMOVE_INITRD_TREE=false",
+        ),
+    );
     let (_, b) = slackware_plan_from(&t, "nvme0n1", "nvme0n1", &[]);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(bt.contains("mkinitrd_command_generator.sh -k 7.3.5") && !bt.contains("rm -rf /mnt/bko-target/boot/initrd-tree"), "{bt}");
+    assert!(
+        bt.contains("mkinitrd_command_generator.sh -k 7.3.5")
+            && !bt.contains("rm -rf /mnt/bko-target/boot/initrd-tree"),
+        "{bt}"
+    );
     let t = slackware_current();
-    t.file("/boot/initrd-tree/command_line", "mkinitrd -c -k 7.3.5 -o /boot/initrd-7.3.5.img\n");
+    t.file(
+        "/boot/initrd-tree/command_line",
+        "mkinitrd -c -k 7.3.5 -o /boot/initrd-7.3.5.img\n",
+    );
     let (v, b) = slackware_plan_from(&t, "nvme0n1", "nvme0n1", &[]);
     assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "geninitrd");
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(bt.contains("mkinitrd_command_generator.sh -k 7.3.5") && !bt.contains("rm -rf /mnt/bko-target/boot/initrd-tree"), "{bt}");
+    assert!(
+        bt.contains("mkinitrd_command_generator.sh -k 7.3.5")
+            && !bt.contains("rm -rf /mnt/bko-target/boot/initrd-tree"),
+        "{bt}"
+    );
 
     // GENERATOR=dracut: not run; the restored images stay, and so do the
     // ESP's copies.
     let t = slackware_current();
-    t.file("/etc/default/geninitrd", GENINITRD_DEFAULT.replace("GENERATOR=mkinitrd", "GENERATOR=dracut"));
+    t.file(
+        "/etc/default/geninitrd",
+        GENINITRD_DEFAULT.replace("GENERATOR=mkinitrd", "GENERATOR=dracut"),
+    );
     let (v, b) = slackware_plan_from(&t, "nvme0n1", "nvme0n1", &[]);
     assert_eq!(s(&v, &["boot", "initramfs", "geninitrd", "runs"]), "dracut");
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(!bt.contains("dracut") && !bt.contains("mkinitrd") && !bt.contains("EFI/Slackware/initrd.gz"), "{bt}");
+    assert!(
+        !bt.contains("dracut")
+            && !bt.contains("mkinitrd")
+            && !bt.contains("EFI/Slackware/initrd.gz"),
+        "{bt}"
+    );
     assert!(b.notes.iter().any(|n| n.starts_with("Slackware: geninitrd's GENERATOR=dracut (/var/lib/pkgtools/setup/setup.01.mkinitrd runs dracut) isn't one bko-holt load runs")), "{:?}", b.notes);
 
     // An executable override script runs in setup.01.mkinitrd's place: not
     // run here either.
     let t = slackware_current();
-    t.file("/etc/default/geninitrd", format!("{GENINITRD_DEFAULT}GENINITRD_OVERRIDE_SCRIPT=/usr/local/sbin/geninitrd-custom\n")).file("/usr/local/sbin/geninitrd-custom", "#!/bin/sh\n");
-    std::fs::set_permissions(t.p("/usr/local/sbin/geninitrd-custom"), <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755)).unwrap();
+    t.file(
+        "/etc/default/geninitrd",
+        format!("{GENINITRD_DEFAULT}GENINITRD_OVERRIDE_SCRIPT=/usr/local/sbin/geninitrd-custom\n"),
+    )
+    .file("/usr/local/sbin/geninitrd-custom", "#!/bin/sh\n");
+    std::fs::set_permissions(
+        t.p("/usr/local/sbin/geninitrd-custom"),
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+    )
+    .unwrap();
     let (v, b) = slackware_plan_from(&t, "nvme0n1", "nvme0n1", &[]);
-    assert_eq!(s(&v, &["boot", "initramfs", "geninitrd", "runs"]), "override");
+    assert_eq!(
+        s(&v, &["boot", "initramfs", "geninitrd", "runs"]),
+        "override"
+    );
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(!bt.contains("mkinitrd") && !bt.contains("EFI/BOOT/initrd.gz"), "{bt}");
-    assert!(b.notes.iter().any(|n| n.starts_with("Slackware: geninitrd runs GENINITRD_OVERRIDE_SCRIPT=/usr/local/sbin/geninitrd-custom")), "{:?}", b.notes);
+    assert!(
+        !bt.contains("mkinitrd") && !bt.contains("EFI/BOOT/initrd.gz"),
+        "{bt}"
+    );
+    assert!(
+        b.notes.iter().any(|n| n.starts_with(
+            "Slackware: geninitrd runs GENINITRD_OVERRIDE_SCRIPT=/usr/local/sbin/geninitrd-custom"
+        )),
+        "{:?}",
+        b.notes
+    );
 
     // A kernel whose modules are gone: its image stays.
     let t = slackware_current();
     std::fs::remove_dir_all(t.p("/lib/modules/7.3.5")).unwrap();
     let (_, b) = slackware_plan_from(&t, "nvme0n1", "nvme0n1", &[]);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(!bt.contains("mkinitrd") && !bt.contains("EFI/BOOT/initrd.gz"), "{bt}");
+    assert!(
+        !bt.contains("mkinitrd") && !bt.contains("EFI/BOOT/initrd.gz"),
+        "{bt}"
+    );
     assert!(b.notes.iter().any(|n| n == "Slackware: /boot/initrd-7.3.5.img is for kernel 7.3.5, which has no /lib/modules/7.3.5, so it stays as restored"), "{:?}", b.notes);
 
     // Without geninitrd's image (a 15.0-style /boot/initrd.gz only), the
@@ -5947,18 +10153,38 @@ fn slackware_current_thinkpad() {
     std::fs::remove_file(t.p("/boot/initrd-generic.img")).unwrap();
     let (v, _) = slackware_plan_from(&t, "nvme0n1", "nvme0n1", &[]);
     assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "mkinitrd");
-    let ev: Vec<&str> = arr(&v, &["boot", "initramfs", "evidence"]).iter().filter_map(Value::as_str).collect();
-    assert!(ev.contains(&"/usr/sbin/geninitrd exists, but /boot has no initrd-VERSION.img it made"), "{ev:?}");
+    let ev: Vec<&str> = arr(&v, &["boot", "initramfs", "evidence"])
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(
+        ev.contains(&"/usr/sbin/geninitrd exists, but /boot has no initrd-VERSION.img it made"),
+        "{ev:?}"
+    );
 
     // Onto a disk named otherwise: elilo.conf's root= and fstab's names
     // are problems, as on 15.0 (Decision 5).
     let (_, b) = slackware_plan_from(&slackware_current(), "nvme0n1", "sda", &[]);
-    for want in ["EFI/Slackware/elilo.conf's root= in append= names /dev/nvme0n1p2, which is /dev/sda2 here", "fstab's /boot/efi names /dev/nvme0n1p1, which is /dev/sda1 here"] {
-        assert!(b.problems.iter().any(|p| p.contains(want)), "{want}: {:?}", b.problems);
+    for want in [
+        "EFI/Slackware/elilo.conf's root= in append= names /dev/nvme0n1p2, which is /dev/sda2 here",
+        "fstab's /boot/efi names /dev/nvme0n1p1, which is /dev/sda1 here",
+    ] {
+        assert!(
+            b.problems.iter().any(|p| p.contains(want)),
+            "{want}: {:?}",
+            b.problems
+        );
     }
     // -current boots with geninitrd's initrd, which mounts / by the name
     // it was made with: the problem says so, not "no initrd".
-    assert!(b.problems.iter().all(|p| !p.contains("it has no initrd")) && b.problems.iter().any(|p| p.contains("the restored initrd mounts / by the name it was made with")), "{:?}", b.problems);
+    assert!(
+        b.problems.iter().all(|p| !p.contains("it has no initrd"))
+            && b.problems
+                .iter()
+                .any(|p| p.contains("the restored initrd mounts / by the name it was made with")),
+        "{:?}",
+        b.problems
+    );
 }
 
 /// Every scenario's dump, by name, for tests that must hold over all of
@@ -5970,43 +10196,102 @@ pub fn dumps() -> Vec<(&'static str, Value)> {
 
 /// One scenario's dump by its name in `dumps`, built alone.
 pub fn dump(name: &str) -> Value {
-    let (_, f) = DUMPS.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("no scenario {name}"));
+    let (_, f) = DUMPS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .unwrap_or_else(|| panic!("no scenario {name}"));
     f()
 }
 
 type Dump = (&'static str, fn() -> Value);
 
 const DUMPS: &[Dump] = &[
-    ("bios_btrfs", || run(&bios_btrfs(), true, bios_btrfs_runner())),
-    ("uefi_shim", || run(&uefi_shim(), true, FakeRunner::default())),
-    ("luks_lvm", || run(&luks_lvm_tree(), true, FakeRunner::default())),
-    ("thin_lvm", || run(&thin_lvm_tree(), true, thin_lvm_runner())),
-    ("vanilla", || run(&vanilla_tree(true), true, vanilla_runner())),
-    ("vanilla_fresh", || run(&vanilla_tree(false), true, vanilla_runner())),
-    ("md_raid1", || run(&md_raid1_tree(), true, FakeRunner::default())),
-    ("zfs_root", || { let (t, r) = zfs_root_tree(); run(&t, true, r) }),
-    ("whole_disk_fs", || run(&misc_tree(), true, FakeRunner::default())),
-    ("kinoite_ostree", || run(&kinoite_ostree(), true, kinoite_runner())),
-    ("gentoo_thinkpad", || run(&gentoo_thinkpad(), true, FakeRunner::default())),
+    ("bios_btrfs", || {
+        run(&bios_btrfs(), true, bios_btrfs_runner())
+    }),
+    ("uefi_shim", || {
+        run(&uefi_shim(), true, FakeRunner::default())
+    }),
+    ("luks_lvm", || {
+        run(&luks_lvm_tree(), true, FakeRunner::default())
+    }),
+    ("thin_lvm", || {
+        run(&thin_lvm_tree(), true, thin_lvm_runner())
+    }),
+    ("vanilla", || {
+        run(&vanilla_tree(true), true, vanilla_runner())
+    }),
+    ("vanilla_fresh", || {
+        run(&vanilla_tree(false), true, vanilla_runner())
+    }),
+    ("md_raid1", || {
+        run(&md_raid1_tree(), true, FakeRunner::default())
+    }),
+    ("zfs_root", || {
+        let (t, r) = zfs_root_tree();
+        run(&t, true, r)
+    }),
+    ("whole_disk_fs", || {
+        run(&misc_tree(), true, FakeRunner::default())
+    }),
+    ("kinoite_ostree", || {
+        run(&kinoite_ostree(), true, kinoite_runner())
+    }),
+    ("gentoo_thinkpad", || {
+        run(&gentoo_thinkpad(), true, FakeRunner::default())
+    }),
     ("pikaos", || run(&pikaos(), true, FakeRunner::default())),
     ("biglinux", || run(&biglinux(), true, biglinux_runner())),
     ("anduinos", || run(&anduinos(), true, anduinos_runner())),
     ("kali", || run(&kali(), true, FakeRunner::default())),
     ("neon", || run(&neon(), true, FakeRunner::default())),
-    ("elementary", || run(&elementary(false), true, FakeRunner::default())),
-    ("elementary_luks", || run(&elementary(true), true, FakeRunner::default())),
-    ("slackware15", || run(&slackware15(), true, FakeRunner::default())),
-    ("slackware15_uefi", || run(&slackware15_uefi(), true, FakeRunner::default())),
-    ("slackware_current", || run(&slackware_current(), true, FakeRunner::default())),
-    ("proxmox", || { let (t, r) = proxmox(false); run(&t, true, r) }),
-    ("proxmox_mirror", || { let (t, r) = proxmox(true); run(&t, true, r) }),
-    ("guix_uefi", || run(&guix_uefi(), true, FakeRunner::default())),
+    ("elementary", || {
+        run(&elementary(false), true, FakeRunner::default())
+    }),
+    ("elementary_luks", || {
+        run(&elementary(true), true, FakeRunner::default())
+    }),
+    ("slackware15", || {
+        run(&slackware15(), true, FakeRunner::default())
+    }),
+    ("slackware15_uefi", || {
+        run(&slackware15_uefi(), true, FakeRunner::default())
+    }),
+    ("slackware_current", || {
+        run(&slackware_current(), true, FakeRunner::default())
+    }),
+    ("proxmox", || {
+        let (t, r) = proxmox(false);
+        run(&t, true, r)
+    }),
+    ("proxmox_mirror", || {
+        let (t, r) = proxmox(true);
+        run(&t, true, r)
+    }),
+    ("guix_uefi", || {
+        run(&guix_uefi(), true, FakeRunner::default())
+    }),
     ("guix_bios", || run(&guix_bios(), true, guix_bios_runner())),
-    ("truenas", || { let (t, r) = truenas(false); run(&t, true, r) }),
-    ("truenas_mirror", || { let (t, r) = truenas(true); run(&t, true, r) }),
-    ("zfsbootmenu", || { let (t, r) = zfsbootmenu(false); run(&t, true, r) }),
-    ("zfsbootmenu_enc", || { let (t, r) = zfsbootmenu(true); run(&t, true, r) }),
-    ("qubes", || { let (t, r) = qubes_tree(); run(&t, true, r) }),
+    ("truenas", || {
+        let (t, r) = truenas(false);
+        run(&t, true, r)
+    }),
+    ("truenas_mirror", || {
+        let (t, r) = truenas(true);
+        run(&t, true, r)
+    }),
+    ("zfsbootmenu", || {
+        let (t, r) = zfsbootmenu(false);
+        run(&t, true, r)
+    }),
+    ("zfsbootmenu_enc", || {
+        let (t, r) = zfsbootmenu(true);
+        run(&t, true, r)
+    }),
+    ("qubes", || {
+        let (t, r) = qubes_tree();
+        run(&t, true, r)
+    }),
 ];
 
 // ---- illumos: OpenIndiana -------------------------------------------------
@@ -6027,19 +10312,62 @@ fn openindiana(uefi: bool) -> (Tree, FakeRunner) {
     const NONE: &str = "00000000-0000-0000-0000-000000000000";
     let t = Tree::new("scn-openindiana");
     let mut img = vec![0u8; 64 * MIB];
-    let (esp, pool, resv) = ((256u64, 16639u64), (16640u64, 114654u64), (114655u64, 131038u64));
-    let mut parts = vec![(ESP, "01d1a000-0000-4000-8000-000000000002", esp.0, esp.1, 0, "loader"), (SOLARIS_ZFS, "01d1a000-0000-4000-8000-000000000003", pool.0, pool.1, 0, "zfs")];
+    let (esp, pool, resv) = (
+        (256u64, 16639u64),
+        (16640u64, 114654u64),
+        (114655u64, 131038u64),
+    );
+    let mut parts = vec![
+        (
+            ESP,
+            "01d1a000-0000-4000-8000-000000000002",
+            esp.0,
+            esp.1,
+            0,
+            "loader",
+        ),
+        (
+            SOLARIS_ZFS,
+            "01d1a000-0000-4000-8000-000000000003",
+            pool.0,
+            pool.1,
+            0,
+            "zfs",
+        ),
+    ];
     parts.extend((3..9).map(|_| (NONE, NONE, 0, 0, 0, "")));
-    parts.push((SOLARIS_RESERVED, "01d1a000-0000-4000-8000-000000000004", resv.0, resv.1, 0, ""));
-    write_gpt(&mut img, 512, &GptSpec { disk_guid: "01d1a000-0000-4000-8000-000000000001", parts });
-    put(&mut img, esp.0 as usize, &fat::sample::fat32((esp.1 - esp.0 + 1) as u32, 0, ""));
+    parts.push((
+        SOLARIS_RESERVED,
+        "01d1a000-0000-4000-8000-000000000004",
+        resv.0,
+        resv.1,
+        0,
+        "",
+    ));
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "01d1a000-0000-4000-8000-000000000001",
+            parts,
+        },
+    );
+    put(
+        &mut img,
+        esp.0 as usize,
+        &fat::sample::fat32((esp.1 - esp.0 + 1) as u32, 0, ""),
+    );
     let cfg = crate::json::parse(
         r#"{"version": 5000, "name": "rpool", "state": 0, "txg": 4, "pool_guid": 4242, "hostname": "", "top_guid": 2, "guid": 2,
             "vdev_children": 1, "vdev_tree": {"type": "disk", "id": 0, "guid": 2, "path": "/dev/dsk/c3t0d0s1", "whole_disk": 1, "ashift": 12},
             "features_for_read": {"com.delphix:hole_birth": true, "com.delphix:embedded_data": true}}"#,
     )
     .unwrap();
-    put(&mut img, pool.0 as usize, &zfs::pack::vdev(((pool.1 - pool.0 + 1) * 512) as usize, &cfg));
+    put(
+        &mut img,
+        pool.0 as usize,
+        &zfs::pack::vdev(((pool.1 - pool.0 + 1) * 512) as usize, &cfg),
+    );
     t.file("/dev/rdsk/c3t0d0p0", &img)
         .file("/etc/release", "             OpenIndiana Hipster 2026.10 (powered by illumos)\n        OpenIndiana Project, part of The Illumos Foundation (C) 2010-2026\n                        Use is subject to license terms.\n                           Assembled 30 October 2026\n")
         .file("/etc/vfstab", "#device\t\tdevice\t\tmount\t\tFS\tfsck\tmount\tmount\n/devices\t-\t\t/devices\tdevfs\t-\tno\t-\n/proc\t\t-\t\t/proc\t\tproc\t-\tno\t-\n/dev/zvol/dsk/rpool/swap\t-\t-\tswap\t-\tno\t-\n")
@@ -6056,23 +10384,75 @@ fn openindiana(uefi: bool) -> (Tree, FakeRunner) {
     // zfs list's columns (report.rs): name, type, used, available,
     // referenced, mountpoint, canmount, mounted, the encryption five,
     // origin, compression, recordsize, volsize, volblocksize, and ten more.
-    let row = |name: &str, ty: &str, mp: &str, canmount: &str, mounted: &str, origin: &str, volsize: &str, vbs: &str| {
+    let row = |name: &str,
+               ty: &str,
+               mp: &str,
+               canmount: &str,
+               mounted: &str,
+               origin: &str,
+               volsize: &str,
+               vbs: &str| {
         let rs = if ty == "volume" { "-" } else { "131072" };
-        format!("{name}\t{ty}\t1000\t2000\t96\t{mp}\t{canmount}\t{mounted}\toff\t-\tnone\tnone\t-\t{origin}\ton\t{rs}\t{volsize}\t{vbs}\t-\ton\t-\tnone\toff\tsensitive\ton\t-\t1\t-\n")
+        format!(
+            "{name}\t{ty}\t1000\t2000\t96\t{mp}\t{canmount}\t{mounted}\toff\t-\tnone\tnone\t-\t{origin}\ton\t{rs}\t{volsize}\t{vbs}\t-\ton\t-\tnone\toff\tsensitive\ton\t-\t1\t-\n"
+        )
     };
-    let fs = |name: &str, mp: &str, canmount: &str, mounted: &str| row(name, "filesystem", mp, canmount, mounted, "-", "-", "-");
+    let fs = |name: &str, mp: &str, canmount: &str, mounted: &str| {
+        row(name, "filesystem", mp, canmount, mounted, "-", "-", "-")
+    };
     let list = [
         fs("rpool", "/rpool", "on", "yes"),
         fs("rpool/ROOT", "legacy", "off", "no"),
         fs("rpool/ROOT/openindiana", "/", "noauto", "no"),
         fs("rpool/ROOT/openindiana/var", "/var", "noauto", "no"),
-        row("rpool/ROOT/openindiana-1", "filesystem", "/", "noauto", "yes", "rpool/ROOT/openindiana@2026-11-14-10:00:00", "-", "-"),
-        row("rpool/ROOT/openindiana-1/var", "filesystem", "/var", "noauto", "yes", "rpool/ROOT/openindiana/var@2026-11-14-10:00:00", "-", "-"),
-        row("rpool/dump", "volume", "-", "-", "-", "-", "1610612736", "131072"),
+        row(
+            "rpool/ROOT/openindiana-1",
+            "filesystem",
+            "/",
+            "noauto",
+            "yes",
+            "rpool/ROOT/openindiana@2026-11-14-10:00:00",
+            "-",
+            "-",
+        ),
+        row(
+            "rpool/ROOT/openindiana-1/var",
+            "filesystem",
+            "/var",
+            "noauto",
+            "yes",
+            "rpool/ROOT/openindiana/var@2026-11-14-10:00:00",
+            "-",
+            "-",
+        ),
+        row(
+            "rpool/dump",
+            "volume",
+            "-",
+            "-",
+            "-",
+            "-",
+            "1610612736",
+            "131072",
+        ),
         fs("rpool/export", "/export", "on", "yes"),
         fs("rpool/export/home", "/export/home", "on", "yes"),
-        fs("rpool/export/home/tester", "/export/home/tester", "on", "yes"),
-        row("rpool/swap", "volume", "-", "-", "-", "-", "1073741824", "4096"),
+        fs(
+            "rpool/export/home/tester",
+            "/export/home/tester",
+            "on",
+            "yes",
+        ),
+        row(
+            "rpool/swap",
+            "volume",
+            "-",
+            "-",
+            "-",
+            "-",
+            "1073741824",
+            "4096",
+        ),
     ]
     .concat();
     let local = "rpool/ROOT\tmountpoint\tlegacy\tlocal\nrpool/ROOT\tcanmount\toff\tlocal\n\
@@ -6083,7 +10463,11 @@ fn openindiana(uefi: bool) -> (Tree, FakeRunner) {
                  rpool/dump\tvolsize\t1610612736\tlocal\nrpool/dump\tchecksum\toff\tlocal\nrpool/dump\tcompression\toff\tlocal\nrpool/dump\trefreservation\t1610612736\tlocal\n\
                  rpool/export\tmountpoint\t/export\tlocal\n\
                  rpool/swap\tvolsize\t1073741824\tlocal\nrpool/swap\trefreservation\t1107427328\tlocal\n";
-    let prtconf = if uefi { "System Configuration:  illumos  i86pc\n    name='efi-systab' type=int64 items=1\n        value=000000007f9ee018\n" } else { "System Configuration:  illumos  i86pc\n    name='bios-boot-device' type=string items=1\n        value='80'\n" };
+    let prtconf = if uefi {
+        "System Configuration:  illumos  i86pc\n    name='efi-systab' type=int64 items=1\n        value=000000007f9ee018\n"
+    } else {
+        "System Configuration:  illumos  i86pc\n    name='bios-boot-device' type=string items=1\n        value='80'\n"
+    };
     let runner = FakeRunner::default()
         .with("hostname", "oi2610\n")
         .with("prtconf -v", prtconf)
@@ -6110,19 +10494,39 @@ fn openindiana(uefi: bool) -> (Tree, FakeRunner) {
 /// OpenIndiana's dump (illumos' report on the fake tree), and its plan onto
 /// c4t0d0.
 fn openindiana_plan(uefi: bool) -> (Value, crate::load::commands::Built) {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let (t, runner) = openindiana(uefi);
     let sys = Sys::new(t.root(), Box::new(runner), true);
     let os = crate::other::os_release(&sys);
     crate::osrel::check_supported(os.as_ref()).unwrap();
-    let v = crate::other::illumos::report(&sys, crate::other::Family::Illumos, os.as_ref(), "2026-11-14T00:00:00Z");
-    assert_eq!(crate::json::parse(&v.pretty()).unwrap().compact(), v.compact());
+    let v = crate::other::illumos::report(
+        &sys,
+        crate::other::Family::Illumos,
+        os.as_ref(),
+        "2026-11-14T00:00:00Z",
+    );
+    assert_eq!(
+        crate::json::parse(&v.pretty()).unwrap().compact(),
+        v.compact()
+    );
     if let Err(e) = crate::bugreport::check_plan(&v.pretty()) {
         panic!("redaction: {e}");
     }
     let l = Layout::from_json(v.clone()).unwrap();
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-    (v, commands::build(&l, &o, &Mapping { pairs: vec![("c3t0d0".into(), "c4t0d0".into())], ..Mapping::default() }))
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+        unreachable!()
+    };
+    (
+        v,
+        commands::build(
+            &l,
+            &o,
+            &Mapping {
+                pairs: vec![("c3t0d0".into(), "c4t0d0".into())],
+                ..Mapping::default()
+            },
+        ),
+    )
 }
 
 /// OpenIndiana read back and planned (docs/design/openindiana.md, O2):
@@ -6134,7 +10538,7 @@ fn openindiana_plan(uefi: bool) -> (Value, crate::load::commands::Built) {
 /// EFI/BOOT/BOOTX64.EFI off the restored ESP, with no NVRAM entry).
 #[test]
 fn openindiana_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let (v, b) = openindiana_plan(true);
     assert_eq!(s(&v, &["os", "family"]), "illumos");
     assert_eq!(s(&v, &["os", "id"]), "openindiana");
@@ -6147,38 +10551,96 @@ fn openindiana_guest() {
     assert_eq!(s(p0, &["content", "type"]), "vfat");
     assert!(!arr(p0, &["esp_image"]).is_empty());
     let p1 = v.at(&["storage", "disks", "0", "partitions", "1"]).unwrap();
-    assert_eq!((s(p1, &["name"]), s(p1, &["content", "type"])), ("c3t0d0s1", "zfs_member"));
-    assert_eq!(s(v.at(&["storage", "disks", "0", "partitions", "2"]).unwrap(), &["name"]), "c3t0d0s8");
+    assert_eq!(
+        (s(p1, &["name"]), s(p1, &["content", "type"])),
+        ("c3t0d0s1", "zfs_member")
+    );
+    assert_eq!(
+        s(
+            v.at(&["storage", "disks", "0", "partitions", "2"]).unwrap(),
+            &["name"]
+        ),
+        "c3t0d0s8"
+    );
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let all = plan_text(&b);
     let st = |x: Stage| b.stage(x).iter().map(Cmd::shell).collect::<String>();
     // The ESP comes back with the table.
-    assert!(b.notes.contains(&"c3t0d0s0: the ESP, written as the source's with the partition table".to_string()), "{:?}", b.notes);
+    assert!(
+        b.notes.contains(
+            &"c3t0d0s0: the ESP, written as the source's with the partition table".to_string()
+        ),
+        "{:?}",
+        b.notes
+    );
     // The dump zvol: a volume of its size, its properties, and nothing in it.
     let f = st(Stage::Format);
     assert!(f.contains("zfs create -V 1610612736 -o checksum=off -o compression=off -o refreservation=1610612736 -o volblocksize=131072 rpool/dump\n"), "{f}");
-    assert!(b.notes.contains(&"ZFS volume rpool/dump: made empty; archivers back up files, not zvols".to_string()), "{:?}", b.notes);
+    assert!(
+        b.notes.contains(
+            &"ZFS volume rpool/dump: made empty; archivers back up files, not zvols".to_string()
+        ),
+        "{:?}",
+        b.notes
+    );
     assert_eq!(all.matches("rpool/dump").count(), 1, "{all}");
-    assert!(!all.contains("dumpadm") && !all.contains("/dev/zvol"), "{all}");
+    assert!(
+        !all.contains("dumpadm") && !all.contains("/dev/zvol"),
+        "{all}"
+    );
     // Both BEs are made; only the booted one and its /var are mounted.
-    for ds in ["rpool/ROOT/openindiana", "rpool/ROOT/openindiana/var", "rpool/ROOT/openindiana-1", "rpool/ROOT/openindiana-1/var"] {
+    for ds in [
+        "rpool/ROOT/openindiana",
+        "rpool/ROOT/openindiana/var",
+        "rpool/ROOT/openindiana-1",
+        "rpool/ROOT/openindiana-1/var",
+    ] {
         assert!(f.contains(&format!(" {ds}\n")), "{ds} in {f}");
     }
     let m = st(Stage::Mount);
     let root = m.find("zfs mount -O rpool/ROOT/openindiana-1\n").expect(&m);
-    let var = m.find("zfs mount -O rpool/ROOT/openindiana-1/var\n").expect(&m);
+    let var = m
+        .find("zfs mount -O rpool/ROOT/openindiana-1/var\n")
+        .expect(&m);
     assert!(root < var, "{m}");
-    assert!(!m.contains("rpool/ROOT/openindiana\n") && !m.contains("rpool/ROOT/openindiana/var\n") && !m.contains("mount -F"), "{m}");
-    for ds in ["rpool/export", "rpool/export/home", "rpool/export/home/tester", "rpool"] {
+    assert!(
+        !m.contains("rpool/ROOT/openindiana\n")
+            && !m.contains("rpool/ROOT/openindiana/var\n")
+            && !m.contains("mount -F"),
+        "{m}"
+    );
+    for ds in [
+        "rpool/export",
+        "rpool/export/home",
+        "rpool/export/home/tester",
+        "rpool",
+    ] {
         assert!(m.contains(&format!("zfs mount -O {ds}\n")), "{ds} in {m}");
     }
-    let be = b.notes.iter().filter(|n| n.starts_with("boot environment ")).collect::<Vec<_>>();
-    assert_eq!(be, ["boot environment openindiana (rpool/ROOT/openindiana) isn't the booted one: it comes back as an empty plain dataset (only the booted BE is restored)"], "{:?}", b.notes);
+    let be = b
+        .notes
+        .iter()
+        .filter(|n| n.starts_with("boot environment "))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        be,
+        [
+            "boot environment openindiana (rpool/ROOT/openindiana) isn't the booted one: it comes back as an empty plain dataset (only the booted BE is restored)"
+        ],
+        "{:?}",
+        b.notes
+    );
     assert!(st(Stage::Format).contains("zpool set bootfs=rpool/ROOT/openindiana-1 rpool\n"));
     // UEFI: the boot archive, and no installboot.
     let bt = st(Stage::Boot);
-    assert!(bt.contains("bootadm update-archive -R /mnt/bko-target\n"), "{bt}");
-    assert!(!all.contains("installboot") && !all.contains("efibootmgr"), "{all}");
+    assert!(
+        bt.contains("bootadm update-archive -R /mnt/bko-target\n"),
+        "{bt}"
+    );
+    assert!(
+        !all.contains("installboot") && !all.contains("efibootmgr"),
+        "{all}"
+    );
     // OmniOS' bootadm remakes etc/versions/build from its build.* fragments
     // and deletes it with none: a fragment for the run, gone after.
     // A build whose mtime has 0 ns (which assemble_files wouldn't put
@@ -6186,11 +10648,18 @@ fn openindiana_guest() {
     // and the fragment's back before it goes.
     let frag = bt.find("cp -p /mnt/bko-target/etc/versions/build /mnt/bko-target/etc/versions/build.bko-holt && ").expect(&bt);
     let ns = bt.find("case $s in *.000000000) /usr/gnu/bin/touch -m -d @${s%.*}.000000001 /mnt/bko-target/etc/versions/build;; esac'\n").expect(&bt);
-    let archive = bt.find("bootadm update-archive -R /mnt/bko-target\n").expect(&bt);
+    let archive = bt
+        .find("bootadm update-archive -R /mnt/bko-target\n")
+        .expect(&bt);
     let back = bt.find("/usr/gnu/bin/touch -m -r /mnt/bko-target/etc/versions/build.bko-holt /mnt/bko-target/etc/versions/build && ").expect(&bt);
-    let gone = bt.find("rm -f /mnt/bko-target/etc/versions/build.bko-holt").expect(&bt);
+    let gone = bt
+        .find("rm -f /mnt/bko-target/etc/versions/build.bko-holt")
+        .expect(&bt);
     let log = bt.find("cp -Rp ").expect(&bt);
-    assert!(frag < ns && ns < archive && archive < back && back < gone && gone < log, "{bt}");
+    assert!(
+        frag < ns && ns < archive && archive < back && back < gone && gone < log,
+        "{bt}"
+    );
     assert!(bt.contains("for f in /mnt/bko-target/etc/versions/build.*; do if [ -e \"$f\" ] || [ -h \"$f\" ]; then exit 0; fi; done;"), "{bt}");
 }
 
@@ -6198,28 +10667,51 @@ fn openindiana_guest() {
 /// the restored system's gptzfsboot in rpool's slice, after the archive.
 #[test]
 fn openindiana_bios() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let (v, b) = openindiana_plan(false);
     assert_eq!(s(&v, &["firmware", "mode"]), "bios");
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
     let frag = bt.find("/etc/versions/build.bko-holt && ").expect(&bt);
-    let archive = bt.find("bootadm update-archive -R /mnt/bko-target\n").expect(&bt);
-    let gone = bt.find("rm -f /mnt/bko-target/etc/versions/build.bko-holt").expect(&bt);
-    let ib = bt.find("installboot -f -b /mnt/bko-target/boot /dev/rdsk/c4t0d0s1\n").expect(&bt);
+    let archive = bt
+        .find("bootadm update-archive -R /mnt/bko-target\n")
+        .expect(&bt);
+    let gone = bt
+        .find("rm -f /mnt/bko-target/etc/versions/build.bko-holt")
+        .expect(&bt);
+    let ib = bt
+        .find("installboot -f -b /mnt/bko-target/boot /dev/rdsk/c4t0d0s1\n")
+        .expect(&bt);
     assert!(frag < archive && archive < gone && archive < ib, "{bt}");
     assert_eq!(bt.matches("installboot").count(), 1, "{bt}");
 }
 
 /// OpenIndiana's report with RUNNER's answers, and its plan onto c4t0d0.
 fn openindiana_with(t: &Tree, runner: FakeRunner) -> (Value, crate::load::commands::Built) {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let sys = Sys::new(t.root(), Box::new(runner), true);
     let os = crate::other::os_release(&sys);
-    let v = crate::other::illumos::report(&sys, crate::other::Family::Illumos, os.as_ref(), "2026-11-14T00:00:00Z");
+    let v = crate::other::illumos::report(
+        &sys,
+        crate::other::Family::Illumos,
+        os.as_ref(),
+        "2026-11-14T00:00:00Z",
+    );
     let l = Layout::from_json(v.clone()).unwrap();
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-    (v, commands::build(&l, &o, &Mapping { pairs: vec![("c3t0d0".into(), "c4t0d0".into())], ..Mapping::default() }))
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+        unreachable!()
+    };
+    (
+        v,
+        commands::build(
+            &l,
+            &o,
+            &Mapping {
+                pairs: vec![("c3t0d0".into(), "c4t0d0".into())],
+                ..Mapping::default()
+            },
+        ),
+    )
 }
 
 /// No prtconf to tell UEFI from BIOS: the firmware is unknown, not bios,
@@ -6251,8 +10743,15 @@ fn openindiana_without_zpool_is_refused() {
     let (t, runner) = openindiana(true);
     let (v, b) = openindiana_with(&t, runner.without("zpool"));
     let e = s(&v, &["storage", "zfs", "tools", "error"]);
-    assert!(e.starts_with("ZFS file systems are mounted, but zpool isn't installed, "), "{e}");
-    assert!(b.problems.contains(&format!("ZFS: {e}")), "{:?}", b.problems);
+    assert!(
+        e.starts_with("ZFS file systems are mounted, but zpool isn't installed, "),
+        "{e}"
+    );
+    assert!(
+        b.problems.contains(&format!("ZFS: {e}")),
+        "{:?}",
+        b.problems
+    );
 }
 
 // ---- TrueNAS Community Edition 25.10 --------------------------------------
@@ -6301,12 +10800,29 @@ fn truenas(mirror: bool) -> (Tree, FakeRunner) {
     use crate::efi::GLOBAL;
     const BF01: &str = "6a898cc3-1dd2-11b2-99a6-080020c9b98d";
     let t = Tree::new(if mirror { "scn-tn-mirror" } else { "scn-tn" });
-    let bes: Vec<&str> = if mirror { vec!["25.10.7", "25.10.8"] } else { vec!["25.10.6", "25.10.7", "25.10.8"] };
+    let bes: Vec<&str> = if mirror {
+        vec!["25.10.7", "25.10.8"]
+    } else {
+        vec!["25.10.6", "25.10.7", "25.10.8"]
+    };
     let active = "25.10.8";
-    let disks: Vec<(&str, &str)> = if mirror { vec![("vda", "254:0"), ("vdb", "254:16")] } else { vec![("vda", "254:0")] };
-    let leaf = |n: &str, i: u64| format!(r#"{{"type": "disk", "id": {i}, "guid": {}, "path": "/dev/{n}3", "whole_disk": 0}}"#, 21 + i);
+    let disks: Vec<(&str, &str)> = if mirror {
+        vec![("vda", "254:0"), ("vdb", "254:16")]
+    } else {
+        vec![("vda", "254:0")]
+    };
+    let leaf = |n: &str, i: u64| {
+        format!(
+            r#"{{"type": "disk", "id": {i}, "guid": {}, "path": "/dev/{n}3", "whole_disk": 0}}"#,
+            21 + i
+        )
+    };
     let tree = if mirror {
-        format!(r#"{{"type": "mirror", "id": 0, "guid": 20, "ashift": 12, "children": [{}, {}]}}"#, leaf("vda", 0), leaf("vdb", 1))
+        format!(
+            r#"{{"type": "mirror", "id": 0, "guid": 20, "ashift": 12, "children": [{}, {}]}}"#,
+            leaf("vda", 0),
+            leaf("vdb", 1)
+        )
     } else {
         r#"{"type": "disk", "id": 0, "guid": 21, "path": "/dev/vda3", "whole_disk": 0, "ashift": 12}"#.to_string()
     };
@@ -6321,74 +10837,186 @@ fn truenas(mirror: bool) -> (Tree, FakeRunner) {
             &mut img,
             512,
             &GptSpec {
-                disk_guid: if i == 0 { "7e7e7e7e-0000-4000-8000-00000000000a" } else { "7e7e7e7e-0000-4000-8000-00000000000b" },
+                disk_guid: if i == 0 {
+                    "7e7e7e7e-0000-4000-8000-00000000000a"
+                } else {
+                    "7e7e7e7e-0000-4000-8000-00000000000b"
+                },
                 parts: vec![
-                    (BIOS_BOOT, if i == 0 { "7e7e7e7e-1111-4000-8000-00000000000a" } else { "7e7e7e7e-1111-4000-8000-00000000000b" }, 34, 2047, 0, ""),
+                    (
+                        BIOS_BOOT,
+                        if i == 0 {
+                            "7e7e7e7e-1111-4000-8000-00000000000a"
+                        } else {
+                            "7e7e7e7e-1111-4000-8000-00000000000b"
+                        },
+                        34,
+                        2047,
+                        0,
+                        "",
+                    ),
                     (ESP, &partuuid, 2048, 67583, 0, ""),
-                    (BF01, if i == 0 { "7e7e7e7e-3333-4000-8000-00000000000a" } else { "7e7e7e7e-3333-4000-8000-00000000000b" }, 67584, 184319, 0, ""),
+                    (
+                        BF01,
+                        if i == 0 {
+                            "7e7e7e7e-3333-4000-8000-00000000000a"
+                        } else {
+                            "7e7e7e7e-3333-4000-8000-00000000000b"
+                        },
+                        67584,
+                        184319,
+                        0,
+                        "",
+                    ),
                 ],
             },
         );
-        put(&mut img, 2048, &fat::sample::fat32(65536, serials[i], "EFI"));
+        put(
+            &mut img,
+            2048,
+            &fat::sample::fat32(65536, serials[i], "EFI"),
+        );
         let cfg = format!(
             r#"{{"version": 5000, "name": "boot-pool", "state": 0, "txg": 4, "pool_guid": 777, "hostname": "truenas", "hostid": 305419896, "top_guid": {}, "guid": {},
                 "vdev_children": 1, "vdev_tree": {tree}, "features_for_read": {{"com.delphix:hole_birth": true}}}}"#,
             if mirror { 20 } else { 21 },
             21 + i
         );
-        put(&mut img, 67584, &zfs::pack::vdev(116736 * 512, &crate::json::parse(&cfg).unwrap()));
+        put(
+            &mut img,
+            67584,
+            &zfs::pack::vdev(116736 * 512, &crate::json::parse(&cfg).unwrap()),
+        );
         let major = devno.split(':').next().unwrap();
         let minor: u32 = devno.split(':').nth(1).unwrap().parse().unwrap();
         t.disk(d, devno, &img, 512)
-            .partition(d, &format!("{d}1"), &format!("{major}:{}", minor + 1), 1, 34, 2014, &img)
-            .partition(d, &format!("{d}2"), &format!("{major}:{}", minor + 2), 2, 2048, 65536, &img)
-            .partition(d, &format!("{d}3"), &format!("{major}:{}", minor + 3), 3, 67584, 116736, &img)
-            .symlink(&format!("/dev/disk/by-partuuid/{partuuid}"), &format!("../../{d}2"));
+            .partition(
+                d,
+                &format!("{d}1"),
+                &format!("{major}:{}", minor + 1),
+                1,
+                34,
+                2014,
+                &img,
+            )
+            .partition(
+                d,
+                &format!("{d}2"),
+                &format!("{major}:{}", minor + 2),
+                2,
+                2048,
+                65536,
+                &img,
+            )
+            .partition(
+                d,
+                &format!("{d}3"),
+                &format!("{major}:{}", minor + 3),
+                3,
+                67584,
+                116736,
+                &img,
+            )
+            .symlink(
+                &format!("/dev/disk/by-partuuid/{partuuid}"),
+                &format!("../../{d}2"),
+            );
         if !mirror {
-            t.file(&var(&format!("Boot000{i}")), efi_load_option(&format!("TrueNAS-{i}"), 2, 2048, 65536, &partuuid, "\\EFI\\debian\\grubx64.efi"));
+            t.file(
+                &var(&format!("Boot000{i}")),
+                efi_load_option(
+                    &format!("TrueNAS-{i}"),
+                    2,
+                    2048,
+                    65536,
+                    &partuuid,
+                    "\\EFI\\debian\\grubx64.efi",
+                ),
+            );
             order.extend([i as u8, 0]);
         }
         let esp = format!("/run/bko-holt/esp-{d}2");
-        t.file(&format!("{esp}/EFI/debian/grubx64.efi"), &grubx64).file(&format!("{esp}/EFI/boot/bootx64.efi"), &grubx64);
+        t.file(&format!("{esp}/EFI/debian/grubx64.efi"), &grubx64)
+            .file(&format!("{esp}/EFI/boot/bootx64.efi"), &grubx64);
     }
     if mirror {
         // The data pool: one GPT partition on vdc.
         let mut img = vec![0u8; 96 * MIB];
-        write_gpt(&mut img, 512, &GptSpec { disk_guid: "7e7e7e7e-0000-4000-8000-00000000000c", parts: vec![(BF01, "7e7e7e7e-3333-4000-8000-00000000000c", 2048, 194559, 0, "")] });
+        write_gpt(
+            &mut img,
+            512,
+            &GptSpec {
+                disk_guid: "7e7e7e7e-0000-4000-8000-00000000000c",
+                parts: vec![(
+                    BF01,
+                    "7e7e7e7e-3333-4000-8000-00000000000c",
+                    2048,
+                    194559,
+                    0,
+                    "",
+                )],
+            },
+        );
         let cfg = r#"{"version": 5000, "name": "tank", "state": 0, "txg": 4, "pool_guid": 888, "hostname": "truenas", "hostid": 305419896, "top_guid": 31, "guid": 31,
             "vdev_children": 1, "vdev_tree": {"type": "disk", "id": 0, "guid": 31, "path": "/dev/vdc1", "whole_disk": 0, "ashift": 12}, "features_for_read": {"com.delphix:hole_birth": true}}"#;
-        put(&mut img, 2048, &zfs::pack::vdev(192512 * 512, &crate::json::parse(cfg).unwrap()));
-        t.disk("vdc", "254:32", &img, 512).partition("vdc", "vdc1", "254:33", 1, 2048, 192512, &img);
+        put(
+            &mut img,
+            2048,
+            &zfs::pack::vdev(192512 * 512, &crate::json::parse(cfg).unwrap()),
+        );
+        t.disk("vdc", "254:32", &img, 512)
+            .partition("vdc", "vdc1", "254:33", 1, 2048, 192512, &img);
     } else {
-        t.file("/sys/firmware/efi/fw_platform_size", "64\n").file(&var("BootOrder"), order).file(&var("BootCurrent"), [6u8, 0, 0, 0, 0, 0]).file(&var("SecureBoot"), [6u8, 0, 0, 0, 0]);
+        t.file("/sys/firmware/efi/fw_platform_size", "64\n")
+            .file(&var("BootOrder"), order)
+            .file(&var("BootCurrent"), [6u8, 0, 0, 0, 0, 0])
+            .file(&var("SecureBoot"), [6u8, 0, 0, 0, 0]);
     }
     // Mounts: the booted BE at / and its children, boot-pool/grub, .system.
-    let mut mi = format!("26 1 0:30 / / ro,relatime shared:1 - zfs boot-pool/ROOT/{active} ro,xattr,noacl\n");
+    let mut mi = format!(
+        "26 1 0:30 / / ro,relatime shared:1 - zfs boot-pool/ROOT/{active} ro,xattr,noacl\n"
+    );
     let mut n = 31;
     for (c, mp) in TN_CHILDREN {
-        mi += &format!("{n} 26 0:{n} / {mp} rw,relatime shared:{n} - zfs boot-pool/ROOT/{active}/{c} rw,xattr,noacl\n");
+        mi += &format!(
+            "{n} 26 0:{n} / {mp} rw,relatime shared:{n} - zfs boot-pool/ROOT/{active}/{c} rw,xattr,noacl\n"
+        );
         n += 1;
     }
     let sys_pool = if mirror { "tank" } else { "boot-pool" };
-    mi += &format!("{n} 26 0:{n} / /boot/grub rw,relatime shared:{n} - zfs boot-pool/grub rw,xattr,noacl\n");
+    mi += &format!(
+        "{n} 26 0:{n} / /boot/grub rw,relatime shared:{n} - zfs boot-pool/grub rw,xattr,noacl\n"
+    );
     n += 1;
     if mirror {
-        mi += &format!("{n} 26 0:{n} / /mnt/tank rw,relatime shared:{n} - zfs tank rw,xattr,posixacl\n");
+        mi += &format!(
+            "{n} 26 0:{n} / /mnt/tank rw,relatime shared:{n} - zfs tank rw,xattr,posixacl\n"
+        );
         n += 1;
-        mi += &format!("{n} 26 0:{n} / /mnt/tank/share rw,relatime shared:{n} - zfs tank/share rw,xattr,posixacl\n");
+        mi += &format!(
+            "{n} 26 0:{n} / /mnt/tank/share rw,relatime shared:{n} - zfs tank/share rw,xattr,posixacl\n"
+        );
         n += 1;
     }
-    mi += &format!("{n} 26 0:{n} / /var/db/system rw,relatime shared:{n} - zfs {sys_pool}/.system rw,xattr,noacl\n");
+    mi += &format!(
+        "{n} 26 0:{n} / /var/db/system rw,relatime shared:{n} - zfs {sys_pool}/.system rw,xattr,noacl\n"
+    );
     n += 1;
     let cores = n;
-    mi += &format!("{n} 26 0:{n} / /var/db/system/cores rw,relatime shared:{n} - zfs {sys_pool}/.system/cores rw,xattr,noacl\n");
+    mi += &format!(
+        "{n} 26 0:{n} / /var/db/system/cores rw,relatime shared:{n} - zfs {sys_pool}/.system/cores rw,xattr,noacl\n"
+    );
     n += 1;
     // The netdata dataset at a path that isn't its name; cores again at
     // systemd's coredump directory (the same dataset, twice: the 25.10.6
     // guest's).
-    mi += &format!("{n} 26 0:{n} / /var/db/system/netdata rw,relatime shared:{n} - zfs {sys_pool}/.system/netdata-{TN_UUID} rw,xattr,noacl\n");
+    mi += &format!(
+        "{n} 26 0:{n} / /var/db/system/netdata rw,relatime shared:{n} - zfs {sys_pool}/.system/netdata-{TN_UUID} rw,xattr,noacl\n"
+    );
     n += 1;
-    mi += &format!("{n} 26 0:{cores} / /var/lib/systemd/coredump rw,relatime shared:{n} - zfs {sys_pool}/.system/cores rw,xattr,noacl\n");
+    mi += &format!(
+        "{n} 26 0:{cores} / /var/lib/systemd/coredump rw,relatime shared:{n} - zfs {sys_pool}/.system/cores rw,xattr,noacl\n"
+    );
     t.file("/etc/os-release", "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nVERSION=\"12 (bookworm)\"\nVERSION_CODENAME=bookworm\nID=debian\n")
         .file("/etc/debian_version", "12.11\n")
         .file("/etc/version", format!("{active}\n"))
@@ -6419,35 +11047,65 @@ fn truenas(mirror: bool) -> (Tree, FakeRunner) {
         ("middlewared", "25.10.8"),
         ("truenas", "25.10.8"),
     ];
-    let status: String = pkgs.iter().map(|(n, v)| format!("Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n")).collect();
+    let status: String = pkgs
+        .iter()
+        .map(|(n, v)| {
+            format!(
+                "Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n"
+            )
+        })
+        .collect();
     t.file("/var/lib/dpkg/status", status);
     // zfs list's columns: name type used available referenced mountpoint
     // canmount mounted encryption encryptionroot keyformat keylocation
     // keystatus origin compression ... (report::zfs_tools_json).
     let fs = |name: &str, mp: &str, canmount: &str, mounted: &str, origin: &str| {
-        format!("{name}\tfilesystem\t900\t2000\t96\t{mp}\t{canmount}\t{mounted}\toff\t-\tnone\tnone\t-\t{origin}\ton\t131072\t-\t-\toff\tsa\tauto\tformD\ton\tsensitive\ton\ton\t1\t-\n")
+        format!(
+            "{name}\tfilesystem\t900\t2000\t96\t{mp}\t{canmount}\t{mounted}\toff\t-\tnone\tnone\t-\t{origin}\ton\t131072\t-\t-\toff\tsa\tauto\tformD\ton\tsensitive\ton\ton\t1\t-\n"
+        )
     };
-    let mut list = fs("boot-pool", "none", "off", "no", "-") + &fs("boot-pool/ROOT", "none", "off", "no", "-") + &fs("boot-pool/grub", "legacy", "off", "yes", "-");
-    let mut props = String::from("boot-pool\tcanmount\toff\tlocal\nboot-pool\tmountpoint\tnone\tlocal\nboot-pool\tcompression\ton\tlocal\nboot-pool\tacltype\toff\tlocal\nboot-pool\txattr\tsa\tlocal\nboot-pool\trelatime\ton\tlocal\nboot-pool\tdevices\toff\tlocal\nboot-pool/ROOT\tcanmount\toff\tlocal\nboot-pool/ROOT\torg.zectl:bootloader\tgrub\tlocal\nboot-pool/grub\tmountpoint\tlegacy\tlocal\nboot-pool/grub\tcanmount\toff\tlocal\n");
+    let mut list = fs("boot-pool", "none", "off", "no", "-")
+        + &fs("boot-pool/ROOT", "none", "off", "no", "-")
+        + &fs("boot-pool/grub", "legacy", "off", "yes", "-");
+    let mut props = String::from(
+        "boot-pool\tcanmount\toff\tlocal\nboot-pool\tmountpoint\tnone\tlocal\nboot-pool\tcompression\ton\tlocal\nboot-pool\tacltype\toff\tlocal\nboot-pool\txattr\tsa\tlocal\nboot-pool\trelatime\ton\tlocal\nboot-pool\tdevices\toff\tlocal\nboot-pool/ROOT\tcanmount\toff\tlocal\nboot-pool/ROOT\torg.zectl:bootloader\tgrub\tlocal\nboot-pool/grub\tmountpoint\tlegacy\tlocal\nboot-pool/grub\tcanmount\toff\tlocal\n",
+    );
     for (bi, be) in bes.iter().enumerate() {
         let on = if *be == active { "yes" } else { "no" };
         let root = format!("boot-pool/ROOT/{be}");
         list += &fs(&root, "legacy", "on", on, "-");
-        props += &format!("{root}\tmountpoint\tlegacy\tlocal\n{root}\treadonly\ton\tlocal\n{root}\t{}\t{TN_KV}\tlocal\n{root}\tzectl:keep\t{}\tlocal\n", crate::truenas::KERNEL_PROP, if bi == 0 && !mirror { "True" } else { "False" });
+        props += &format!(
+            "{root}\tmountpoint\tlegacy\tlocal\n{root}\treadonly\ton\tlocal\n{root}\t{}\t{TN_KV}\tlocal\n{root}\tzectl:keep\t{}\tlocal\n",
+            crate::truenas::KERNEL_PROP,
+            if bi == 0 && !mirror { "True" } else { "False" }
+        );
         for (c, mp) in TN_CHILDREN {
             let ds = format!("{root}/{c}");
-            let origin = if bi > 0 && TN_CLONED.contains(&c) { format!("boot-pool/ROOT/{}/{c}@install-2026-09-0{bi}", bes[bi - 1]) } else { "-".to_string() };
+            let origin = if bi > 0 && TN_CLONED.contains(&c) {
+                format!("boot-pool/ROOT/{}/{c}@install-2026-09-0{bi}", bes[bi - 1])
+            } else {
+                "-".to_string()
+            };
             list += &fs(&ds, mp, "noauto", on, &origin);
-            props += &format!("{ds}\tmountpoint\t{mp}\tlocal\n{ds}\tcanmount\tnoauto\tlocal\n{ds}\torg.zectl:bootloader\t\tlocal\n");
+            props += &format!(
+                "{ds}\tmountpoint\t{mp}\tlocal\n{ds}\tcanmount\tnoauto\tlocal\n{ds}\torg.zectl:bootloader\t\tlocal\n"
+            );
             if TN_RO.contains(&c) {
                 props += &format!("{ds}\treadonly\ton\tlocal\n");
             }
         }
         if *be != active {
-            t.file(&format!("/run/bko-holt/truenas-be-{be}/version"), format!("{be}\n"));
+            t.file(
+                &format!("/run/bko-holt/truenas-be-{be}/version"),
+                format!("{be}\n"),
+            );
         }
     }
-    for (ds, canmount) in [(format!("{sys_pool}/.system"), "on"), (format!("{sys_pool}/.system/cores"), "on"), (format!("{sys_pool}/.system/netdata-{TN_UUID}"), "noauto")] {
+    for (ds, canmount) in [
+        (format!("{sys_pool}/.system"), "on"),
+        (format!("{sys_pool}/.system/cores"), "on"),
+        (format!("{sys_pool}/.system/netdata-{TN_UUID}"), "noauto"),
+    ] {
         list += &fs(&ds, "legacy", canmount, "yes", "-");
         props += &format!("{ds}\tmountpoint\tlegacy\tlocal\n");
         if canmount != "on" {
@@ -6457,7 +11115,9 @@ fn truenas(mirror: bool) -> (Tree, FakeRunner) {
     let mut pools = "boot-pool\n".to_string();
     if mirror {
         pools += "tank\n";
-        list = fs("tank", "/mnt/tank", "on", "yes", "-") + &fs("tank/share", "/mnt/tank/share", "on", "yes", "-") + &list;
+        list = fs("tank", "/mnt/tank", "on", "yes", "-")
+            + &fs("tank/share", "/mnt/tank/share", "on", "yes", "-")
+            + &list;
         props += "tank\tmountpoint\t/tank\tlocal\ntank/share\tmountpoint\t/tank/share\tinherited\n";
     }
     let vdevs = if mirror {
@@ -6465,7 +11125,11 @@ fn truenas(mirror: bool) -> (Tree, FakeRunner) {
     } else {
         r#"{"/dev/vda3": {"name": "/dev/vda3", "vdev_type": "disk", "path": "/dev/vda3"}}"#
     };
-    let status_of = |pool: &str, vdevs: &str| format!(r#"{{"output_version": {{"command": "zpool status", "vers_major": 0, "vers_minor": 1}}, "pools": {{"{pool}": {{"name": "{pool}", "state": "ONLINE", "vdevs": {{"{pool}": {{"name": "{pool}", "vdev_type": "root", "vdevs": {vdevs}}}}}}}}}}}"#);
+    let status_of = |pool: &str, vdevs: &str| {
+        format!(
+            r#"{{"output_version": {{"command": "zpool status", "vers_major": 0, "vers_minor": 1}}, "pools": {{"{pool}": {{"name": "{pool}", "state": "ONLINE", "vdevs": {{"{pool}": {{"name": "{pool}", "vdev_type": "root", "vdevs": {vdevs}}}}}}}}}}}"#
+        )
+    };
     let mut runner = FakeRunner::default()
         .with("zpool list -H -o name", &pools)
         .with(
@@ -6485,25 +11149,43 @@ fn truenas(mirror: bool) -> (Tree, FakeRunner) {
     }
     for (d, _) in &disks {
         let at = format!("/run/bko-holt/esp-{d}2");
-        runner = runner.with(&format!("mount -t vfat -o ro,noexec,nodev,nosuid /dev/{d}2 {at}"), "").with(&format!("umount {at}"), "");
+        runner = runner
+            .with(
+                &format!("mount -t vfat -o ro,noexec,nodev,nosuid /dev/{d}2 {at}"),
+                "",
+            )
+            .with(&format!("umount {at}"), "");
     }
     for be in bes.iter().filter(|b| **b != active) {
         let at = format!("/run/bko-holt/truenas-be-{be}");
-        runner = runner.with(&format!("mount -t zfs -o ro,zfsutil,nodev,nosuid,noexec boot-pool/ROOT/{be}/etc {at}"), "").with(&format!("umount {at}"), "");
+        runner = runner
+            .with(
+                &format!(
+                    "mount -t zfs -o ro,zfsutil,nodev,nosuid,noexec boot-pool/ROOT/{be}/etc {at}"
+                ),
+                "",
+            )
+            .with(&format!("umount {at}"), "");
     }
     (t, runner)
 }
 
 /// TrueNAS's dump and plan: the source disks going to sda (sdb, sdc);
 /// `extra`, more of load's arguments; `pool_names`, the mapping's renames.
-fn truenas_plan(mirror: bool, extra: &[&str], pool_names: &[(&str, &str)]) -> (Value, crate::load::commands::Built) {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+fn truenas_plan(
+    mirror: bool,
+    extra: &[&str],
+    pool_names: &[(&str, &str)],
+) -> (Value, crate::load::commands::Built) {
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let (t, runner) = truenas(mirror);
     let v = run(&t, true, runner);
     let l = Layout::from_json(v.clone()).unwrap();
     let mut a = vec!["l.json".to_string()];
     a.extend(extra.iter().map(|s| s.to_string()));
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
+        unreachable!()
+    };
     let only = (!o.pools.is_empty()).then(|| l.only_pools(&o.pools));
     let l = only.map_or(l, |x| x.layout);
     let mut pairs: Vec<(String, String)> = vec![("vda".into(), "sda".into())];
@@ -6513,7 +11195,14 @@ fn truenas_plan(mirror: bool, extra: &[&str], pool_names: &[(&str, &str)]) -> (V
             pairs.push(("vdc".into(), "sdc".into()));
         }
     }
-    let m = Mapping { pairs, pool_names: pool_names.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(), ..Mapping::default() };
+    let m = Mapping {
+        pairs,
+        pool_names: pool_names
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect(),
+        ..Mapping::default()
+    };
     (v, commands::build(&l, &o, &m))
 }
 
@@ -6525,44 +11214,134 @@ fn truenas_plan(mirror: bool, extra: &[&str], pool_names: &[(&str, &str)]) -> (V
 /// reinstalls GRUB both ways with one update-grub and no initramfs.
 #[test]
 fn truenas_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let (v, b) = truenas_plan(false, &[], &[]);
     assert_eq!(s(&v, &["os", "id"]), "debian");
     assert_eq!(s(&v, &["os", "version_id"]), "12");
     assert_eq!(s(&v, &["os", "product"]), "TrueNAS 25.10.8");
-    for (p, ver) in [("grub-pc", "2.06-13+deb12u1"), ("grub-efi-amd64-bin", "2.06-13+deb12u1"), ("middlewared", "25.10.8"), ("truenas", "25.10.8")] {
+    for (p, ver) in [
+        ("grub-pc", "2.06-13+deb12u1"),
+        ("grub-efi-amd64-bin", "2.06-13+deb12u1"),
+        ("middlewared", "25.10.8"),
+        ("truenas", "25.10.8"),
+    ] {
         assert_eq!(s(&v, &["boot", "packages", p]), ver, "{p}");
     }
     // The inactive BEs' sources: no `from`, their read-only mount.
     let src = arr(&v, &["storage", "backup_sources"]);
-    let hinted: Vec<(&str, &str, &str)> = src.iter().filter(|b| b.get("from").unwrap().is_null()).map(|b| (s(b, &["path"]), s(b, &["mount", "device"]), s(b, &["mount", "options"]))).collect();
+    let hinted: Vec<(&str, &str, &str)> = src
+        .iter()
+        .filter(|b| b.get("from").unwrap().is_null())
+        .map(|b| {
+            (
+                s(b, &["path"]),
+                s(b, &["mount", "device"]),
+                s(b, &["mount", "options"]),
+            )
+        })
+        .collect();
     assert_eq!(hinted.len(), 2 * 16, "{hinted:?}");
-    assert!(hinted.contains(&("/run/bko-be/25.10.6", "boot-pool/ROOT/25.10.6", "ro,nodev,nosuid,noexec")), "{hinted:?}");
-    assert!(hinted.contains(&("/run/bko-be/25.10.6/usr", "boot-pool/ROOT/25.10.6/usr", "ro,zfsutil,nodev,nosuid,noexec")), "{hinted:?}");
-    assert!(hinted.contains(&("/run/bko-be/25.10.7/var/local/ca-certificates", "boot-pool/ROOT/25.10.7/var/ca-certificates", "ro,zfsutil,nodev,nosuid,noexec")), "{hinted:?}");
-    assert!(!hinted.iter().any(|h| h.0.contains("25.10.8")), "{hinted:?}");
-    let first = src.iter().find(|b| s(b, &["path"]) == "/run/bko-be/25.10.6").unwrap();
-    assert_eq!(s(first, &["note"]), "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here");
+    assert!(
+        hinted.contains(&(
+            "/run/bko-be/25.10.6",
+            "boot-pool/ROOT/25.10.6",
+            "ro,nodev,nosuid,noexec"
+        )),
+        "{hinted:?}"
+    );
+    assert!(
+        hinted.contains(&(
+            "/run/bko-be/25.10.6/usr",
+            "boot-pool/ROOT/25.10.6/usr",
+            "ro,zfsutil,nodev,nosuid,noexec"
+        )),
+        "{hinted:?}"
+    );
+    assert!(
+        hinted.contains(&(
+            "/run/bko-be/25.10.7/var/local/ca-certificates",
+            "boot-pool/ROOT/25.10.7/var/ca-certificates",
+            "ro,zfsutil,nodev,nosuid,noexec"
+        )),
+        "{hinted:?}"
+    );
+    assert!(
+        !hinted.iter().any(|h| h.0.contains("25.10.8")),
+        "{hinted:?}"
+    );
+    let first = src
+        .iter()
+        .find(|b| s(b, &["path"]) == "/run/bko-be/25.10.6")
+        .unwrap();
+    assert_eq!(
+        s(first, &["note"]),
+        "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here"
+    );
     assert_eq!(s(first, &["fstype"]), "zfs");
     // The legacy datasets mounted on the source: sources at their paths.
     let netdata = format!("boot-pool/.system/netdata-{TN_UUID}");
-    for (p, ds) in [("/boot/grub", "boot-pool/grub"), ("/var/db/system", "boot-pool/.system"), ("/var/db/system/cores", "boot-pool/.system/cores"), ("/var/db/system/netdata", netdata.as_str()), ("/", "boot-pool/ROOT/25.10.8"), ("/usr", "boot-pool/ROOT/25.10.8/usr")] {
-        assert!(src.iter().any(|b| s(b, &["path"]) == p && s(b, &["source"]) == ds && s(b, &["from"]) == p), "{p}");
+    for (p, ds) in [
+        ("/boot/grub", "boot-pool/grub"),
+        ("/var/db/system", "boot-pool/.system"),
+        ("/var/db/system/cores", "boot-pool/.system/cores"),
+        ("/var/db/system/netdata", netdata.as_str()),
+        ("/", "boot-pool/ROOT/25.10.8"),
+        ("/usr", "boot-pool/ROOT/25.10.8/usr"),
+    ] {
+        assert!(
+            src.iter()
+                .any(|b| s(b, &["path"]) == p && s(b, &["source"]) == ds && s(b, &["from"]) == p),
+            "{p}"
+        );
     }
     // .system/cores, mounted twice: backed up once, at its first path.
-    assert_eq!(src.iter().filter(|b| s(b, &["source"]) == "boot-pool/.system/cores").count(), 1);
-    assert!(!src.iter().any(|b| s(b, &["path"]) == "/var/lib/systemd/coredump"));
-    let cores = src.iter().find(|b| s(b, &["path"]) == "/var/db/system/cores").unwrap();
-    assert_eq!(s(cores, &["note"]), "ZFS dataset boot-pool/.system/cores is also mounted at /var/lib/systemd/coredump: backed up here only, once");
+    assert_eq!(
+        src.iter()
+            .filter(|b| s(b, &["source"]) == "boot-pool/.system/cores")
+            .count(),
+        1
+    );
+    assert!(
+        !src.iter()
+            .any(|b| s(b, &["path"]) == "/var/lib/systemd/coredump")
+    );
+    let cores = src
+        .iter()
+        .find(|b| s(b, &["path"]) == "/var/db/system/cores")
+        .unwrap();
+    assert_eq!(
+        s(cores, &["note"]),
+        "ZFS dataset boot-pool/.system/cores is also mounted at /var/lib/systemd/coredump: backed up here only, once"
+    );
     // boot.truenas: every BE, its version (read from its own etc), kernel,
     // keep and clones.
     let tn = v.at(&["boot", "truenas"]).unwrap();
     let bes = arr(tn, &["bes"]);
-    let got: Vec<(&str, &str, &str, bool)> = bes.iter().map(|b| (s(b, &["name"]), s(b, &["version"]), s(b, &["keep"]), b.get("active").unwrap().as_bool().unwrap())).collect();
-    assert_eq!(got, vec![("25.10.6", "25.10.6", "True", false), ("25.10.7", "25.10.7", "False", false), ("25.10.8", "25.10.8", "False", true)]);
+    let got: Vec<(&str, &str, &str, bool)> = bes
+        .iter()
+        .map(|b| {
+            (
+                s(b, &["name"]),
+                s(b, &["version"]),
+                s(b, &["keep"]),
+                b.get("active").unwrap().as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ("25.10.6", "25.10.6", "True", false),
+            ("25.10.7", "25.10.7", "False", false),
+            ("25.10.8", "25.10.8", "False", true)
+        ]
+    );
     assert!(bes.iter().all(|b| s(b, &["kernel"]) == TN_KV));
     assert_eq!(arr(&bes[2], &["clones"]).len(), 5);
-    assert_eq!(s(&bes[2], &["clones", "1", "origin"]), "boot-pool/ROOT/25.10.7/data@install-2026-09-02");
+    assert_eq!(
+        s(&bes[2], &["clones", "1", "origin"]),
+        "boot-pool/ROOT/25.10.7/data@install-2026-09-02"
+    );
     assert_eq!(s(tn, &["esps", "0", "device"]), "vda2");
     assert_eq!(s(tn, &["esps", "0", "label"]), "EFI");
     // The ESP in boot.esps, mounted nowhere, with its files.
@@ -6570,85 +11349,226 @@ fn truenas_guest() {
     assert_eq!(esps.len(), 1);
     assert_eq!(s(&esps[0], &["device"]), "vda2");
     assert!(esps[0].get("mounted_at").unwrap().is_null());
-    let files: Vec<&str> = arr(&esps[0], &["contents", "files"]).iter().map(|f| s(f, &["path"])).collect();
-    assert!(files.contains(&"EFI/debian/grubx64.efi") && files.contains(&"EFI/boot/bootx64.efi"), "{files:?}");
-    let w: Vec<&str> = arr(&v, &["warnings"]).iter().filter_map(Value::as_str).collect();
+    let files: Vec<&str> = arr(&esps[0], &["contents", "files"])
+        .iter()
+        .map(|f| s(f, &["path"]))
+        .collect();
+    assert!(
+        files.contains(&"EFI/debian/grubx64.efi") && files.contains(&"EFI/boot/bootx64.efi"),
+        "{files:?}"
+    );
+    let w: Vec<&str> = arr(&v, &["warnings"])
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
     assert!(w.is_empty(), "{w:?}");
 
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let text = |st: Stage| -> String { b.stage(st).iter().map(Cmd::shell).collect() };
     // readonly=on nowhere before the boot stage; there, once for each of
     // the 4 read-only datasets of each BE, after everything else.
-    for st in [Stage::Partition, Stage::Assemble, Stage::Format, Stage::Mount, Stage::Restore] {
+    for st in [
+        Stage::Partition,
+        Stage::Assemble,
+        Stage::Format,
+        Stage::Mount,
+        Stage::Restore,
+    ] {
         assert!(!text(st).contains("readonly=on"), "{st:?}: {}", text(st));
     }
     let fmt = text(Stage::Format);
-    assert!(!fmt.contains(" -t ") || !fmt.contains("zpool create -f -d -o cachefile=none -t"), "{fmt}");
+    assert!(
+        !fmt.contains(" -t ") || !fmt.contains("zpool create -f -d -o cachefile=none -t"),
+        "{fmt}"
+    );
     let asm = text(Stage::Assemble);
-    assert!(asm.lines().any(|l| l.starts_with("zpool create ") && l.contains("-o compatibility=grub2") && l.contains(" boot-pool /dev/sda3") && !l.contains(" -t ")), "{asm}");
+    assert!(
+        asm.lines().any(|l| l.starts_with("zpool create ")
+            && l.contains("-o compatibility=grub2")
+            && l.contains(" boot-pool /dev/sda3")
+            && !l.contains(" -t ")),
+        "{asm}"
+    );
     for be in ["25.10.6", "25.10.7", "25.10.8"] {
-        assert!(fmt.lines().any(|l| l.starts_with("zfs create -u ") && l.ends_with(&format!(" boot-pool/ROOT/{be}")) && l.contains("truenas:kernel_version=") && l.contains("zectl:keep=")), "{be}: {fmt}");
+        assert!(
+            fmt.lines().any(|l| l.starts_with("zfs create -u ")
+                && l.ends_with(&format!(" boot-pool/ROOT/{be}"))
+                && l.contains("truenas:kernel_version=")
+                && l.contains("zectl:keep=")),
+            "{be}: {fmt}"
+        );
         for (c, _) in TN_CHILDREN {
-            assert!(fmt.lines().any(|l| l.starts_with("zfs create -u ") && l.ends_with(&format!(" boot-pool/ROOT/{be}/{c}"))), "{be}/{c}: {fmt}");
+            assert!(
+                fmt.lines().any(|l| l.starts_with("zfs create -u ")
+                    && l.ends_with(&format!(" boot-pool/ROOT/{be}/{c}"))),
+                "{be}/{c}: {fmt}"
+            );
         }
     }
-    assert!(fmt.contains("zpool set bootfs=boot-pool/ROOT/25.10.8 boot-pool\n"), "{fmt}");
-    assert!(fmt.lines().any(|l| l.starts_with("mkfs.fat ") && l.contains("-i 7E570001") && l.contains("-n EFI") && l.ends_with("/dev/sda2")), "{fmt}");
+    assert!(
+        fmt.contains("zpool set bootfs=boot-pool/ROOT/25.10.8 boot-pool\n"),
+        "{fmt}"
+    );
+    assert!(
+        fmt.lines().any(|l| l.starts_with("mkfs.fat ")
+            && l.contains("-i 7E570001")
+            && l.contains("-n EFI")
+            && l.ends_with("/dev/sda2")),
+        "{fmt}"
+    );
     let bt = text(Stage::Boot);
-    let ro: Vec<&str> = bt.lines().filter(|l| l.starts_with("zfs set readonly=on ")).collect();
+    let ro: Vec<&str> = bt
+        .lines()
+        .filter(|l| l.starts_with("zfs set readonly=on "))
+        .collect();
     assert_eq!(ro.len(), 3 * 4, "{bt}");
-    assert!(ro.contains(&"zfs set readonly=on boot-pool/ROOT/25.10.6") && ro.contains(&"zfs set readonly=on boot-pool/ROOT/25.10.8/usr"), "{ro:?}");
+    assert!(
+        ro.contains(&"zfs set readonly=on boot-pool/ROOT/25.10.6")
+            && ro.contains(&"zfs set readonly=on boot-pool/ROOT/25.10.8/usr"),
+        "{ro:?}"
+    );
     let last_ro = bt.rfind("zfs set readonly=on").unwrap();
-    assert!(bt[last_ro..].lines().count() == 1, "readonly=on comes last: {bt}");
-    assert!(bt.find("zfs set readonly=on").unwrap() > bt.find("update-grub").unwrap() && bt.find("zfs set readonly=on").unwrap() > bt.find("efibootmgr").unwrap(), "{bt}");
+    assert!(
+        bt[last_ro..].lines().count() == 1,
+        "readonly=on comes last: {bt}"
+    );
+    assert!(
+        bt.find("zfs set readonly=on").unwrap() > bt.find("update-grub").unwrap()
+            && bt.find("zfs set readonly=on").unwrap() > bt.find("efibootmgr").unwrap(),
+        "{bt}"
+    );
     // Mounts: the booted BE at /, its children by zfs mount, the legacy
     // datasets by mount, each inactive BE at run/bko-be.
     let mt = text(Stage::Mount);
-    assert!(mt.contains("mount -t zfs boot-pool/ROOT/25.10.8 /mnt/bko-target\n"), "{mt}");
-    assert!(mt.contains("zfs mount boot-pool/ROOT/25.10.8/usr\n"), "{mt}");
-    assert!(mt.contains("mount -t zfs boot-pool/grub /mnt/bko-target/boot/grub\n") && mt.contains("mount -t zfs boot-pool/.system /mnt/bko-target/var/db/system\n") && mt.contains("mount -t zfs boot-pool/.system/cores /mnt/bko-target/var/db/system/cores\n"), "{mt}");
-    assert!(mt.contains(&format!("mount -t zfs {netdata} /mnt/bko-target/var/db/system/netdata\n")), "{mt}");
+    assert!(
+        mt.contains("mount -t zfs boot-pool/ROOT/25.10.8 /mnt/bko-target\n"),
+        "{mt}"
+    );
+    assert!(
+        mt.contains("zfs mount boot-pool/ROOT/25.10.8/usr\n"),
+        "{mt}"
+    );
+    assert!(
+        mt.contains("mount -t zfs boot-pool/grub /mnt/bko-target/boot/grub\n")
+            && mt.contains("mount -t zfs boot-pool/.system /mnt/bko-target/var/db/system\n")
+            && mt.contains(
+                "mount -t zfs boot-pool/.system/cores /mnt/bko-target/var/db/system/cores\n"
+            ),
+        "{mt}"
+    );
+    assert!(
+        mt.contains(&format!(
+            "mount -t zfs {netdata} /mnt/bko-target/var/db/system/netdata\n"
+        )),
+        "{mt}"
+    );
     assert_eq!(mt.matches("boot-pool/grub /mnt").count(), 1, "{mt}");
-    assert_eq!(mt.matches("mount -t zfs boot-pool/.system/cores ").count(), 1, "{mt}");
+    assert_eq!(
+        mt.matches("mount -t zfs boot-pool/.system/cores ").count(),
+        1,
+        "{mt}"
+    );
     assert!(!mt.contains("coredump"), "{mt}");
     assert!(b.notes.iter().any(|n| n == "ZFS dataset boot-pool/.system/cores was also mounted at /var/lib/systemd/coredump on the source: mounted at /var/db/system/cores only here (its files are restored once; the restored system mounts it again)"), "{:?}", b.notes);
-    assert!(!b.notes.iter().any(|n| n.contains("/boot/grub")), "{:?}", b.notes);
+    assert!(
+        !b.notes.iter().any(|n| n.contains("/boot/grub")),
+        "{:?}",
+        b.notes
+    );
     for be in ["25.10.6", "25.10.7"] {
-        let root = mt.find(&format!("mount -t zfs boot-pool/ROOT/{be} /mnt/bko-target/run/bko-be/{be}\n")).expect(&mt);
+        let root = mt
+            .find(&format!(
+                "mount -t zfs boot-pool/ROOT/{be} /mnt/bko-target/run/bko-be/{be}\n"
+            ))
+            .expect(&mt);
         let usr = mt.find(&format!("mount -t zfs -o zfsutil boot-pool/ROOT/{be}/usr /mnt/bko-target/run/bko-be/{be}/usr\n")).expect(&mt);
         let ca = mt.find(&format!("mount -t zfs -o zfsutil boot-pool/ROOT/{be}/var/ca-certificates /mnt/bko-target/run/bko-be/{be}/var/local/ca-certificates\n")).expect(&mt);
-        assert!(mt.find(&format!("mkdir -p /mnt/bko-target/run/bko-be/{be}\n")).unwrap() < root && root < usr && usr < ca, "{mt}");
-        assert!(!mt.contains(&format!("zfs mount boot-pool/ROOT/{be}")), "{mt}");
+        assert!(
+            mt.find(&format!("mkdir -p /mnt/bko-target/run/bko-be/{be}\n"))
+                .unwrap()
+                < root
+                && root < usr
+                && usr < ca,
+            "{mt}"
+        );
+        assert!(
+            !mt.contains(&format!("zfs mount boot-pool/ROOT/{be}")),
+            "{mt}"
+        );
         // Unmounted at the boot stage's start, deepest first, then rmdir.
-        let u_ca = bt.find(&format!("umount /mnt/bko-target/run/bko-be/{be}/var/local/ca-certificates'\n")).expect(&bt);
-        let u_root = bt.find(&format!("umount /mnt/bko-target/run/bko-be/{be}'\n")).expect(&bt);
-        let rm = bt.find(&format!("rmdir /mnt/bko-target/run/bko-be/{be}'\n")).expect(&bt);
+        let u_ca = bt
+            .find(&format!(
+                "umount /mnt/bko-target/run/bko-be/{be}/var/local/ca-certificates'\n"
+            ))
+            .expect(&bt);
+        let u_root = bt
+            .find(&format!("umount /mnt/bko-target/run/bko-be/{be}'\n"))
+            .expect(&bt);
+        let rm = bt
+            .find(&format!("rmdir /mnt/bko-target/run/bko-be/{be}'\n"))
+            .expect(&bt);
         assert!(u_ca < u_root && u_root < rm, "{bt}");
     }
-    let rm_all = bt.find("sh -c '[ ! -d /mnt/bko-target/run/bko-be ] || rmdir /mnt/bko-target/run/bko-be'\n").expect(&bt);
-    assert!(rm_all < bt.find("mount --rbind --make-rslave /run /mnt/bko-target/run").unwrap(), "{bt}");
+    let rm_all = bt
+        .find("sh -c '[ ! -d /mnt/bko-target/run/bko-be ] || rmdir /mnt/bko-target/run/bko-be'\n")
+        .expect(&bt);
+    assert!(
+        rm_all
+            < bt.find("mount --rbind --make-rslave /run /mnt/bko-target/run")
+                .unwrap(),
+        "{bt}"
+    );
     assert!(!bt.contains("rm -rf /mnt/bko-target/run"), "{bt}");
     // The truenas arm: no initramfs, i386-pc on the disk, x86_64-efi on
     // its ESP with the fallback copy, one update-grub, the NVRAM entry.
-    assert!(!bt.contains("update-initramfs") && !bt.contains("truenas-initrd"), "{bt}");
-    assert_eq!(bt.matches("grub-install --target=i386-pc /dev/sda\n").count(), 1, "{bt}");
+    assert!(
+        !bt.contains("update-initramfs") && !bt.contains("truenas-initrd"),
+        "{bt}"
+    );
+    assert_eq!(
+        bt.matches("grub-install --target=i386-pc /dev/sda\n")
+            .count(),
+        1,
+        "{bt}"
+    );
     assert_eq!(bt.matches("grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck --no-floppy --no-nvram\n").count(), 1, "{bt}");
-    let m = bt.find("mount -t vfat /dev/sda2 /mnt/bko-target/boot/efi\n").expect(&bt);
+    let m = bt
+        .find("mount -t vfat /dev/sda2 /mnt/bko-target/boot/efi\n")
+        .expect(&bt);
     let cp = bt.find("cp /mnt/bko-target/boot/efi/EFI/debian/grubx64.efi /mnt/bko-target/boot/efi/EFI/boot/bootx64.efi\n").expect(&bt);
     let um = bt.find("umount /mnt/bko-target/boot/efi\n").expect(&bt);
-    assert!(m < cp && cp < um && um < bt.find("update-grub").unwrap(), "{bt}");
+    assert!(
+        m < cp && cp < um && um < bt.find("update-grub").unwrap(),
+        "{bt}"
+    );
     assert_eq!(bt.matches("update-grub").count(), 1, "{bt}");
     assert!(bt.contains("efibootmgr --quiet --create --disk /dev/sda --part 2 --label TrueNAS-0 --loader '\\EFI\\debian\\grubx64.efi'\n"), "{bt}");
     assert!(b.notes.iter().any(|n| n == "TrueNAS: 3 boot environments restored (active 25.10.8); GRUB reinstalled on 1 disk and 1 ESP, its menu rebuilt"), "{:?}", b.notes);
     assert!(b.notes.iter().any(|n| n == "ZFS: 25.10.8's datasets audit, data, home, root, var/log were clones of 25.10.7's snapshots; they come back as full copies (no snapshot is remade)"), "{:?}", b.notes);
-    assert!(b.notes.iter().any(|n| n.starts_with("ZFS: 25.10.7's datasets audit, data")), "{:?}", b.notes);
-    assert!(!b.notes.iter().any(|n| n.starts_with("ZFS: 25.10.6's")), "{:?}", b.notes);
-    assert!(!text(Stage::Format).contains("@"), "no snapshot or clone is made");
+    assert!(
+        b.notes
+            .iter()
+            .any(|n| n.starts_with("ZFS: 25.10.7's datasets audit, data")),
+        "{:?}",
+        b.notes
+    );
+    assert!(
+        !b.notes.iter().any(|n| n.starts_with("ZFS: 25.10.6's")),
+        "{:?}",
+        b.notes
+    );
+    assert!(
+        !text(Stage::Format).contains("@"),
+        "no snapshot or clone is made"
+    );
     assert!(text(Stage::Close).contains("zpool export boot-pool"));
     // --no-nvram: no entry.
     let (_, b) = truenas_plan(false, &["--no-nvram"], &[]);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(!bt.contains("efibootmgr") && bt.contains("--target=x86_64-efi"), "{bt}");
+    assert!(
+        !bt.contains("efibootmgr") && bt.contains("--target=x86_64-efi"),
+        "{bt}"
+    );
 }
 
 /// What load refuses on TrueNAS: a release other than 25.10, and
@@ -6656,32 +11576,80 @@ fn truenas_guest() {
 #[test]
 fn truenas_refusals() {
     let (_, b) = truenas_plan(false, &[], &[("boot-pool", "boot-pool_bko")]);
-    assert!(b.problems.iter().any(|p| p.starts_with("TrueNAS: boot-pool can't be renamed (its GRUB script names it)")), "{:?}", b.problems);
+    assert!(
+        b.problems.iter().any(
+            |p| p.starts_with("TrueNAS: boot-pool can't be renamed (its GRUB script names it)")
+        ),
+        "{:?}",
+        b.problems
+    );
     let (t, runner) = truenas(false);
     t.file("/etc/version", "24.10.2\n");
     let v = run(&t, true, runner);
     assert_eq!(s(&v, &["os", "product"]), "TrueNAS 24.10.2");
     let l = crate::load::layout::Layout::from_json(v).unwrap();
-    let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-    let b = crate::load::commands::build(&l, &o, &crate::load::target::Mapping { pairs: vec![("vda".into(), "sda".into())], ..Default::default() });
-    assert_eq!(b.problems, vec!["TrueNAS: the source is TrueNAS 24.10.2; bko-holt load supports TrueNAS 25.10 only".to_string()]);
+    let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+        unreachable!()
+    };
+    let b = crate::load::commands::build(
+        &l,
+        &o,
+        &crate::load::target::Mapping {
+            pairs: vec![("vda".into(), "sda".into())],
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        b.problems,
+        vec![
+            "TrueNAS: the source is TrueNAS 24.10.2; bko-holt load supports TrueNAS 25.10 only"
+                .to_string()
+        ]
+    );
     // Without the middleware's marks it's plain Debian 12: no boot.truenas,
     // no product; its inactive BEs are still sources (crate::zfs_be).
     let (t, runner) = truenas(false);
     std::fs::remove_file(t.p("/data/freenas-v1.db")).unwrap();
     let v = run(&t, true, runner);
     assert!(v.at(&["boot", "truenas"]).is_none() && v.at(&["os", "product"]).is_none());
-    assert!(arr(&v, &["storage", "backup_sources"]).iter().any(|b| s(b, &["path"]) == "/run/bko-be/25.10.6"));
+    assert!(
+        arr(&v, &["storage", "backup_sources"])
+            .iter()
+            .any(|b| s(b, &["path"]) == "/run/bko-be/25.10.6")
+    );
     // boot-pool/grub in fstab: mounted once, as the source had it, and
     // no note that it isn't on the layout's disks.
     let (t, runner) = truenas(false);
-    t.file("/etc/fstab", "boot-pool/grub	/boot/grub	zfs	relatime,defaults	0	0
-");
+    t.file(
+        "/etc/fstab",
+        "boot-pool/grub	/boot/grub	zfs	relatime,defaults	0	0
+",
+    );
     let l = crate::load::layout::Layout::from_json(run(&t, true, runner)).unwrap();
-    let b = crate::load::commands::build(&l, &o, &crate::load::target::Mapping { pairs: vec![("vda".into(), "sda".into())], ..Default::default() });
-    let mt: String = b.stage(crate::load::Stage::Mount).iter().map(crate::load::commands::Cmd::shell).collect();
-    assert_eq!(mt.matches("mount -t zfs boot-pool/grub /mnt/bko-target/boot/grub\n").count(), 1, "{mt}");
-    assert!(!b.notes.iter().any(|n| n.contains("/boot/grub")), "{:?}", b.notes);
+    let b = crate::load::commands::build(
+        &l,
+        &o,
+        &crate::load::target::Mapping {
+            pairs: vec![("vda".into(), "sda".into())],
+            ..Default::default()
+        },
+    );
+    let mt: String = b
+        .stage(crate::load::Stage::Mount)
+        .iter()
+        .map(crate::load::commands::Cmd::shell)
+        .collect();
+    assert_eq!(
+        mt.matches("mount -t zfs boot-pool/grub /mnt/bko-target/boot/grub\n")
+            .count(),
+        1,
+        "{mt}"
+    );
+    assert!(
+        !b.notes.iter().any(|n| n.contains("/boot/grub")),
+        "{:?}",
+        b.notes
+    );
 }
 
 /// TrueNAS on a BIOS boot mirror with the data pool tank on vdc: GRUB on
@@ -6689,37 +11657,76 @@ fn truenas_refusals() {
 /// left alone with --pools boot-pool, and a --map of its disk refused.
 #[test]
 fn truenas_mirror_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let (v, b) = truenas_plan(true, &[], &[]);
     assert_eq!(s(&v, &["firmware", "mode"]), "bios");
     let bes = arr(&v, &["boot", "truenas", "bes"]);
     assert_eq!(bes.len(), 2);
     assert_eq!(arr(&v, &["boot", "esps"]).len(), 2);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
-    let text = |b: &crate::load::commands::Built, st: Stage| -> String { b.stage(st).iter().map(Cmd::shell).collect() };
+    let text = |b: &crate::load::commands::Built, st: Stage| -> String {
+        b.stage(st).iter().map(Cmd::shell).collect()
+    };
     let asm = text(&b, Stage::Assemble);
-    assert!(asm.lines().any(|l| l.starts_with("zpool create ") && l.contains("boot-pool mirror /dev/sda3 /dev/sdb3")), "{asm}");
-    assert!(asm.lines().any(|l| l.starts_with("zpool create ") && l.contains(" tank /dev/sdc1")), "{asm}");
+    assert!(
+        asm.lines().any(|l| l.starts_with("zpool create ")
+            && l.contains("boot-pool mirror /dev/sda3 /dev/sdb3")),
+        "{asm}"
+    );
+    assert!(
+        asm.lines()
+            .any(|l| l.starts_with("zpool create ") && l.contains(" tank /dev/sdc1")),
+        "{asm}"
+    );
     let bt = text(&b, Stage::Boot);
     for d in ["sda", "sdb"] {
-        assert_eq!(bt.matches(&format!("grub-install --target=i386-pc /dev/{d}\n")).count(), 1, "{bt}");
-        assert!(bt.contains(&format!("mount -t vfat /dev/{d}2 /mnt/bko-target/boot/efi\n")), "{bt}");
+        assert_eq!(
+            bt.matches(&format!("grub-install --target=i386-pc /dev/{d}\n"))
+                .count(),
+            1,
+            "{bt}"
+        );
+        assert!(
+            bt.contains(&format!(
+                "mount -t vfat /dev/{d}2 /mnt/bko-target/boot/efi\n"
+            )),
+            "{bt}"
+        );
     }
     assert_eq!(bt.matches("--target=x86_64-efi").count(), 2, "{bt}");
     assert_eq!(bt.matches("update-grub").count(), 1, "{bt}");
-    assert!(!bt.contains("efibootmgr") && !bt.contains("update-initramfs"), "{bt}");
+    assert!(
+        !bt.contains("efibootmgr") && !bt.contains("update-initramfs"),
+        "{bt}"
+    );
     assert!(b.notes.iter().any(|n| n == "TrueNAS: 2 boot environments restored (active 25.10.8); GRUB reinstalled on 2 disks and 2 ESPs, its menu rebuilt"), "{:?}", b.notes);
-    assert!(text(&b, Stage::Mount).contains("mount -t zfs tank/.system /mnt/bko-target/var/db/system\n"));
+    assert!(
+        text(&b, Stage::Mount)
+            .contains("mount -t zfs tank/.system /mnt/bko-target/var/db/system\n")
+    );
     // --pools boot-pool: nothing touches vdc's target, tank isn't made,
     // its files aren't restored.
     let (_, b) = truenas_plan(true, &["--pools", "boot-pool", "--repo", "/r"], &[]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
-    let all: String = b.stages.iter().flat_map(|(_, c)| c.iter().map(Cmd::shell)).collect();
+    let all: String = b
+        .stages
+        .iter()
+        .flat_map(|(_, c)| c.iter().map(Cmd::shell))
+        .collect();
     assert!(!all.contains("sdc") && !all.contains("zpool create -f -d -o cachefile=none -o ashift=12 -o feature@async_destroy=enabled -R /mnt/bko-target tank"), "{all}");
-    assert!(!all.lines().any(|l| l.starts_with("zfs create") && l.contains(" tank")), "{all}");
+    assert!(
+        !all.lines()
+            .any(|l| l.starts_with("zfs create") && l.contains(" tank")),
+        "{all}"
+    );
     assert!(!all.contains("mount -t zfs tank/.system"), "{all}");
     let rs = text(&b, Stage::Restore);
-    assert!(rs.contains("!/mnt/tank/**\n") && rs.contains("!/var/db/system/**\n") && rs.contains(&format!("--glob-file {RUN_DIR}/restore.globs")), "{rs}");
+    assert!(
+        rs.contains("!/mnt/tank/**\n")
+            && rs.contains("!/var/db/system/**\n")
+            && rs.contains(&format!("--glob-file {RUN_DIR}/restore.globs")),
+        "{rs}"
+    );
     let (tr, runner) = truenas(true);
     let l = crate::load::layout::Layout::from_json(run(&tr, true, runner)).unwrap();
     let only = l.only_pools(&["boot-pool".to_string()]);
@@ -6727,14 +11734,50 @@ fn truenas_mirror_guest() {
     assert!(only.layout.disk("vdc").is_none() && only.problems.is_empty());
     assert_eq!(only.notes, vec!["--pools: pool tank on vdc left untouched (not partitioned, made or restored); its files under /mnt/tank, /mnt/tank/share, /var/db/system, /var/db/system/cores, /var/db/system/netdata aren't restored".to_string()]);
     assert_eq!(only.guids, vec![("tank".to_string(), "888".to_string())]);
-    let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json", "--pools", "boot-pool", "--map", "vdc=/dev/sdc"].map(String::from)) else { unreachable!() };
-    let sys = crate::load::target::System { disks: vec![], mounts: vec![], pools: vec![], pvs: vec![], devs: vec![], swaps: vec![] };
-    let p = crate::load::target::left_out_pool_problems(&o, &only, &crate::load::target::Mapping::default(), &sys);
-    assert_eq!(p, vec!["--map vdc=/dev/sdc: vdc holds a pool --pools leaves untouched, so it has no target".to_string()]);
+    let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(
+        &["l.json", "--pools", "boot-pool", "--map", "vdc=/dev/sdc"].map(String::from),
+    ) else {
+        unreachable!()
+    };
+    let sys = crate::load::target::System {
+        disks: vec![],
+        mounts: vec![],
+        pools: vec![],
+        pvs: vec![],
+        devs: vec![],
+        swaps: vec![],
+    };
+    let p = crate::load::target::left_out_pool_problems(
+        &o,
+        &only,
+        &crate::load::target::Mapping::default(),
+        &sys,
+    );
+    assert_eq!(
+        p,
+        vec![
+            "--map vdc=/dev/sdc: vdc holds a pool --pools leaves untouched, so it has no target"
+                .to_string()
+        ]
+    );
     // pool_left_out, about vdc; which pool isn't known here: null.
-    assert_eq!((p[0].code, p[0].str_field("disk"), p[0].field("pool").map(crate::json::Value::is_null)), (crate::load::codes::ProblemCode::PoolLeftOut, Some("vdc"), Some(true)));
+    assert_eq!(
+        (
+            p[0].code,
+            p[0].str_field("disk"),
+            p[0].field("pool").map(crate::json::Value::is_null)
+        ),
+        (
+            crate::load::codes::ProblemCode::PoolLeftOut,
+            Some("vdc"),
+            Some(true)
+        )
+    );
     // A name the layout hasn't.
-    assert_eq!(l.only_pools(&["boot".to_string()]).problems[0], "--pools boot: the layout has no ZFS pool boot (it has boot-pool, tank)");
+    assert_eq!(
+        l.only_pools(&["boot".to_string()]).problems[0],
+        "--pools boot: the layout has no ZFS pool boot (it has boot-pool, tank)"
+    );
 }
 
 // ---- ZFSBootMenu on Void ----------------------------------------------------
@@ -6768,7 +11811,20 @@ fn zfsbootmenu(enc: bool) -> (Tree, FakeRunner) {
     write_gpt(
         &mut img,
         512,
-        &GptSpec { disk_guid: "2bb0e0e1-0000-4000-8000-00000000000a", parts: vec![(ESP, ESP_UUID, 2048, 73727, 0, ""), (BF00, "2bb0e0e1-2222-4000-8000-00000000000a", 73728, 190463, 0, "")] },
+        &GptSpec {
+            disk_guid: "2bb0e0e1-0000-4000-8000-00000000000a",
+            parts: vec![
+                (ESP, ESP_UUID, 2048, 73727, 0, ""),
+                (
+                    BF00,
+                    "2bb0e0e1-2222-4000-8000-00000000000a",
+                    73728,
+                    190463,
+                    0,
+                    "",
+                ),
+            ],
+        },
     );
     put(&mut img, 2048, &fat::sample::fat32(71680, 0x2bb0_e0e1, ""));
     let cfg = crate::json::parse(
@@ -6778,9 +11834,24 @@ fn zfsbootmenu(enc: bool) -> (Tree, FakeRunner) {
     )
     .unwrap();
     put(&mut img, 73728, &zfs::pack::vdev(116736 * 512, &cfg));
-    let zbm = sample::uki(sample::RELEASE_OSREL, sample::RELEASE_CMDLINE, sample::RELEASE_KERNEL, true);
+    let zbm = sample::uki(
+        sample::RELEASE_OSREL,
+        sample::RELEASE_CMDLINE,
+        sample::RELEASE_KERNEL,
+        true,
+    );
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
-    let pkgs = [("base-system", "0.114_2"), ("dracut", "106_1"), ("efibootmgr", "18_2"), ("linux", "6.12_1"), ("linux6.12", ZBM_LTS), ("linux-mainline", "6.18_1"), ("linux6.18", ZBM_MAINLINE), ("zfs", "2.4.0_1"), ("dosfstools", "4.2_1")];
+    let pkgs = [
+        ("base-system", "0.114_2"),
+        ("dracut", "106_1"),
+        ("efibootmgr", "18_2"),
+        ("linux", "6.12_1"),
+        ("linux6.12", ZBM_LTS),
+        ("linux-mainline", "6.18_1"),
+        ("linux6.18", ZBM_MAINLINE),
+        ("zfs", "2.4.0_1"),
+        ("dosfstools", "4.2_1"),
+    ];
     let db: String = pkgs.iter().map(|(n, v)| format!("\t<key>{n}</key>\n\t<dict>\n\t\t<key>architecture</key>\n\t\t<string>x86_64</string>\n\t\t<key>pkgver</key>\n\t\t<string>{n}-{v}</string>\n\t</dict>\n")).collect();
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
@@ -6806,27 +11877,49 @@ fn zfsbootmenu(enc: bool) -> (Tree, FakeRunner) {
         .file("/proc/sys/kernel/hostname", "void-zbm\n")
         .file("/proc/cmdline", "root=zfs:zroot/ROOT/void loglevel=4 console=tty0 console=ttyS0,115200n8\n");
     for k in [ZBM_LTS, ZBM_MAINLINE] {
-        t.file(&format!("/boot/vmlinuz-{k}"), "k").file(&format!("/boot/initramfs-{k}.img"), "i").file(&format!("/boot/config-{k}"), "").dir(&format!("/usr/lib/modules/{k}/kernel"));
+        t.file(&format!("/boot/vmlinuz-{k}"), "k")
+            .file(&format!("/boot/initramfs-{k}.img"), "i")
+            .file(&format!("/boot/config-{k}"), "")
+            .dir(&format!("/usr/lib/modules/{k}/kernel"));
     }
     // The inactive BE's /boot, where dump mounts it.
     let at = "/run/bko-holt/zbm-be-void-6.12";
-    t.file(&format!("{at}/boot/vmlinuz-{ZBM_LTS}"), "k").file(&format!("{at}/boot/initramfs-{ZBM_LTS}.img"), "i").file(&format!("{at}/boot/config-{ZBM_LTS}"), "");
+    t.file(&format!("{at}/boot/vmlinuz-{ZBM_LTS}"), "k")
+        .file(&format!("{at}/boot/initramfs-{ZBM_LTS}.img"), "i")
+        .file(&format!("{at}/boot/config-{ZBM_LTS}"), "");
     if enc {
         t.file("/etc/zfs/zroot.key", "not-the-real-passphrase");
     }
     // zfs list's columns (report::zfs_tools_json): name type used available
     // referenced mountpoint canmount mounted encryption encryptionroot
     // keyformat keylocation keystatus origin compression ...
-    let (e, er, kf) = if enc { ("aes-256-gcm", "zroot", "passphrase") } else { ("off", "-", "none") };
+    let (e, er, kf) = if enc {
+        ("aes-256-gcm", "zroot", "passphrase")
+    } else {
+        ("off", "-", "none")
+    };
     let fs = |name: &str, mp: &str, canmount: &str, mounted: &str, keyloc: &str, origin: &str| {
         let ks = if enc { "available" } else { "-" };
-        format!("{name}\tfilesystem\t900\t2000\t96\t{mp}\t{canmount}\t{mounted}\t{e}\t{er}\t{kf}\t{keyloc}\t{ks}\t{origin}\tlz4\t131072\t-\t-\tposix\tsa\tauto\tnone\toff\tsensitive\ton\ton\t1\t-\n")
+        format!(
+            "{name}\tfilesystem\t900\t2000\t96\t{mp}\t{canmount}\t{mounted}\t{e}\t{er}\t{kf}\t{keyloc}\t{ks}\t{origin}\tlz4\t131072\t-\t-\tposix\tsa\tauto\tnone\toff\tsensitive\ton\ton\t1\t-\n"
+        )
     };
-    let rootloc = if enc { "file:///etc/zfs/zroot.key" } else { "none" };
+    let rootloc = if enc {
+        "file:///etc/zfs/zroot.key"
+    } else {
+        "none"
+    };
     let list = fs("zroot", "none", "on", "no", rootloc, "-")
         + &fs("zroot/ROOT", "none", "on", "no", "none", "-")
         + &fs("zroot/ROOT/void", "/", "noauto", "yes", "none", "-")
-        + &fs("zroot/ROOT/void-6.12", "/", "noauto", "no", "none", "zroot/ROOT/void@pre-mainline")
+        + &fs(
+            "zroot/ROOT/void-6.12",
+            "/",
+            "noauto",
+            "no",
+            "none",
+            "zroot/ROOT/void@pre-mainline",
+        )
         + &fs("zroot/home", "/home", "on", "yes", "none", "-");
     let mut props = String::from(
         "zroot\tmountpoint\tnone\tlocal\nzroot\tcompression\tlz4\tlocal\nzroot\tacltype\tposix\tlocal\nzroot\txattr\tsa\tlocal\nzroot\trelatime\ton\tlocal\n\
@@ -6864,16 +11957,32 @@ fn zfsbootmenu(enc: bool) -> (Tree, FakeRunner) {
 
 /// ZFSBootMenu's dump (`v`, changed by `change` first) planned onto sda
 /// with load's arguments `extra`.
-fn zbm_plan(enc: bool, extra: &[&str], change: impl Fn(&mut Value)) -> (Value, crate::load::commands::Built) {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+fn zbm_plan(
+    enc: bool,
+    extra: &[&str],
+    change: impl Fn(&mut Value),
+) -> (Value, crate::load::commands::Built) {
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let (t, runner) = zfsbootmenu(enc);
     let mut v = run(&t, true, runner);
     change(&mut v);
     let l = Layout::from_json(v.clone()).unwrap();
     let mut a = vec!["l.json".to_string()];
     a.extend(extra.iter().map(|s| s.to_string()));
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
-    (v, commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "sda".into())], ..Mapping::default() }))
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
+        unreachable!()
+    };
+    (
+        v,
+        commands::build(
+            &l,
+            &o,
+            &Mapping {
+                pairs: vec![("vda".into(), "sda".into())],
+                ..Mapping::default()
+            },
+        ),
+    )
 }
 
 /// void-zbm read back and planned: the loader named zfsbootmenu from
@@ -6886,32 +11995,65 @@ fn zbm_plan(enc: bool, extra: &[&str], change: impl Fn(&mut Value)) -> (Value, c
 /// source's order.
 #[test]
 fn zfsbootmenu_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     use crate::zfsbootmenu::sample;
     let (v, b) = zbm_plan(false, &[], |_| {});
     assert_eq!(s(&v, &["os", "id"]), "void");
-    let w: Vec<&str> = arr(&v, &["warnings"]).iter().filter_map(Value::as_str).collect();
+    let w: Vec<&str> = arr(&v, &["warnings"])
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
     assert!(w.is_empty(), "{w:?}");
     // The loader, from BootCurrent's file.
     let l = v.at(&["boot", "loader"]).unwrap();
     assert_eq!(s(l, &["name"]), "zfsbootmenu");
     assert!(l.get("package").unwrap().is_null());
-    let why: Vec<&str> = arr(l, &["evidence"]).iter().filter_map(Value::as_str).collect();
-    assert_eq!(why, ["firmware booted \\EFI\\ZBM\\VMLINUZ.EFI", "that is a ZFSBootMenu image (EFI/ZBM/VMLINUZ.EFI)"]);
-    for (p, ver) in [("linux-mainline", "6.18_1"), ("zfs", "2.4.0_1"), ("dracut", "106_1")] {
+    let why: Vec<&str> = arr(l, &["evidence"])
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(
+        why,
+        [
+            "firmware booted \\EFI\\ZBM\\VMLINUZ.EFI",
+            "that is a ZFSBootMenu image (EFI/ZBM/VMLINUZ.EFI)"
+        ]
+    );
+    for (p, ver) in [
+        ("linux-mainline", "6.18_1"),
+        ("zfs", "2.4.0_1"),
+        ("dracut", "106_1"),
+    ] {
         assert_eq!(s(&v, &["boot", "packages", p]), ver, "{p}");
     }
     assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "dracut");
     // boot.zfsbootmenu.
     let z = v.at(&["boot", "zfsbootmenu"]).unwrap();
     let images = arr(z, &["images"]);
-    let paths: Vec<(&str, &str)> = images.iter().map(|i| (s(i, &["path"]), s(i, &["why"]))).collect();
-    assert_eq!(paths, [("EFI/ZBM/VMLINUZ-BACKUP.EFI", "it is in a zbm directory"), ("EFI/ZBM/VMLINUZ.EFI", "it is in a zbm directory")]);
+    let paths: Vec<(&str, &str)> = images
+        .iter()
+        .map(|i| (s(i, &["path"]), s(i, &["why"])))
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            ("EFI/ZBM/VMLINUZ-BACKUP.EFI", "it is in a zbm directory"),
+            ("EFI/ZBM/VMLINUZ.EFI", "it is in a zbm directory")
+        ]
+    );
     let i = &images[1];
-    let zbm = sample::uki(sample::RELEASE_OSREL, sample::RELEASE_CMDLINE, sample::RELEASE_KERNEL, true);
+    let zbm = sample::uki(
+        sample::RELEASE_OSREL,
+        sample::RELEASE_CMDLINE,
+        sample::RELEASE_KERNEL,
+        true,
+    );
     assert_eq!(s(i, &["sha256"]), crate::bytes::sha256_hex(&zbm));
     assert_eq!(u(i, &["size"]), zbm.len() as u64);
-    assert_eq!((s(i, &["esp_device"]), s(i, &["esp_mount"])), ("vda1", "/boot/efi"));
+    assert_eq!(
+        (s(i, &["esp_device"]), s(i, &["esp_mount"])),
+        ("vda1", "/boot/efi")
+    );
     assert!(i.get("version").unwrap().is_null());
     assert_eq!(s(i, &["osrel"]), "Void Linux");
     assert_eq!(s(i, &["kernel"]), sample::RELEASE_KERNEL);
@@ -6920,30 +12062,95 @@ fn zfsbootmenu_guest() {
     assert_eq!(s(z, &["pools", "0", "name"]), "zroot");
     assert_eq!(s(z, &["pools", "0", "bootfs"]), "zroot/ROOT/void");
     let bes = arr(z, &["bes"]);
-    let got: Vec<(&str, bool, bool, bool)> = bes.iter().map(|b| (s(b, &["dataset"]), b.get("bootfs").unwrap().as_bool().unwrap(), b.get("mounted").unwrap().as_bool().unwrap(), b.get("read").unwrap().as_bool().unwrap())).collect();
-    assert_eq!(got, [("zroot/ROOT/void", true, true, true), ("zroot/ROOT/void-6.12", false, false, true)]);
-    let names = |b: &Value, k: &str| -> Vec<String> { arr(b, &[k]).iter().filter_map(Value::as_str).map(str::to_string).collect() };
-    assert_eq!(names(&bes[0], "kernels"), [format!("vmlinuz-{ZBM_LTS}"), format!("vmlinuz-{ZBM_MAINLINE}")]);
-    assert_eq!(names(&bes[0], "initramfs"), [format!("initramfs-{ZBM_LTS}.img"), format!("initramfs-{ZBM_MAINLINE}.img")]);
+    let got: Vec<(&str, bool, bool, bool)> = bes
+        .iter()
+        .map(|b| {
+            (
+                s(b, &["dataset"]),
+                b.get("bootfs").unwrap().as_bool().unwrap(),
+                b.get("mounted").unwrap().as_bool().unwrap(),
+                b.get("read").unwrap().as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("zroot/ROOT/void", true, true, true),
+            ("zroot/ROOT/void-6.12", false, false, true)
+        ]
+    );
+    let names = |b: &Value, k: &str| -> Vec<String> {
+        arr(b, &[k])
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect()
+    };
+    assert_eq!(
+        names(&bes[0], "kernels"),
+        [
+            format!("vmlinuz-{ZBM_LTS}"),
+            format!("vmlinuz-{ZBM_MAINLINE}")
+        ]
+    );
+    assert_eq!(
+        names(&bes[0], "initramfs"),
+        [
+            format!("initramfs-{ZBM_LTS}.img"),
+            format!("initramfs-{ZBM_MAINLINE}.img")
+        ]
+    );
     assert_eq!(names(&bes[1], "kernels"), [format!("vmlinuz-{ZBM_LTS}")]);
-    assert_eq!(names(&bes[1], "initramfs"), [format!("initramfs-{ZBM_LTS}.img")]);
+    assert_eq!(
+        names(&bes[1], "initramfs"),
+        [format!("initramfs-{ZBM_LTS}.img")]
+    );
     assert!(bes[0].get("origin").unwrap().is_null());
     assert_eq!(s(&bes[1], &["origin"]), "zroot/ROOT/void@pre-mainline");
-    assert_eq!(s(&bes[0], &["commandline"]), "loglevel=4 console=tty0 console=ttyS0,115200n8");
+    assert_eq!(
+        s(&bes[0], &["commandline"]),
+        "loglevel=4 console=tty0 console=ttyS0,115200n8"
+    );
     assert_eq!(s(&bes[0], &["commandline_from"]), "zroot/ROOT");
     assert_eq!(s(&bes[1], &["commandline"]), "%{parent} bko.be=void-6.12");
     assert_eq!(s(&bes[1], &["commandline_from"]), "zroot/ROOT/void-6.12");
     // One hinted source: the inactive BE, read-only.
     let src = arr(&v, &["storage", "backup_sources"]);
-    let hinted: Vec<(&str, &str, &str)> = src.iter().filter(|b| b.get("from").unwrap().is_null()).map(|b| (s(b, &["path"]), s(b, &["mount", "device"]), s(b, &["mount", "options"]))).collect();
-    assert_eq!(hinted, [("/run/bko-be/void-6.12", "zroot/ROOT/void-6.12", "ro,zfsutil,nodev,nosuid,noexec")]);
+    let hinted: Vec<(&str, &str, &str)> = src
+        .iter()
+        .filter(|b| b.get("from").unwrap().is_null())
+        .map(|b| {
+            (
+                s(b, &["path"]),
+                s(b, &["mount", "device"]),
+                s(b, &["mount", "options"]),
+            )
+        })
+        .collect();
+    assert_eq!(
+        hinted,
+        [(
+            "/run/bko-be/void-6.12",
+            "zroot/ROOT/void-6.12",
+            "ro,zfsutil,nodev,nosuid,noexec"
+        )]
+    );
 
     // The plan.
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let text = |st: Stage| -> String { b.stage(st).iter().map(Cmd::shell).collect() };
     let asm = text(Stage::Assemble);
-    let create = asm.lines().find(|l| l.starts_with("zpool create ")).expect(&asm);
-    for w in ["-o compatibility=openzfs-2.3-linux", "-o autotrim=on", "-O mountpoint=none", "-R /mnt/bko-target zroot /dev/sda2"] {
+    let create = asm
+        .lines()
+        .find(|l| l.starts_with("zpool create "))
+        .expect(&asm);
+    for w in [
+        "-o compatibility=openzfs-2.3-linux",
+        "-o autotrim=on",
+        "-O mountpoint=none",
+        "-R /mnt/bko-target zroot /dev/sda2",
+    ] {
         assert!(create.contains(w), "{w}: {create}");
     }
     assert!(!create.contains("bootfs"), "{create}");
@@ -6953,22 +12160,40 @@ fn zfsbootmenu_guest() {
     let fmt = text(Stage::Format);
     assert!(fmt.contains("zfs create -u -o mountpoint=none -o 'org.zfsbootmenu:commandline=loglevel=4 console=tty0 console=ttyS0,115200n8' zroot/ROOT\n"), "{fmt}");
     assert!(fmt.contains("zfs create -u -o mountpoint=/ -o canmount=noauto -o 'org.zfsbootmenu:commandline=%{parent} bko.be=void-6.12' zroot/ROOT/void-6.12\n"), "{fmt}");
-    let mk = b.stage(Stage::Format).iter().find(|c| c.argv.last().map(String::as_str) == Some("zroot/ROOT/void-6.12")).unwrap();
-    assert!(mk.argv.contains(&"org.zfsbootmenu:commandline=%{parent} bko.be=void-6.12".to_string()), "{:?}", mk.argv);
-    assert!(fmt.contains("zpool set bootfs=zroot/ROOT/void zroot\n"), "{fmt}");
+    let mk = b
+        .stage(Stage::Format)
+        .iter()
+        .find(|c| c.argv.last().map(String::as_str) == Some("zroot/ROOT/void-6.12"))
+        .unwrap();
+    assert!(
+        mk.argv
+            .contains(&"org.zfsbootmenu:commandline=%{parent} bko.be=void-6.12".to_string()),
+        "{:?}",
+        mk.argv
+    );
+    assert!(
+        fmt.contains("zpool set bootfs=zroot/ROOT/void zroot\n"),
+        "{fmt}"
+    );
     assert!(!fmt.contains('@'), "no snapshot or clone is made: {fmt}");
     assert!(b.notes.iter().any(|n| n == "ZFS: void-6.12 (zroot/ROOT/void-6.12) was a clone of void's snapshots; it comes back as a full copy (no snapshot is remade)"), "{:?}", b.notes);
     // Mounts: the booted BE at /, then the inactive one at run/bko-be.
     let mt = text(Stage::Mount);
     let root = mt.find("zfs mount zroot/ROOT/void\n").expect(&mt);
-    let be = mt.find("mount -t zfs -o zfsutil zroot/ROOT/void-6.12 /mnt/bko-target/run/bko-be/void-6.12\n").expect(&mt);
-    let esp = mt.find("mount -t vfat -o defaults /dev/sda1 /mnt/bko-target/boot/efi\n").expect(&mt);
+    let be = mt
+        .find("mount -t zfs -o zfsutil zroot/ROOT/void-6.12 /mnt/bko-target/run/bko-be/void-6.12\n")
+        .expect(&mt);
+    let esp = mt
+        .find("mount -t vfat -o defaults /dev/sda1 /mnt/bko-target/boot/efi\n")
+        .expect(&mt);
     assert!(root < be && root < esp, "{mt}");
     assert!(!mt.contains("zfs mount zroot/ROOT/void-6.12"), "{mt}");
     // The boot stage: the BE taken away first, the booted BE's initramfs,
     // no loader install, both entries in the source's order.
     let bt = text(Stage::Boot);
-    let um = bt.find("umount /mnt/bko-target/run/bko-be/void-6.12'\n").expect(&bt);
+    let um = bt
+        .find("umount /mnt/bko-target/run/bko-be/void-6.12'\n")
+        .expect(&bt);
     let rm = bt.find("rmdir /mnt/bko-target/run/bko-be'\n").expect(&bt);
     let dracut = bt.find("dracut --force --kver").expect(&bt);
     assert!(um < rm && rm < dracut, "{bt}");
@@ -6986,9 +12211,19 @@ fn zfsbootmenu_guest() {
         "{:?}",
         b.notes
     );
-    assert!(b.notes.iter().any(|n| n.starts_with("ZFSBootMenu: its image EFI/ZBM/VMLINUZ-BACKUP.EFI ")), "{:?}", b.notes);
+    assert!(
+        b.notes
+            .iter()
+            .any(|n| n.starts_with("ZFSBootMenu: its image EFI/ZBM/VMLINUZ-BACKUP.EFI ")),
+        "{:?}",
+        b.notes
+    );
     assert!(b.notes.iter().any(|n| n.starts_with("ZFSBootMenu: only the booted boot environment's initramfs is remade; void-6.12's /boot stay as restored")), "{:?}", b.notes);
-    assert!(!b.notes.iter().any(|n| n.contains("BOOTX64.EFI")), "{:?}", b.notes);
+    assert!(
+        !b.notes.iter().any(|n| n.contains("BOOTX64.EFI")),
+        "{:?}",
+        b.notes
+    );
     assert!(!bt.contains("cmp -s"), "no key file: {bt}");
     // --no-nvram: no entry, and a note that the copy can't boot alone.
     let (_, b) = zbm_plan(false, &["--no-nvram"], |_| {});
@@ -7000,12 +12235,20 @@ fn zfsbootmenu_guest() {
     let with_data = |extra: &[u8]| {
         let extra = extra.to_vec();
         move |v: &mut Value| {
-            let Some(Value::Arr(es)) = v.at(&["boot", "efi", "entries"]).cloned() else { panic!() };
+            let Some(Value::Arr(es)) = v.at(&["boot", "efi", "entries"]).cloned() else {
+                panic!()
+            };
             let mut es = es;
             let Value::Obj(o) = &mut es[0] else { panic!() };
             for (k, x) in o.iter_mut() {
                 match k.as_str() {
-                    "load_option_hex" => *x = Value::from(format!("{}{}", x.as_str().unwrap(), extra.iter().map(|b| format!("{b:02x}")).collect::<String>())),
+                    "load_option_hex" => {
+                        *x = Value::from(format!(
+                            "{}{}",
+                            x.as_str().unwrap(),
+                            extra.iter().map(|b| format!("{b:02x}")).collect::<String>()
+                        ))
+                    }
                     "optional_data_bytes" => *x = Value::from(extra.len() as u64),
                     _ => {}
                 }
@@ -7013,27 +12256,56 @@ fn zfsbootmenu_guest() {
             set_at(v, &["boot", "efi", "entries"], Value::Arr(es));
         }
     };
-    let text_arg: Vec<u8> = "zbm.prefer=zroot/ROOT/void-6.12!".encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect();
+    let text_arg: Vec<u8> = "zbm.prefer=zroot/ROOT/void-6.12!"
+        .encode_utf16()
+        .chain([0])
+        .flat_map(u16::to_le_bytes)
+        .collect();
     let (_, b) = zbm_plan(false, &[], with_data(&text_arg));
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
     assert!(bt.contains("--label 'ZFSBootMenu (Backup)' --loader '\\EFI\\ZBM\\VMLINUZ-BACKUP.EFI' --unicode 'zbm.prefer=zroot/ROOT/void-6.12!'\n"), "{bt}");
-    assert!(bt.contains("--label ZFSBootMenu --loader '\\EFI\\ZBM\\VMLINUZ.EFI'\n"), "{bt}");
+    assert!(
+        bt.contains("--label ZFSBootMenu --loader '\\EFI\\ZBM\\VMLINUZ.EFI'\n"),
+        "{bt}"
+    );
     let (_, b) = zbm_plan(false, &[], with_data(&[1, 2, 0xff]));
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
     let f = format!("{}/efi-optional-data-0000", crate::load::RUN_DIR);
-    assert!(bt.contains(&format!("sh -c 'printf '\\''\\001\\002\\377'\\'' > {f}'\n")), "{bt}");
-    assert!(bt.contains(&format!("--loader '\\EFI\\ZBM\\VMLINUZ-BACKUP.EFI' --append-binary-args {f}\n")), "{bt}");
+    assert!(
+        bt.contains(&format!("sh -c 'printf '\\''\\001\\002\\377'\\'' > {f}'\n")),
+        "{bt}"
+    );
+    assert!(
+        bt.contains(&format!(
+            "--loader '\\EFI\\ZBM\\VMLINUZ-BACKUP.EFI' --append-binary-args {f}\n"
+        )),
+        "{bt}"
+    );
 }
 
 /// What load refuses for ZFSBootMenu: the BEs' pool not in the layout, a
 /// bootfs not among the datasets, no image on an ESP fstab mounts.
 #[test]
 fn zfsbootmenu_refusals() {
-    let (_, b) = zbm_plan(false, &[], |v| set_at(v, &["boot", "zfsbootmenu", "pools"], crate::json::parse(r#"[{"name": "tank", "bootfs": null}]"#).unwrap()));
+    let (_, b) = zbm_plan(false, &[], |v| {
+        set_at(
+            v,
+            &["boot", "zfsbootmenu", "pools"],
+            crate::json::parse(r#"[{"name": "tank", "bootfs": null}]"#).unwrap(),
+        )
+    });
     assert!(b.problems.iter().any(|p| p == "ZFSBootMenu: its boot environments' pool tank isn't in the layout, so nothing it boots would be restored"), "{:?}", b.problems);
-    let (_, b) = zbm_plan(false, &[], |v| set_at(v, &["boot", "zfsbootmenu", "pools"], crate::json::parse(r#"[{"name": "zroot", "bootfs": "zroot/ROOT/gone"}]"#).unwrap()));
+    let (_, b) = zbm_plan(false, &[], |v| {
+        set_at(
+            v,
+            &["boot", "zfsbootmenu", "pools"],
+            crate::json::parse(r#"[{"name": "zroot", "bootfs": "zroot/ROOT/gone"}]"#).unwrap(),
+        )
+    });
     assert!(b.problems.iter().any(|p| p == "ZFSBootMenu: pool zroot's bootfs zroot/ROOT/gone isn't among the layout's datasets, so ZFSBootMenu would have no default boot environment"), "{:?}", b.problems);
-    let (_, b) = zbm_plan(false, &[], |v| set_at(v, &["storage", "fstab"], Value::Arr(vec![])));
+    let (_, b) = zbm_plan(false, &[], |v| {
+        set_at(v, &["storage", "fstab"], Value::Arr(vec![]))
+    });
     assert!(
         b.problems.iter().any(|p| p == "ZFSBootMenu: no image of it is on an ESP that fstab mounts and this layout makes (EFI/ZBM/VMLINUZ-BACKUP.EFI on /boot/efi, EFI/ZBM/VMLINUZ.EFI on /boot/efi), so the restore wouldn't bring it back"),
         "{:?}",
@@ -7048,37 +12320,71 @@ fn zfsbootmenu_refusals() {
 /// source's.
 #[test]
 fn zfsbootmenu_encrypted() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let (v, b) = zbm_plan(true, &[], |_| {});
     assert_eq!(s(&v, &["boot", "loader", "name"]), "zfsbootmenu");
-    assert_eq!(s(&v, &["storage", "zfs", "tools", "datasets", "0", "keylocation"]), "file:///etc/zfs/zroot.key");
+    assert_eq!(
+        s(
+            &v,
+            &["storage", "zfs", "tools", "datasets", "0", "keylocation"]
+        ),
+        "file:///etc/zfs/zroot.key"
+    );
     assert!(
         b.problems.iter().any(|p| p == "ZFS encryption root zroot: give its new key with --key-file zroot=FILE (the source keeps its passphrase in /etc/zfs/zroot.key, inside the encrypted datasets: give that passphrase)"),
         "{:?}",
         b.problems
     );
-    let (_, b) = zbm_plan(true, &["--key-file", "zroot=/root/zroot-passphrase"], |_| {});
+    let (_, b) = zbm_plan(
+        true,
+        &["--key-file", "zroot=/root/zroot-passphrase"],
+        |_| {},
+    );
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let text = |st: Stage| -> String { b.stage(st).iter().map(Cmd::shell).collect() };
     let asm = text(Stage::Assemble);
-    let create = asm.lines().find(|l| l.starts_with("zpool create ")).expect(&asm);
-    for w in ["-O encryption=aes-256-gcm", "-O keyformat=passphrase", "-O keylocation=file:///root/zroot-passphrase", "-O org.zfsbootmenu:keysource=zroot/ROOT/void"] {
+    let create = asm
+        .lines()
+        .find(|l| l.starts_with("zpool create "))
+        .expect(&asm);
+    for w in [
+        "-O encryption=aes-256-gcm",
+        "-O keyformat=passphrase",
+        "-O keylocation=file:///root/zroot-passphrase",
+        "-O org.zfsbootmenu:keysource=zroot/ROOT/void",
+    ] {
         assert!(create.contains(w), "{w}: {create}");
     }
     let bt = text(Stage::Boot);
     // The same key, or one newline more or less at the end (libzfs drops
     // one from a passphrase: the ZFSBootMenu guide's `echo ... >` key file).
     let check = bt.find("sh -c 'cmp -s /root/zroot-passphrase /mnt/bko-target/etc/zfs/zroot.key || echo | cat /mnt/bko-target/etc/zfs/zroot.key - | cmp -s /root/zroot-passphrase - || echo | cat /root/zroot-passphrase - | cmp -s - /mnt/bko-target/etc/zfs/zroot.key || { echo '\\''ZFS encryption root zroot: the restored /etc/zfs/zroot.key is not the key --key-file zroot=/root/zroot-passphrase gave").expect(&bt);
-    let loc = bt.find("zfs set keylocation=file:///etc/zfs/zroot.key zroot\n").expect(&bt);
+    let loc = bt
+        .find("zfs set keylocation=file:///etc/zfs/zroot.key zroot\n")
+        .expect(&bt);
     let dracut = bt.find("dracut --force --kver").expect(&bt);
-    assert!(bt.find("umount /mnt/bko-target/run/bko-be/void-6.12'\n").unwrap() < check && check < loc && loc < dracut, "{bt}");
+    assert!(
+        bt.find("umount /mnt/bko-target/run/bko-be/void-6.12'\n")
+            .unwrap()
+            < check
+            && check < loc
+            && loc < dracut,
+        "{bt}"
+    );
     assert_eq!(bt.matches("cmp -s").count(), 3, "{bt}");
-    assert!(!bt.contains("> /mnt/bko-target/etc/zfs/zroot.key") && !bt.contains("install -m 400 /root/zroot-passphrase"), "the restored key file is never rewritten: {bt}");
+    assert!(
+        !bt.contains("> /mnt/bko-target/etc/zfs/zroot.key")
+            && !bt.contains("install -m 400 /root/zroot-passphrase"),
+        "the restored key file is never rewritten: {bt}"
+    );
     // A raw or hex key without a separate keystore still requires --key-file,
     // rather than encrypting the pool with an unpersisted ephemeral RAM key.
     for fmt in ["raw", "hex"] {
         let (_, b) = zbm_plan(true, &[], |v| {
-            let Some(Value::Arr(mut ds)) = v.at(&["storage", "zfs", "tools", "datasets"]).cloned() else { panic!() };
+            let Some(Value::Arr(mut ds)) = v.at(&["storage", "zfs", "tools", "datasets"]).cloned()
+            else {
+                panic!()
+            };
             set_at(&mut ds[0], &["keyformat"], Value::from(fmt));
             set_at(v, &["storage", "zfs", "tools", "datasets"], Value::Arr(ds));
         });
@@ -7090,23 +12396,42 @@ fn zfsbootmenu_encrypted() {
     }
     // A raw key is read whole: byte for byte only.
     let (_, b) = zbm_plan(true, &["--key-file", "zroot=/root/zroot-key"], |v| {
-        let Some(Value::Arr(mut ds)) = v.at(&["storage", "zfs", "tools", "datasets"]).cloned() else { panic!() };
+        let Some(Value::Arr(mut ds)) = v.at(&["storage", "zfs", "tools", "datasets"]).cloned()
+        else {
+            panic!()
+        };
         set_at(&mut ds[0], &["keyformat"], Value::from("raw"));
         set_at(v, &["storage", "zfs", "tools", "datasets"], Value::Arr(ds));
     });
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(bt.contains("sh -c 'cmp -s /root/zroot-key /mnt/bko-target/etc/zfs/zroot.key || { echo "), "{bt}");
+    assert!(
+        bt.contains("sh -c 'cmp -s /root/zroot-key /mnt/bko-target/etc/zfs/zroot.key || { echo "),
+        "{bt}"
+    );
     assert_eq!(bt.matches("cmp -s").count(), 1, "{bt}");
 }
 
 /// A dump's JSON object member K, for writing (tests that reshape a dump).
 fn member<'a>(v: &'a mut Value, k: &str) -> &'a mut Value {
-    let Value::Obj(o) = v else { panic!("no object for {k}") };
-    &mut o.iter_mut().find(|(n, _)| n == k).unwrap_or_else(|| panic!("no {k}")).1
+    let Value::Obj(o) = v else {
+        panic!("no object for {k}")
+    };
+    &mut o
+        .iter_mut()
+        .find(|(n, _)| n == k)
+        .unwrap_or_else(|| panic!("no {k}"))
+        .1
 }
 
 fn corpus_dump(name: &str) -> Value {
-    crate::json::parse(&std::fs::read_to_string(format!("{}/tests/corpus/{name}/src.json", env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap()
+    crate::json::parse(
+        &std::fs::read_to_string(format!(
+            "{}/tests/corpus/{name}/src.json",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap(),
+    )
+    .unwrap()
 }
 
 /// Off Linux nothing of crate::zfs_be applies: FreeBSD's inactive bectl
@@ -7114,7 +12439,7 @@ fn corpus_dump(name: &str) -> Value {
 /// one, mounts nothing under run/bko-be and leaves no /run behind.
 #[test]
 fn freebsd_bes_stay_empty() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let mut v = corpus_dump("freebsd14");
     let tools = v.at(&["storage", "zfs", "tools"]).unwrap().clone();
     let (bes, src, w) = crate::zfs_be::dump_sources(Some(crate::other::Family::FreeBsd), &tools);
@@ -7124,34 +12449,73 @@ fn freebsd_bes_stay_empty() {
     assert_eq!(src.len(), 1);
     assert_eq!(src[0].path, "/run/bko-be/14.5-RELEASE_2026-11-06_085140");
     let hinted = src[0].to_json();
-    let Value::Obj(st) = member(&mut v, "storage") else { unreachable!() };
+    let Value::Obj(st) = member(&mut v, "storage") else {
+        unreachable!()
+    };
     st.retain(|(k, _)| k != "backup_sources");
     st.push(("backup_sources".into(), Value::Arr(vec![hinted])));
     let l = crate::load::layout::Layout::from_json(v).unwrap();
-    let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-    let b = crate::load::commands::build(&l, &o, &crate::load::target::Mapping { pairs: vec![("vtbd0".into(), "vtbd0".into())], ..Default::default() });
-    let all: String = b.stages.iter().flat_map(|(_, c)| c.iter().map(Cmd::shell)).collect();
+    let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+        unreachable!()
+    };
+    let b = crate::load::commands::build(
+        &l,
+        &o,
+        &crate::load::target::Mapping {
+            pairs: vec![("vtbd0".into(), "vtbd0".into())],
+            ..Default::default()
+        },
+    );
+    let all: String = b
+        .stages
+        .iter()
+        .flat_map(|(_, c)| c.iter().map(Cmd::shell))
+        .collect();
     assert!(!all.contains("bko-be"), "{all}");
-    assert!(b.stage(Stage::Mount).iter().all(|c| !c.argv.iter().any(|a| a.contains("14.5-RELEASE"))));
+    assert!(
+        b.stage(Stage::Mount)
+            .iter()
+            .all(|c| !c.argv.iter().any(|a| a.contains("14.5-RELEASE")))
+    );
 }
 
 /// --pools on a family other than Linux: the glob file the restore names
 /// is written there too.
 #[test]
 fn freebsd_pools_glob_file() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let mut v = corpus_dump("freebsd14");
     let z = member(member(&mut v, "storage"), "zfs");
     let Value::Obj(o) = z else { unreachable!() };
-    o.push(("left_out_paths".into(), Value::Arr(vec![Value::from("/data")])));
+    o.push((
+        "left_out_paths".into(),
+        Value::Arr(vec![Value::from("/data")]),
+    ));
     let l = crate::load::layout::Layout::from_json(v).unwrap();
-    let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string(), "--repo".into(), "/r".into()]) else { unreachable!() };
-    let b = crate::load::commands::build(&l, &o, &crate::load::target::Mapping { pairs: vec![("vtbd0".into(), "vtbd0".into())], ..Default::default() });
+    let Ok(crate::load::Parsed::Run(o)) =
+        crate::load::parse_args(&["l.json".to_string(), "--repo".into(), "/r".into()])
+    else {
+        unreachable!()
+    };
+    let b = crate::load::commands::build(
+        &l,
+        &o,
+        &crate::load::target::Mapping {
+            pairs: vec![("vtbd0".into(), "vtbd0".into())],
+            ..Default::default()
+        },
+    );
     let rs = b.stage(Stage::Restore);
     let want_globs = format!("{RUN_DIR}/restore.globs");
-    let w = rs.iter().position(|c| c.write.as_deref() == Some(want_globs.as_str())).expect("the glob file is written");
+    let w = rs
+        .iter()
+        .position(|c| c.write.as_deref() == Some(want_globs.as_str()))
+        .expect("the glob file is written");
     assert_eq!(rs[w].stdin.as_deref(), Some("!/data/**\n"));
-    let r = rs.iter().position(|c| c.argv.iter().any(|a| a.ends_with("restore.globs")) && c.write.is_none()).expect("the restore names it");
+    let r = rs
+        .iter()
+        .position(|c| c.argv.iter().any(|a| a.ends_with("restore.globs")) && c.write.is_none())
+        .expect("the restore names it");
     assert!(w < r, "{}", rs.iter().map(Cmd::shell).collect::<String>());
 }
 
@@ -7159,7 +12523,7 @@ fn freebsd_pools_glob_file() {
 /// left-out pool on no disk of the layout, one with no GUID.
 #[test]
 fn truenas_pools_refusals() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let (t, runner) = truenas(true);
     let v = run(&t, true, runner);
     let keep = ["boot-pool".to_string()];
@@ -7167,38 +12531,84 @@ fn truenas_pools_refusals() {
     let mut w = v.clone();
     {
         let st = member(&mut w, "storage");
-        let Value::Arr(disks) = member(st, "disks") else { unreachable!() };
-        let vdc = disks.iter_mut().find(|d| d.get("name").and_then(Value::as_str) == Some("vdc")).unwrap();
-        let Value::Arr(parts) = member(vdc, "partitions") else { unreachable!() };
+        let Value::Arr(disks) = member(st, "disks") else {
+            unreachable!()
+        };
+        let vdc = disks
+            .iter_mut()
+            .find(|d| d.get("name").and_then(Value::as_str) == Some("vdc"))
+            .unwrap();
+        let Value::Arr(parts) = member(vdc, "partitions") else {
+            unreachable!()
+        };
         parts.push(crate::json::parse(&format!(r#"{{"name": "vdc2", "number": 2, "start_lba": 194560, "sectors": 1024, "type": "{LINUX}", "content": {{"type": "ext4", "uuid": "5e5e0000-0000-4000-8000-000000000099"}}}}"#)).unwrap());
-        let Value::Arr(src) = member(st, "backup_sources") else { unreachable!() };
+        let Value::Arr(src) = member(st, "backup_sources") else {
+            unreachable!()
+        };
         src.push(crate::json::parse(r#"{"path": "/srv", "from": "/srv", "device": "vdc2", "fstype": "ext4", "source": "/dev/vdc2", "subvol": null}"#).unwrap());
     }
     let l = crate::load::layout::Layout::from_json(w).unwrap();
     let only = l.only_pools(&keep);
     assert!(only.problems.is_empty(), "{:?}", only.problems);
     assert!(only.notes.iter().any(|n| n == "--pools: the left-out disks also hold /srv (vdc2), which aren't made or restored either"), "{:?}", only.notes);
-    let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json", "--pools", "boot-pool", "--repo", "/r"].map(String::from)) else { unreachable!() };
-    let b = crate::load::commands::build(&only.layout, &o, &crate::load::target::Mapping { pairs: vec![("vda".into(), "sda".into()), ("vdb".into(), "sdb".into())], ..Default::default() });
+    let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(
+        &["l.json", "--pools", "boot-pool", "--repo", "/r"].map(String::from),
+    ) else {
+        unreachable!()
+    };
+    let b = crate::load::commands::build(
+        &only.layout,
+        &o,
+        &crate::load::target::Mapping {
+            pairs: vec![("vda".into(), "sda".into()), ("vdb".into(), "sdb".into())],
+            ..Default::default()
+        },
+    );
     let rs: String = b.stage(Stage::Restore).iter().map(Cmd::shell).collect();
-    assert!(rs.contains("!/srv/**\n") && rs.contains("!/mnt/tank/**\n"), "{rs}");
-    assert!(!b.stage(Stage::Format).iter().map(Cmd::shell).collect::<String>().contains("5e5e0000"));
+    assert!(
+        rs.contains("!/srv/**\n") && rs.contains("!/mnt/tank/**\n"),
+        "{rs}"
+    );
+    assert!(
+        !b.stage(Stage::Format)
+            .iter()
+            .map(Cmd::shell)
+            .collect::<String>()
+            .contains("5e5e0000")
+    );
     // tank on no disk of the layout (its label unread).
     let mut w = v.clone();
     {
-        let Value::Arr(disks) = member(member(&mut w, "storage"), "disks") else { unreachable!() };
+        let Value::Arr(disks) = member(member(&mut w, "storage"), "disks") else {
+            unreachable!()
+        };
         disks.retain(|d| d.get("name").and_then(Value::as_str) != Some("vdc"));
     }
-    let only = crate::load::layout::Layout::from_json(w).unwrap().only_pools(&keep);
+    let only = crate::load::layout::Layout::from_json(w)
+        .unwrap()
+        .only_pools(&keep);
     assert!(only.problems.iter().any(|p| p.starts_with("--pools: pool tank is to be left untouched, but no disk of the layout holds a vdev of it")), "{:?}", only.problems);
     // tank with no GUID in the dump.
     let mut w = v.clone();
     {
-        let Value::Arr(labels) = member(member(member(&mut w, "storage"), "zfs"), "pools_from_labels") else { unreachable!() };
+        let Value::Arr(labels) = member(
+            member(member(&mut w, "storage"), "zfs"),
+            "pools_from_labels",
+        ) else {
+            unreachable!()
+        };
         labels.retain(|p| p.get("name").and_then(Value::as_str) != Some("tank"));
     }
-    let only = crate::load::layout::Layout::from_json(w).unwrap().only_pools(&keep);
-    assert!(only.problems.iter().any(|p| p.starts_with("--pools: pool tank has no GUID in the dump")), "{:?}", only.problems);
+    let only = crate::load::layout::Layout::from_json(w)
+        .unwrap()
+        .only_pools(&keep);
+    assert!(
+        only.problems
+            .iter()
+            .any(|p| p.starts_with("--pools: pool tank has no GUID in the dump")),
+        "{:?}",
+        only.problems
+    );
     assert!(only.guids.is_empty());
 }
 
@@ -7212,17 +12622,40 @@ fn truenas_bootfs_and_targets() {
         "size\t31138512896\t-\nashift\t12\tlocal\ncachefile\tnone\tlocal\ncompatibility\tgrub2\tlocal\nbootfs\tboot-pool/ROOT/25.10.7\tlocal\nfeature@async_destroy\tenabled\tlocal\n",
     );
     let v = run(&t, true, runner);
-    let w: Vec<&str> = arr(&v, &["warnings"]).iter().filter_map(Value::as_str).collect();
+    let w: Vec<&str> = arr(&v, &["warnings"])
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
     assert!(w.iter().any(|x| x.starts_with("ZFS pool boot-pool: its bootfs is boot-pool/ROOT/25.10.7, but the booted boot environment is boot-pool/ROOT/25.10.8")), "{w:?}");
-    assert!(!arr(&v, &["storage", "backup_sources"]).iter().any(|b| s(b, &["path"]).starts_with("/run/bko-be/25.10.7")));
+    assert!(
+        !arr(&v, &["storage", "backup_sources"])
+            .iter()
+            .any(|b| s(b, &["path"]).starts_with("/run/bko-be/25.10.7"))
+    );
     let l = crate::load::layout::Layout::from_json(v).unwrap();
-    let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-    let b = crate::load::commands::build(&l, &o, &crate::load::target::Mapping { pairs: vec![("vda".into(), "sda".into())], ..Default::default() });
+    let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+        unreachable!()
+    };
+    let b = crate::load::commands::build(
+        &l,
+        &o,
+        &crate::load::target::Mapping {
+            pairs: vec![("vda".into(), "sda".into())],
+            ..Default::default()
+        },
+    );
     assert!(b.problems.iter().any(|p| p.starts_with("ZFS: the pool's bootfs is boot-pool/ROOT/25.10.7, but the dump was made on boot environment boot-pool/ROOT/25.10.8")), "{:?}", b.problems);
     // The mirror with vdb unmapped.
     let (t, runner) = truenas(true);
     let l = crate::load::layout::Layout::from_json(run(&t, true, runner)).unwrap();
-    let b = crate::load::commands::build(&l, &o, &crate::load::target::Mapping { pairs: vec![("vda".into(), "sda".into()), ("vdc".into(), "sdc".into())], ..Default::default() });
+    let b = crate::load::commands::build(
+        &l,
+        &o,
+        &crate::load::target::Mapping {
+            pairs: vec![("vda".into(), "sda".into()), ("vdc".into(), "sdc".into())],
+            ..Default::default()
+        },
+    );
     assert!(b.problems.iter().any(|p| p == "TrueNAS: vdb holds a boot-pool vdev but has no target, so GRUB can't be installed on it"), "{:?}", b.problems);
 }
 
@@ -7265,13 +12698,24 @@ fn solus(mounted: bool, esp_name: &str) -> Tree {
             disk_guid: "50105050-0000-4000-8000-00000000d15c",
             parts: vec![
                 (ESP, SOLUS_ESP, 4096, 75775, 0, esp_name),
-                (BIOS_BOOT, "50105050-0000-4000-8000-000000000002", 75776, 79871, 0, ""),
+                (
+                    BIOS_BOOT,
+                    "50105050-0000-4000-8000-000000000002",
+                    75776,
+                    79871,
+                    0,
+                    "",
+                ),
                 (LINUX, SOLUS_ROOT_PART, 79872, 196574, 0, ""),
             ],
         },
     );
     put(&mut img, 4096, &fat::sample::fat32(71680, 0x2949_1e0b, ""));
-    put(&mut img, 79872, &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""));
+    put(
+        &mut img,
+        79872,
+        &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""),
+    );
     let utf16 = |s: &str| -> Vec<u8> {
         let mut v = vec![6u8, 0, 0, 0];
         v.extend(s.encode_utf16().chain([0]).flat_map(u16::to_le_bytes));
@@ -7280,11 +12724,27 @@ fn solus(mounted: bool, esp_name: &str) -> Tree {
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
     let mut mountinfo = "26 1 254:3 / / rw,noatime shared:1 - ext4 /dev/vda3 rw\n".to_string();
     if mounted {
-        mountinfo.push_str("40 26 254:1 / /boot rw,relatime shared:9 - vfat /dev/vda1 rw,fmask=0022,dmask=0022\n");
+        mountinfo.push_str(
+            "40 26 254:1 / /boot rw,relatime shared:9 - vfat /dev/vda1 rw,fmask=0022,dmask=0022\n",
+        );
     }
-    let (shim, sd, mm, fb) = (vec![1u8; 300], vec![2u8; 400], vec![3u8; 200], vec![4u8; 100]);
-    let opts = format!("root=PARTUUID={SOLUS_ROOT_PART} rd.vconsole.keymap=us rd.vconsole.font=ter-v32b rw plymouth.use-simpledrm console=tty0 console=ttyS0,115200n8");
-    let ver = |n: &str, v: &str, r: &str| (format!("/var/lib/eopkg/package/{n}-{v}-{r}/metadata.xml"), format!("<PISI>\n    <Source>\n        <Name>{n}</Name>\n    </Source>\n    <Package>\n        <Name>{n}</Name>\n        <Architecture>x86_64</Architecture>\n    </Package>\n</PISI>\n"));
+    let (shim, sd, mm, fb) = (
+        vec![1u8; 300],
+        vec![2u8; 400],
+        vec![3u8; 200],
+        vec![4u8; 100],
+    );
+    let opts = format!(
+        "root=PARTUUID={SOLUS_ROOT_PART} rd.vconsole.keymap=us rd.vconsole.font=ter-v32b rw plymouth.use-simpledrm console=tty0 console=ttyS0,115200n8"
+    );
+    let ver = |n: &str, v: &str, r: &str| {
+        (
+            format!("/var/lib/eopkg/package/{n}-{v}-{r}/metadata.xml"),
+            format!(
+                "<PISI>\n    <Source>\n        <Name>{n}</Name>\n    </Source>\n    <Package>\n        <Name>{n}</Name>\n        <Architecture>x86_64</Architecture>\n    </Package>\n</PISI>\n"
+            ),
+        )
+    };
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 4096, 71680, &img)
         .partition("vda", "vda2", "254:2", 2, 75776, 4096, &img)
@@ -7319,8 +12779,14 @@ fn solus(mounted: bool, esp_name: &str) -> Tree {
     for (i, v) in SOLUS_KVS.iter().enumerate() {
         let kernel = format!("com.solus-project.current.{v}");
         t.file(&format!("/usr/lib64/kernel/{kernel}"), vec![b'k'; 10 + i])
-            .file(&format!("/usr/lib64/kernel/initrd-{kernel}"), vec![b'i'; 20 + i])
-            .file(&format!("/usr/lib64/kernel/cmdline-{v}.current"), "quiet splash\n")
+            .file(
+                &format!("/usr/lib64/kernel/initrd-{kernel}"),
+                vec![b'i'; 20 + i],
+            )
+            .file(
+                &format!("/usr/lib64/kernel/cmdline-{v}.current"),
+                "quiet splash\n",
+            )
             .file(&format!("/usr/lib64/kernel/config-{v}.current"), "")
             .file(&format!("/usr/lib64/kernel/System.map-{v}.current"), "")
             .dir(&format!("/usr/lib64/modules/{v}.current/kernel"));
@@ -7331,10 +12797,16 @@ fn solus(mounted: bool, esp_name: &str) -> Tree {
         t.file("/boot/EFI/com.solus-project/bootloaderx64.efi", &shim)
             .file("/boot/EFI/com.solus-project/grubx64.efi", &sd)
             .file("/boot/EFI/com.solus-project/mmx64.efi", &mm)
-            .file("/boot/EFI/com.solus-project/BOOTX64.CSV", "bootloaderx64.efi,Solus Linux Bootloader,,This is the boot entry for Solus\n")
+            .file(
+                "/boot/EFI/com.solus-project/BOOTX64.CSV",
+                "bootloaderx64.efi,Solus Linux Bootloader,,This is the boot entry for Solus\n",
+            )
             .file("/boot/EFI/BOOT/BOOTX64.EFI", &shim)
             .file("/boot/EFI/BOOT/fbx64.efi", &fb)
-            .file("/boot/loader/loader.conf", format!("default Solus-current-{k}.conf\n"))
+            .file(
+                "/boot/loader/loader.conf",
+                format!("default Solus-current-{k}.conf\n"),
+            )
             .file("/boot/solus-enroll-me.cer", "cert");
         for v in SOLUS_KVS {
             let kernel = format!("com.solus-project.current.{v}");
@@ -7348,7 +12820,17 @@ fn solus(mounted: bool, esp_name: &str) -> Tree {
     } else {
         t.dir("/boot");
     }
-    for (n, v, r) in [("clr-boot-manager", "3.6.0", "39"), ("shim-signed", "15.8", "7"), ("systemd", "257.10", "186"), ("linux-current", "7.3.4", "373"), ("dracut", "108", "44"), ("usysconf", "0.5.13", "49"), ("efibootmgr", "18", "3"), ("e2fsprogs", "1.47.3", "40"), ("dosfstools", "4.2", "9")] {
+    for (n, v, r) in [
+        ("clr-boot-manager", "3.6.0", "39"),
+        ("shim-signed", "15.8", "7"),
+        ("systemd", "257.10", "186"),
+        ("linux-current", "7.3.4", "373"),
+        ("dracut", "108", "44"),
+        ("usysconf", "0.5.13", "49"),
+        ("efibootmgr", "18", "3"),
+        ("e2fsprogs", "1.47.3", "40"),
+        ("dosfstools", "4.2", "9"),
+    ] {
         let (p, m) = ver(n, v, r);
         t.file(&p, m);
     }
@@ -7357,10 +12839,19 @@ fn solus(mounted: bool, esp_name: &str) -> Tree {
 
 /// Solus's plan from a tree, the source disk vda going to vdb.
 fn solus_plan(v: &Value) -> crate::load::commands::Built {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let l = Layout::from_json(v.clone()).unwrap();
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-    commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() })
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+        unreachable!()
+    };
+    commands::build(
+        &l,
+        &o,
+        &Mapping {
+            pairs: vec![("vda".into(), "vdb".into())],
+            ..Mapping::default()
+        },
+    )
 }
 
 /// Solus read back and planned (docs/design/solus.md): supported by its
@@ -7371,11 +12862,21 @@ fn solus_plan(v: &Value) -> crate::load::commands::Built {
 /// the source's boot entry, and the three notes.
 #[test]
 fn solus_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let v = run(&solus(true, "EFI"), true, FakeRunner::default());
-    assert_eq!((s(&v, &["os", "id"]), s(&v, &["os", "version_id"])), ("solus", "4.9"));
+    assert_eq!(
+        (s(&v, &["os", "id"]), s(&v, &["os", "version_id"])),
+        ("solus", "4.9")
+    );
     assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
-    for (p, ver) in [("clr-boot-manager", "3.6.0-39"), ("shim-signed", "15.8-7"), ("linux-current", "7.3.4-373"), ("dracut", "108-44"), ("usysconf", "0.5.13-49"), ("efibootmgr", "18-3")] {
+    for (p, ver) in [
+        ("clr-boot-manager", "3.6.0-39"),
+        ("shim-signed", "15.8-7"),
+        ("linux-current", "7.3.4-373"),
+        ("dracut", "108-44"),
+        ("usysconf", "0.5.13-49"),
+        ("efibootmgr", "18-3"),
+    ] {
         assert_eq!(s(&v, &["boot", "packages", p]), ver, "{p}");
     }
     assert!(v.at(&["boot", "packages", "systemd"]).is_none());
@@ -7384,52 +12885,146 @@ fn solus_guest() {
     assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
     assert_eq!(s(l, &["manager"]), "clr-boot-manager");
     assert_eq!(s(l, &["shim_package"]), "shim-signed");
-    assert!(l.get("evidence").unwrap().compact().contains("that is clr-boot-manager's shim"), "{}", l.compact());
+    assert!(
+        l.get("evidence")
+            .unwrap()
+            .compact()
+            .contains("that is clr-boot-manager's shim"),
+        "{}",
+        l.compact()
+    );
     assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "prebuilt");
     let esps = arr(&v, &["boot", "esps"]);
     assert_eq!(esps.len(), 1);
-    assert_eq!((s(&esps[0], &["device"]), s(&esps[0], &["mounted_at"])), ("vda1", "/boot"));
+    assert_eq!(
+        (s(&esps[0], &["device"]), s(&esps[0], &["mounted_at"])),
+        ("vda1", "/boot")
+    );
     assert_eq!(esps[0].get("in_fstab"), Some(&Value::Bool(false)));
-    let files: Vec<(&str, Option<&str>)> = arr(&esps[0], &["contents", "files"]).iter().map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str))).collect();
-    assert!(files.contains(&("EFI/BOOT/BOOTX64.EFI", Some("EFI/com.solus-project/bootloaderx64.efi"))), "{files:?}");
+    let files: Vec<(&str, Option<&str>)> = arr(&esps[0], &["contents", "files"])
+        .iter()
+        .map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str)))
+        .collect();
+    assert!(
+        files.contains(&(
+            "EFI/BOOT/BOOTX64.EFI",
+            Some("EFI/com.solus-project/bootloaderx64.efi")
+        )),
+        "{files:?}"
+    );
     // The guest's fallback path: shim's copy and its fbx64.efi, no grubx64.efi.
-    assert!(files.contains(&("EFI/BOOT/fbx64.efi", None)) && !files.iter().any(|(p, _)| *p == "EFI/BOOT/grubx64.efi"), "{files:?}");
+    assert!(
+        files.contains(&("EFI/BOOT/fbx64.efi", None))
+            && !files.iter().any(|(p, _)| *p == "EFI/BOOT/grubx64.efi"),
+        "{files:?}"
+    );
     assert_eq!(arr(&v, &["boot", "systemd_boot", "entries"]).len(), 2);
-    assert_eq!(s(&v, &["boot", "systemd_boot", "loader_conf", "default"]), "Solus-current-7.3.4-373.conf");
+    assert_eq!(
+        s(&v, &["boot", "systemd_boot", "loader_conf", "default"]),
+        "Solus-current-7.3.4-373.conf"
+    );
     // Both kernels clr-boot-manager keeps, from /usr/lib64/kernel, as
     // uname -r names them; default-current the newest.
-    let kernels: Vec<(&str, bool, u64)> = arr(&v, &["boot", "kernels", "installed"]).iter().map(|x| (s(x, &["version"]), x.get("running") == Some(&Value::Bool(true)), u(x, &["initrd_bytes"]))).collect();
-    assert_eq!(kernels, vec![("6.18.21-333.current", false, 20), ("7.3.4-373.current", true, 21)]);
-    assert!(arr(&v, &["boot", "kernels", "installed"]).iter().all(|x| x.get("modules_installed") == Some(&Value::Bool(true)) && s(x, &["dir"]) == "/usr/lib64/kernel"));
-    assert_eq!(s(&v, &["boot", "kernels", "symlinks", "/usr/lib64/kernel/default-current"]), "com.solus-project.current.7.3.4-373");
+    let kernels: Vec<(&str, bool, u64)> = arr(&v, &["boot", "kernels", "installed"])
+        .iter()
+        .map(|x| {
+            (
+                s(x, &["version"]),
+                x.get("running") == Some(&Value::Bool(true)),
+                u(x, &["initrd_bytes"]),
+            )
+        })
+        .collect();
+    assert_eq!(
+        kernels,
+        vec![
+            ("6.18.21-333.current", false, 20),
+            ("7.3.4-373.current", true, 21)
+        ]
+    );
+    assert!(
+        arr(&v, &["boot", "kernels", "installed"])
+            .iter()
+            .all(|x| x.get("modules_installed") == Some(&Value::Bool(true))
+                && s(x, &["dir"]) == "/usr/lib64/kernel")
+    );
+    assert_eq!(
+        s(
+            &v,
+            &[
+                "boot",
+                "kernels",
+                "symlinks",
+                "/usr/lib64/kernel/default-current"
+            ]
+        ),
+        "com.solus-project.current.7.3.4-373"
+    );
     assert!(v.at(&["boot", "cbm_esp_unmounted"]).is_none());
     assert!(crate::report::refusal(&v).is_none());
     assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
     // /boot is a backup source, though fstab has no line for it.
-    assert!(arr(&v, &["storage", "backup_sources"]).iter().any(|b| s(b, &["path"]) == "/boot"));
+    assert!(
+        arr(&v, &["storage", "backup_sources"])
+            .iter()
+            .any(|b| s(b, &["path"]) == "/boot")
+    );
     // The BIOS boot partition is a partition like any other.
-    assert_eq!(s(&v, &["storage", "disks", "0", "partitions", "1", "type_name"]), "BIOS boot");
+    assert_eq!(
+        s(
+            &v,
+            &["storage", "disks", "0", "partitions", "1", "type_name"]
+        ),
+        "BIOS boot"
+    );
 
     let b = solus_plan(&v);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let p: String = b.stage(Stage::Partition).iter().map(Cmd::shell).collect();
     assert!(p.contains("/dev/vdb1 : start=4096, size=71680, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, uuid=50105050-0000-4000-8000-000000000001, name=\"EFI\""), "{p}");
-    assert!(p.contains("/dev/vdb2 : start=75776, size=4096, type=21686148-6449-6E6F-744E-656564454649"), "{p}");
+    assert!(
+        p.contains("/dev/vdb2 : start=75776, size=4096, type=21686148-6449-6E6F-744E-656564454649"),
+        "{p}"
+    );
     // root=PARTUUID= in the entries: the root's partition GUID is kept.
     assert!(p.contains(&format!("/dev/vdb3 : start=79872, size=116703, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid={SOLUS_ROOT_PART}")), "{p}");
     let m: String = b.stage(Stage::Mount).iter().map(Cmd::shell).collect();
     // fstab has no /boot: the ESP is mounted there from the dump's mount,
     // after /.
     let root = m.find("/dev/vdb3 /mnt/bko-target\n").expect(&m);
-    let esp = m.find("mount -t vfat -o rw,relatime /dev/vdb1 /mnt/bko-target/boot\n").expect(&m);
+    let esp = m
+        .find("mount -t vfat -o rw,relatime /dev/vdb1 /mnt/bko-target/boot\n")
+        .expect(&m);
     assert!(root < esp, "{m}");
-    assert!(b.notes.iter().any(|n| n.starts_with("Solus: its ESP vda1 is mounted at /boot for the restore")), "{:?}", b.notes);
+    assert!(
+        b.notes
+            .iter()
+            .any(|n| n.starts_with("Solus: its ESP vda1 is mounted at /boot for the restore")),
+        "{:?}",
+        b.notes
+    );
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(!bt.contains("bootctl") && !bt.contains("dracut") && !bt.contains("update-initramfs") && !bt.contains("clr-boot-manager") && !bt.contains("grub-install"), "{bt}");
+    assert!(
+        !bt.contains("bootctl")
+            && !bt.contains("dracut")
+            && !bt.contains("update-initramfs")
+            && !bt.contains("clr-boot-manager")
+            && !bt.contains("grub-install"),
+        "{bt}"
+    );
     assert!(bt.contains("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'Solus Linux Bootloader' --loader '\\EFI\\com.solus-project\\bootloaderx64.efi'\n"), "{bt}");
     assert_eq!(bt.matches("efibootmgr --quiet --create").count(), 1, "{bt}");
-    for n in ["Solus: clr-boot-manager's shim, MokManager, systemd-boot, kernels, initrds and loader entries are the restored ESP's", "Solus: clr-boot-manager isn't run: in the rescue system LoaderDevicePartUUID names the rescue stick's ESP", "Solus: on other hardware with Secure Boot on, Solus's key must be enrolled again: solus-enroll-me.cer", "Solus: each kernel's initrd came prebuilt in its package"] {
-        assert!(b.notes.iter().any(|x| x.starts_with(n)), "{n}: {:?}", b.notes);
+    for n in [
+        "Solus: clr-boot-manager's shim, MokManager, systemd-boot, kernels, initrds and loader entries are the restored ESP's",
+        "Solus: clr-boot-manager isn't run: in the rescue system LoaderDevicePartUUID names the rescue stick's ESP",
+        "Solus: on other hardware with Secure Boot on, Solus's key must be enrolled again: solus-enroll-me.cer",
+        "Solus: each kernel's initrd came prebuilt in its package",
+    ] {
+        assert!(
+            b.notes.iter().any(|x| x.starts_with(n)),
+            "{n}: {:?}",
+            b.notes
+        );
     }
 }
 
@@ -7442,12 +13037,24 @@ fn solus_guest() {
 #[test]
 fn solus_fallback_boot() {
     use crate::efi::{GLOBAL, LOADER};
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let t = solus(true, "EFI");
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
     std::fs::remove_file(t.p(&var("Boot0001"))).unwrap();
     std::fs::remove_file(t.p(&format!("/sys/firmware/efi/efivars/LoaderInfo-{LOADER}"))).unwrap();
-    t.file(&var("Boot0002"), efi_load_option("UEFI Misc Device", 1, 4096, 71680, SOLUS_ESP, "\\EFI\\BOOT\\BOOTX64.EFI")).file(&var("BootOrder"), [7u8, 0, 0, 0, 2, 0]).file(&var("BootCurrent"), [6u8, 0, 0, 0, 2, 0]);
+    t.file(
+        &var("Boot0002"),
+        efi_load_option(
+            "UEFI Misc Device",
+            1,
+            4096,
+            71680,
+            SOLUS_ESP,
+            "\\EFI\\BOOT\\BOOTX64.EFI",
+        ),
+    )
+    .file(&var("BootOrder"), [7u8, 0, 0, 0, 2, 0])
+    .file(&var("BootCurrent"), [6u8, 0, 0, 0, 2, 0]);
     let v = run(&t, true, FakeRunner::default());
     let l = v.at(&["boot", "loader"]).unwrap();
     assert_eq!(s(l, &["name"]), "systemd-boot");
@@ -7458,14 +13065,32 @@ fn solus_fallback_boot() {
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
     assert!(!bt.contains("bootctl") && !bt.contains("dracut"), "{bt}");
-    let misc = bt.find("--label 'UEFI Misc Device' --loader '\\EFI\\BOOT\\BOOTX64.EFI'\n").expect(&bt);
+    let misc = bt
+        .find("--label 'UEFI Misc Device' --loader '\\EFI\\BOOT\\BOOTX64.EFI'\n")
+        .expect(&bt);
     let solus = bt.find("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'Solus Linux Bootloader' --loader '\\EFI\\com.solus-project\\bootloaderx64.efi'\n").expect(&bt);
     assert!(misc < solus, "{bt}");
     // --no-nvram: no entry at all.
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string(), "--no-nvram".into()]) else { unreachable!() };
-    let nb = commands::build(&Layout::from_json(v).unwrap(), &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
-    assert!(!nb.stage(Stage::Boot).iter().map(Cmd::shell).collect::<String>().contains("efibootmgr --quiet --create"));
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string(), "--no-nvram".into()])
+    else {
+        unreachable!()
+    };
+    let nb = commands::build(
+        &Layout::from_json(v).unwrap(),
+        &o,
+        &Mapping {
+            pairs: vec![("vda".into(), "vdb".into())],
+            ..Mapping::default()
+        },
+    );
+    assert!(
+        !nb.stage(Stage::Boot)
+            .iter()
+            .map(Cmd::shell)
+            .collect::<String>()
+            .contains("efibootmgr --quiet --create")
+    );
 }
 
 /// Solus with nothing mounted at /boot (between clr-boot-manager runs):
@@ -7482,7 +13107,10 @@ fn solus_unmounted_esp_refuses() {
     assert!(arr(&v, &["boot", "esps"]).is_empty());
     assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
     assert_eq!(s(&v, &["boot", "cbm_esp_unmounted", "device"]), "vda1");
-    assert_eq!(s(&v, &["boot", "cbm_esp_unmounted", "found_by"]), format!("LoaderDevicePartUUID ({SOLUS_ESP})"));
+    assert_eq!(
+        s(&v, &["boot", "cbm_esp_unmounted", "found_by"]),
+        format!("LoaderDevicePartUUID ({SOLUS_ESP})")
+    );
     assert_eq!(crate::report::refusal(&v).as_deref(), Some(msg));
     let sys = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
     assert_eq!(crate::dump(&sys).unwrap_err(), msg);
@@ -7490,9 +13118,16 @@ fn solus_unmounted_esp_refuses() {
     // on the root's disk.
     for name in ["ESP", "EFI"] {
         let t = solus(false, name);
-        std::fs::remove_file(t.p(&format!("/sys/firmware/efi/efivars/LoaderDevicePartUUID-{LOADER}"))).unwrap();
+        std::fs::remove_file(t.p(&format!(
+            "/sys/firmware/efi/efivars/LoaderDevicePartUUID-{LOADER}"
+        )))
+        .unwrap();
         let v = run(&t, true, FakeRunner::default());
-        let how = if name == "ESP" { "its partition name, ESP" } else { "the ESP type, on the root file system's disk vda" };
+        let how = if name == "ESP" {
+            "its partition name, ESP"
+        } else {
+            "the ESP type, on the root file system's disk vda"
+        };
         assert_eq!(s(&v, &["boot", "cbm_esp_unmounted", "found_by"]), how);
         assert_eq!(crate::report::refusal(&v).as_deref(), Some(msg));
     }
@@ -7501,7 +13136,10 @@ fn solus_unmounted_esp_refuses() {
     let t = solus(false, "EFI");
     std::fs::remove_dir_all(t.p("/var/lib/eopkg/package/clr-boot-manager-3.6.0-39")).unwrap();
     let v = run(&t, true, FakeRunner::default());
-    assert!(v.at(&["boot", "cbm_esp_unmounted"]).is_none() && v.at(&["boot", "loader", "manager"]).is_none());
+    assert!(
+        v.at(&["boot", "cbm_esp_unmounted"]).is_none()
+            && v.at(&["boot", "loader", "manager"]).is_none()
+    );
     assert!(crate::dump(&Sys::new(t.root(), Box::new(FakeRunner::default()), true)).is_ok());
 }
 
@@ -7514,7 +13152,13 @@ fn solus_bios_refused() {
     set_at(&mut v, &["boot", "loader", "firmware"], Value::from("bios"));
     set_at(&mut v, &["boot", "loader", "name"], Value::from("grub"));
     let b = solus_plan(&v);
-    assert!(b.problems.iter().any(|p| p.starts_with("Solus on BIOS (clr-boot-manager's GRUB2 backend) isn't supported by bko-holt load")), "{:?}", b.problems);
+    assert!(
+        b.problems.iter().any(|p| p.starts_with(
+            "Solus on BIOS (clr-boot-manager's GRUB2 backend) isn't supported by bko-holt load"
+        )),
+        "{:?}",
+        b.problems
+    );
 }
 
 // ---- Ubuntu Core 24 -------------------------------------------------------
@@ -7528,8 +13172,15 @@ const UC_SEED_PARTUUID: &str = "954a6c14-611b-4b9f-a025-0c0dcd9ac146";
 
 /// An ext4 sample with label L and UUID U.
 fn ext4_with(label: &str, uuid: &str) -> Vec<u8> {
-    let mut img = ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, label);
-    let b: Vec<u8> = (0..16).map(|i| u8::from_str_radix(&uuid.replace('-', "")[2 * i..2 * i + 2], 16).unwrap()).collect();
+    let mut img = ext::sample::image(
+        0x4 | 0x8 | 0x10 | 0x20,
+        0x2 | 0x40 | 0x80 | 0x200,
+        0x1 | 0x2 | 0x400,
+        label,
+    );
+    let b: Vec<u8> = (0..16)
+        .map(|i| u8::from_str_radix(&uuid.replace('-', "")[2 * i..2 * i + 2], 16).unwrap())
+        .collect();
     img[1024 + 104..1024 + 120].copy_from_slice(&b);
     img
 }
@@ -7554,11 +13205,39 @@ fn snapcore_tree(fde: bool) -> Tree {
         &GptSpec {
             disk_guid: "9c1b5d6e-0000-4000-8000-0000000000c0",
             parts: vec![
-                (BIOS_BOOT, "2f78214f-e265-4e5f-aeb8-8c9d13caa2ce", 2048, 4095, 0, "BIOS Boot"),
+                (
+                    BIOS_BOOT,
+                    "2f78214f-e265-4e5f-aeb8-8c9d13caa2ce",
+                    2048,
+                    4095,
+                    0,
+                    "BIOS Boot",
+                ),
                 (ESP, UC_SEED_PARTUUID, 4096, 77823, 0, "ubuntu-seed"),
-                (LINUX, "5ec61a69-7e69-4f28-b0e6-4ad2ba4d689c", 77824, 86015, 0, "ubuntu-boot"),
-                (LINUX, "fb2212f5-3d65-4656-89ae-18b3bb660bfb", 86016, 126975, 0, "ubuntu-save"),
-                (LINUX, "ca4a89d0-44fa-4fa8-a211-f1ca46ad4f55", 126976, 188415, 0, "ubuntu-data"),
+                (
+                    LINUX,
+                    "5ec61a69-7e69-4f28-b0e6-4ad2ba4d689c",
+                    77824,
+                    86015,
+                    0,
+                    "ubuntu-boot",
+                ),
+                (
+                    LINUX,
+                    "fb2212f5-3d65-4656-89ae-18b3bb660bfb",
+                    86016,
+                    126975,
+                    0,
+                    "ubuntu-save",
+                ),
+                (
+                    LINUX,
+                    "ca4a89d0-44fa-4fa8-a211-f1ca46ad4f55",
+                    126976,
+                    188415,
+                    0,
+                    "ubuntu-data",
+                ),
             ],
         },
     );
@@ -7568,12 +13247,22 @@ fn snapcore_tree(fde: bool) -> Tree {
     let mut core = grub::grub2_diskboot_img();
     core.extend(vec![0x5au8; 3 * 512]);
     put(&mut img, 2048, &core);
-    put(&mut img, 4096, &fat::sample::fat32(73728, 0xaba0_ace2, "ubuntu-seed"));
+    put(
+        &mut img,
+        4096,
+        &fat::sample::fat32(73728, 0xaba0_ace2, "ubuntu-seed"),
+    );
     put(&mut img, 77824, &ext4_with("ubuntu-boot", UC_BOOT_UUID));
     let (save, data) = if fde {
-        (luks::sample::luks2(UC_LUKS_SAVE, "ubuntu-save-enc"), luks::sample::luks2(UC_LUKS_DATA, "ubuntu-data-enc"))
+        (
+            luks::sample::luks2(UC_LUKS_SAVE, "ubuntu-save-enc"),
+            luks::sample::luks2(UC_LUKS_DATA, "ubuntu-data-enc"),
+        )
     } else {
-        (ext4_with("ubuntu-save", UC_SAVE_UUID), ext4_with("ubuntu-data", UC_DATA_UUID))
+        (
+            ext4_with("ubuntu-save", UC_SAVE_UUID),
+            ext4_with("ubuntu-data", UC_DATA_UUID),
+        )
     };
     put(&mut img, 86016, &save);
     put(&mut img, 126976, &data);
@@ -7585,22 +13274,51 @@ fn snapcore_tree(fde: bool) -> Tree {
         .partition("vda", "vda5", "254:5", 5, 126976, 61440, &img)
         .file("/sys/block/vda/device/model", "")
         .disk("loop0", "7:0", &[0u8; 4096], 512)
-        .file("/sys/block/loop0/loop/backing_file", "/var/lib/snapd/snaps/pc_196.snap\n")
+        .file(
+            "/sys/block/loop0/loop/backing_file",
+            "/var/lib/snapd/snaps/pc_196.snap\n",
+        )
         .disk("loop1", "7:1", &[0u8; 4096], 512)
-        .file("/sys/block/loop1/loop/backing_file", "/var/lib/snapd/snaps/core24_2307.snap\n");
+        .file(
+            "/sys/block/loop1/loop/backing_file",
+            "/var/lib/snapd/snaps/core24_2307.snap\n",
+        );
     let (dsrc, ssrc, ddev, sdev) = if fde {
-        let dm = |dev: &str, devno: &str, name: &str, luks_uuid: &str, part: &str, image: Vec<u8>| {
-            t.disk(dev, devno, &image, 512)
-                .file(&format!("/sys/block/{dev}/dm/name"), format!("{name}\n"))
-                .file(&format!("/sys/block/{dev}/dm/uuid"), format!("CRYPT-LUKS2-{}-{name}\n", luks_uuid.replace('-', "")))
-                .file(&format!("/sys/block/{dev}/slaves/{part}"), "")
-                .file(&format!("/sys/block/vda/{part}/holders/{dev}"), "")
-                .symlink(&format!("/dev/mapper/{name}"), &format!("../{dev}"));
-        };
+        let dm =
+            |dev: &str, devno: &str, name: &str, luks_uuid: &str, part: &str, image: Vec<u8>| {
+                t.disk(dev, devno, &image, 512)
+                    .file(&format!("/sys/block/{dev}/dm/name"), format!("{name}\n"))
+                    .file(
+                        &format!("/sys/block/{dev}/dm/uuid"),
+                        format!("CRYPT-LUKS2-{}-{name}\n", luks_uuid.replace('-', "")),
+                    )
+                    .file(&format!("/sys/block/{dev}/slaves/{part}"), "")
+                    .file(&format!("/sys/block/vda/{part}/holders/{dev}"), "")
+                    .symlink(&format!("/dev/mapper/{name}"), &format!("../{dev}"));
+            };
         // snap-bootstrap's names: a new UUID each boot.
-        dm("dm-0", "253:0", "ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388", UC_LUKS_DATA, "vda5", ext4_with("ubuntu-data", UC_DATA_UUID));
-        dm("dm-1", "253:1", "ubuntu-save-49a0d13a-7664-46aa-8520-97d6f9bc9b51", UC_LUKS_SAVE, "vda4", ext4_with("ubuntu-save", UC_SAVE_UUID));
-        ("/dev/mapper/ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388", "/dev/mapper/ubuntu-save-49a0d13a-7664-46aa-8520-97d6f9bc9b51", "253:0", "253:1")
+        dm(
+            "dm-0",
+            "253:0",
+            "ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388",
+            UC_LUKS_DATA,
+            "vda5",
+            ext4_with("ubuntu-data", UC_DATA_UUID),
+        );
+        dm(
+            "dm-1",
+            "253:1",
+            "ubuntu-save-49a0d13a-7664-46aa-8520-97d6f9bc9b51",
+            UC_LUKS_SAVE,
+            "vda4",
+            ext4_with("ubuntu-save", UC_SAVE_UUID),
+        );
+        (
+            "/dev/mapper/ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388",
+            "/dev/mapper/ubuntu-save-49a0d13a-7664-46aa-8520-97d6f9bc9b51",
+            "253:0",
+            "253:1",
+        )
     } else {
         ("/dev/vda5", "/dev/vda4", "254:5", "254:4")
     };
@@ -7630,46 +13348,145 @@ fn snapcore_tree(fde: bool) -> Tree {
         .file("/proc/cmdline", "snapd_recovery_mode=run console=ttyS0,115200n8 console=tty1 panic=-1\n")
         .file(&format!("{d}/modeenv"), crate::snapcore::tests::MODEENV_TEXT)
         .file(&format!("{d}/state.json"), r#"{"data": {"snaps": {"core24": {"type": "base", "sequence": {"revisions": [{"snap": {"name": "core24", "revision": 423}}, {"snap": {"name": "core24", "revision": 2307}}]}, "current": 2307}, "hello": {"type": "app", "sequence": {"revisions": [{"snap": {"name": "hello", "revision": 42}}, {"snap": {"name": "hello", "revision": 29}}]}, "current": 29}, "pc": {"sequence": {"revisions": [{"snap": {"name": "pc", "revision": 178}}, {"snap": {"name": "pc", "revision": 196}}]}, "current": 196}, "pc-kernel": {"sequence": {"revisions": [{"snap": {"name": "pc-kernel", "revision": 1803}}, {"snap": {"name": "pc-kernel", "revision": 3908}}]}, "current": 3908}}}}"#);
-    for f in ["core24_423", "core24_2307", "hello_42", "hello_29", "pc_178", "pc_196", "pc-kernel_1803", "pc-kernel_3908"] {
+    for f in [
+        "core24_423",
+        "core24_2307",
+        "hello_42",
+        "hello_29",
+        "pc_178",
+        "pc_196",
+        "pc-kernel_1803",
+        "pc-kernel_3908",
+    ] {
         t.file(&format!("{d}/snaps/{f}.snap"), "hsqs");
     }
     t.file("/run/mnt/data/bko-mark", "data\n")
         .file("/run/mnt/ubuntu-save/bko-mark", "save\n")
-        .file("/run/mnt/ubuntu-save/device/fde/marker", if fde { "m" } else { "" })
-        .file("/run/mnt/ubuntu-boot/device/model", crate::snapcore::tests::MODEL_TEXT)
+        .file(
+            "/run/mnt/ubuntu-save/device/fde/marker",
+            if fde { "m" } else { "" },
+        )
+        .file(
+            "/run/mnt/ubuntu-boot/device/model",
+            crate::snapcore::tests::MODEL_TEXT,
+        )
         .file("/run/mnt/ubuntu-boot/EFI/boot/grubx64.efi", vec![2u8; 400])
-        .file("/run/mnt/ubuntu-boot/EFI/ubuntu/grub.cfg", "# Snapd-Boot-Config-Edition: 3\n")
-        .file("/run/mnt/ubuntu-boot/EFI/ubuntu/grubenv", crate::snapcore::tests::grubenv(&["kernel_status=", "snapd_extra_cmdline_args=", "snapd_full_cmdline_args=console=ttyS0,115200n8 console=tty1 panic=-1"]))
-        .file("/run/mnt/ubuntu-boot/EFI/ubuntu/pc-kernel_3908.snap/kernel.efi", vec![9u8; 500])
-        .file("/run/mnt/ubuntu-boot/EFI/ubuntu/pc-kernel_1803.snap/kernel.efi", vec![8u8; 500])
-        .symlink("/run/mnt/ubuntu-boot/EFI/ubuntu/kernel.efi", "pc-kernel_3908.snap/kernel.efi")
+        .file(
+            "/run/mnt/ubuntu-boot/EFI/ubuntu/grub.cfg",
+            "# Snapd-Boot-Config-Edition: 3\n",
+        )
+        .file(
+            "/run/mnt/ubuntu-boot/EFI/ubuntu/grubenv",
+            crate::snapcore::tests::grubenv(&[
+                "kernel_status=",
+                "snapd_extra_cmdline_args=",
+                "snapd_full_cmdline_args=console=ttyS0,115200n8 console=tty1 panic=-1",
+            ]),
+        )
+        .file(
+            "/run/mnt/ubuntu-boot/EFI/ubuntu/pc-kernel_3908.snap/kernel.efi",
+            vec![9u8; 500],
+        )
+        .file(
+            "/run/mnt/ubuntu-boot/EFI/ubuntu/pc-kernel_1803.snap/kernel.efi",
+            vec![8u8; 500],
+        )
+        .symlink(
+            "/run/mnt/ubuntu-boot/EFI/ubuntu/kernel.efi",
+            "pc-kernel_3908.snap/kernel.efi",
+        )
         .file("/run/mnt/ubuntu-seed/EFI/boot/bootx64.efi", vec![1u8; 300])
         .file("/run/mnt/ubuntu-seed/EFI/boot/fbx64.efi", vec![3u8; 300])
-        .file("/run/mnt/ubuntu-seed/EFI/ubuntu/shimx64.efi", vec![1u8; 300])
-        .file("/run/mnt/ubuntu-seed/EFI/ubuntu/grubx64.efi", vec![2u8; 400])
-        .file("/run/mnt/ubuntu-seed/EFI/ubuntu/bootx64.csv", "shimx64.efi,ubuntu\n")
-        .file("/run/mnt/ubuntu-seed/EFI/ubuntu/grub.cfg", "# Snapd-Boot-Config-Edition: 2\n")
-        .file("/run/mnt/ubuntu-seed/EFI/ubuntu/grubenv", crate::snapcore::tests::grubenv(&["snapd_recovery_mode=run", "snapd_recovery_system=", "snapd_good_recovery_systems=20240603,bko-20261114", "recovery_system_status=", "try_recovery_system="]));
-    for (label, kernel) in [("20240603", "pc-kernel_1803"), ("bko-20261114", "pc-kernel_3908")] {
-        t.file(&format!("/run/mnt/ubuntu-seed/systems/{label}/model"), crate::snapcore::tests::MODEL_TEXT)
-            .file(&format!("/run/mnt/ubuntu-seed/systems/{label}/grubenv"), crate::snapcore::tests::grubenv(&[&format!("snapd_recovery_kernel=/snaps/{kernel}.snap"), "snapd_extra_cmdline_args=", "snapd_full_cmdline_args=console=ttyS0 console=tty1 panic=-1"]))
-            .dir(&format!("/run/mnt/ubuntu-seed/systems/{label}/assertions"));
+        .file(
+            "/run/mnt/ubuntu-seed/EFI/ubuntu/shimx64.efi",
+            vec![1u8; 300],
+        )
+        .file(
+            "/run/mnt/ubuntu-seed/EFI/ubuntu/grubx64.efi",
+            vec![2u8; 400],
+        )
+        .file(
+            "/run/mnt/ubuntu-seed/EFI/ubuntu/bootx64.csv",
+            "shimx64.efi,ubuntu\n",
+        )
+        .file(
+            "/run/mnt/ubuntu-seed/EFI/ubuntu/grub.cfg",
+            "# Snapd-Boot-Config-Edition: 2\n",
+        )
+        .file(
+            "/run/mnt/ubuntu-seed/EFI/ubuntu/grubenv",
+            crate::snapcore::tests::grubenv(&[
+                "snapd_recovery_mode=run",
+                "snapd_recovery_system=",
+                "snapd_good_recovery_systems=20240603,bko-20261114",
+                "recovery_system_status=",
+                "try_recovery_system=",
+            ]),
+        );
+    for (label, kernel) in [
+        ("20240603", "pc-kernel_1803"),
+        ("bko-20261114", "pc-kernel_3908"),
+    ] {
+        t.file(
+            &format!("/run/mnt/ubuntu-seed/systems/{label}/model"),
+            crate::snapcore::tests::MODEL_TEXT,
+        )
+        .file(
+            &format!("/run/mnt/ubuntu-seed/systems/{label}/grubenv"),
+            crate::snapcore::tests::grubenv(&[
+                &format!("snapd_recovery_kernel=/snaps/{kernel}.snap"),
+                "snapd_extra_cmdline_args=",
+                "snapd_full_cmdline_args=console=ttyS0 console=tty1 panic=-1",
+            ]),
+        )
+        .dir(&format!("/run/mnt/ubuntu-seed/systems/{label}/assertions"));
     }
-    for f in ["core24_423", "core24_2307", "pc_178", "pc_196", "pc-kernel_1803", "pc-kernel_3908", "snapd_21759", "snapd_28332"] {
+    for f in [
+        "core24_423",
+        "core24_2307",
+        "pc_178",
+        "pc_196",
+        "pc-kernel_1803",
+        "pc-kernel_3908",
+        "snapd_21759",
+        "snapd_28332",
+    ] {
         t.file(&format!("/run/mnt/ubuntu-seed/snaps/{f}.snap"), "hsqs");
     }
     if fde {
-        t.file("/run/mnt/ubuntu-boot/device/fde/ubuntu-data.sealed-key", vec![0u8; 64])
-            .file("/run/mnt/ubuntu-seed/device/fde/ubuntu-data.recovery.sealed-key", vec![0u8; 64])
-            .file("/run/mnt/ubuntu-seed/device/fde/ubuntu-save.recovery.sealed-key", vec![0u8; 64]);
+        t.file(
+            "/run/mnt/ubuntu-boot/device/fde/ubuntu-data.sealed-key",
+            vec![0u8; 64],
+        )
+        .file(
+            "/run/mnt/ubuntu-seed/device/fde/ubuntu-data.recovery.sealed-key",
+            vec![0u8; 64],
+        )
+        .file(
+            "/run/mnt/ubuntu-seed/device/fde/ubuntu-save.recovery.sealed-key",
+            vec![0u8; 64],
+        );
     }
     // shim's fallback's entry, from the restored seed (U1).
-    t.symlink(&format!("/dev/disk/by-partuuid/{UC_SEED_PARTUUID}"), "../../vda2")
-        .file("/sys/firmware/efi/fw_platform_size", "64\n")
-        .file(&v_("Boot0007"), efi_load_option("ubuntu", 2, 4096, 73728, UC_SEED_PARTUUID, "\\EFI\\ubuntu\\shimx64.efi"))
-        .file(&v_("BootOrder"), [7u8, 0, 0, 0, 7, 0])
-        .file(&v_("BootCurrent"), [6u8, 0, 0, 0, 7, 0])
-        .file(&v_("SecureBoot"), [6u8, 0, 0, 0, 1]);
+    t.symlink(
+        &format!("/dev/disk/by-partuuid/{UC_SEED_PARTUUID}"),
+        "../../vda2",
+    )
+    .file("/sys/firmware/efi/fw_platform_size", "64\n")
+    .file(
+        &v_("Boot0007"),
+        efi_load_option(
+            "ubuntu",
+            2,
+            4096,
+            73728,
+            UC_SEED_PARTUUID,
+            "\\EFI\\ubuntu\\shimx64.efi",
+        ),
+    )
+    .file(&v_("BootOrder"), [7u8, 0, 0, 0, 7, 0])
+    .file(&v_("BootCurrent"), [6u8, 0, 0, 0, 7, 0])
+    .file(&v_("SecureBoot"), [6u8, 0, 0, 0, 1]);
     t
 }
 
@@ -7685,7 +13502,11 @@ impl crate::sys::Runner for SnapcoreRunner {
     fn run(&self, prog: &str, args: &[&str]) -> Option<String> {
         if prog == "cryptsetup" && args.first() == Some(&"luksHeaderBackup") {
             let dev = std::fs::read(self.root.join(args[1].trim_start_matches('/'))).ok()?;
-            std::fs::write(self.root.join(args[3].trim_start_matches('/')), &dev[..dev.len().min(2 * 16384 + 16744448)]).ok()?;
+            std::fs::write(
+                self.root.join(args[3].trim_start_matches('/')),
+                &dev[..dev.len().min(2 * 16384 + 16744448)],
+            )
+            .ok()?;
             return Some(String::new());
         }
         self.inner.run(prog, args)
@@ -7700,7 +13521,14 @@ fn snapcore_sys(t: &Tree, changes: &str) -> Sys {
     let inner = FakeRunner::default()
         .with(&format!("unsquashfs -cat {base} usr/lib/os-release"), crate::osrel::tests::UBUNTU_CORE)
         .with("snap changes", &format!("ID   Status  Spawn               Ready               Summary\n1    Done    today at 12:30 UTC  today at 12:31 UTC  Initialize system state\n{changes}"));
-    Sys::new(t.root(), Box::new(SnapcoreRunner { inner, root: t.root().to_path_buf() }), true)
+    Sys::new(
+        t.root(),
+        Box::new(SnapcoreRunner {
+            inner,
+            root: t.root().to_path_buf(),
+        }),
+        true,
+    )
 }
 
 /// `run`, through SYS (its runner a SnapcoreRunner).
@@ -7708,7 +13536,10 @@ fn snapcore_run(sys: &Sys) -> Value {
     let os = crate::osrel::read(sys);
     crate::osrel::check_supported(os.as_ref()).unwrap();
     let v = crate::report::build(sys, os.as_ref(), "2026-11-14T00:00:00Z");
-    assert_eq!(crate::json::parse(&v.compact()).unwrap().compact(), v.compact());
+    assert_eq!(
+        crate::json::parse(&v.compact()).unwrap().compact(),
+        v.compact()
+    );
     if let Err(e) = crate::bugreport::check_plan(&v.pretty()) {
         panic!("redaction: {e}");
     }
@@ -7716,12 +13547,21 @@ fn snapcore_run(sys: &Sys) -> Value {
 }
 
 fn snapcore_plan(v: &Value, extra: &[&str]) -> crate::load::commands::Built {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let l = Layout::from_json(v.clone()).unwrap();
     let mut a = vec!["/run/x/l.json".to_string()];
     a.extend(extra.iter().map(|s| s.to_string()));
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
-    commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() })
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
+        unreachable!()
+    };
+    commands::build(
+        &l,
+        &o,
+        &Mapping {
+            pairs: vec![("vda".into(), "vdb".into())],
+            ..Mapping::default()
+        },
+    )
 }
 
 /// The plain uc24: boot.snapcore (docs/design/ubuntu-core.md, U2) from
@@ -7734,7 +13574,7 @@ fn snapcore_plan(v: &Value, extra: &[&str]) -> crate::load::commands::Built {
 /// boot areas, the log; no grub-install, no efibootmgr.
 #[test]
 fn snapcore_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let t = snapcore_tree(false);
     let v = snapcore_run(&snapcore_sys(&t, ""));
     assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
@@ -7742,7 +13582,17 @@ fn snapcore_guest() {
     assert_eq!(crate::snapcore::refusal(&v), None);
     let sc = v.at(&["boot", "snapcore"]).expect("boot.snapcore");
     assert_eq!(sc.get("encrypted"), Some(&Value::Bool(false)));
-    let roles: Vec<(&str, &str, &str, &str)> = arr(sc, &["partitions"]).iter().map(|p| (s(p, &["role"]), s(p, &["device"]), s(p, &["fs_label"]), s(p, &["at"]))).collect();
+    let roles: Vec<(&str, &str, &str, &str)> = arr(sc, &["partitions"])
+        .iter()
+        .map(|p| {
+            (
+                s(p, &["role"]),
+                s(p, &["device"]),
+                s(p, &["fs_label"]),
+                s(p, &["at"]),
+            )
+        })
+        .collect();
     assert_eq!(
         roles,
         vec![
@@ -7756,43 +13606,128 @@ fn snapcore_guest() {
     assert_eq!(s(sc, &["partitions", "0", "partuuid"]), UC_SEED_PARTUUID);
     assert_eq!(s(sc, &["modeenv", "mode"]), "run");
     assert_eq!(arr(sc, &["modeenv", "current_recovery_systems"]).len(), 2);
-    assert_eq!(s(sc, &["modeenv", "current_kernels", "0"]), "pc-kernel_3908.snap");
-    assert_eq!((s(sc, &["model", "gadget"]), s(sc, &["model", "grade"]), s(sc, &["model", "base"])), ("pc", "signed", "core24"));
-    assert!(sc.at(&["model", "storage_safety"]).is_some_and(Value::is_null));
-    assert_eq!((s(sc, &["os_release", "id"]), s(sc, &["os_release", "version_id"])), ("ubuntu-core", "24"));
+    assert_eq!(
+        s(sc, &["modeenv", "current_kernels", "0"]),
+        "pc-kernel_3908.snap"
+    );
+    assert_eq!(
+        (
+            s(sc, &["model", "gadget"]),
+            s(sc, &["model", "grade"]),
+            s(sc, &["model", "base"])
+        ),
+        ("pc", "signed", "core24")
+    );
+    assert!(
+        sc.at(&["model", "storage_safety"])
+            .is_some_and(Value::is_null)
+    );
+    assert_eq!(
+        (
+            s(sc, &["os_release", "id"]),
+            s(sc, &["os_release", "version_id"])
+        ),
+        ("ubuntu-core", "24")
+    );
     assert!(s(sc, &["os_release", "source"]).starts_with("base snap "));
-    assert_eq!(s(sc, &["boot", "run_kernel"]), "pc-kernel_3908.snap/kernel.efi");
+    assert_eq!(
+        s(sc, &["boot", "run_kernel"]),
+        "pc-kernel_3908.snap/kernel.efi"
+    );
     assert_eq!(arr(sc, &["boot", "kernels"]).len(), 2);
     assert_eq!(s(sc, &["seed", "snapd_recovery_mode"]), "run");
-    assert_eq!((s(sc, &["seed", "systems", "0", "label"]), s(sc, &["seed", "systems", "0", "kernel"])), ("20240603", "/snaps/pc-kernel_1803.snap"));
-    assert_eq!(s(sc, &["seed", "systems", "1", "kernel"]), "/snaps/pc-kernel_3908.snap");
-    let hello = arr(sc, &["snaps"]).iter().find(|x| x.get("name").and_then(Value::as_str) == Some("hello")).unwrap();
-    assert_eq!((s(hello, &["current"]), arr(hello, &["revisions"]).len(), arr(hello, &["files"]).len()), ("29", 2, 2));
+    assert_eq!(
+        (
+            s(sc, &["seed", "systems", "0", "label"]),
+            s(sc, &["seed", "systems", "0", "kernel"])
+        ),
+        ("20240603", "/snaps/pc-kernel_1803.snap")
+    );
+    assert_eq!(
+        s(sc, &["seed", "systems", "1", "kernel"]),
+        "/snaps/pc-kernel_3908.snap"
+    );
+    let hello = arr(sc, &["snaps"])
+        .iter()
+        .find(|x| x.get("name").and_then(Value::as_str) == Some("hello"))
+        .unwrap();
+    assert_eq!(
+        (
+            s(hello, &["current"]),
+            arr(hello, &["revisions"]).len(),
+            arr(hello, &["files"]).len()
+        ),
+        ("29", 2, 2)
+    );
     assert_eq!(u(sc, &["changes_in_progress"]), 0);
-    assert_eq!((s(sc, &["boot_areas", "disk"]), s(sc, &["boot_areas", "mbr_code_kind"])), ("vda", "grub2"));
+    assert_eq!(
+        (
+            s(sc, &["boot_areas", "disk"]),
+            s(sc, &["boot_areas", "mbr_code_kind"])
+        ),
+        ("vda", "grub2")
+    );
     assert_eq!(u(sc, &["boot_areas", "bios_boot", "image_bytes"]), 2048);
     assert!(v.at(&["storage", "luks_headers"]).is_none());
     // backup_sources: the four roots, live, with the mounts an offline
     // backup makes; not / (the base snap) nor the binds.
     let bs = arr(&v, &["storage", "backup_sources"]);
-    let paths: Vec<(&str, &str, &str)> = bs.iter().map(|b| (s(b, &["path"]), s(b, &["from"]), s(b, &["mount", "device"]))).collect();
+    let paths: Vec<(&str, &str, &str)> = bs
+        .iter()
+        .map(|b| (s(b, &["path"]), s(b, &["from"]), s(b, &["mount", "device"])))
+        .collect();
     assert_eq!(
         paths,
         vec![
-            ("/run/mnt/ubuntu-seed", "/run/mnt/ubuntu-seed", "/dev/disk/by-uuid/ABA0-ACE2"),
-            ("/run/mnt/ubuntu-boot", "/run/mnt/ubuntu-boot", "/dev/disk/by-uuid/179e8e2f-37a3-46c8-aa2d-352e2d4b6f72"),
-            ("/run/mnt/ubuntu-save", "/run/mnt/ubuntu-save", "/dev/disk/by-uuid/3472dc89-900a-4d67-8ac4-21ba0e88f040"),
-            ("/run/mnt/data", "/run/mnt/data", "/dev/disk/by-uuid/0aa850ad-0ffb-41a5-ba7a-9479f0fb1d79")
+            (
+                "/run/mnt/ubuntu-seed",
+                "/run/mnt/ubuntu-seed",
+                "/dev/disk/by-uuid/ABA0-ACE2"
+            ),
+            (
+                "/run/mnt/ubuntu-boot",
+                "/run/mnt/ubuntu-boot",
+                "/dev/disk/by-uuid/179e8e2f-37a3-46c8-aa2d-352e2d4b6f72"
+            ),
+            (
+                "/run/mnt/ubuntu-save",
+                "/run/mnt/ubuntu-save",
+                "/dev/disk/by-uuid/3472dc89-900a-4d67-8ac4-21ba0e88f040"
+            ),
+            (
+                "/run/mnt/data",
+                "/run/mnt/data",
+                "/dev/disk/by-uuid/0aa850ad-0ffb-41a5-ba7a-9479f0fb1d79"
+            )
         ]
     );
-    assert_eq!(s(&bs[3], &["mount", "options"]), "ro,noload,nodev,nosuid,noexec");
-    assert!(v.at(&["storage", "physical_root"]).is_some_and(Value::is_null));
+    assert_eq!(
+        s(&bs[3], &["mount", "options"]),
+        "ro,noload,nodev,nosuid,noexec"
+    );
+    assert!(
+        v.at(&["storage", "physical_root"])
+            .is_some_and(Value::is_null)
+    );
 
     let b = snapcore_plan(&v, &[]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
-    assert_eq!(crate::other::restored_marker(&v), "run/mnt/data/system-data/var/lib/snapd/modeenv");
-    assert!(b.notes.iter().any(|n| n.starts_with("Ubuntu Core (unencrypted)")), "{:?}", b.notes);
-    assert!(!b.notes.iter().any(|n| n.starts_with("fstab's")), "{:?}", b.notes);
+    assert_eq!(
+        crate::other::restored_marker(&v),
+        "run/mnt/data/system-data/var/lib/snapd/modeenv"
+    );
+    assert!(
+        b.notes
+            .iter()
+            .any(|n| n.starts_with("Ubuntu Core (unencrypted)")),
+        "{:?}",
+        b.notes
+    );
+    assert!(
+        !b.notes.iter().any(|n| n.starts_with("fstab's")),
+        "{:?}",
+        b.notes
+    );
     let text = |st: Stage| b.stage(st).iter().map(Cmd::shell).collect::<String>();
     let part = text(Stage::Partition);
     for l in [
@@ -7805,12 +13740,29 @@ fn snapcore_guest() {
         assert!(part.contains(l), "{l}: {part}");
     }
     let fmt = text(Stage::Format);
-    let line = |end: &str| fmt.lines().find(|l| l.starts_with("mk") && l.split_whitespace().any(|w| w == end)).unwrap_or_else(|| panic!("{end}: {fmt}")).to_string();
+    let line = |end: &str| {
+        fmt.lines()
+            .find(|l| l.starts_with("mk") && l.split_whitespace().any(|w| w == end))
+            .unwrap_or_else(|| panic!("{end}: {fmt}"))
+            .to_string()
+    };
     let seed = line("/dev/vdb2");
-    assert!(seed.starts_with("mkfs.fat") && seed.contains("-i ABA0ACE2") && seed.contains("-n ubuntu-seed"), "{seed}");
-    for (end, label, uuid) in [("/dev/vdb3", "ubuntu-boot", UC_BOOT_UUID), ("/dev/vdb4", "ubuntu-save", UC_SAVE_UUID), ("/dev/vdb5", "ubuntu-data", UC_DATA_UUID)] {
+    assert!(
+        seed.starts_with("mkfs.fat")
+            && seed.contains("-i ABA0ACE2")
+            && seed.contains("-n ubuntu-seed"),
+        "{seed}"
+    );
+    for (end, label, uuid) in [
+        ("/dev/vdb3", "ubuntu-boot", UC_BOOT_UUID),
+        ("/dev/vdb4", "ubuntu-save", UC_SAVE_UUID),
+        ("/dev/vdb5", "ubuntu-data", UC_DATA_UUID),
+    ] {
         let l = line(end);
-        assert!(l.contains(&format!("-L {label}")) && l.contains(&format!("-U {uuid}")), "{l}");
+        assert!(
+            l.contains(&format!("-L {label}")) && l.contains(&format!("-U {uuid}")),
+            "{l}"
+        );
     }
     let m = text(Stage::Mount);
     for l in [
@@ -7828,9 +13780,27 @@ fn snapcore_guest() {
         let x = text(st);
         assert!(x.contains("-path '\\''/mnt/bko-target/run/*'\\'' ! -path /mnt/bko-target/run/mnt ! -path '\\''/mnt/bko-target/run/mnt/*'\\''") || x.contains("no --repo"), "{x}");
     }
-    assert_eq!(bt.matches("! -path /mnt/bko-target/run/mnt ").count(), 2, "{bt}");
-    let run: String = bt.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("\n");
-    for no in ["chroot", "grub-install", "update-grub", "grub-mkconfig", "efibootmgr", "update-initramfs", "dracut", "--rbind", "grub-editenv"] {
+    assert_eq!(
+        bt.matches("! -path /mnt/bko-target/run/mnt ").count(),
+        2,
+        "{bt}"
+    );
+    let run: String = bt
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for no in [
+        "chroot",
+        "grub-install",
+        "update-grub",
+        "grub-mkconfig",
+        "efibootmgr",
+        "update-initramfs",
+        "dracut",
+        "--rbind",
+        "grub-editenv",
+    ] {
         assert!(!run.contains(no), "{no}: {bt}");
     }
     let pos = |x: &str| bt.find(x).unwrap_or_else(|| panic!("{x}: {bt}"));
@@ -7840,11 +13810,26 @@ fn snapcore_guest() {
     let back = pos("atimes.after");
     assert!(check < areas && areas < log && log < back, "{bt}");
     // --new-machine is for FDE; --new-uuids isn't restored.
-    assert!(snapcore_plan(&v, &["--new-machine"]).problems.iter().any(|p| p.starts_with("--new-machine is for an encrypted Ubuntu Core")));
-    assert!(snapcore_plan(&v, &["--new-uuids"]).problems.iter().any(|p| p.starts_with("Ubuntu Core with --new-uuids isn't restored")));
+    assert!(
+        snapcore_plan(&v, &["--new-machine"])
+            .problems
+            .iter()
+            .any(|p| p.starts_with("--new-machine is for an encrypted Ubuntu Core"))
+    );
+    assert!(
+        snapcore_plan(&v, &["--new-uuids"])
+            .problems
+            .iter()
+            .any(|p| p.starts_with("Ubuntu Core with --new-uuids isn't restored"))
+    );
     // Not Ubuntu Core: --new-machine is refused.
     let lv = self::run(&luks_lvm_tree(), true, FakeRunner::default());
-    assert!(snapcore_plan(&lv, &["--new-machine"]).problems.iter().any(|p| p == "--new-machine is for an encrypted Ubuntu Core; this layout isn't one"));
+    assert!(
+        snapcore_plan(&lv, &["--new-machine"])
+            .problems
+            .iter()
+            .any(|p| p == "--new-machine is for an encrypted Ubuntu Core; this layout isn't one")
+    );
 }
 
 /// uc24-fde: both LUKS2 headers kept (dump writes them beside the layout,
@@ -7855,7 +13840,7 @@ fn snapcore_guest() {
 /// recovery system.
 #[test]
 fn snapcore_fde_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let t = snapcore_tree(true);
     let v = snapcore_run(&snapcore_sys(&t, ""));
     let w = arr(&v, &["warnings"]);
@@ -7863,54 +13848,132 @@ fn snapcore_fde_guest() {
     let sc = v.at(&["boot", "snapcore"]).unwrap();
     assert_eq!(sc.get("encrypted"), Some(&Value::Bool(true)));
     let data = arr(sc, &["partitions"])[3].clone();
-    assert_eq!((s(&data, &["luks", "label"]), s(&data, &["luks", "dm_device"]), s(&data, &["fs_label"])), ("ubuntu-data-enc", "dm-0", "ubuntu-data"));
+    assert_eq!(
+        (
+            s(&data, &["luks", "label"]),
+            s(&data, &["luks", "dm_device"]),
+            s(&data, &["fs_label"])
+        ),
+        ("ubuntu-data-enc", "dm-0", "ubuntu-data")
+    );
     assert_eq!(arr(sc, &["save", "fde_files"]).len(), 1);
     assert_eq!(arr(sc, &["seed", "fde_files"]).len(), 2);
     let hs = arr(&v, &["storage", "luks_headers"]);
-    let dev: Vec<(&str, &str)> = hs.iter().map(|h| (s(h, &["device"]), s(h, &["file"]))).collect();
-    assert_eq!(dev, vec![("vda4", "luks2-header-e1ba50bc-76db-4c8b-8e4d-df5b02ec295d.img"), ("vda5", "luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img")]);
-    let hdir = t.p("/run/bko-holt/luks-headers").to_string_lossy().into_owned();
+    let dev: Vec<(&str, &str)> = hs
+        .iter()
+        .map(|h| (s(h, &["device"]), s(h, &["file"])))
+        .collect();
+    assert_eq!(
+        dev,
+        vec![
+            (
+                "vda4",
+                "luks2-header-e1ba50bc-76db-4c8b-8e4d-df5b02ec295d.img"
+            ),
+            (
+                "vda5",
+                "luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img"
+            )
+        ]
+    );
+    let hdir = t
+        .p("/run/bko-holt/luks-headers")
+        .to_string_lossy()
+        .into_owned();
     for h in hs {
-        assert_eq!(crate::luksheader::check_file(&format!("{hdir}/{}", s(h, &["file"])), h), None);
+        assert_eq!(
+            crate::luksheader::check_file(&format!("{hdir}/{}", s(h, &["file"])), h),
+            None
+        );
     }
     // backup_sources: the opened volumes, the hints by the inner UUIDs.
     let bs = arr(&v, &["storage", "backup_sources"]);
-    assert_eq!(s(&bs[3], &["source"]), "/dev/mapper/ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388");
+    assert_eq!(
+        s(&bs[3], &["source"]),
+        "/dev/mapper/ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388"
+    );
     assert_eq!(s(&bs[3], &["device"]), "dm-0");
     assert!(s(&bs[3], &["note"]).contains("bko-holt recovery-key-file"));
 
     let key = "/run/key";
-    let kf = ["--luks-header-dir", &hdir, "--key-file", &format!("ubuntu-data-enc={key}"), "--key-file", &format!("ubuntu-save-enc={key}")];
+    let kf = [
+        "--luks-header-dir",
+        &hdir,
+        "--key-file",
+        &format!("ubuntu-data-enc={key}"),
+        "--key-file",
+        &format!("ubuntu-save-enc={key}"),
+    ];
     let b = snapcore_plan(&v, &kf);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     assert!(b.notes.iter().any(|n| n.contains("On the same machine (the same TPM and Secure Boot variables, dbx included) it boots unattended only if nothing was resealed since the backup")), "{:?}", b.notes);
-    assert!(b.notes.iter().any(|n| n.contains("must be kept with the dump")), "{:?}", b.notes);
+    assert!(
+        b.notes
+            .iter()
+            .any(|n| n.contains("must be kept with the dump")),
+        "{:?}",
+        b.notes
+    );
     // A data segment of a fixed size must fit whole (a dynamic one, only
     // its offset).
-    let fixed = crate::json::parse(&v.compact().replace("\"size\":\"dynamic\"", "\"size\":\"999999999999\"")).unwrap();
+    let fixed = crate::json::parse(
+        &v.compact()
+            .replace("\"size\":\"dynamic\"", "\"size\":\"999999999999\""),
+    )
+    .unwrap();
     let p = snapcore_plan(&fixed, &kf).problems;
-    assert!(p.iter().any(|x| x.starts_with("vda5: its kept LUKS2 header's data segment needs 1000016777215 bytes")), "{p:?}");
-    let text = |b: &crate::load::commands::Built, st: Stage| b.stage(st).iter().map(Cmd::shell).collect::<String>();
+    assert!(
+        p.iter().any(|x| x
+            .starts_with("vda5: its kept LUKS2 header's data segment needs 1000016777215 bytes")),
+        "{p:?}"
+    );
+    let text = |b: &crate::load::commands::Built, st: Stage| {
+        b.stage(st).iter().map(Cmd::shell).collect::<String>()
+    };
     let asm = text(&b, Stage::Assemble);
     for l in [
-        format!("cryptsetup luksHeaderRestore --batch-mode /dev/vdb4 --header-backup-file {hdir}/luks2-header-e1ba50bc-76db-4c8b-8e4d-df5b02ec295d.img\n"),
-        format!("cryptsetup open --key-file={key} /dev/vdb4 ubuntu-save-49a0d13a-7664-46aa-8520-97d6f9bc9b51\n"),
-        format!("cryptsetup luksHeaderRestore --batch-mode /dev/vdb5 --header-backup-file {hdir}/luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img\n"),
-        format!("cryptsetup open --key-file={key} /dev/vdb5 ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388\n"),
+        format!(
+            "cryptsetup luksHeaderRestore --batch-mode /dev/vdb4 --header-backup-file {hdir}/luks2-header-e1ba50bc-76db-4c8b-8e4d-df5b02ec295d.img\n"
+        ),
+        format!(
+            "cryptsetup open --key-file={key} /dev/vdb4 ubuntu-save-49a0d13a-7664-46aa-8520-97d6f9bc9b51\n"
+        ),
+        format!(
+            "cryptsetup luksHeaderRestore --batch-mode /dev/vdb5 --header-backup-file {hdir}/luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img\n"
+        ),
+        format!(
+            "cryptsetup open --key-file={key} /dev/vdb5 ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388\n"
+        ),
     ] {
         assert!(asm.contains(&l), "{l}: {asm}");
     }
-    let cmds: String = asm.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("\n");
+    let cmds: String = asm
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
     for no in ["luksFormat", "luksAddKey", "token"] {
         assert!(!cmds.contains(no), "{no}: {asm}");
     }
     let fmt = text(&b, Stage::Format);
-    assert!(fmt.lines().any(|l| l.starts_with("mke2fs") && l.contains("-L ubuntu-data") && l.contains(UC_DATA_UUID) && l.contains(" /dev/mapper/ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388 ")), "{fmt}");
+    assert!(
+        fmt.lines().any(|l| l.starts_with("mke2fs")
+            && l.contains("-L ubuntu-data")
+            && l.contains(UC_DATA_UUID)
+            && l.contains(" /dev/mapper/ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388 ")),
+        "{fmt}"
+    );
     let m = text(&b, Stage::Mount);
     assert!(m.contains("mount -t ext4 -o defaults /dev/mapper/ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388 /mnt/bko-target/run/mnt/data\n"), "{m}");
-    assert!(text(&b, Stage::Close).contains("cryptsetup close ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388"));
+    assert!(
+        text(&b, Stage::Close)
+            .contains("cryptsetup close ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388")
+    );
     let bt = text(&b, Stage::Boot);
-    assert!(!bt.contains("efibootmgr") && !bt.contains("grub-editenv"), "{bt}");
+    assert!(
+        !bt.contains("efibootmgr") && !bt.contains("grub-editenv"),
+        "{bt}"
+    );
 
     // --new-machine: recover mode of the image's system, by grub-editenv on
     // the restored seed, after the check.
@@ -7919,20 +13982,43 @@ fn snapcore_fde_guest() {
     let bt = text(&b, Stage::Boot);
     let ed = bt.find("grub-editenv /mnt/bko-target/run/mnt/ubuntu-seed/EFI/ubuntu/grubenv set snapd_recovery_mode=recover snapd_recovery_system=20240603\n").unwrap_or_else(|| panic!("{bt}"));
     assert!(bt.find("wk=pc-kernel_3908.snap").unwrap() < ed);
-    assert!(b.notes.iter().any(|n| n.contains("--new-machine: the restored seed's grubenv boots recover mode of 20240603")), "{:?}", b.notes);
+    assert!(
+        b.notes.iter().any(|n| n
+            .contains("--new-machine: the restored seed's grubenv boots recover mode of 20240603")),
+        "{:?}",
+        b.notes
+    );
 
     // Without the key, or the header file: refused, naming what to do.
     let p = snapcore_plan(&v, &["--luks-header-dir", &hdir]).problems;
     assert!(p.iter().any(|x| x.contains("vda5: its LUKS2 header is kept, so it opens only with a key it already has: give --key-file ubuntu-data-enc=FILE") && x.contains("bko-holt recovery-key-file FILE")), "{p:?}");
     let pc = snapcore_plan(&v, &["--luks-header-dir", &hdir]).coded_problems();
-    assert!(pc.iter().any(|x| x.code == crate::load::codes::ProblemCode::KeptHeaderKeyNeeded && x.str_field("name") == Some("ubuntu-data-enc")), "{pc:?}");
+    assert!(
+        pc.iter().any(
+            |x| x.code == crate::load::codes::ProblemCode::KeptHeaderKeyNeeded
+                && x.str_field("name") == Some("ubuntu-data-enc")
+        ),
+        "{pc:?}"
+    );
     let p = snapcore_plan(&v, &kf[2..]).problems;
     assert!(p.iter().any(|x| x.starts_with("vda5: the LUKS2 header the dump kept: /run/x/luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img") && x.contains("`bko-holt luks-headers` fetches it from the backup")), "{p:?}");
-    std::fs::write(format!("{hdir}/luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img"), b"LUKS").unwrap();
+    std::fs::write(
+        format!("{hdir}/luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img"),
+        b"LUKS",
+    )
+    .unwrap();
     let p = snapcore_plan(&v, &kf).problems;
-    assert!(p.iter().any(|x| x.contains("isn't the header the dump kept (its SHA-256 differs)")), "{p:?}");
+    assert!(
+        p.iter()
+            .any(|x| x.contains("isn't the header the dump kept (its SHA-256 differs)")),
+        "{p:?}"
+    );
     let p = snapcore_plan(&v, &[&kf[..], &["--new-uuids"]].concat()).problems;
-    assert!(p.iter().any(|x| x.contains("--new-uuids, and the dump kept its LUKS2 header")), "{p:?}");
+    assert!(
+        p.iter()
+            .any(|x| x.contains("--new-uuids, and the dump kept its LUKS2 header")),
+        "{p:?}"
+    );
     // A dump that kept no header (not root, no cryptsetup): refused.
     let mut w = v.clone();
     if let Value::Obj(o) = &mut w {
@@ -7945,8 +14031,19 @@ fn snapcore_fde_guest() {
         }
     }
     let p = snapcore_plan(&w, &kf).problems;
-    assert!(p.iter().any(|x| x.starts_with("Ubuntu Core: the dump kept no LUKS2 header of ubuntu-data (vda5)")), "{p:?}");
-    assert!(snapcore_plan(&w, &kf).stage(Stage::Assemble).iter().any(|c| c.argv.get(1).is_some_and(|a| a == "luksFormat")), "the generic path, refused by the problem above");
+    assert!(
+        p.iter()
+            .any(|x| x
+                .starts_with("Ubuntu Core: the dump kept no LUKS2 header of ubuntu-data (vda5)")),
+        "{p:?}"
+    );
+    assert!(
+        snapcore_plan(&w, &kf)
+            .stage(Stage::Assemble)
+            .iter()
+            .any(|c| c.argv.get(1).is_some_and(|a| a == "luksFormat")),
+        "the generic path, refused by the problem above"
+    );
 }
 
 /// What the dump refuses (docs/design/ubuntu-core.md, "dump", v1): not run
@@ -7957,33 +14054,77 @@ fn snapcore_refusals() {
     let t = snapcore_tree(false);
     let refused = |t: &Tree, changes: &str| -> String {
         let sys = snapcore_sys(t, changes);
-        let v = crate::report::build(&sys, crate::osrel::read(&sys).as_ref(), "2026-11-14T00:00:00Z");
+        let v = crate::report::build(
+            &sys,
+            crate::osrel::read(&sys).as_ref(),
+            "2026-11-14T00:00:00Z",
+        );
         crate::snapcore::refusal(&v).unwrap_or_default()
     };
-    let r = refused(&t, "7    Doing   today at 13:01 UTC  -                   Auto-refresh snap \"pc-kernel\"\n");
-    assert!(r.contains("`snap changes` shows 1 change(s) in progress (7 Doing)"), "{r}");
+    let r = refused(
+        &t,
+        "7    Doing   today at 13:01 UTC  -                   Auto-refresh snap \"pc-kernel\"\n",
+    );
+    assert!(
+        r.contains("`snap changes` shows 1 change(s) in progress (7 Doing)"),
+        "{r}"
+    );
     let d = "/run/mnt/data/system-data/var/lib/snapd/modeenv";
-    t.file(d, crate::snapcore::tests::MODEENV_TEXT.replace("mode=run", "mode=recover"));
+    t.file(
+        d,
+        crate::snapcore::tests::MODEENV_TEXT.replace("mode=run", "mode=recover"),
+    );
     assert!(refused(&t, "").contains("modeenv says mode=recover: dump runs in run mode"));
     t.file(d, crate::snapcore::tests::MODEENV_TEXT);
-    t.file("/run/mnt/ubuntu-boot/EFI/ubuntu/grubenv", crate::snapcore::tests::grubenv(&["kernel_status=try"]));
-    assert!(refused(&t, "").contains("a kernel refresh is being tried (the run grubenv's kernel_status=try)"));
-    t.file("/run/mnt/ubuntu-boot/EFI/ubuntu/grubenv", crate::snapcore::tests::grubenv(&["kernel_status="]));
-    t.file("/run/mnt/ubuntu-boot/device/model", crate::snapcore::tests::MODEL_TEXT.replace("name: pc\n", "name: pi\n"));
+    t.file(
+        "/run/mnt/ubuntu-boot/EFI/ubuntu/grubenv",
+        crate::snapcore::tests::grubenv(&["kernel_status=try"]),
+    );
+    assert!(
+        refused(&t, "")
+            .contains("a kernel refresh is being tried (the run grubenv's kernel_status=try)")
+    );
+    t.file(
+        "/run/mnt/ubuntu-boot/EFI/ubuntu/grubenv",
+        crate::snapcore::tests::grubenv(&["kernel_status="]),
+    );
+    t.file(
+        "/run/mnt/ubuntu-boot/device/model",
+        crate::snapcore::tests::MODEL_TEXT.replace("name: pc\n", "name: pi\n"),
+    );
     assert!(refused(&t, "").contains("the model's gadget is pi, not pc"));
-    t.file("/run/mnt/ubuntu-boot/device/model", crate::snapcore::tests::MODEL_TEXT);
+    t.file(
+        "/run/mnt/ubuntu-boot/device/model",
+        crate::snapcore::tests::MODEL_TEXT,
+    );
     assert_eq!(refused(&t, ""), "");
     // A locked ubuntu-data (recover mode of a system that didn't unlock it).
     let t = snapcore_tree(true);
     std::fs::remove_file(t.p("/sys/block/vda/vda5/holders/dm-0")).unwrap();
     let r = refused(&t, "");
-    assert!(r.contains("ubuntu-data (vda5, ubuntu-data-enc) is encrypted and not open") && r.contains("bko-holt recovery-key-file KEY"), "{r}");
+    assert!(
+        r.contains("ubuntu-data (vda5, ubuntu-data-enc) is encrypted and not open")
+            && r.contains("bko-holt recovery-key-file KEY"),
+        "{r}"
+    );
     // A header that couldn't be kept (no cryptsetup): refused.
     let t = snapcore_tree(true);
-    let sys = Sys::new(t.root(), Box::new(FakeRunner::default().without("cryptsetup")), true);
-    let v = crate::report::build(&sys, crate::osrel::read(&sys).as_ref(), "2026-11-14T00:00:00Z");
+    let sys = Sys::new(
+        t.root(),
+        Box::new(FakeRunner::default().without("cryptsetup")),
+        true,
+    );
+    let v = crate::report::build(
+        &sys,
+        crate::osrel::read(&sys).as_ref(),
+        "2026-11-14T00:00:00Z",
+    );
     let r = crate::snapcore::refusal(&v).unwrap_or_default();
-    assert!(r.contains("the LUKS2 header of vda4 wasn't kept") && r.contains("the LUKS2 header of vda5 wasn't kept"), "{r}");
+    assert!(
+        r.contains("the LUKS2 header of vda4 wasn't kept")
+            && r.contains("the LUKS2 header of vda5 wasn't kept"),
+        "{r}"
+    );
     assert!(crate::dump(&sys).is_err());
     // A seed of another size (a fit that took the wrong partition).
     let t = snapcore_tree(false);
@@ -7991,12 +14132,24 @@ fn snapcore_refusals() {
     let c = v.compact();
     let at = c.find("\"partlabel\":\"ubuntu-seed\"").unwrap();
     let from = c[..at].rfind("\"size_bytes\":37748736").unwrap();
-    let v = crate::json::parse(&format!("{}\"size_bytes\":{}{}", &c[..from], 40u64 << 20, &c[from + "\"size_bytes\":37748736".len()..])).unwrap();
+    let v = crate::json::parse(&format!(
+        "{}\"size_bytes\":{}{}",
+        &c[..from],
+        40u64 << 20,
+        &c[from + "\"size_bytes\":37748736".len()..]
+    ))
+    .unwrap();
     let p = snapcore_plan(&v, &[]).problems;
     assert!(p.iter().any(|x| x.starts_with("Ubuntu Core: ubuntu-seed (vda2) would be 41943040 bytes (40 MiB, 4 MiB bigger) instead of the gadget's 37748736 bytes: only ubuntu-data")), "{p:?}");
     // A few sectors less (BackShot2's uc24 cases of 2026-11-25 read "750 MiB
     // instead of the gadget's 750 MiB"): the exact bytes.
-    let v = crate::json::parse(&format!("{}\"size_bytes\":{}{}", &c[..from], (36u64 << 20) - 17 * 512, &c[from + "\"size_bytes\":37748736".len()..])).unwrap();
+    let v = crate::json::parse(&format!(
+        "{}\"size_bytes\":{}{}",
+        &c[..from],
+        (36u64 << 20) - 17 * 512,
+        &c[from + "\"size_bytes\":37748736".len()..]
+    ))
+    .unwrap();
     let p = snapcore_plan(&v, &[]).problems;
     assert!(p.iter().any(|x| x.starts_with("Ubuntu Core: ubuntu-seed (vda2) would be 37740032 bytes (36 MiB, 8.5 KiB smaller) instead of the gadget's 37748736 bytes")), "{p:?}");
 }
@@ -8026,29 +14179,111 @@ struct QLv {
 /// beside 20 GiB roots, one revision with activation skip (Qubes's own are
 /// -kn; LVM's default -ky), a volatile volume and a leftover -snap.
 fn qubes_lvs() -> Vec<QLv> {
-    let q = |name, origin, gib, holds| QLv { name, origin, gib, holds, skip: false };
+    let q = |name, origin, gib, holds| QLv {
+        name,
+        origin,
+        gib,
+        holds,
+        skip: false,
+    };
     vec![
         q("vm-fedora-44-xfce-root-1794670030-back", None, 10, "gpt"),
-        q("vm-fedora-44-xfce-root-1794670062-back", Some("vm-fedora-44-xfce-root-1794670030-back"), 20, "gpt"),
-        q("vm-fedora-44-xfce-root", Some("vm-fedora-44-xfce-root-1794670062-back"), 20, "gpt"),
-        q("vm-fedora-44-xfce-private-1794670063-back", None, 2, "ext4:1"),
-        q("vm-fedora-44-xfce-private", Some("vm-fedora-44-xfce-private-1794670063-back"), 2, "ext4:1"),
+        q(
+            "vm-fedora-44-xfce-root-1794670062-back",
+            Some("vm-fedora-44-xfce-root-1794670030-back"),
+            20,
+            "gpt",
+        ),
+        q(
+            "vm-fedora-44-xfce-root",
+            Some("vm-fedora-44-xfce-root-1794670062-back"),
+            20,
+            "gpt",
+        ),
+        q(
+            "vm-fedora-44-xfce-private-1794670063-back",
+            None,
+            2,
+            "ext4:1",
+        ),
+        q(
+            "vm-fedora-44-xfce-private",
+            Some("vm-fedora-44-xfce-private-1794670063-back"),
+            2,
+            "ext4:1",
+        ),
         q("vm-debian-13-xfce-root-1794670100-back", None, 20, "gpt"),
-        q("vm-debian-13-xfce-root-1794670200-back", Some("vm-debian-13-xfce-root-1794670100-back"), 20, "gpt"),
-        q("vm-debian-13-xfce-root", Some("vm-debian-13-xfce-root-1794670200-back"), 20, "gpt"),
-        q("vm-debian-13-xfce-private-1794670101-back", None, 2, "ext4:2"),
-        q("vm-debian-13-xfce-private-1794670201-back", Some("vm-debian-13-xfce-private-1794670101-back"), 2, "ext4:2"),
-        q("vm-debian-13-xfce-private", Some("vm-debian-13-xfce-private-1794670201-back"), 2, "ext4:2"),
+        q(
+            "vm-debian-13-xfce-root-1794670200-back",
+            Some("vm-debian-13-xfce-root-1794670100-back"),
+            20,
+            "gpt",
+        ),
+        q(
+            "vm-debian-13-xfce-root",
+            Some("vm-debian-13-xfce-root-1794670200-back"),
+            20,
+            "gpt",
+        ),
+        q(
+            "vm-debian-13-xfce-private-1794670101-back",
+            None,
+            2,
+            "ext4:2",
+        ),
+        q(
+            "vm-debian-13-xfce-private-1794670201-back",
+            Some("vm-debian-13-xfce-private-1794670101-back"),
+            2,
+            "ext4:2",
+        ),
+        q(
+            "vm-debian-13-xfce-private",
+            Some("vm-debian-13-xfce-private-1794670201-back"),
+            2,
+            "ext4:2",
+        ),
         q("vm-work-private-1794670226-back", None, 2, "ext4:3"),
-        QLv { name: "vm-work-private-1794670270-back", origin: Some("vm-work-private-1794670226-back"), gib: 2, holds: "ext4:3", skip: true },
-        q("vm-work-private", Some("vm-work-private-1794670270-back"), 2, "ext4:3"),
+        QLv {
+            name: "vm-work-private-1794670270-back",
+            origin: Some("vm-work-private-1794670226-back"),
+            gib: 2,
+            holds: "ext4:3",
+            skip: true,
+        },
+        q(
+            "vm-work-private",
+            Some("vm-work-private-1794670270-back"),
+            2,
+            "ext4:3",
+        ),
         q("vm-work-volatile", None, 10, "zero"),
         q("vm-personal-private-1794670230-back", None, 2, "ext4:4"),
-        q("vm-personal-private-1794670280-back", Some("vm-personal-private-1794670230-back"), 2, "ext4:4"),
-        q("vm-personal-private", Some("vm-personal-private-1794670280-back"), 2, "ext4:4"),
+        q(
+            "vm-personal-private-1794670280-back",
+            Some("vm-personal-private-1794670230-back"),
+            2,
+            "ext4:4",
+        ),
+        q(
+            "vm-personal-private",
+            Some("vm-personal-private-1794670280-back"),
+            2,
+            "ext4:4",
+        ),
         q("vm-sys-net-private-1794670300-back", None, 2, "ext4:5"),
-        q("vm-sys-net-private", Some("vm-sys-net-private-1794670300-back"), 2, "ext4:5"),
-        q("vm-sys-net-root-snap", Some("vm-fedora-44-xfce-root"), 20, "gpt"),
+        q(
+            "vm-sys-net-private",
+            Some("vm-sys-net-private-1794670300-back"),
+            2,
+            "ext4:5",
+        ),
+        q(
+            "vm-sys-net-root-snap",
+            Some("vm-fedora-44-xfce-root"),
+            20,
+            "gpt",
+        ),
         q("vm-sys-firewall-private", None, 2, "ext4:6"),
         q("vm-default-dvm-private", None, 2, "ext4:7"),
         q("vm-default-mgmt-dvm-private", None, 2, "ext4:8"),
@@ -8064,16 +14299,38 @@ fn qubes_lvs() -> Vec<QLv> {
 fn qubes_vg_text() -> String {
     let id = |n: usize| format!("qv{n:04}-aaaa-bbbb-cccc-dddd-eeee-ffffff");
     let striped = |n: usize, name: &str, extents: u64, at: u64, visible: bool| {
-        let st = if visible { r#"["READ", "WRITE", "VISIBLE"]"# } else { r#"["READ", "WRITE"]"# };
-        format!("{name} {{\nid = \"{}\"\nstatus = {st}\nflags = []\ncreation_time = 1794660000\ncreation_host = \"dom0\"\nsegment_count = 1\n\nsegment1 {{\nstart_extent = 0\nextent_count = {extents}\n\ntype = \"striped\"\nstripe_count = 1\n\nstripes = [\n\"pv0\", {at}\n]\n}}\n}}\n", id(n))
+        let st = if visible {
+            r#"["READ", "WRITE", "VISIBLE"]"#
+        } else {
+            r#"["READ", "WRITE"]"#
+        };
+        format!(
+            "{name} {{\nid = \"{}\"\nstatus = {st}\nflags = []\ncreation_time = 1794660000\ncreation_host = \"dom0\"\nsegment_count = 1\n\nsegment1 {{\nstart_extent = 0\nextent_count = {extents}\n\ntype = \"striped\"\nstripe_count = 1\n\nstripes = [\n\"pv0\", {at}\n]\n}}\n}}\n",
+            id(n)
+        )
     };
     let pool = |n: usize, name: &str, extents: u64| {
-        format!("{name} {{\nid = \"{}\"\nstatus = [\"READ\", \"WRITE\", \"VISIBLE\"]\nflags = []\ncreation_time = 1794660000\ncreation_host = \"dom0\"\nsegment_count = 1\n\nsegment1 {{\nstart_extent = 0\nextent_count = {extents}\n\ntype = \"thin-pool\"\nmetadata = \"{name}_tmeta\"\npool = \"{name}_tdata\"\ntransaction_id = 40\nchunk_size = 128\ndiscards = \"passdown\"\nzero_new_blocks = 1\n}}\n}}\n", id(n))
+        format!(
+            "{name} {{\nid = \"{}\"\nstatus = [\"READ\", \"WRITE\", \"VISIBLE\"]\nflags = []\ncreation_time = 1794660000\ncreation_host = \"dom0\"\nsegment_count = 1\n\nsegment1 {{\nstart_extent = 0\nextent_count = {extents}\n\ntype = \"thin-pool\"\nmetadata = \"{name}_tmeta\"\npool = \"{name}_tdata\"\ntransaction_id = 40\nchunk_size = 128\ndiscards = \"passdown\"\nzero_new_blocks = 1\n}}\n}}\n",
+            id(n)
+        )
     };
-    let thin = |n: usize, name: &str, pool: &str, gib: u64, dev: usize, origin: Option<&str>, skip: bool| {
-        let o = origin.map(|o| format!("origin = \"{o}\"\n")).unwrap_or_default();
+    let thin = |n: usize,
+                name: &str,
+                pool: &str,
+                gib: u64,
+                dev: usize,
+                origin: Option<&str>,
+                skip: bool| {
+        let o = origin
+            .map(|o| format!("origin = \"{o}\"\n"))
+            .unwrap_or_default();
         let flags = if skip { r#"["ACTIVATION_SKIP"]"# } else { "[]" };
-        format!("{name} {{\nid = \"{}\"\nstatus = [\"READ\", \"WRITE\", \"VISIBLE\"]\nflags = {flags}\ncreation_time = 1794660000\ncreation_host = \"dom0\"\nsegment_count = 1\n\nsegment1 {{\nstart_extent = 0\nextent_count = {}\n\ntype = \"thin\"\nthin_pool = \"{pool}\"\ntransaction_id = {dev}\ndevice_id = {dev}\n{o}}}\n}}\n", id(n), gib * 256)
+        format!(
+            "{name} {{\nid = \"{}\"\nstatus = [\"READ\", \"WRITE\", \"VISIBLE\"]\nflags = {flags}\ncreation_time = 1794660000\ncreation_host = \"dom0\"\nsegment_count = 1\n\nsegment1 {{\nstart_extent = 0\nextent_count = {}\n\ntype = \"thin\"\nthin_pool = \"{pool}\"\ntransaction_id = {dev}\ndevice_id = {dev}\n{o}}}\n}}\n",
+            id(n),
+            gib * 256
+        )
     };
     // 4 MiB extents: swap 1006, root-pool 5120 + 10 meta, vm-pool 8827 + 9 meta, spare 10.
     let mut lvs = String::new();
@@ -8100,9 +14357,13 @@ fn qubes_vg_text() -> String {
 fn qubes_xml() -> String {
     let dom = |class: &str, name: &str, template: bool| {
         let root = if template {
-            format!("<volume name=\"root\" pool=\"vm-pool\" vid=\"qubes_dom0/vm-{name}-root\" revisions_to_keep=\"2\" rw=\"True\" save_on_stop=\"True\" size=\"21474836480\" snap_on_start=\"False\"/>")
+            format!(
+                "<volume name=\"root\" pool=\"vm-pool\" vid=\"qubes_dom0/vm-{name}-root\" revisions_to_keep=\"2\" rw=\"True\" save_on_stop=\"True\" size=\"21474836480\" snap_on_start=\"False\"/>"
+            )
         } else {
-            format!("<volume name=\"root\" pool=\"vm-pool\" vid=\"qubes_dom0/vm-{name}-root\" rw=\"False\" snap_on_start=\"True\" source=\"qubes_dom0/vm-fedora-44-xfce-root\"/>")
+            format!(
+                "<volume name=\"root\" pool=\"vm-pool\" vid=\"qubes_dom0/vm-{name}-root\" rw=\"False\" snap_on_start=\"True\" source=\"qubes_dom0/vm-fedora-44-xfce-root\"/>"
+            )
         };
         format!(
             "<domain id=\"domain-{name}\" class=\"{class}\"><properties><property name=\"name\">{name}</property></properties><volume-config>{root}<volume name=\"private\" pool=\"vm-pool\" vid=\"qubes_dom0/vm-{name}-private\" revisions_to_keep=\"2\" rw=\"True\" save_on_stop=\"True\" size=\"2147483648\"/><volume name=\"volatile\" pool=\"vm-pool\" vid=\"qubes_dom0/vm-{name}-volatile\" rw=\"True\" size=\"10737418240\"/><volume name=\"kernel\" pool=\"linux-kernel\" vid=\"6.18.51-1.qubes.fc41\" rw=\"False\"/></volume-config></domain>\n"
@@ -8111,7 +14372,16 @@ fn qubes_xml() -> String {
     let mut d = String::new();
     d += &dom("TemplateVM", "fedora-44-xfce", true);
     d += &dom("TemplateVM", "debian-13-xfce", true);
-    for (c, n) in [("AppVM", "work"), ("AppVM", "personal"), ("AppVM", "untrusted"), ("AppVM", "vault"), ("AppVM", "default-dvm"), ("AppVM", "default-mgmt-dvm"), ("AppVM", "sys-net"), ("DispVM", "sys-firewall")] {
+    for (c, n) in [
+        ("AppVM", "work"),
+        ("AppVM", "personal"),
+        ("AppVM", "untrusted"),
+        ("AppVM", "vault"),
+        ("AppVM", "default-dvm"),
+        ("AppVM", "default-mgmt-dvm"),
+        ("AppVM", "sys-net"),
+        ("DispVM", "sys-firewall"),
+    ] {
         d += &dom(c, n, false);
     }
     format!(
@@ -8134,11 +14404,33 @@ fn qubes_tree() -> (Tree, FakeRunner) {
         512,
         &GptSpec {
             disk_guid: "9b0e5c11-0000-4000-8000-00000000d15c",
-            parts: vec![(ESP, QUBES_ESP, 2048, 34815, 0, "EFI System Partition"), (LINUX, "9b0e5c11-0000-4000-8000-000000000002", 34816, 51199, 0, ""), (LINUX, "9b0e5c11-0000-4000-8000-000000000004", 51200, 131038, 0, "")],
+            parts: vec![
+                (ESP, QUBES_ESP, 2048, 34815, 0, "EFI System Partition"),
+                (
+                    LINUX,
+                    "9b0e5c11-0000-4000-8000-000000000002",
+                    34816,
+                    51199,
+                    0,
+                    "",
+                ),
+                (
+                    LINUX,
+                    "9b0e5c11-0000-4000-8000-000000000004",
+                    51200,
+                    131038,
+                    0,
+                    "",
+                ),
+            ],
         },
     );
     put(&mut img, 2048, &fat::sample::fat32(32768, 0x9b0e_0001, ""));
-    put(&mut img, 34816, &ext4_with("", "9b0e5c11-0000-4000-8000-0000000000b0"));
+    put(
+        &mut img,
+        34816,
+        &ext4_with("", "9b0e5c11-0000-4000-8000-0000000000b0"),
+    );
     put(&mut img, 51200, &luks::sample::luks2(QUBES_LUKS, ""));
     let pv = lvm::sample::pv_with(512, 1 << 20, &qubes_vg_text());
     let luks_dm = format!("luks-{QUBES_LUKS}");
@@ -8163,33 +14455,112 @@ fn qubes_tree() -> (Tree, FakeRunner) {
     // the thin LVs on their pool's -tpool.
     let gpt_img = {
         let mut g = vec![0u8; 512 * 512];
-        write_gpt(&mut g, 512, &GptSpec { disk_guid: "9b0e5c11-0000-4000-8000-0000000000c0", parts: vec![(BIOS_BOOT, "9b0e5c11-0000-4000-8000-0000000000c1", 40, 79, 0, ""), (LINUX, "9b0e5c11-0000-4000-8000-0000000000c2", 80, 470, 0, "Root filesystem")] });
+        write_gpt(
+            &mut g,
+            512,
+            &GptSpec {
+                disk_guid: "9b0e5c11-0000-4000-8000-0000000000c0",
+                parts: vec![
+                    (
+                        BIOS_BOOT,
+                        "9b0e5c11-0000-4000-8000-0000000000c1",
+                        40,
+                        79,
+                        0,
+                        "",
+                    ),
+                    (
+                        LINUX,
+                        "9b0e5c11-0000-4000-8000-0000000000c2",
+                        80,
+                        470,
+                        0,
+                        "Root filesystem",
+                    ),
+                ],
+            },
+        );
         g
     };
     let mut devs: Vec<(String, String, Vec<u8>, Vec<String>)> = vec![
-        ("qubes_dom0-swap".into(), lv_uuid(1), misc::sample::swap(16, ""), vec!["dm-0".into()]),
-        ("qubes_dom0-root--pool_tmeta".into(), lv_uuid(5) + "-tmeta", vec![0u8; 65536], vec!["dm-0".into()]),
-        ("qubes_dom0-root--pool_tdata".into(), lv_uuid(4) + "-tdata", vec![0u8; 65536], vec!["dm-0".into()]),
-        ("qubes_dom0-root--pool-tpool".into(), lv_uuid(2) + "-tpool", vec![0u8; 65536], vec!["dm-2".into(), "dm-3".into()]),
-        ("qubes_dom0-root".into(), lv_uuid(3), ext4_with("", QUBES_ROOT_UUID), vec!["dm-4".into()]),
-        ("qubes_dom0-vm--pool_tmeta".into(), lv_uuid(9) + "-tmeta", vec![0u8; 65536], vec!["dm-0".into()]),
-        ("qubes_dom0-vm--pool_tdata".into(), lv_uuid(8) + "-tdata", vec![0u8; 65536], vec!["dm-0".into()]),
-        ("qubes_dom0-vm--pool-tpool".into(), lv_uuid(7) + "-tpool", vec![0u8; 65536], vec!["dm-6".into(), "dm-7".into()]),
+        (
+            "qubes_dom0-swap".into(),
+            lv_uuid(1),
+            misc::sample::swap(16, ""),
+            vec!["dm-0".into()],
+        ),
+        (
+            "qubes_dom0-root--pool_tmeta".into(),
+            lv_uuid(5) + "-tmeta",
+            vec![0u8; 65536],
+            vec!["dm-0".into()],
+        ),
+        (
+            "qubes_dom0-root--pool_tdata".into(),
+            lv_uuid(4) + "-tdata",
+            vec![0u8; 65536],
+            vec!["dm-0".into()],
+        ),
+        (
+            "qubes_dom0-root--pool-tpool".into(),
+            lv_uuid(2) + "-tpool",
+            vec![0u8; 65536],
+            vec!["dm-2".into(), "dm-3".into()],
+        ),
+        (
+            "qubes_dom0-root".into(),
+            lv_uuid(3),
+            ext4_with("", QUBES_ROOT_UUID),
+            vec!["dm-4".into()],
+        ),
+        (
+            "qubes_dom0-vm--pool_tmeta".into(),
+            lv_uuid(9) + "-tmeta",
+            vec![0u8; 65536],
+            vec!["dm-0".into()],
+        ),
+        (
+            "qubes_dom0-vm--pool_tdata".into(),
+            lv_uuid(8) + "-tdata",
+            vec![0u8; 65536],
+            vec!["dm-0".into()],
+        ),
+        (
+            "qubes_dom0-vm--pool-tpool".into(),
+            lv_uuid(7) + "-tpool",
+            vec![0u8; 65536],
+            vec!["dm-6".into(), "dm-7".into()],
+        ),
     ];
     for (i, l) in qubes_lvs().iter().enumerate() {
         let image = match l.holds {
             "gpt" => gpt_img.clone(),
             "zero" => vec![0u8; 65536],
             "ext4:root" => ext4_with("", QUBES_ROOT_UUID),
-            e => ext4_with("", &format!("9b0e5c11-0000-4000-8000-0000000001{:02}", e.trim_start_matches("ext4:").parse::<u32>().unwrap())),
+            e => ext4_with(
+                "",
+                &format!(
+                    "9b0e5c11-0000-4000-8000-0000000001{:02}",
+                    e.trim_start_matches("ext4:").parse::<u32>().unwrap()
+                ),
+            ),
         };
-        devs.push((format!("qubes_dom0-{}", l.name.replace('-', "--")), lv_uuid(10 + i), image, vec!["dm-8".into()]));
+        devs.push((
+            format!("qubes_dom0-{}", l.name.replace('-', "--")),
+            lv_uuid(10 + i),
+            image,
+            vec!["dm-8".into()],
+        ));
     }
     for (i, (name, uuid, image, slaves)) in devs.iter().enumerate() {
         let dm = format!("dm-{}", i + 1);
-        t.disk(&dm, &format!("253:{}", i + 1), image, 512).file(&format!("/sys/block/{dm}/dm/name"), format!("{name}\n")).file(&format!("/sys/block/{dm}/dm/uuid"), format!("{uuid}\n")).symlink(&format!("/dev/mapper/{name}"), &format!("../{dm}"));
+        t.disk(&dm, &format!("253:{}", i + 1), image, 512)
+            .file(&format!("/sys/block/{dm}/dm/name"), format!("{name}\n"))
+            .file(&format!("/sys/block/{dm}/dm/uuid"), format!("{uuid}\n"))
+            .symlink(&format!("/dev/mapper/{name}"), &format!("../{dm}"));
         for s in slaves {
-            t.file(&format!("/sys/block/{dm}/slaves/{s}"), "").file(&format!("/sys/block/{s}/holders/{dm}"), "");
+            t.file(&format!("/sys/block/{dm}/slaves/{s}"), "")
+                .file(&format!("/sys/block/{s}/holders/{dm}"), "");
         }
     }
     let root_dm = devs.iter().position(|d| d.0 == "qubes_dom0-root").unwrap() + 1;
@@ -8248,11 +14619,23 @@ fn qubes_tree() -> (Tree, FakeRunner) {
 }
 
 fn qubes_plan(v: &Value) -> crate::load::commands::Built {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let l = Layout::from_json(v.clone()).unwrap();
-    let a: Vec<String> = ["l.json", "--repo", "/srv/bko-repo"].iter().map(|s| s.to_string()).collect();
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
-    commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() })
+    let a: Vec<String> = ["l.json", "--repo", "/srv/bko-repo"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
+        unreachable!()
+    };
+    commands::build(
+        &l,
+        &o,
+        &Mapping {
+            pairs: vec![("vda".into(), "vdb".into())],
+            ..Mapping::default()
+        },
+    )
 }
 
 /// Qubes OS 4.3 (docs/design/qubes.md, Q2-Q4): dump records qubes.xml, Xen,
@@ -8264,7 +14647,7 @@ fn qubes_plan(v: &Value) -> crate::load::commands::Built {
 /// remakes Xen's GRUB menu and checks it.
 #[test]
 fn qubes_guest() {
-    use crate::load::{commands::Cmd, Stage};
+    use crate::load::{Stage, commands::Cmd};
     let (t, r) = qubes_tree();
     let v = run(&t, true, r);
     assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
@@ -8274,32 +14657,76 @@ fn qubes_guest() {
     assert!(s(x, &["cmdline_xen_default"]).starts_with("console=com1 "));
     assert_eq!(arr(x, &["entries"]).len(), 1);
     assert_eq!(s(&v, &["boot", "loader", "name"]), "grub");
-    assert_eq!(v.at(&["boot", "loader", "via_shim"]), Some(&Value::Bool(false)));
+    assert_eq!(
+        v.at(&["boot", "loader", "via_shim"]),
+        Some(&Value::Bool(false))
+    );
     // qubes.xml: 10 qubes, 3 volumes each in vm-pool (kernel in its own).
     let vols = arr(&v, &["storage", "qubes", "volumes"]);
-    assert_eq!(vols.iter().filter(|x| x.get("pool").and_then(Value::as_str) == Some("vm-pool")).count(), 30);
+    assert_eq!(
+        vols.iter()
+            .filter(|x| x.get("pool").and_then(Value::as_str) == Some("vm-pool"))
+            .count(),
+        30
+    );
     // Thin usage from dmsetup status: 64 KiB chunks, 4 KiB metadata blocks.
-    let lvs = arr(&v, &["storage", "lvm", "volume_groups", "0", "logical_volumes"]);
-    let lv = |n: &str| lvs.iter().find(|l| l.get("name").and_then(Value::as_str) == Some(n)).unwrap();
+    let lvs = arr(
+        &v,
+        &["storage", "lvm", "volume_groups", "0", "logical_volumes"],
+    );
+    let lv = |n: &str| {
+        lvs.iter()
+            .find(|l| l.get("name").and_then(Value::as_str) == Some(n))
+            .unwrap()
+    };
     assert_eq!(u(lv("vm-pool"), &["data_used_bytes"]), 190000 * 65536);
     assert_eq!(u(lv("vm-pool"), &["metadata_used_bytes"]), 4100 * 4096);
     assert_eq!(u(lv("vm-work-private"), &["mapped_bytes"]), 524288 * 512);
     // The raw volumes: every vm-* LV but the volatile one; backup sources
     // with fstype raw at their image paths.
     let dms = arr(&v, &["storage", "dm_devices"]);
-    let raw: Vec<&Value> = dms.iter().filter(|d| d.get("raw_volume").is_some()).collect();
+    let raw: Vec<&Value> = dms
+        .iter()
+        .filter(|d| d.get("raw_volume").is_some())
+        .collect();
     assert_eq!(raw.len(), 25);
-    assert!(dms.iter().any(|d| d.at(&["dm", "lv"]).and_then(Value::as_str) == Some("vm-work-volatile") && d.get("raw_volume").is_none()));
-    assert!(dms.iter().all(|d| d.at(&["dm", "lv"]).and_then(Value::as_str) != Some("root") || d.get("raw_volume").is_none()));
-    let w = raw.iter().find(|d| d.at(&["dm", "lv"]).and_then(Value::as_str) == Some("vm-work-private")).unwrap();
-    assert_eq!(s(w, &["raw_volume", "image"]), "/.bko-holt/raw/qubes_dom0/vm-work-private.img");
+    assert!(
+        dms.iter().any(
+            |d| d.at(&["dm", "lv"]).and_then(Value::as_str) == Some("vm-work-volatile")
+                && d.get("raw_volume").is_none()
+        )
+    );
+    assert!(dms.iter().all(
+        |d| d.at(&["dm", "lv"]).and_then(Value::as_str) != Some("root")
+            || d.get("raw_volume").is_none()
+    ));
+    let w = raw
+        .iter()
+        .find(|d| d.at(&["dm", "lv"]).and_then(Value::as_str) == Some("vm-work-private"))
+        .unwrap();
+    assert_eq!(
+        s(w, &["raw_volume", "image"]),
+        "/.bko-holt/raw/qubes_dom0/vm-work-private.img"
+    );
     assert_eq!(s(w, &["raw_volume", "qube"]), "work");
     let srcs = arr(&v, &["storage", "backup_sources"]);
-    assert_eq!(srcs.iter().filter(|b| b.get("fstype").and_then(Value::as_str) == Some("raw")).count(), 25);
+    assert_eq!(
+        srcs.iter()
+            .filter(|b| b.get("fstype").and_then(Value::as_str) == Some("raw"))
+            .count(),
+        25
+    );
     assert_eq!(s(&srcs[0], &["path"]), "/");
-    assert!(srcs.iter().any(|b| s(b, &["path"]) == "/.bko-holt/raw/qubes_dom0/vm-work-private-1794670270-back.img" && s(b, &["note"]).contains("`lvchange -ay -K` it first")));
+    assert!(srcs.iter().any(|b| s(b, &["path"])
+        == "/.bko-holt/raw/qubes_dom0/vm-work-private-1794670270-back.img"
+        && s(b, &["note"]).contains("`lvchange -ay -K` it first")));
     // fstab's UUID= finds the mounted root, not vault's private with the same UUID.
-    let root_dm = dms.iter().find(|d| d.at(&["dm", "lv"]).and_then(Value::as_str) == Some("root")).and_then(|d| d.get("name")).and_then(Value::as_str).unwrap();
+    let root_dm = dms
+        .iter()
+        .find(|d| d.at(&["dm", "lv"]).and_then(Value::as_str) == Some("root"))
+        .and_then(|d| d.get("name"))
+        .and_then(Value::as_str)
+        .unwrap();
     assert_eq!(s(&v, &["storage", "fstab", "0", "resolves_to"]), root_dm);
 
     let b = qubes_plan(&v);
@@ -8309,44 +14736,98 @@ fn qubes_guest() {
         assert!(asm.contains(&format!("--type thin-pool -n {p} ")), "{asm}");
     }
     let roots = 1 + qubes_lvs().iter().filter(|l| l.origin.is_none()).count();
-    assert_eq!(asm.lines().filter(|l| l.contains("--type thin ")).count(), roots, "{asm}");
+    assert_eq!(
+        asm.lines().filter(|l| l.contains("--type thin ")).count(),
+        roots,
+        "{asm}"
+    );
     assert!(!asm.contains("--snapshot"), "{asm}");
     assert!(asm.contains("# thin pool qubes_dom0/vm-pool: made with 34.5 GiB of data and 36 MiB of metadata; the source used 11.6 GiB of its data and 16 MiB of its metadata; its 26 thin LVs (13 of them snapshots) add up to 176 GiB virtual"), "{asm}");
     let fmt: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
-    assert!(fmt.contains("/dev/mapper/qubes_dom0-root\n") && !fmt.contains("vm--"), "{fmt}");
+    assert!(
+        fmt.contains("/dev/mapper/qubes_dom0-root\n") && !fmt.contains("vm--"),
+        "{fmt}"
+    );
     // The restore's commands as their words (the scripts unquoted).
-    let rs: String = b.stage(Stage::Restore).iter().map(|c| format!("{}\n", c.argv.join(" "))).collect();
-    assert!(b.stage(Stage::Restore).iter().any(|c| c.stdin.as_deref().is_some_and(|g| g.contains("!/.bko-holt/raw/**\n"))), "{rs}");
+    let rs: String = b
+        .stage(Stage::Restore)
+        .iter()
+        .map(|c| format!("{}\n", c.argv.join(" ")))
+        .collect();
+    assert!(
+        b.stage(Stage::Restore).iter().any(|c| c
+            .stdin
+            .as_deref()
+            .is_some_and(|g| g.contains("!/.bko-holt/raw/**\n"))),
+        "{rs}"
+    );
     // Each raw write runs the archiver's dump: tagged (holt-json.md).
-    let writes: Vec<&Cmd> = b.stage(Stage::Restore).iter().filter(|c| c.argv.iter().any(|a| a.contains("raw-write --size"))).collect();
-    assert!(writes.len() == 25 && writes.iter().all(|c| c.archiver), "{rs}");
+    let writes: Vec<&Cmd> = b
+        .stage(Stage::Restore)
+        .iter()
+        .filter(|c| c.argv.iter().any(|a| a.contains("raw-write --size")))
+        .collect();
+    assert!(
+        writes.len() == 25 && writes.iter().all(|c| c.archiver),
+        "{rs}"
+    );
     assert_eq!(rs.matches("raw-write --size").count(), 25, "{rs}");
     assert_eq!(rs.matches(&format!("lvcreate --devicesfile '' --devices /dev/mapper/luks-{QUBES_LUKS} --snapshot qubes_dom0/")).count(), 13, "{rs}");
     // Each snapshot after its origin's image is written, and before its own.
     let at = |needle: &str| rs.find(needle).unwrap_or_else(|| panic!("{needle}: {rs}"));
     for l in qubes_lvs().iter().filter(|l| l.origin.is_some()) {
         let o = l.origin.unwrap();
-        let snap = at(&format!("--snapshot qubes_dom0/{o} -n {} --setactivationskip {}", l.name, if l.skip { "y" } else { "n" }));
+        let snap = at(&format!(
+            "--snapshot qubes_dom0/{o} -n {} --setactivationskip {}",
+            l.name,
+            if l.skip { "y" } else { "n" }
+        ));
         let mapper = |n: &str| format!("/dev/mapper/qubes_dom0-{};", n.replace('-', "--"));
-        assert!(at(&format!("--chunk 65536 {}", mapper(o))) < snap && snap < at(&format!("--chunk 65536 {}", mapper(l.name))), "{}: {rs}", l.name);
+        assert!(
+            at(&format!("--chunk 65536 {}", mapper(o))) < snap
+                && snap < at(&format!("--chunk 65536 {}", mapper(l.name))),
+            "{}: {rs}",
+            l.name
+        );
     }
     // The 20 GiB revision of a 10 GiB one gets its own size; activation
     // skip on, then activated to be written.
-    assert!(rs.contains("--yes --fs ignore -L 20480m qubes_dom0/vm-fedora-44-xfce-root-1794670062-back"), "{rs}");
+    assert!(
+        rs.contains(
+            "--yes --fs ignore -L 20480m qubes_dom0/vm-fedora-44-xfce-root-1794670062-back"
+        ),
+        "{rs}"
+    );
     assert_eq!(rs.matches("lvresize").count(), 1, "{rs}");
-    assert!(rs.contains("--ignoreactivationskip qubes_dom0/vm-work-private-1794670270-back"), "{rs}");
+    assert!(
+        rs.contains("--ignoreactivationskip qubes_dom0/vm-work-private-1794670270-back"),
+        "{rs}"
+    );
     assert!(rs.contains("rustic-bko --repository /srv/bko-repo --no-progress dump latest:/.bko-holt/raw/qubes_dom0/vm-work-private.img"), "{rs}");
     assert!(b.stage(Stage::Restore).iter().any(|c| c.why.as_deref().is_some_and(|w| w.starts_with("thin snapshot qubes_dom0/vm-sys-net-root-snap: lvcreate -s of qubes_dom0/vm-fedora-44-xfce-root") && w.contains("a leftover -snap"))), "{rs}");
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
     let d = bt.find("dracut --force").expect(&bt);
-    let mk = bt.find("chroot /mnt/bko-target env LANG=C grub2-mkconfig -o /boot/grub2/grub.cfg\n").expect(&bt);
+    let mk = bt
+        .find("chroot /mnt/bko-target env LANG=C grub2-mkconfig -o /boot/grub2/grub.cfg\n")
+        .expect(&bt);
     let chk = bt.find("multiboot2").expect(&bt);
     let nv = bt.find("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'Qubes OS' --loader '\\EFI\\qubes\\grubx64.efi'\n").expect(&bt);
     assert!(d < mk && mk < chk && chk < nv, "{bt}");
     assert_eq!(bt.matches("efibootmgr --quiet --create").count(), 1, "{bt}");
-    assert!(!bt.contains("grub2-install") && !bt.contains("grub-install"), "{bt}");
-    for n in ["Qubes: 25 volumes of 10 qubes come back as raw images", "qubes_dom0/vm-work-volatile: Qubes's volatile volume, made empty", "Qubes OS: GRUB 2 without shim (Secure Boot off)"] {
-        assert!(b.notes.iter().any(|x| x.starts_with(n)), "{n}: {:?}", b.notes);
+    assert!(
+        !bt.contains("grub2-install") && !bt.contains("grub-install"),
+        "{bt}"
+    );
+    for n in [
+        "Qubes: 25 volumes of 10 qubes come back as raw images",
+        "qubes_dom0/vm-work-volatile: Qubes's volatile volume, made empty",
+        "Qubes OS: GRUB 2 without shim (Secure Boot off)",
+    ] {
+        assert!(
+            b.notes.iter().any(|x| x.starts_with(n)),
+            "{n}: {:?}",
+            b.notes
+        );
     }
 }
 
@@ -8357,26 +14838,80 @@ fn qubes_guest() {
 fn qubes_refusals() {
     let (t, r) = qubes_tree();
     let v = run(&t, true, r);
-    let lvs = || arr(&v, &["storage", "lvm", "volume_groups", "0", "logical_volumes"]).clone();
-    let idx = |n: &str| lvs().iter().position(|l| l.get("name").and_then(Value::as_str) == Some(n)).unwrap().to_string();
+    let lvs = || {
+        arr(
+            &v,
+            &["storage", "lvm", "volume_groups", "0", "logical_volumes"],
+        )
+        .clone()
+    };
+    let idx = |n: &str| {
+        lvs()
+            .iter()
+            .position(|l| l.get("name").and_then(Value::as_str) == Some(n))
+            .unwrap()
+            .to_string()
+    };
     let check = |w: Value, want: &str| {
         let p = qubes_plan(&w).problems;
         assert!(p.iter().any(|x| x.contains(want)), "{want}: {p:?}");
     };
     let mut w = v.clone();
     let i = idx("vm-vault-private");
-    set_in(&mut w, &["storage", "lvm", "volume_groups", "0", "logical_volumes", &i, "segments", "0", "external_origin"], Value::from("ext"));
+    set_in(
+        &mut w,
+        &[
+            "storage",
+            "lvm",
+            "volume_groups",
+            "0",
+            "logical_volumes",
+            &i,
+            "segments",
+            "0",
+            "external_origin",
+        ],
+        Value::from("ext"),
+    );
     check(w, "has the external origin ext");
     let mut w = v.clone();
-    set_in(&mut w, &["storage", "lvm", "volume_groups", "0", "logical_volumes", &idx("vm-pool"), "data_used_bytes"], Value::from(40u64 << 30));
-    check(w, "thin pool qubes_dom0/vm-pool: the source had 40 GiB of data in use, more than the 34.5 GiB");
+    set_in(
+        &mut w,
+        &[
+            "storage",
+            "lvm",
+            "volume_groups",
+            "0",
+            "logical_volumes",
+            &idx("vm-pool"),
+            "data_used_bytes",
+        ],
+        Value::from(40u64 << 30),
+    );
+    check(
+        w,
+        "thin pool qubes_dom0/vm-pool: the source had 40 GiB of data in use, more than the 34.5 GiB",
+    );
     let mut w = v.clone();
     let mut all = lvs();
-    all.retain(|l| l.get("name").and_then(Value::as_str) != Some("vm-fedora-44-xfce-root-1794670030-back"));
-    set_in(&mut w, &["storage", "lvm", "volume_groups", "0", "logical_volumes"], Value::Arr(all));
-    check(w, "is a thin snapshot of vm-fedora-44-xfce-root-1794670030-back, which isn't a thin LV of pool vm-pool in the dump");
+    all.retain(|l| {
+        l.get("name").and_then(Value::as_str) != Some("vm-fedora-44-xfce-root-1794670030-back")
+    });
+    set_in(
+        &mut w,
+        &["storage", "lvm", "volume_groups", "0", "logical_volumes"],
+        Value::Arr(all),
+    );
+    check(
+        w,
+        "is a thin snapshot of vm-fedora-44-xfce-root-1794670030-back, which isn't a thin LV of pool vm-pool in the dump",
+    );
     let mut w = v.clone();
-    set_in(&mut w, &["storage", "fstab", "0", "type"], Value::from("btrfs"));
+    set_in(
+        &mut w,
+        &["storage", "fstab", "0", "type"],
+        Value::from("btrfs"),
+    );
     check(w, "Qubes OS on btrfs");
     let mut w = v.clone();
     set_at(&mut w, &["os", "version_id"], Value::from("4.2"));
@@ -8385,7 +14920,9 @@ fn qubes_refusals() {
 
 /// `x` at `path` (object keys and array indexes), in place.
 fn set_in(v: &mut Value, path: &[&str], x: Value) {
-    let Some((last, rest)) = path.split_first().map(|(f, r)| (f, r)) else { return };
+    let Some((last, rest)) = path.split_first().map(|(f, r)| (f, r)) else {
+        return;
+    };
     match v {
         Value::Arr(a) => {
             let i: usize = last.parse().unwrap();
@@ -8402,7 +14939,15 @@ fn set_in(v: &mut Value, path: &[&str], x: Value) {
                     None => o.push((last.to_string(), x)),
                 }
             } else {
-                set_in(&mut o.iter_mut().find(|(k, _)| k == last).unwrap_or_else(|| panic!("no {last}")).1, rest, x);
+                set_in(
+                    &mut o
+                        .iter_mut()
+                        .find(|(k, _)| k == last)
+                        .unwrap_or_else(|| panic!("no {last}"))
+                        .1,
+                    rest,
+                    x,
+                );
             }
         }
         _ => panic!("no object or array at {last}"),

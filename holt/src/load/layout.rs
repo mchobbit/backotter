@@ -17,7 +17,11 @@ pub const DUMP_SCHEMAS: &[u64] = &[SCHEMA];
 /// DUMP_SCHEMAS in words: "schema 1", or "schemas 1, 2".
 fn schemas_read() -> String {
     let l: Vec<String> = DUMP_SCHEMAS.iter().map(u64::to_string).collect();
-    format!("schema{} {}", if l.len() == 1 { "" } else { "s" }, l.join(", "))
+    format!(
+        "schema{} {}",
+        if l.len() == 1 { "" } else { "s" },
+        l.join(", ")
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,17 +121,29 @@ fn table(v: &Value) -> Option<Table> {
         // dump writes the MBR signature as bare hex ("ffe14ceb"); sfdisk
         // wants it with 0x, or reads it as decimal.
         TableKind::Mbr => match v.get("disk_signature") {
-            Some(Value::Str(t)) => u32::from_str_radix(t.trim_start_matches("0x"), 16).ok().map(|n| format!("0x{n:08x}")),
+            Some(Value::Str(t)) => u32::from_str_radix(t.trim_start_matches("0x"), 16)
+                .ok()
+                .map(|n| format!("0x{n:08x}")),
             Some(x) => x.as_u64().map(|n| format!("0x{n:08x}")),
             None => None,
         },
     };
-    Some(Table { kind, id, first_usable_lba: v.get_u64_lenient("first_usable_lba"), last_usable_lba: v.get_u64_lenient("last_usable_lba"), entry_count: v.get_u64_lenient("entry_count") })
+    Some(Table {
+        kind,
+        id,
+        first_usable_lba: v.get_u64_lenient("first_usable_lba"),
+        last_usable_lba: v.get_u64_lenient("last_usable_lba"),
+        entry_count: v.get_u64_lenient("entry_count"),
+    })
 }
 
 fn part(v: &Value, sector: u64) -> Option<Part> {
-    let start_lba = v.get_u64_lenient("start_lba").or_else(|| v.get_u64_lenient("start_bytes").map(|b| b / sector))?;
-    let sectors = v.get_u64_lenient("sectors").or_else(|| v.get_u64_lenient("size_bytes").map(|b| b / sector))?;
+    let start_lba = v
+        .get_u64_lenient("start_lba")
+        .or_else(|| v.get_u64_lenient("start_bytes").map(|b| b / sector))?;
+    let sectors = v
+        .get_u64_lenient("sectors")
+        .or_else(|| v.get_u64_lenient("size_bytes").map(|b| b / sector))?;
     let ptype = match v.get("type") {
         Some(Value::Str(t)) => t.clone(),
         Some(x) => format!("0x{:02x}", x.as_u64().unwrap_or(0)),
@@ -158,8 +174,20 @@ const DEVICE_SECTIONS: [&str; 3] = ["disks", "md_arrays", "dm_devices"];
 pub fn all_devices(v: &Value) -> impl Iterator<Item = &Value> {
     DEVICE_SECTIONS
         .iter()
-        .flat_map(move |sect| v.at(&["storage", sect]).and_then(Value::as_array).into_iter().flatten())
-        .flat_map(|d| std::iter::once(d).chain(d.get("partitions").and_then(Value::as_array).into_iter().flatten()))
+        .flat_map(move |sect| {
+            v.at(&["storage", sect])
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .flat_map(|d| {
+            std::iter::once(d).chain(
+                d.get("partitions")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten(),
+            )
+        })
 }
 
 /// The first of all_devices(V) named NAME.
@@ -171,9 +199,19 @@ pub fn find_device<'a>(v: &'a Value, name: &str) -> Option<&'a Value> {
 /// before its partitions (which F may have changed).
 pub fn for_each_device_mut(v: &mut Value, mut f: impl FnMut(&mut Value)) {
     for sect in DEVICE_SECTIONS {
-        for d in v.at_mut(&["storage", sect]).and_then(Value::as_array_mut).into_iter().flatten() {
+        for d in v
+            .at_mut(&["storage", sect])
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
             f(d);
-            for p in d.get_mut("partitions").and_then(Value::as_array_mut).into_iter().flatten() {
+            for p in d
+                .get_mut("partitions")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
                 f(p);
             }
         }
@@ -189,45 +227,88 @@ impl Layout {
             return Err("a backotter-system document (a stick's system.json), not a bko-holt dump: `bko-holt stick --copy INSTALL_ID OUT --json` writes the layout it carries to OUT, which load takes".into());
         }
         if !FORMATS.contains(&format) {
-            return Err(format!("not a bko-holt dump (format {format:?}, want {:?})", FORMATS[0]));
+            return Err(format!(
+                "not a bko-holt dump (format {format:?}, want {:?})",
+                FORMATS[0]
+            ));
         }
         match v.get("schema").and_then(Value::as_u64) {
             Some(s) if DUMP_SCHEMAS.contains(&s) => {}
-            other => return Err(format!("schema {other:?} isn't one this bko-holt knows (it reads {})", schemas_read())),
+            other => {
+                return Err(format!(
+                    "schema {other:?} isn't one this bko-holt knows (it reads {})",
+                    schemas_read()
+                ));
+            }
         }
         let id = v.at(&["os", "id"]).and_then(Value::as_str).unwrap_or("");
-        let ver = v.at(&["os", "version_id"]).and_then(Value::as_str).unwrap_or("");
+        let ver = v
+            .at(&["os", "version_id"])
+            .and_then(Value::as_str)
+            .unwrap_or("");
         // Slackware -current by its codename (osrel::check_supported).
         let codename = v.at(&["os", "version_codename"]).and_then(Value::as_str);
-        if !crate::osrel::supported(id, ver) && !crate::osrel::slackware_current(id, ver, codename) {
-            return Err(format!("the source system is {id} {ver}; bko-holt load supports only {}", crate::osrel::supported_names()));
+        if !crate::osrel::supported(id, ver) && !crate::osrel::slackware_current(id, ver, codename)
+        {
+            return Err(format!(
+                "the source system is {id} {ver}; bko-holt load supports only {}",
+                crate::osrel::supported_names()
+            ));
         }
         // -current on x86_64 only (osrel::check_slackware_current_machine);
         // a dump with no os.machine is from before A3, so x86_64.
-        let machine = v.at(&["os", "machine"]).and_then(Value::as_str).unwrap_or("x86_64");
+        let machine = v
+            .at(&["os", "machine"])
+            .and_then(Value::as_str)
+            .unwrap_or("x86_64");
         if crate::osrel::slackware_current(id, ver, codename) && machine != "x86_64" {
-            return Err(format!("the source system is Slackware -current on {machine}; bko-holt load supports -current on x86_64 (Slackware64-current) only"));
+            return Err(format!(
+                "the source system is Slackware -current on {machine}; bko-holt load supports -current on x86_64 (Slackware64-current) only"
+            ));
         }
         if v.get("privileged").and_then(Value::as_bool) == Some(false) {
             return Err("the dump wasn't made as root, so it has udev's view of the disks only; dump again as root".into());
         }
         let mut disks = Vec::new();
-        for d in v.at(&["storage", "disks"]).and_then(Value::as_array).into_iter().flatten() {
+        for d in v
+            .at(&["storage", "disks"])
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             if d.get("kind").and_then(Value::as_str) == Some("ram") {
                 continue;
             }
             // A ZFS volume (zdN) is made inside its pool, not mapped to a disk.
-            if d.get("links").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).any(|l| l.starts_with("/dev/zvol/")) {
+            if d.get("links")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .any(|l| l.starts_with("/dev/zvol/"))
+            {
                 continue;
             }
-            let sector = d.get_u64_lenient("logical_sector_size").unwrap_or(512).max(512);
+            let sector = d
+                .get_u64_lenient("logical_sector_size")
+                .unwrap_or(512)
+                .max(512);
             let tv = d.get("partition_table").cloned().unwrap_or(Value::Null);
             let table = table(&tv);
             if !tv.is_null() && table.is_none() {
                 let t = tv.get("type").and_then(Value::as_str).unwrap_or("?");
-                return Err(format!("{}: partition table type {t:?} isn't one bko-holt load can make", s(d, "name").unwrap_or_default()));
+                return Err(format!(
+                    "{}: partition table type {t:?} isn't one bko-holt load can make",
+                    s(d, "name").unwrap_or_default()
+                ));
             }
-            let parts: Vec<Part> = d.get("partitions").and_then(Value::as_array).into_iter().flatten().filter_map(|p| part(p, sector)).collect();
+            let parts: Vec<Part> = d
+                .get("partitions")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|p| part(p, sector))
+                .collect();
             let content = d.get("content").cloned().unwrap_or(Value::Null);
             disks.push(Disk {
                 name: s(d, "name").unwrap_or_default(),
@@ -250,7 +331,11 @@ impl Layout {
     }
 
     pub fn arr(&self, path: &[&str]) -> &[Value] {
-        self.v.at(path).and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
+        self.v
+            .at(path)
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     pub fn str_at(&self, path: &[&str]) -> Option<&str> {
@@ -258,7 +343,8 @@ impl Layout {
     }
 
     pub fn uefi(&self) -> bool {
-        self.str_at(&["boot", "loader", "firmware"]) == Some("uefi") || self.str_at(&["firmware", "mode"]) == Some("uefi")
+        self.str_at(&["boot", "loader", "firmware"]) == Some("uefi")
+            || self.str_at(&["firmware", "mode"]) == Some("uefi")
     }
 
     pub fn hostname(&self) -> &str {
@@ -304,7 +390,12 @@ impl Layout {
                 }
                 // A GELI provider (FreeBSD's vtbd0p3.eli): its record, whose
                 // content is what's inside it.
-                for p in std::iter::once(d).chain(d.get("partitions").and_then(Value::as_array).into_iter().flatten()) {
+                for p in std::iter::once(d).chain(
+                    d.get("partitions")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten(),
+                ) {
                     if p.at(&["geli", "provider"]).and_then(Value::as_str) == Some(name) {
                         return p.get("geli");
                     }
@@ -316,16 +407,28 @@ impl Layout {
 
     /// The content (filesystem, container, member signature) of a source device.
     pub fn content(&self, name: &str) -> Option<&Value> {
-        self.device(name).and_then(|d| d.get("content")).filter(|c| !c.is_null())
+        self.device(name)
+            .and_then(|d| d.get("content"))
+            .filter(|c| !c.is_null())
     }
 
     /// The source devices a device-mapper or md device sits on.
     pub fn slaves(&self, name: &str) -> Vec<String> {
-        let Some(d) = self.device(name) else { return vec![] };
+        let Some(d) = self.device(name) else {
+            return vec![];
+        };
         if let Some(m) = d.at(&["md", "members"]).and_then(Value::as_array) {
-            return m.iter().filter_map(|x| x.get("device").and_then(Value::as_str).map(str::to_string)).collect();
+            return m
+                .iter()
+                .filter_map(|x| x.get("device").and_then(Value::as_str).map(str::to_string))
+                .collect();
         }
-        d.get("slaves").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect()
+        d.get("slaves")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect()
     }
 
     /// The crypttab line for a LUKS container, found by the name it was
@@ -333,7 +436,11 @@ impl Layout {
     pub fn crypttab_entry(&self, dm_name: &str, luks_uuid: Option<&str>) -> Option<&Value> {
         self.arr(&["storage", "crypttab"]).iter().find(|e| {
             e.get("name").and_then(Value::as_str) == Some(dm_name)
-                || luks_uuid.is_some_and(|u| e.get("device").and_then(Value::as_str).is_some_and(|d| d.eq_ignore_ascii_case(&format!("UUID={u}"))))
+                || luks_uuid.is_some_and(|u| {
+                    e.get("device")
+                        .and_then(Value::as_str)
+                        .is_some_and(|d| d.eq_ignore_ascii_case(&format!("UUID={u}")))
+                })
         })
     }
 
@@ -345,15 +452,34 @@ impl Layout {
     /// leaves it to the restored crypttab.  A plain one with a real key
     /// isn't this, and stays a Problem.
     pub fn random_key_crypt(&self, name: &str) -> Option<(String, String, String)> {
-        let dm = self.arr(&["storage", "dm_devices"]).iter().find(|d| d.get("name").and_then(Value::as_str) == Some(name))?;
-        if dm.at(&["dm", "target"]).and_then(Value::as_str) != Some("crypt") || dm.at(&["dm", "crypt_type"]).and_then(Value::as_str) != Some("PLAIN") {
+        let dm = self
+            .arr(&["storage", "dm_devices"])
+            .iter()
+            .find(|d| d.get("name").and_then(Value::as_str) == Some(name))?;
+        if dm.at(&["dm", "target"]).and_then(Value::as_str) != Some("crypt")
+            || dm.at(&["dm", "crypt_type"]).and_then(Value::as_str) != Some("PLAIN")
+        {
             return None;
         }
-        let dm_name = dm.at(&["dm", "dm_name"]).and_then(Value::as_str).unwrap_or(name);
+        let dm_name = dm
+            .at(&["dm", "dm_name"])
+            .and_then(Value::as_str)
+            .unwrap_or(name);
         let e = self.crypttab_entry(dm_name, None)?;
-        let key = s(e, "key_file").filter(|k| matches!(k.as_str(), "/dev/urandom" | "/dev/random"))?;
-        let opt = e.get("options").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).find(|o| *o == "swap" || *o == "tmp" || o.starts_with("tmp="))?;
-        Some((s(e, "name").unwrap_or_else(|| dm_name.to_string()), key, opt.to_string()))
+        let key =
+            s(e, "key_file").filter(|k| matches!(k.as_str(), "/dev/urandom" | "/dev/random"))?;
+        let opt = e
+            .get("options")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .find(|o| *o == "swap" || *o == "tmp" || o.starts_with("tmp="))?;
+        Some((
+            s(e, "name").unwrap_or_else(|| dm_name.to_string()),
+            key,
+            opt.to_string(),
+        ))
     }
 }
 
@@ -382,27 +508,53 @@ impl Layout {
         let mut v = self.v.clone();
         let mut notes = Vec::new();
         let mut problems = Vec::new();
-        let mut names: Vec<String> = self.arr(&["storage", "zfs", "tools", "imported_pools"]).iter().filter_map(|p| s(p, "name")).collect();
+        let mut names: Vec<String> = self
+            .arr(&["storage", "zfs", "tools", "imported_pools"])
+            .iter()
+            .filter_map(|p| s(p, "name"))
+            .collect();
         for p in self.arr(&["storage", "zfs", "pools_from_labels"]) {
             if let Some(n) = s(p, "name").filter(|n| !names.contains(n)) {
                 names.push(n);
             }
         }
         for k in keep.iter().filter(|k| !names.contains(k)) {
-            problems.push(format!("--pools {k}: the layout has no ZFS pool {k} (it has {})", if names.is_empty() { "none".to_string() } else { names.join(", ") }));
+            problems.push(format!(
+                "--pools {k}: the layout has no ZFS pool {k} (it has {})",
+                if names.is_empty() {
+                    "none".to_string()
+                } else {
+                    names.join(", ")
+                }
+            ));
         }
-        let left: Vec<String> = names.iter().filter(|n| !keep.contains(n)).cloned().collect();
-        let pool_of = |c: &Value| (s(c, "type").as_deref() == Some("zfs_member")).then(|| s(c, "pool_name").or_else(|| s(c, "label"))).flatten();
+        let left: Vec<String> = names
+            .iter()
+            .filter(|n| !keep.contains(n))
+            .cloned()
+            .collect();
+        let pool_of = |c: &Value| {
+            (s(c, "type").as_deref() == Some("zfs_member"))
+                .then(|| s(c, "pool_name").or_else(|| s(c, "label")))
+                .flatten()
+        };
         let mut out_disks: Vec<String> = Vec::new();
-        let mut on: Vec<(String, Vec<String>)> = left.iter().map(|n| (n.clone(), Vec::new())).collect();
+        let mut on: Vec<(String, Vec<String>)> =
+            left.iter().map(|n| (n.clone(), Vec::new())).collect();
         // Bug: only_pools (--pools) missed GELI-backed ZFS vdevs and kept
         // storage.md_arrays, dm_devices, lvm.volume_groups, btrfs, and
         // xfs_external_logs referencing out_disks, making assemble() and
         // format() fail with missing-device errors on partial pool restores.
         // Inspect GELI inner content, refuse split containers, and prune them.
         for d in &self.disks {
-            let geli_c = std::iter::once(d.name.as_str()).chain(d.parts.iter().map(|p| p.name.as_str())).filter_map(|n| self.device(n)?.at(&["geli", "content"]));
-            let pools: Vec<String> = std::iter::once(&d.content).chain(d.parts.iter().map(|p| &p.content)).chain(geli_c).filter_map(pool_of).collect();
+            let geli_c = std::iter::once(d.name.as_str())
+                .chain(d.parts.iter().map(|p| p.name.as_str()))
+                .filter_map(|n| self.device(n)?.at(&["geli", "content"]));
+            let pools: Vec<String> = std::iter::once(&d.content)
+                .chain(d.parts.iter().map(|p| &p.content))
+                .chain(geli_c)
+                .filter_map(pool_of)
+                .collect();
             let gone: Vec<&String> = pools.iter().filter(|p| left.contains(p)).collect();
             if gone.is_empty() {
                 continue;
@@ -424,10 +576,18 @@ impl Layout {
         // A device on a disk left out: a partition of one, or what sits on
         // one (md, device-mapper: its slaves).
         fn on_disks(l: &Layout, dev: &str, disks: &[String], depth: usize) -> bool {
-            if disks.iter().any(|d| d == dev) || l.disks.iter().filter(|d| disks.contains(&d.name)).any(|d| d.parts.iter().any(|p| p.name == dev)) {
+            if disks.iter().any(|d| d == dev)
+                || l.disks
+                    .iter()
+                    .filter(|d| disks.contains(&d.name))
+                    .any(|d| d.parts.iter().any(|p| p.name == dev))
+            {
                 return true;
             }
-            depth < 8 && l.slaves(dev).iter().any(|s| on_disks(l, s, disks, depth + 1))
+            depth < 8
+                && l.slaves(dev)
+                    .iter()
+                    .any(|s| on_disks(l, s, disks, depth + 1))
         }
         let mut left_json = Vec::new();
         let mut all_paths: Vec<String> = Vec::new();
@@ -435,36 +595,79 @@ impl Layout {
             let paths: Vec<String> = self
                 .arr(&["storage", "backup_sources"])
                 .iter()
-                .filter(|b| s(b, "fstype").as_deref() == Some("zfs") && s(b, "source").is_some_and(|x| pool_part(&x) == *n))
+                .filter(|b| {
+                    s(b, "fstype").as_deref() == Some("zfs")
+                        && s(b, "source").is_some_and(|x| pool_part(&x) == *n)
+                })
                 .filter_map(|b| s(b, "path"))
                 .collect();
-            let guid = self.arr(&["storage", "zfs", "pools_from_labels"]).iter().find(|l| s(l, "name").as_deref() == Some(n.as_str())).and_then(|l| l.get("pool_guid")).and_then(|g| g.as_str().map(str::to_string).or_else(|| g.as_u64().map(|x| x.to_string())));
+            let guid = self
+                .arr(&["storage", "zfs", "pools_from_labels"])
+                .iter()
+                .find(|l| s(l, "name").as_deref() == Some(n.as_str()))
+                .and_then(|l| l.get("pool_guid"))
+                .and_then(|g| {
+                    g.as_str()
+                        .map(str::to_string)
+                        .or_else(|| g.as_u64().map(|x| x.to_string()))
+                });
             if ds.is_empty() {
                 problems.push(format!("--pools: pool {n} is to be left untouched, but no disk of the layout holds a vdev of it (its label wasn't read, or it's inside GELI or LUKS), so bko-holt load can't tell which disks to leave alone"));
             }
             if guid.is_none() {
                 problems.push(format!("--pools: pool {n} has no GUID in the dump (storage.zfs.pools_from_labels), so a target disk holding it couldn't be recognised and refused"));
             }
-            let files = if paths.is_empty() { String::new() } else { format!("; its files under {} aren't restored", paths.join(", ")) };
-            notes.push(format!("--pools: pool {n} on {} left untouched (not partitioned, made or restored){files}", if ds.is_empty() { "no disk of the layout".to_string() } else { ds.join(", ") }));
+            let files = if paths.is_empty() {
+                String::new()
+            } else {
+                format!("; its files under {} aren't restored", paths.join(", "))
+            };
+            notes.push(format!(
+                "--pools: pool {n} on {} left untouched (not partitioned, made or restored){files}",
+                if ds.is_empty() {
+                    "no disk of the layout".to_string()
+                } else {
+                    ds.join(", ")
+                }
+            ));
             all_paths.extend(paths.iter().cloned());
-            left_json.push(crate::json::Obj::new().set("name", n.as_str()).set("guid", guid).set("disks", ds.clone()).set("paths", paths).build());
+            left_json.push(
+                crate::json::Obj::new()
+                    .set("name", n.as_str())
+                    .set("guid", guid)
+                    .set("disks", ds.clone())
+                    .set("paths", paths)
+                    .build(),
+            );
         }
         // Whatever else those disks hold (an ext4 /srv beside the pool's
         // partition) isn't made either: its files aren't restored.
         let mut others: Vec<String> = Vec::new();
         for b in self.arr(&["storage", "backup_sources"]) {
-            let (Some(path), Some(dev)) = (s(b, "path"), s(b, "device")) else { continue };
+            let (Some(path), Some(dev)) = (s(b, "path"), s(b, "device")) else {
+                continue;
+            };
             if !all_paths.contains(&path) && on_disks(self, &dev, &out_disks, 0) {
                 others.push(format!("{path} ({dev})"));
                 all_paths.push(path);
             }
         }
         if !others.is_empty() {
-            notes.push(format!("--pools: the left-out disks also hold {}, which aren't made or restored either", others.join(", ")));
+            notes.push(format!(
+                "--pools: the left-out disks also hold {}, which aren't made or restored either",
+                others.join(", ")
+            ));
         }
-        let guids: Vec<(String, String)> = left_json.iter().filter_map(|p| Some((s(p, "name")?, s(p, "guid")?.to_ascii_lowercase()))).collect();
-        let kept_disks: Vec<String> = self.disks.iter().map(|d| d.name.clone()).filter(|n| !out_disks.contains(n)).collect();
+        let guids: Vec<(String, String)> = left_json
+            .iter()
+            .filter_map(|p| Some((s(p, "name")?, s(p, "guid")?.to_ascii_lowercase())))
+            .collect();
+        let kept_disks: Vec<String> = self
+            .disks
+            .iter()
+            .map(|d| d.name.clone())
+            .filter(|n| !out_disks.contains(n))
+            .collect();
         let mut check_split = |what: &str, name: &str, devs: &[String]| -> bool {
             let has_out = devs.iter().any(|d| on_disks(self, d, &out_disks, 0));
             if has_out && devs.iter().any(|d| on_disks(self, d, &kept_disks, 0)) {
@@ -474,14 +677,26 @@ impl Layout {
         };
         if let Some(Value::Arr(a)) = v.at_mut(&["storage", "md_arrays"]) {
             a.retain(|m| {
-                let mems: Vec<String> = m.at(&["md", "members"]).and_then(Value::as_array).into_iter().flatten().filter_map(|x| s(x, "device")).collect();
+                let mems: Vec<String> = m
+                    .at(&["md", "members"])
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|x| s(x, "device"))
+                    .collect();
                 !check_split("md array", &s(m, "name").unwrap_or_default(), &mems)
             });
         }
         let mut out_vgs: Vec<String> = Vec::new();
         if let Some(Value::Arr(a)) = v.at_mut(&["storage", "lvm", "volume_groups"]) {
             a.retain(|vg| {
-                let pvs: Vec<String> = vg.get("physical_volumes").and_then(Value::as_array).into_iter().flatten().filter_map(|p| s(p, "device")).collect();
+                let pvs: Vec<String> = vg
+                    .get("physical_volumes")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|p| s(p, "device"))
+                    .collect();
                 let vn = s(vg, "name").unwrap_or_default();
                 let drop_vg = check_split("volume group", &vn, &pvs);
                 if drop_vg {
@@ -492,15 +707,39 @@ impl Layout {
         }
         if let Some(Value::Arr(a)) = v.at_mut(&["storage", "dm_devices"]) {
             a.retain(|d| {
-                let in_out_vg = d.at(&["dm", "vg"]).and_then(Value::as_str).is_some_and(|g| out_vgs.iter().any(|x| x == g));
-                let sl: Vec<String> = d.get("slaves").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
-                !in_out_vg && !check_split("device-mapper device", &s(d, "name").unwrap_or_default(), &sl)
+                let in_out_vg = d
+                    .at(&["dm", "vg"])
+                    .and_then(Value::as_str)
+                    .is_some_and(|g| out_vgs.iter().any(|x| x == g));
+                let sl: Vec<String> = d
+                    .get("slaves")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect();
+                !in_out_vg
+                    && !check_split(
+                        "device-mapper device",
+                        &s(d, "name").unwrap_or_default(),
+                        &sl,
+                    )
             });
         }
         if let Some(Value::Arr(a)) = v.at_mut(&["storage", "btrfs"]) {
             a.retain(|fs| {
-                let devs: Vec<String> = fs.get("devices").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
-                !check_split("btrfs filesystem", &s(fs, "uuid").unwrap_or_default(), &devs)
+                let devs: Vec<String> = fs
+                    .get("devices")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect();
+                !check_split(
+                    "btrfs filesystem",
+                    &s(fs, "uuid").unwrap_or_default(),
+                    &devs,
+                )
             });
         }
         if let Some(Value::Arr(a)) = v.at_mut(&["storage", "xfs_external_logs"]) {
@@ -509,7 +748,10 @@ impl Layout {
         if let Some(Value::Arr(a)) = v.at_mut(&["storage", "disks"]) {
             a.retain(|d| !s(d, "name").is_some_and(|n| out_disks.contains(&n)));
         }
-        for path in [&["storage", "zfs", "tools", "imported_pools"][..], &["storage", "zfs", "pools_from_labels"][..]] {
+        for path in [
+            &["storage", "zfs", "tools", "imported_pools"][..],
+            &["storage", "zfs", "pools_from_labels"][..],
+        ] {
             if let Some(Value::Arr(a)) = v.at_mut(path) {
                 a.retain(|p| !s(p, "name").is_some_and(|n| left.contains(&n)));
             }
@@ -520,7 +762,10 @@ impl Layout {
         if let Some(Value::Obj(z)) = v.at_mut(&["storage", "zfs"]) {
             z.retain(|(k, _)| k != "left_out_pools" && k != "left_out_paths");
             z.push(("left_out_pools".into(), Value::Arr(left_json)));
-            z.push(("left_out_paths".into(), Value::Arr(all_paths.into_iter().map(Value::from).collect())));
+            z.push((
+                "left_out_paths".into(),
+                Value::Arr(all_paths.into_iter().map(Value::from).collect()),
+            ));
         }
         let layout = match Layout::from_json(v) {
             Ok(l) => l,
@@ -529,7 +774,13 @@ impl Layout {
                 self.clone()
             }
         };
-        OnlyPools { layout, notes, problems, disks: out_disks, guids }
+        OnlyPools {
+            layout,
+            notes,
+            problems,
+            disks: out_disks,
+            guids,
+        }
     }
 }
 
@@ -608,8 +859,16 @@ mod tests {
         // bko-holt's load, and its image's marker, refuse.
         assert!(DUMP_SCHEMAS.contains(&u64::from(crate::report::SCHEMA)));
         assert_eq!(schemas_read(), "schema 1");
-        let e = Layout::from_json(crate::json::parse(&sample::bios_mbr().replacen("\"schema\": 1", "\"schema\": 9", 1)).unwrap()).err().unwrap();
-        assert_eq!(e, "schema Some(9) isn't one this bko-holt knows (it reads schema 1)");
+        let e = Layout::from_json(
+            crate::json::parse(&sample::bios_mbr().replacen("\"schema\": 1", "\"schema\": 9", 1))
+                .unwrap(),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            e,
+            "schema Some(9) isn't one this bko-holt knows (it reads schema 1)"
+        );
     }
 
     #[test]
@@ -619,18 +878,43 @@ mod tests {
                 "md_arrays": [{"name": "md0", "partitions": [{"name": "md0p1"}]}], "softraid_volumes": [{"name": "sd9"}]}}"#,
         )
         .unwrap();
-        let names = |v: &Value| all_devices(v).filter_map(|d| d.get("name").and_then(Value::as_str)).map(str::to_string).collect::<Vec<_>>();
-        assert_eq!(names(&v), ["sda", "sda1", "sda2", "sdb", "md0", "md0p1", "dm-0"]);
-        assert_eq!(find_device(&v, "md0p1").and_then(|d| d.get("name")).and_then(Value::as_str), Some("md0p1"));
+        let names = |v: &Value| {
+            all_devices(v)
+                .filter_map(|d| d.get("name").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names(&v),
+            ["sda", "sda1", "sda2", "sdb", "md0", "md0p1", "dm-0"]
+        );
+        assert_eq!(
+            find_device(&v, "md0p1")
+                .and_then(|d| d.get("name"))
+                .and_then(Value::as_str),
+            Some("md0p1")
+        );
         assert!(find_device(&v, "sd9").is_none());
         let mut seen = Vec::new();
         for_each_device_mut(&mut v, |d| {
-            seen.push(d.get("name").and_then(Value::as_str).unwrap_or("").to_string());
+            seen.push(
+                d.get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+            );
             d.put("seen", seen.len() as u64);
         });
         assert_eq!(seen, names(&v));
-        assert_eq!(v.at(&["storage", "disks", "0", "partitions", "1", "seen"]).and_then(Value::as_u64), Some(3));
-        assert_eq!(names(&crate::json::parse("{}").unwrap()), Vec::<String>::new());
+        assert_eq!(
+            v.at(&["storage", "disks", "0", "partitions", "1", "seen"])
+                .and_then(Value::as_u64),
+            Some(3)
+        );
+        assert_eq!(
+            names(&crate::json::parse("{}").unwrap()),
+            Vec::<String>::new()
+        );
     }
 
     fn parse(t: &str) -> Result<Layout, String> {
@@ -650,7 +934,12 @@ mod tests {
         assert_eq!(d.parts[1].ptype, "0x82");
         assert!(d.used);
         assert!(!l.uefi());
-        assert_eq!(l.content("vda3").and_then(|c| c.get("type")).and_then(Value::as_str), Some("btrfs"));
+        assert_eq!(
+            l.content("vda3")
+                .and_then(|c| c.get("type"))
+                .and_then(Value::as_str),
+            Some("btrfs")
+        );
         assert_eq!(l.hostname(), "deb13");
     }
 
@@ -660,15 +949,35 @@ mod tests {
     #[test]
     fn numbers_in_every_spelling() {
         let good = sample::bios_mbr();
-        for (start, sectors, number, size) in [("2048", "1953792", "1", "17179869184"), ("\"2048\"", "\"1953792\"", "\"1\"", "\"17179869184\""), ("\"0x800\"", "\"0x1dd000\"", "\"0x1\"", "\"0x400000000\"")] {
+        for (start, sectors, number, size) in [
+            ("2048", "1953792", "1", "17179869184"),
+            ("\"2048\"", "\"1953792\"", "\"1\"", "\"17179869184\""),
+            ("\"0x800\"", "\"0x1dd000\"", "\"0x1\"", "\"0x400000000\""),
+        ] {
             let t = good
-                .replace("\"number\": 1, \"start_lba\": 2048, \"sectors\": 1953792", &format!("\"number\": {number}, \"start_lba\": {start}, \"sectors\": {sectors}"))
-                .replace("\"size_bytes\": 17179869184, \"logical_sector_size\": 512", &format!("\"size_bytes\": {size}, \"logical_sector_size\": \"0x200\""));
+                .replace(
+                    "\"number\": 1, \"start_lba\": 2048, \"sectors\": 1953792",
+                    &format!(
+                        "\"number\": {number}, \"start_lba\": {start}, \"sectors\": {sectors}"
+                    ),
+                )
+                .replace(
+                    "\"size_bytes\": 17179869184, \"logical_sector_size\": 512",
+                    &format!("\"size_bytes\": {size}, \"logical_sector_size\": \"0x200\""),
+                );
             assert_ne!(t, good, "{start}");
             let l = parse(&t).unwrap();
             let d = &l.disks[0];
-            assert_eq!((d.size_bytes, d.sector_size, d.parts.len()), (17179869184, 512, 3), "{start}");
-            assert_eq!((d.parts[0].number, d.parts[0].start_lba, d.parts[0].sectors), (1, 2048, 1953792), "{start}");
+            assert_eq!(
+                (d.size_bytes, d.sector_size, d.parts.len()),
+                (17179869184, 512, 3),
+                "{start}"
+            );
+            assert_eq!(
+                (d.parts[0].number, d.parts[0].start_lba, d.parts[0].sectors),
+                (1, 2048, 1953792),
+                "{start}"
+            );
         }
         // Not a spelling dump writes: the partition isn't read.
         let t = good.replace("\"start_lba\": 2048,", "\"start_lba\": \"0X800\",");
@@ -679,12 +988,35 @@ mod tests {
     fn contract_checks() {
         let good = sample::bios_mbr();
         assert!(parse(&good.replace("\"bko-holt\"", "\"bko-laydump\"")).is_ok());
-        assert!(parse(&good.replace("\"bko-holt\"", "\"other\"")).unwrap_err().contains("not a bko-holt dump"));
-        assert!(parse(&good.replace("\"schema\": 1", "\"schema\": 2")).unwrap_err().contains("schema"));
-        assert!(parse(&good.replace("\"version_id\": \"13\"", "\"version_id\": \"11\"")).unwrap_err().contains("supports only Debian 13, Linux Mint 22"));
-        let mint = good.replace("\"id\": \"debian\", \"version_id\": \"13\"", "\"id\": \"linuxmint\", \"version_id\": \"22.3\"");
+        assert!(
+            parse(&good.replace("\"bko-holt\"", "\"other\""))
+                .unwrap_err()
+                .contains("not a bko-holt dump")
+        );
+        assert!(
+            parse(&good.replace("\"schema\": 1", "\"schema\": 2"))
+                .unwrap_err()
+                .contains("schema")
+        );
+        assert!(
+            parse(&good.replace("\"version_id\": \"13\"", "\"version_id\": \"11\""))
+                .unwrap_err()
+                .contains("supports only Debian 13, Linux Mint 22")
+        );
+        let mint = good.replace(
+            "\"id\": \"debian\", \"version_id\": \"13\"",
+            "\"id\": \"linuxmint\", \"version_id\": \"22.3\"",
+        );
         assert!(parse(&mint).is_ok());
-        assert!(parse(&good.replace("\"privileged\": true", "\"privileged\": false")).unwrap_err().contains("as root"));
-        assert!(parse(&good.replace("\"type\": \"dos\"", "\"type\": \"sun\"")).unwrap_err().contains("isn't one"));
+        assert!(
+            parse(&good.replace("\"privileged\": true", "\"privileged\": false"))
+                .unwrap_err()
+                .contains("as root")
+        );
+        assert!(
+            parse(&good.replace("\"type\": \"dos\"", "\"type\": \"sun\""))
+                .unwrap_err()
+                .contains("isn't one")
+        );
     }
 }

@@ -45,7 +45,10 @@ pub struct Udev {
 
 impl Udev {
     pub fn get(&self, k: &str) -> Option<&str> {
-        self.props.iter().find(|(key, _)| key == k).map(|(_, v)| v.as_str())
+        self.props
+            .iter()
+            .find(|(key, _)| key == k)
+            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -125,7 +128,11 @@ impl BlockDev {
             Some("usb") => Some("usb".into()),
             Some("ata") => Some("sata".into()),
             Some("scsi") => {
-                if self.udev.get("ID_PATH").is_some_and(|p| p.contains("virtio")) {
+                if self
+                    .udev
+                    .get("ID_PATH")
+                    .is_some_and(|p| p.contains("virtio"))
+                {
                     Some("virtio-scsi".into())
                 } else {
                     Some("scsi".into())
@@ -138,7 +145,13 @@ impl BlockDev {
 }
 
 fn kind_of(name: &str) -> Kind {
-    let prefix = |p: &str| name.starts_with(p) && name[p.len()..].chars().next().is_some_and(|c| c.is_ascii_digit());
+    let prefix = |p: &str| {
+        name.starts_with(p)
+            && name[p.len()..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_digit())
+    };
     if prefix("dm-") {
         Kind::Dm
     } else if prefix("md") {
@@ -168,28 +181,53 @@ fn read_dev(sys: &Sys, sysfs: &str, name: &str, kind: Kind, parent: Option<&str>
     };
     let flag = |p: &str| sys.read_trim(p).map(|v| v == "1");
     let attr = |p: &str| sys.read_trim(&format!("{sysfs}/device/{p}"));
-    let udev = sys.read(&format!("/run/udev/data/b{devno}")).map(|t| parse_udev(&t)).unwrap_or_default();
+    let udev = sys
+        .read(&format!("/run/udev/data/b{devno}"))
+        .map(|t| parse_udev(&t))
+        .unwrap_or_default();
     let whole = parent.is_none();
     BlockDev {
         name: name.to_string(),
         kind,
         size_bytes: sys.read_u64(&format!("{sysfs}/size")).unwrap_or(0) * 512,
         parent: parent.map(str::to_string),
-        partition_number: sys.read_u64(&format!("{sysfs}/partition")).map(|n| n as u32),
+        partition_number: sys
+            .read_u64(&format!("{sysfs}/partition"))
+            .map(|n| n as u32),
         start_sectors: sys.read_u64(&format!("{sysfs}/start")),
         holders: sys.list(&format!("{sysfs}/holders")),
         slaves: sys.list(&format!("{sysfs}/slaves")),
-        logical_block_size: sys.read_u64(&format!("{queue}/logical_block_size")).unwrap_or(512),
-        physical_block_size: sys.read_u64(&format!("{queue}/physical_block_size")).unwrap_or(512),
+        logical_block_size: sys
+            .read_u64(&format!("{queue}/logical_block_size"))
+            .unwrap_or(512),
+        physical_block_size: sys
+            .read_u64(&format!("{queue}/physical_block_size"))
+            .unwrap_or(512),
         rotational: flag(&format!("{queue}/rotational")),
-        removable: if whole { flag(&format!("{sysfs}/removable")) } else { None },
+        removable: if whole {
+            flag(&format!("{sysfs}/removable"))
+        } else {
+            None
+        },
         read_only: flag(&format!("{sysfs}/ro")),
         discard_max_bytes: sys.read_u64(&format!("{queue}/discard_max_bytes")),
         model: if whole { attr("model") } else { None },
         vendor: if whole { attr("vendor") } else { None },
-        serial: if whole { attr("serial").or_else(|| udev.get("ID_SERIAL_SHORT").map(str::to_string)) } else { None },
-        wwid: if whole { attr("wwid").or_else(|| udev.get("ID_WWN").map(str::to_string)) } else { None },
-        firmware: if whole { attr("firmware_rev").or_else(|| attr("rev")) } else { None },
+        serial: if whole {
+            attr("serial").or_else(|| udev.get("ID_SERIAL_SHORT").map(str::to_string))
+        } else {
+            None
+        },
+        wwid: if whole {
+            attr("wwid").or_else(|| udev.get("ID_WWN").map(str::to_string))
+        } else {
+            None
+        },
+        firmware: if whole {
+            attr("firmware_rev").or_else(|| attr("rev"))
+        } else {
+            None
+        },
         dm_name: sys.read_trim(&format!("{sysfs}/dm/name")),
         dm_uuid: sys.read_trim(&format!("{sysfs}/dm/uuid")),
         loop_backing_file: sys.read_trim(&format!("{sysfs}/loop/backing_file")),
@@ -209,11 +247,20 @@ pub fn scan(sys: &Sys) -> Vec<BlockDev> {
         if dev.size_bytes == 0 {
             continue;
         }
-        let parts: Vec<String> =
-            sys.list(&sysfs).into_iter().filter(|e| sys.is_file(&format!("{sysfs}/{e}/partition"))).collect();
+        let parts: Vec<String> = sys
+            .list(&sysfs)
+            .into_iter()
+            .filter(|e| sys.is_file(&format!("{sysfs}/{e}/partition")))
+            .collect();
         out.push(dev);
         for p in parts {
-            out.push(read_dev(sys, &format!("{sysfs}/{p}"), &p, Kind::Partition, Some(&name)));
+            out.push(read_dev(
+                sys,
+                &format!("{sysfs}/{p}"),
+                &p,
+                Kind::Partition,
+                Some(&name),
+            ));
         }
     }
     out
@@ -252,10 +299,18 @@ mod tests {
 
     #[test]
     fn udev_db_parsing() {
-        let u = parse_udev("S:disk/by-id/ata-X\nS:disk/by-path/pci-0000:00:1f.2-ata-1\nW:4\nI:123\nE:ID_FS_TYPE=ext4\nE:ID_FS_UUID=abc\nE:ID_PATH=pci-0000\nE:NOEQUALS\nG:systemd\nQ:systemd\nV:1\n");
+        let u = parse_udev(
+            "S:disk/by-id/ata-X\nS:disk/by-path/pci-0000:00:1f.2-ata-1\nW:4\nI:123\nE:ID_FS_TYPE=ext4\nE:ID_FS_UUID=abc\nE:ID_PATH=pci-0000\nE:NOEQUALS\nG:systemd\nQ:systemd\nV:1\n",
+        );
         assert_eq!(u.get("ID_FS_TYPE"), Some("ext4"));
         assert_eq!(u.get("NOEQUALS"), None);
-        assert_eq!(u.links, vec!["/dev/disk/by-id/ata-X", "/dev/disk/by-path/pci-0000:00:1f.2-ata-1"]);
+        assert_eq!(
+            u.links,
+            vec![
+                "/dev/disk/by-id/ata-X",
+                "/dev/disk/by-path/pci-0000:00:1f.2-ata-1"
+            ]
+        );
         assert!(parse_udev("").props.is_empty());
     }
 
@@ -274,20 +329,43 @@ mod tests {
         assert_eq!(kind_of("nbd3"), Kind::Nbd);
         assert_eq!(kind_of("ram0"), Kind::Ram);
         assert_eq!(kind_of("mmcblk0"), Kind::Disk);
-        for k in [Kind::Disk, Kind::Partition, Kind::Dm, Kind::Md, Kind::Loop, Kind::Zram, Kind::Rom, Kind::Floppy, Kind::Nbd, Kind::Ram] {
+        for k in [
+            Kind::Disk,
+            Kind::Partition,
+            Kind::Dm,
+            Kind::Md,
+            Kind::Loop,
+            Kind::Zram,
+            Kind::Rom,
+            Kind::Floppy,
+            Kind::Nbd,
+            Kind::Ram,
+        ] {
             assert!(!k.name().is_empty());
         }
     }
 
     #[test]
     fn lvm_names() {
-        assert_eq!(split_lvm_dm_name("vg0-root"), Some(("vg0".into(), "root".into())));
-        assert_eq!(split_lvm_dm_name("my--vg-lv--a"), Some(("my-vg".into(), "lv-a".into())));
-        assert_eq!(split_lvm_dm_name("debian--vg-swap_1"), Some(("debian-vg".into(), "swap_1".into())));
+        assert_eq!(
+            split_lvm_dm_name("vg0-root"),
+            Some(("vg0".into(), "root".into()))
+        );
+        assert_eq!(
+            split_lvm_dm_name("my--vg-lv--a"),
+            Some(("my-vg".into(), "lv-a".into()))
+        );
+        assert_eq!(
+            split_lvm_dm_name("debian--vg-swap_1"),
+            Some(("debian-vg".into(), "swap_1".into()))
+        );
         assert_eq!(split_lvm_dm_name("nodash"), None);
         assert_eq!(split_lvm_dm_name("-lv"), None);
         assert_eq!(split_lvm_dm_name("vg-"), None);
-        assert_eq!(split_lvm_dm_name("vg-thin-tpool"), Some(("vg".into(), "thin-tpool".into())));
+        assert_eq!(
+            split_lvm_dm_name("vg-thin-tpool"),
+            Some(("vg".into(), "thin-tpool".into()))
+        );
     }
 
     #[test]
@@ -320,7 +398,10 @@ mod tests {
         assert_eq!(vda.transport().as_deref(), Some("virtio"));
         assert_eq!(vda.discard_max_bytes, Some(2147483136));
         assert_eq!(vda.removable, Some(false));
-        assert_eq!(vda.udev.links, vec!["/dev/disk/by-path/virtio-pci-0000:00:04.0"]);
+        assert_eq!(
+            vda.udev.links,
+            vec!["/dev/disk/by-path/virtio-pci-0000:00:04.0"]
+        );
         let vda2 = &devs[3];
         assert_eq!(vda2.kind, Kind::Partition);
         assert_eq!(vda2.parent.as_deref(), Some("vda"));
@@ -367,16 +448,53 @@ mod tests {
             dm_name: None,
             dm_uuid: None,
             loop_backing_file: None,
-            udev: Udev { props: props.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), links: vec![] },
+            udev: Udev {
+                props: props
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+                links: vec![],
+            },
         };
         assert_eq!(mk("nvme0n1", &[]).transport().as_deref(), Some("nvme"));
         assert_eq!(mk("mmcblk0", &[]).transport().as_deref(), Some("mmc"));
         assert_eq!(mk("xvda", &[]).transport().as_deref(), Some("xen"));
-        assert_eq!(mk("sda", &[("ID_BUS", "ata")]).transport().as_deref(), Some("sata"));
-        assert_eq!(mk("sda", &[("ID_BUS", "usb")]).transport().as_deref(), Some("usb"));
-        assert_eq!(mk("sda", &[("ID_BUS", "scsi"), ("ID_PATH", "pci-0000:00:05.0-scsi-0:0:0:0")]).transport().as_deref(), Some("scsi"));
-        assert_eq!(mk("sda", &[("ID_BUS", "scsi"), ("ID_PATH", "virtio-pci-0000:00:05.0-scsi-0:0:0:0")]).transport().as_deref(), Some("virtio-scsi"));
-        assert_eq!(mk("sda", &[("ID_BUS", "ieee1394")]).transport().as_deref(), Some("ieee1394"));
+        assert_eq!(
+            mk("sda", &[("ID_BUS", "ata")]).transport().as_deref(),
+            Some("sata")
+        );
+        assert_eq!(
+            mk("sda", &[("ID_BUS", "usb")]).transport().as_deref(),
+            Some("usb")
+        );
+        assert_eq!(
+            mk(
+                "sda",
+                &[
+                    ("ID_BUS", "scsi"),
+                    ("ID_PATH", "pci-0000:00:05.0-scsi-0:0:0:0")
+                ]
+            )
+            .transport()
+            .as_deref(),
+            Some("scsi")
+        );
+        assert_eq!(
+            mk(
+                "sda",
+                &[
+                    ("ID_BUS", "scsi"),
+                    ("ID_PATH", "virtio-pci-0000:00:05.0-scsi-0:0:0:0")
+                ]
+            )
+            .transport()
+            .as_deref(),
+            Some("virtio-scsi")
+        );
+        assert_eq!(
+            mk("sda", &[("ID_BUS", "ieee1394")]).transport().as_deref(),
+            Some("ieee1394")
+        );
         assert_eq!(mk("sda", &[]).transport(), None);
     }
 }

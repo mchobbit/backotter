@@ -1,7 +1,7 @@
 //! RedoxFS (Redox): its header block, "RedoxFS\0", the version and the UUID.
 
 use super::Content;
-use crate::bytes::{le64, sub, uuid, ByteSource};
+use crate::bytes::{ByteSource, le64, sub, uuid};
 use crate::json::Obj;
 
 pub fn probe(src: &dyn ByteSource) -> Option<Content> {
@@ -44,7 +44,10 @@ mod tests {
         let c = probe(&MemSource(sample::image())).unwrap();
         assert_eq!(c.kind, "redoxfs");
         assert_eq!(c.version.as_deref(), Some("8"));
-        assert_eq!(c.uuid.as_deref(), Some("10111213-1415-1617-1819-1a1b1c1d1e1f"));
+        assert_eq!(
+            c.uuid.as_deref(),
+            Some("10111213-1415-1617-1819-1a1b1c1d1e1f")
+        );
         assert!(probe(&MemSource(vec![0u8; 65536])).is_none());
     }
 }

@@ -9,7 +9,8 @@ use std::process::{Command, Output};
 fn bin(args: &[&str], env: &[(&str, &str)]) -> Output {
     // BKO_HOLT_BIN: the binary, when these tests run outside the build
     // tree (copied into a test guest).
-    let exe = std::env::var("BKO_HOLT_BIN").unwrap_or_else(|_| env!("CARGO_BIN_EXE_bko-holt").to_string());
+    let exe = std::env::var("BKO_HOLT_BIN")
+        .unwrap_or_else(|_| env!("CARGO_BIN_EXE_bko-holt").to_string());
     let mut c = Command::new(exe);
     c.args(args);
     for (k, v) in env {
@@ -42,12 +43,18 @@ fn help_and_version() {
     for a in ["-V", "--version"] {
         let o = bin(&[a], &[]);
         assert_eq!(o.status.code(), Some(0));
-        assert_eq!(stdout(&o), format!("bko-holt {}\n", env!("CARGO_PKG_VERSION")));
+        assert_eq!(
+            stdout(&o),
+            format!("bko-holt {}\n", env!("CARGO_PKG_VERSION"))
+        );
     }
     let o = bin(&["--license"], &[]);
     assert_eq!(o.status.code(), Some(0));
     assert_eq!(stdout(&o), include_str!("../LICENSE"));
-    assert!(stdout(&o).contains("GNU GENERAL PUBLIC LICENSE\n                       Version 3, 29 June 2007"));
+    assert!(
+        stdout(&o)
+            .contains("GNU GENERAL PUBLIC LICENSE\n                       Version 3, 29 June 2007")
+    );
 }
 
 #[test]
@@ -72,10 +79,17 @@ fn bad_arguments_exit_2() {
 #[test]
 fn refuses_other_systems_with_exit_3() {
     let t = Tree::new("cli-buster");
-    t.file("/etc/os-release", "PRETTY_NAME=\"Debian GNU/Linux 10 (buster)\"\nID=debian\nVERSION_ID=\"10\"\n");
+    t.file(
+        "/etc/os-release",
+        "PRETTY_NAME=\"Debian GNU/Linux 10 (buster)\"\nID=debian\nVERSION_ID=\"10\"\n",
+    );
     let o = bin(&["dump", "--sysroot", t.root().to_str().unwrap()], &[]);
     assert_eq!(o.status.code(), Some(3));
-    assert!(stderr(&o).contains("Debian GNU/Linux 10 (buster)"), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("Debian GNU/Linux 10 (buster)"),
+        "{}",
+        stderr(&o)
+    );
     assert!(stdout(&o).is_empty());
     let empty = Tree::new("cli-empty");
     let o = bin(&["dump", "--sysroot", empty.root().to_str().unwrap()], &[]);
@@ -87,20 +101,39 @@ fn sysroot_dump_is_json() {
     let t = Tree::new("cli-sysroot");
     t.debian13().disk("vda", "254:0", &vec![0u8; 1 << 20], 512);
     let root = t.root().to_str().unwrap();
-    let o = bin(&["dump", "--sysroot", root], &[("SOURCE_DATE_EPOCH", "1793828645")]);
+    let o = bin(
+        &["dump", "--sysroot", root],
+        &[("SOURCE_DATE_EPOCH", "1793828645")],
+    );
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     let text = stdout(&o);
     assert!(text.starts_with("{\n  \"format\": \"bko-holt\",\n  \"schema\": 1,\n"));
     let v = json::parse(&text).unwrap();
-    assert_eq!(v.get("generated").and_then(Value::as_str), Some("2026-11-04T21:44:05Z"));
-    assert_eq!(v.at(&["tool", "name"]).and_then(Value::as_str), Some("bko-holt"));
-    assert_eq!(v.at(&["storage", "disks", "0", "name"]).and_then(Value::as_str), Some("vda"));
-    let c = bin(&["dump", "--compact", "--sysroot", root], &[("SOURCE_DATE_EPOCH", "1793828645")]);
+    assert_eq!(
+        v.get("generated").and_then(Value::as_str),
+        Some("2026-11-04T21:44:05Z")
+    );
+    assert_eq!(
+        v.at(&["tool", "name"]).and_then(Value::as_str),
+        Some("bko-holt")
+    );
+    assert_eq!(
+        v.at(&["storage", "disks", "0", "name"])
+            .and_then(Value::as_str),
+        Some("vda")
+    );
+    let c = bin(
+        &["dump", "--compact", "--sysroot", root],
+        &[("SOURCE_DATE_EPOCH", "1793828645")],
+    );
     let ct = stdout(&c);
     assert_eq!(ct.lines().count(), 1);
     assert_eq!(json::parse(&ct).unwrap().compact(), v.compact());
     // The same input gives the same output.
-    let again = bin(&["dump", "--sysroot", root], &[("SOURCE_DATE_EPOCH", "1793828645")]);
+    let again = bin(
+        &["dump", "--sysroot", root],
+        &[("SOURCE_DATE_EPOCH", "1793828645")],
+    );
     assert_eq!(stdout(&again), text);
 }
 
@@ -126,14 +159,24 @@ fn live_host_matches_lsblk() {
         assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
         let v = json::parse(&stdout(&o)).unwrap();
         assert_eq!(v.at(&["os", "id"]).and_then(Value::as_str), Some("debian"));
-        let ls = Command::new("lsblk").args(["--json", "-b", "-o", "NAME,KNAME,SIZE,FSTYPE,UUID,LABEL,PTTYPE,PTUUID,TYPE,PARTUUID"]).output().unwrap();
+        let ls = Command::new("lsblk")
+            .args([
+                "--json",
+                "-b",
+                "-o",
+                "NAME,KNAME,SIZE,FSTYPE,UUID,LABEL,PTTYPE,PTUUID,TYPE,PARTUUID",
+            ])
+            .output()
+            .unwrap();
         assert!(ls.status.success());
         let ls = json::parse(&String::from_utf8(ls.stdout).unwrap()).unwrap();
         let privileged = v.get("privileged") == Some(&Value::Bool(true));
         match compare_with_lsblk(&v, &ls, privileged) {
             Ok(checked) => {
                 assert!(checked > 0, "lsblk listed nothing to check");
-                eprintln!("checked {checked} devices against lsblk (privileged: {privileged}, attempt {attempt})");
+                eprintln!(
+                    "checked {checked} devices against lsblk (privileged: {privileged}, attempt {attempt})"
+                );
                 return;
             }
             Err(e) => {
@@ -142,7 +185,10 @@ fn live_host_matches_lsblk() {
             }
         }
     }
-    panic!("the dump disagreed with lsblk three times:\n{}", errors.join("\n"));
+    panic!(
+        "the dump disagreed with lsblk three times:\n{}",
+        errors.join("\n")
+    );
 }
 
 /// The devices of lsblk's tree LS checked against the dump V: the number
@@ -170,10 +216,26 @@ fn compare_with_lsblk(v: &Value, ls: &Value, privileged: bool) -> Result<usize, 
     walk(ls.get("blockdevices").unwrap(), &mut lsblk);
     // Ours, flattened too.
     let mut ours: Vec<Value> = Vec::new();
-    for sec in ["disks", "md_arrays", "dm_devices", "loop_devices", "other_devices"] {
-        for d in v.at(&["storage", sec]).and_then(Value::as_array).into_iter().flatten() {
+    for sec in [
+        "disks",
+        "md_arrays",
+        "dm_devices",
+        "loop_devices",
+        "other_devices",
+    ] {
+        for d in v
+            .at(&["storage", sec])
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             ours.push(d.clone());
-            for p in d.get("partitions").and_then(Value::as_array).into_iter().flatten() {
+            for p in d
+                .get("partitions")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 ours.push(p.clone());
             }
         }
@@ -185,30 +247,63 @@ fn compare_with_lsblk(v: &Value, ls: &Value, privileged: bool) -> Result<usize, 
         if size == 0 || l.get("type").and_then(Value::as_str) == Some("rom") {
             continue;
         }
-        let d = ours.iter().find(|d| d.get("name").and_then(Value::as_str) == Some(kname)).ok_or_else(|| format!("{kname} missing from the dump"))?;
-        check_eq!(d.get("size_bytes").and_then(Value::as_u64), Some(size), "size of {kname}");
+        let d = ours
+            .iter()
+            .find(|d| d.get("name").and_then(Value::as_str) == Some(kname))
+            .ok_or_else(|| format!("{kname} missing from the dump"))?;
+        check_eq!(
+            d.get("size_bytes").and_then(Value::as_u64),
+            Some(size),
+            "size of {kname}"
+        );
         let fstype = l.get("fstype").and_then(Value::as_str);
         let our_type = d.at(&["content", "type"]).and_then(Value::as_str);
         // blkid's known false positive: a partitioned disk whose last
         // partition is a ZFS vdev has that vdev's end labels at its own
         // end, and blkid calls the whole disk a zfs_member.  We don't.
-        let blkid_zfs_quirk = privileged && fstype == Some("zfs_member") && l.get("pttype").is_some_and(|p| !p.is_null()) && l.get("type").and_then(Value::as_str) == Some("disk");
+        let blkid_zfs_quirk = privileged
+            && fstype == Some("zfs_member")
+            && l.get("pttype").is_some_and(|p| !p.is_null())
+            && l.get("type").and_then(Value::as_str) == Some("disk");
         if blkid_zfs_quirk {
             check_eq!(our_type, None::<&str>, "{kname}: whole disk with a table");
         } else if fstype.is_some() {
-            check_eq!(our_type, fstype, "content type of {kname} (privileged: {privileged})");
+            check_eq!(
+                our_type,
+                fstype,
+                "content type of {kname} (privileged: {privileged})"
+            );
             let uuid = l.get("uuid").and_then(Value::as_str);
             let our_uuid = d.at(&["content", "uuid"]).and_then(Value::as_str);
-            check_eq!(our_uuid.map(str::to_lowercase), uuid.map(str::to_lowercase), "uuid of {kname}");
-            check_eq!(d.at(&["content", "label"]).and_then(Value::as_str), l.get("label").and_then(Value::as_str), "label of {kname}");
+            check_eq!(
+                our_uuid.map(str::to_lowercase),
+                uuid.map(str::to_lowercase),
+                "uuid of {kname}"
+            );
+            check_eq!(
+                d.at(&["content", "label"]).and_then(Value::as_str),
+                l.get("label").and_then(Value::as_str),
+                "label of {kname}"
+            );
         }
         if let Some(pt) = l.get("pttype").and_then(Value::as_str) {
             if l.get("type").and_then(Value::as_str) != Some("part") {
-                check_eq!(d.at(&["partition_table", "type"]).and_then(Value::as_str), Some(pt), "table of {kname}");
+                check_eq!(
+                    d.at(&["partition_table", "type"]).and_then(Value::as_str),
+                    Some(pt),
+                    "table of {kname}"
+                );
             }
         }
-        if let (Some(pu), Some("part")) = (l.get("partuuid").and_then(Value::as_str), l.get("type").and_then(Value::as_str)) {
-            check_eq!(d.get("uuid").and_then(Value::as_str).map(str::to_lowercase), Some(pu.to_lowercase()), "partuuid of {kname}");
+        if let (Some(pu), Some("part")) = (
+            l.get("partuuid").and_then(Value::as_str),
+            l.get("type").and_then(Value::as_str),
+        ) {
+            check_eq!(
+                d.get("uuid").and_then(Value::as_str).map(str::to_lowercase),
+                Some(pu.to_lowercase()),
+                "partuuid of {kname}"
+            );
         }
         checked += 1;
     }

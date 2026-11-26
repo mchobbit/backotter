@@ -18,7 +18,7 @@
 
 use crate::json::{Obj, Value};
 use crate::report::{BackupSource, MountHint};
-use crate::sys::{safe_name, RoMountWords, Sys, RUN_DIR};
+use crate::sys::{RUN_DIR, RoMountWords, Sys, safe_name};
 
 /// abroot.json: the image's, then /etc's, merged (viper's MergeInConfig:
 /// a key in the later file wins).
@@ -59,12 +59,19 @@ impl Config {
     /// one read wins (the installer's /etc copy repeats the image's keys,
     /// `thinProvisioning: false` first and `true` after).
     pub fn get(&self, key: &str) -> Option<&Value> {
-        self.keys.iter().rev().find(|(k, _)| k.eq_ignore_ascii_case(key)).map(|(_, v)| v)
+        self.keys
+            .iter()
+            .rev()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+            .map(|(_, v)| v)
     }
 
     /// A string key, None when missing or empty.
     pub fn str(&self, key: &str) -> Option<String> {
-        self.get(key).and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_string)
+        self.get(key)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
     }
 
     /// thinProvisioning, as viper's GetBool reads it.
@@ -87,7 +94,9 @@ pub fn config(sys: &Sys) -> Option<Config> {
         files.push(f);
         match crate::json::parse(&t) {
             Ok(Value::Obj(kv)) => keys.extend(kv),
-            _ => sys.warn(format!("ABRoot: {f} isn't a JSON object; its keys are left out of boot.abroot.config")),
+            _ => sys.warn(format!(
+                "ABRoot: {f} isn't a JSON object; its keys are left out of boot.abroot.config"
+            )),
         }
     }
     (!files.is_empty()).then_some(Config { keys, files })
@@ -172,13 +181,29 @@ pub fn parse_master(text: &str) -> (Option<String>, Vec<Entry>) {
             continue;
         }
         if let Some(rest) = l.strip_prefix("menuentry ") {
-            let title = match rest.trim_start().strip_prefix('"').and_then(|r| r.split_once('"')) {
+            let title = match rest
+                .trim_start()
+                .strip_prefix('"')
+                .and_then(|r| r.split_once('"'))
+            {
                 Some((t, _)) => t.to_string(),
-                None => rest.split_whitespace().next().map(unquote).unwrap_or_default(),
+                None => rest
+                    .split_whitespace()
+                    .next()
+                    .map(unquote)
+                    .unwrap_or_default(),
             };
             let words: Vec<&str> = rest.split_whitespace().collect();
-            let class = words.iter().position(|w| *w == "--class").and_then(|i| words.get(i + 1)).map(|w| unquote(w));
-            entries.push(Entry { title, class, ..Entry::default() });
+            let class = words
+                .iter()
+                .position(|w| *w == "--class")
+                .and_then(|i| words.get(i + 1))
+                .map(|w| unquote(w));
+            entries.push(Entry {
+                title,
+                class,
+                ..Entry::default()
+            });
             inside = true;
             continue;
         }
@@ -231,15 +256,33 @@ pub fn parse_abroot_cfg(text: &str, label: &str) -> RootCfg {
         match w.first() {
             Some(&("menuentry" | "submenu" | "}")) => search = None,
             Some(&"search") => {
-                search = w.iter().any(|x| *x == "--fs-uuid" || *x == "-u").then(|| w.last().filter(|x| !x.starts_with('-')).map(|s| s.to_string())).flatten();
+                search = w
+                    .iter()
+                    .any(|x| *x == "--fs-uuid" || *x == "-u")
+                    .then(|| {
+                        w.last()
+                            .filter(|x| !x.starts_with('-'))
+                            .map(|s| s.to_string())
+                    })
+                    .flatten();
             }
-            Some(&"linux") if c.linux.is_none() && w.get(1).is_some_and(|k| strip_device(k).starts_with(&prefix)) => {
+            Some(&"linux")
+                if c.linux.is_none()
+                    && w.get(1)
+                        .is_some_and(|k| strip_device(k).starts_with(&prefix)) =>
+            {
                 c.linux = Some(line.trim().to_string());
                 c.kernel = w.get(1).map(|s| s.to_string());
-                c.root = w.iter().skip(2).find_map(|x| x.strip_prefix("root=")).map(str::to_string);
+                c.root = w
+                    .iter()
+                    .skip(2)
+                    .find_map(|x| x.strip_prefix("root="))
+                    .map(str::to_string);
                 c.search_uuid = search.clone();
             }
-            Some(&"initrd") if c.linux.is_some() && c.initrd.is_none() => c.initrd = w.get(1).map(|s| s.to_string()),
+            Some(&"initrd") if c.linux.is_some() && c.initrd.is_none() => {
+                c.initrd = w.get(1).map(|s| s.to_string())
+            }
             _ => {}
         }
     }
@@ -284,31 +327,56 @@ fn with_mounted<R>(sys: &Sys, fs: &Fs, may_mount: bool, f: impl FnOnce(&str) -> 
     let at = format!("{RUN_DIR}/abroot-{}", fs.label);
     let words = RoMountWords {
         cant_make: format!("ABRoot: can't make {at} to read {} ({})", fs.label, fs.dev),
-        mount_failed: format!("ABRoot: a read-only mount of {} ({}) at {at} failed, so boot.abroot doesn't say what it holds", fs.label, fs.node()),
-        still_mounted: format!("ABRoot: {} is still mounted read-only at {at}; `umount {at}` when this dump is done", fs.label),
+        mount_failed: format!(
+            "ABRoot: a read-only mount of {} ({}) at {at} failed, so boot.abroot doesn't say what it holds",
+            fs.label,
+            fs.node()
+        ),
+        still_mounted: format!(
+            "ABRoot: {} is still mounted read-only at {at}; `umount {at}` when this dump is done",
+            fs.label
+        ),
     };
     sys.with_ro_mount(&ty, &ro_options(&ty), &fs.node(), &at, &words, f)
 }
 
 /// What `init/LABEL/` holds, read at BASE (init's mount): its files, the
 /// kernel versions, abroot.cfg.
-fn init_dir(sys: &Sys, base: &str, label: &str) -> (Value, Vec<(String, Option<u64>, Option<u64>, bool)>) {
+fn init_dir(
+    sys: &Sys,
+    base: &str,
+    label: &str,
+) -> (Value, Vec<(String, Option<u64>, Option<u64>, bool)>) {
     let dir = format!("{base}/{label}");
     let files = sys.list(&dir);
     let mut kernels = Vec::new();
     for f in &files {
         if let Some(k) = f.strip_prefix("vmlinuz-") {
-            kernels.push((k.to_string(), sys.file_size(&format!("{dir}/{f}")), sys.file_size(&format!("{dir}/initrd.img-{k}")), sys.is_file(&format!("{dir}/config-{k}"))));
+            kernels.push((
+                k.to_string(),
+                sys.file_size(&format!("{dir}/{f}")),
+                sys.file_size(&format!("{dir}/initrd.img-{k}")),
+                sys.is_file(&format!("{dir}/config-{k}")),
+            ));
         }
     }
     let cfg = sys.read(&format!("{dir}/abroot.cfg")).map(|t| {
         let c = parse_abroot_cfg(&t, label);
-        Obj::new().set("linux", c.linux).set("kernel", c.kernel).set("initrd", c.initrd).set("root", c.root).set("search_uuid", c.search_uuid).build()
+        Obj::new()
+            .set("linux", c.linux)
+            .set("kernel", c.kernel)
+            .set("initrd", c.initrd)
+            .set("root", c.root)
+            .set("search_uuid", c.search_uuid)
+            .build()
     });
     let v = Obj::new()
         .set("exists", sys.is_dir(&dir))
         .set("files", files.clone())
-        .set("kernels", kernels.iter().map(|k| k.0.clone()).collect::<Vec<_>>())
+        .set(
+            "kernels",
+            kernels.iter().map(|k| k.0.clone()).collect::<Vec<_>>(),
+        )
         .set("abroot_cfg", cfg)
         .build();
     (v, kernels)
@@ -319,27 +387,44 @@ fn init_dir(sys: &Sys, base: &str, label: &str) -> (Value, Vec<(String, Option<u
 /// root), read at BASE.
 fn root_state(sys: &Sys, base: &str) -> (Value, bool) {
     let base = base.trim_end_matches('/');
-    let abimage = sys.read(&format!("{base}/abimage.abr")).map(|t| match crate::json::parse(&t) {
-        Ok(v) => {
-            let g = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
-            Obj::new().set("digest", g("digest")).set("timestamp", g("timestamp")).set("image", g("image")).build()
-        }
-        Err(_) => Obj::new().set("unparsed", true).build(),
-    });
-    (abimage.unwrap_or(Value::Null), !sys.exists(&format!("{base}/usr")))
+    let abimage = sys
+        .read(&format!("{base}/abimage.abr"))
+        .map(|t| match crate::json::parse(&t) {
+            Ok(v) => {
+                let g = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
+                Obj::new()
+                    .set("digest", g("digest"))
+                    .set("timestamp", g("timestamp"))
+                    .set("image", g("image"))
+                    .build()
+            }
+            Err(_) => Obj::new().set("unparsed", true).build(),
+        });
+    (
+        abimage.unwrap_or(Value::Null),
+        !sys.exists(&format!("{base}/usr")),
+    )
 }
 
 /// boot.abroot for a running ABRoot system.  FSS are the filesystems the
 /// dump found, with their labels and mounts.
 pub fn read(sys: &Sys, cfg: &Config, fss: &[Fs]) -> Dump {
-    let by_label = |l: &Option<String>| l.as_deref().and_then(|l| fss.iter().find(|f| f.label == l));
+    let by_label =
+        |l: &Option<String>| l.as_deref().and_then(|l| fss.iter().find(|f| f.label == l));
     let (la, lb) = (cfg.str("partLabelA"), cfg.str("partLabelB"));
     let labels: Vec<String> = [la.clone(), lb.clone()].into_iter().flatten().collect();
     let init_label = cfg.str("thinInitVolume");
     let init = by_label(&init_label);
     let var = by_label(&cfg.str("partLabelVar"));
-    let present = labels.iter().find(|l| by_label(&Some(l.to_string())).is_some_and(|f| f.mounted_at.as_deref() == Some("/"))).cloned();
-    let future = present.as_ref().and_then(|p| labels.iter().find(|l| *l != p).cloned());
+    let present = labels
+        .iter()
+        .find(|l| {
+            by_label(&Some(l.to_string())).is_some_and(|f| f.mounted_at.as_deref() == Some("/"))
+        })
+        .cloned();
+    let future = present
+        .as_ref()
+        .and_then(|p| labels.iter().find(|l| *l != p).cloned());
     let running = sys.read_trim("/proc/sys/kernel/osrelease");
     // An upgrade running (its lock, looked at before any mount): dump makes
     // no mounts of its own, so that `abroot upgrade` doesn't find the init
@@ -352,16 +437,35 @@ pub fn read(sys: &Sys, cfg: &Config, fss: &[Fs]) -> Dump {
     // The master grub.cfg.
     let grub = sys.read(GRUB_CFG).map(|t| {
         let (default, entries) = parse_master(&t);
-        let default_label = default.as_deref().and_then(|d| d.parse::<usize>().ok()).and_then(|i| entries.get(i)).and_then(Entry::label);
+        let default_label = default
+            .as_deref()
+            .and_then(|d| d.parse::<usize>().ok())
+            .and_then(|i| entries.get(i))
+            .and_then(Entry::label);
         let ev: Vec<Value> = entries
             .iter()
-            .map(|e| Obj::new().set("title", e.title.as_str()).set("class", e.class.clone()).set("root", e.root.clone()).set("configfile", e.configfile.clone()).set("label", e.label()).build())
+            .map(|e| {
+                Obj::new()
+                    .set("title", e.title.as_str())
+                    .set("class", e.class.clone())
+                    .set("root", e.root.clone())
+                    .set("configfile", e.configfile.clone())
+                    .set("label", e.label())
+                    .build()
+            })
             .collect();
-        Obj::new().set("file", GRUB_CFG).set("default", default).set("default_label", default_label).set("entries", ev).set("future_cfg", sys.is_file(&format!("{GRUB_CFG}.future"))).build()
+        Obj::new()
+            .set("file", GRUB_CFG)
+            .set("default", default)
+            .set("default_label", default_label)
+            .set("entries", ev)
+            .set("future_cfg", sys.is_file(&format!("{GRUB_CFG}.future")))
+            .build()
     });
 
     // init: both roots' directories, from one read.
-    let mut init_dirs: Vec<(String, Value, Vec<(String, Option<u64>, Option<u64>, bool)>)> = Vec::new();
+    let mut init_dirs: Vec<(String, Value, Vec<(String, Option<u64>, Option<u64>, bool)>)> =
+        Vec::new();
     let init_read = init.and_then(|f| {
         with_mounted(sys, f, !locked, |base| {
             for l in &labels {
@@ -381,21 +485,36 @@ pub fn read(sys: &Sys, cfg: &Config, fss: &[Fs]) -> Dump {
         // read from sysfs while the mount is there.)
         let state = fs.and_then(|f| {
             with_mounted(sys, f, !locked, |base| {
-                let alloc = if f.mounted_at.is_none() && f.fstype.as_deref() == Some("btrfs") { f.uuid.as_deref().and_then(|u| crate::report::btrfs_allocation(sys, u).map(|v| (u.to_string(), v))) } else { None };
+                let alloc = if f.mounted_at.is_none() && f.fstype.as_deref() == Some("btrfs") {
+                    f.uuid.as_deref().and_then(|u| {
+                        crate::report::btrfs_allocation(sys, u).map(|v| (u.to_string(), v))
+                    })
+                } else {
+                    None
+                };
                 (root_state(sys, base), base == "/", alloc)
             })
         });
         if let Some((_, _, Some(p))) = &state {
             btrfs_profiles.push(p.clone());
         }
-        let modules = |base: &str, k: &str| sys.is_dir(&format!("{}/usr/lib/modules/{k}", base.trim_end_matches('/'))) || sys.is_dir(&format!("{}/lib/modules/{k}", base.trim_end_matches('/')));
+        let modules = |base: &str, k: &str| {
+            sys.is_dir(&format!(
+                "{}/usr/lib/modules/{k}",
+                base.trim_end_matches('/')
+            )) || sys.is_dir(&format!("{}/lib/modules/{k}", base.trim_end_matches('/')))
+        };
         let is_present = present.as_deref() == Some(l.as_str());
         let dir = init_dirs.iter().find(|(x, _, _)| x == l);
         // A kernel's modules are in its own root: `/` for the present one,
         // the read-only mount (gone by now) for the other; read again only
         // for the present root, else left null.
         for (k, vb, ib, config) in dir.map(|d| d.2.clone()).unwrap_or_default() {
-            let modules_installed = if is_present { Value::Bool(modules("/", &k)) } else { Value::Null };
+            let modules_installed = if is_present {
+                Value::Bool(modules("/", &k))
+            } else {
+                Value::Null
+            };
             kernels.push(
                 Obj::new()
                     .set("version", k.as_str())
@@ -404,27 +523,52 @@ pub fn read(sys: &Sys, cfg: &Config, fss: &[Fs]) -> Dump {
                     .set("vmlinuz_bytes", vb)
                     .set("initrd_bytes", ib)
                     .set("config", config)
-                    .set("running", is_present && running.as_deref() == Some(k.as_str()))
+                    .set(
+                        "running",
+                        is_present && running.as_deref() == Some(k.as_str()),
+                    )
                     .set("modules_installed", modules_installed)
                     .build(),
             );
         }
-        let mut o = fs.map(Fs::json).unwrap_or_else(|| Obj::new().set("label", l.as_str()).set("device", Value::Null));
+        let mut o = fs.map(Fs::json).unwrap_or_else(|| {
+            Obj::new()
+                .set("label", l.as_str())
+                .set("device", Value::Null)
+        });
         o.put("present", is_present);
         o.put("read", state.is_some());
-        o.put("abimage", state.as_ref().map(|((a, _), _, _)| a.clone()).unwrap_or(Value::Null));
+        o.put(
+            "abimage",
+            state
+                .as_ref()
+                .map(|((a, _), _, _)| a.clone())
+                .unwrap_or(Value::Null),
+        );
         o.put("empty", state.as_ref().map(|((_, e), _, _)| *e));
         o.put("init", dir.map(|d| d.1.clone()).unwrap_or(Value::Null));
         roots.push(o.build());
     }
 
     let mut config = Obj::new();
-    for k in ["partLabelA", "partLabelB", "partLabelVar", "partLabelBoot", "partLabelEfi", "PartCryptVar", "thinInitVolume"] {
+    for k in [
+        "partLabelA",
+        "partLabelB",
+        "partLabelVar",
+        "partLabelBoot",
+        "partLabelEfi",
+        "PartCryptVar",
+        "thinInitVolume",
+    ] {
         config.put(k, cfg.str(k));
     }
     config.put("thinProvisioning", cfg.thin());
     config.put("files", cfg.files.clone());
-    let thin_two_roots = cfg.thin() && init.is_some() && labels.len() == 2 && labels.iter().all(|l| by_label(&Some(l.clone())).is_some()) && la != lb;
+    let thin_two_roots = cfg.thin()
+        && init.is_some()
+        && labels.len() == 2
+        && labels.iter().all(|l| by_label(&Some(l.clone())).is_some())
+        && la != lb;
     let json = Obj::new()
         .set("config", config)
         .set("thin_two_roots", thin_two_roots)
@@ -432,7 +576,10 @@ pub fn read(sys: &Sys, cfg: &Config, fss: &[Fs]) -> Dump {
         .set("present", present.clone())
         .set("future", future.clone())
         .set("grub", grub)
-        .set("init", init.map(|f| f.json().set("read", init_read.is_some()).build()))
+        .set(
+            "init",
+            init.map(|f| f.json().set("read", init_read.is_some()).build()),
+        )
         .set("var", var.map(|f| f.json().build()))
         .set("roots", roots)
         .set("kargs", sys.read_trim(KARGS))
@@ -451,7 +598,11 @@ pub fn read(sys: &Sys, cfg: &Config, fss: &[Fs]) -> Dump {
         fstype: f.fstype.clone().unwrap_or_default(),
         source: f.node(),
         subvol: None,
-        mount: Some(MountHint { device: f.node(), fstype: f.fstype.clone().unwrap_or_default(), options: ro_options(f.fstype.as_deref().unwrap_or("")) }),
+        mount: Some(MountHint {
+            device: f.node(),
+            fstype: f.fstype.clone().unwrap_or_default(),
+            options: ro_options(f.fstype.as_deref().unwrap_or("")),
+        }),
         note: Some(HINT_NOTE.to_string()),
     };
     if let Some(f) = init.filter(|f| f.mounted_at.is_none()) {
@@ -460,14 +611,23 @@ pub fn read(sys: &Sys, cfg: &Config, fss: &[Fs]) -> Dump {
     if let Some(f) = by_label(&future).filter(|f| f.mounted_at.is_none()) {
         sources.push(hinted(FUTURE_AT, f));
     }
-    Dump { json, sources, root_note: ROOT_NOTE.to_string(), kernels, btrfs_profiles }
+    Dump {
+        json,
+        sources,
+        root_note: ROOT_NOTE.to_string(),
+        kernels,
+        btrfs_profiles,
+    }
 }
 
 /// BOOT (the dump's boot section) with boot.abroot in it and the init
 /// LV's kernels in boot.kernels.installed.
 pub fn add_to_boot(mut boot: Value, d: Option<&Dump>) -> Value {
     let Some(d) = d else { return boot };
-    if let Some(a) = boot.at_mut(&["kernels", "installed"]).and_then(Value::as_array_mut) {
+    if let Some(a) = boot
+        .at_mut(&["kernels", "installed"])
+        .and_then(Value::as_array_mut)
+    {
         a.extend(d.kernels.iter().cloned());
     }
     // boot has no abroot of its own (dump adds it here, once), so it goes
@@ -510,12 +670,32 @@ mod tests {
         assert_eq!(e[0].label().as_deref(), Some("vos-a"));
         assert_eq!(e[1].label().as_deref(), Some("vos-b"));
         // An upgrade's swap: default=1, the titles traded.
-        let (d, e) = parse_master(&MASTER.replace("default=0", "default=1").replace("Current State (A)", "Previous State (A)").replace("Previous State (B)", "Current State (B)"));
+        let (d, e) = parse_master(
+            &MASTER
+                .replace("default=0", "default=1")
+                .replace("Current State (A)", "Previous State (A)")
+                .replace("Previous State (B)", "Current State (B)"),
+        );
         assert_eq!(d.as_deref(), Some("1"));
         assert_eq!(e[1].title, "Current State (B)");
         // A configfile with a device, or none at all.
-        assert_eq!(Entry { configfile: Some("(lvm/vos--root-init)/vos-b/abroot.cfg".into()), ..Entry::default() }.label().as_deref(), Some("vos-b"));
-        assert_eq!(Entry { configfile: Some("/abroot.cfg".into()), ..Entry::default() }.label(), None);
+        assert_eq!(
+            Entry {
+                configfile: Some("(lvm/vos--root-init)/vos-b/abroot.cfg".into()),
+                ..Entry::default()
+            }
+            .label()
+            .as_deref(),
+            Some("vos-b")
+        );
+        assert_eq!(
+            Entry {
+                configfile: Some("/abroot.cfg".into()),
+                ..Entry::default()
+            }
+            .label(),
+            None
+        );
         assert_eq!(Entry::default().label(), None);
         assert_eq!(strip_device("(lvm/x)/vos-a/vmlinuz-6"), "/vos-a/vmlinuz-6");
         assert_eq!(strip_device("/vos-a/vmlinuz-6"), "/vos-a/vmlinuz-6");
@@ -524,25 +704,54 @@ mod tests {
     #[test]
     fn root_cfgs() {
         // The installer's (processor.py's _ROOT_GRUB_CFG).
-        let c = parse_abroot_cfg("insmod gzio\ninsmod part_gpt\ninsmod ext2\nlinux   (lvm/vos--root-init)/vos-a/vmlinuz-6.17.8-amd64 root=UUID=b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf quiet splash bgrt_disable $vt_handoff lsm=integrity\ninitrd  (lvm/vos--root-init)/vos-a/initrd.img-6.17.8-amd64\n", "vos-a");
-        assert_eq!(c.kernel.as_deref(), Some("(lvm/vos--root-init)/vos-a/vmlinuz-6.17.8-amd64"));
-        assert_eq!(c.initrd.as_deref(), Some("(lvm/vos--root-init)/vos-a/initrd.img-6.17.8-amd64"));
-        assert_eq!(c.root.as_deref(), Some("UUID=b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf"));
+        let c = parse_abroot_cfg(
+            "insmod gzio\ninsmod part_gpt\ninsmod ext2\nlinux   (lvm/vos--root-init)/vos-a/vmlinuz-6.17.8-amd64 root=UUID=b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf quiet splash bgrt_disable $vt_handoff lsm=integrity\ninitrd  (lvm/vos--root-init)/vos-a/initrd.img-6.17.8-amd64\n",
+            "vos-a",
+        );
+        assert_eq!(
+            c.kernel.as_deref(),
+            Some("(lvm/vos--root-init)/vos-a/vmlinuz-6.17.8-amd64")
+        );
+        assert_eq!(
+            c.initrd.as_deref(),
+            Some("(lvm/vos--root-init)/vos-a/initrd.img-6.17.8-amd64")
+        );
+        assert_eq!(
+            c.root.as_deref(),
+            Some("UUID=b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf")
+        );
         assert_eq!(c.search_uuid, None);
         // An upgrade's (core/grub.go's template inside grub-mkconfig's output).
         // Its 00_header searches for the font's filesystem first, and a
         // stray linux line of another label (memtest, a leftover) comes
         // before: neither counts.
-        let c = parse_abroot_cfg(&format!("{UPGRADE_HEADER}  linux   /vos-a/vmlinuz-old root=UUID=x\n### BEGIN /etc/grub.d/10_linux ###\n  search --no-floppy --fs-uuid --set=root 20111213-1415-1617-1819-1a1b1c1d1e1f\n  linux   /vos-b/vmlinuz-6.18.1-amd64 root=/dev/mapper/vos--root-root--b quiet splash\n  initrd  /vos-b/initrd.img-6.18.1-amd64\n"), "vos-b");
+        let c = parse_abroot_cfg(
+            &format!(
+                "{UPGRADE_HEADER}  linux   /vos-a/vmlinuz-old root=UUID=x\n### BEGIN /etc/grub.d/10_linux ###\n  search --no-floppy --fs-uuid --set=root 20111213-1415-1617-1819-1a1b1c1d1e1f\n  linux   /vos-b/vmlinuz-6.18.1-amd64 root=/dev/mapper/vos--root-root--b quiet splash\n  initrd  /vos-b/initrd.img-6.18.1-amd64\n"
+            ),
+            "vos-b",
+        );
         assert_eq!(c.kernel.as_deref(), Some("/vos-b/vmlinuz-6.18.1-amd64"));
         assert_eq!(c.initrd.as_deref(), Some("/vos-b/initrd.img-6.18.1-amd64"));
         assert_eq!(c.root.as_deref(), Some("/dev/mapper/vos--root-root--b"));
-        assert_eq!(c.search_uuid.as_deref(), Some("20111213-1415-1617-1819-1a1b1c1d1e1f"));
+        assert_eq!(
+            c.search_uuid.as_deref(),
+            Some("20111213-1415-1617-1819-1a1b1c1d1e1f")
+        );
         // A menuentry's own search doesn't reach past it.
-        let c = parse_abroot_cfg("menuentry m {\n search --fs-uuid --set=root 1111\n}\nlinux /vos-a/vmlinuz-6 root=UUID=x\n", "vos-a");
-        assert_eq!((c.kernel.as_deref(), c.search_uuid), (Some("/vos-a/vmlinuz-6"), None));
+        let c = parse_abroot_cfg(
+            "menuentry m {\n search --fs-uuid --set=root 1111\n}\nlinux /vos-a/vmlinuz-6 root=UUID=x\n",
+            "vos-a",
+        );
+        assert_eq!(
+            (c.kernel.as_deref(), c.search_uuid),
+            (Some("/vos-a/vmlinuz-6"), None)
+        );
         assert_eq!(parse_abroot_cfg("", "vos-a"), RootCfg::default());
-        assert_eq!(parse_abroot_cfg("linux /vos-b/vmlinuz-6 root=x\n", "vos-a"), RootCfg::default());
+        assert_eq!(
+            parse_abroot_cfg("linux /vos-b/vmlinuz-6 root=x\n", "vos-a"),
+            RootCfg::default()
+        );
     }
 
     /// grub-mkconfig's 00_header as an upgrade's abroot.cfg begins: a
@@ -552,7 +761,10 @@ mod tests {
     #[test]
     fn ro_options_by_type() {
         assert_eq!(ro_options("ext4"), "ro,noload,nodev,nosuid,noexec");
-        assert_eq!(ro_options("btrfs"), "ro,rescue=nologreplay,nodev,nosuid,noexec");
+        assert_eq!(
+            ro_options("btrfs"),
+            "ro,rescue=nologreplay,nodev,nosuid,noexec"
+        );
         assert_eq!(ro_options("xfs"), "ro,nodev,nosuid,noexec");
     }
 
@@ -579,8 +791,19 @@ mod tests {
         t.file(CONFIGS[1], "not json");
         let c = config(&s).unwrap();
         assert!(!c.thin() && c.str("partLabelB").as_deref() == Some("vos-b"));
-        assert!(s.warnings()[0].contains("/etc/abroot/abroot.json isn't a JSON object"), "{:?}", s.warnings());
-        assert!(config(&Sys::new(Tree::new("abroot-none").root(), Box::new(FakeRunner::default()), false)).is_none());
+        assert!(
+            s.warnings()[0].contains("/etc/abroot/abroot.json isn't a JSON object"),
+            "{:?}",
+            s.warnings()
+        );
+        assert!(
+            config(&Sys::new(
+                Tree::new("abroot-none").root(),
+                Box::new(FakeRunner::default()),
+                false
+            ))
+            .is_none()
+        );
     }
 
     /// Unprivileged, nothing is mounted: init and the other root unread,
@@ -596,8 +819,20 @@ mod tests {
             .file("/part-future/usr/x", "")
             .file(GRUB_CFG, MASTER)
             .file(LOCK, "");
-        let fs = |dev: &str, label: &str, ty: &str, dm: &str, at: Option<&str>| Fs { dev: dev.into(), label: label.into(), uuid: Some(format!("{label}-uuid")), fstype: Some(ty.into()), dm_name: Some(dm.into()), mounted_at: at.map(str::to_string) };
-        let fss = [fs("dm-0", "vos-init", "ext4", "vos--root-init", None), fs("dm-4", "vos-a", "btrfs", "vos--root-root--a", Some("/")), fs("dm-5", "vos-b", "btrfs", "vos--root-root--b", None), fs("dm-7", "vos-var", "btrfs", "vos--var-var", Some("/var"))];
+        let fs = |dev: &str, label: &str, ty: &str, dm: &str, at: Option<&str>| Fs {
+            dev: dev.into(),
+            label: label.into(),
+            uuid: Some(format!("{label}-uuid")),
+            fstype: Some(ty.into()),
+            dm_name: Some(dm.into()),
+            mounted_at: at.map(str::to_string),
+        };
+        let fss = [
+            fs("dm-0", "vos-init", "ext4", "vos--root-init", None),
+            fs("dm-4", "vos-a", "btrfs", "vos--root-root--a", Some("/")),
+            fs("dm-5", "vos-b", "btrfs", "vos--root-root--b", None),
+            fs("dm-7", "vos-var", "btrfs", "vos--var-var", Some("/var")),
+        ];
         // Privileged, but an upgrade is running: no mount of dump's own is
         // tried (the runner answers none: a try would warn that it failed).
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
@@ -609,30 +844,86 @@ mod tests {
         assert_eq!(j.get("thin_two_roots"), Some(&Value::Bool(true)));
         assert_eq!(j.get("operation_lock"), Some(&Value::Bool(true)));
         assert_eq!(j.get("mounts_skipped"), Some(&Value::Bool(true)));
-        assert_eq!(j.at(&["grub", "default_label"]).and_then(Value::as_str), Some("vos-a"));
+        assert_eq!(
+            j.at(&["grub", "default_label"]).and_then(Value::as_str),
+            Some("vos-a")
+        );
         assert_eq!(j.at(&["init", "read"]), Some(&Value::Bool(false)));
-        assert_eq!(j.at(&["roots", "0", "abimage", "digest"]).and_then(Value::as_str), Some("sha256:aa"));
+        assert_eq!(
+            j.at(&["roots", "0", "abimage", "digest"])
+                .and_then(Value::as_str),
+            Some("sha256:aa")
+        );
         assert_eq!(j.at(&["roots", "0", "empty"]), Some(&Value::Bool(false)));
         assert_eq!(j.at(&["roots", "1", "read"]), Some(&Value::Bool(false)));
         assert!(j.at(&["roots", "1", "empty"]).is_some_and(Value::is_null));
         assert_eq!(s.warnings().len(), 1, "{:?}", s.warnings());
-        assert!(s.warnings()[0].starts_with("ABRoot: /run/abroot/operation.lock is there"), "{:?}", s.warnings());
-        let paths: Vec<(&str, Option<&str>, &str, &str)> = d.sources.iter().map(|b| (b.path.as_str(), b.from.as_deref(), b.mount.as_ref().unwrap().device.as_str(), b.mount.as_ref().unwrap().options.as_str())).collect();
-        assert_eq!(paths, vec![("/boot/init", None, "/dev/mapper/vos--root-init", "ro,noload,nodev,nosuid,noexec"), ("/part-future", None, "/dev/mapper/vos--root-root--b", "ro,rescue=nologreplay,nodev,nosuid,noexec")]);
+        assert!(
+            s.warnings()[0].starts_with("ABRoot: /run/abroot/operation.lock is there"),
+            "{:?}",
+            s.warnings()
+        );
+        let paths: Vec<(&str, Option<&str>, &str, &str)> = d
+            .sources
+            .iter()
+            .map(|b| {
+                (
+                    b.path.as_str(),
+                    b.from.as_deref(),
+                    b.mount.as_ref().unwrap().device.as_str(),
+                    b.mount.as_ref().unwrap().options.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            paths,
+            vec![
+                (
+                    "/boot/init",
+                    None,
+                    "/dev/mapper/vos--root-init",
+                    "ro,noload,nodev,nosuid,noexec"
+                ),
+                (
+                    "/part-future",
+                    None,
+                    "/dev/mapper/vos--root-root--b",
+                    "ro,rescue=nologreplay,nodev,nosuid,noexec"
+                )
+            ]
+        );
         // Without the lock, dump does mount them (here the mounts fail).
         std::fs::remove_file(t.p(LOCK)).unwrap();
         let s2 = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         let d2 = read(&s2, &c, &fss);
         assert_eq!(d2.json.get("mounts_skipped"), Some(&Value::Bool(false)));
-        assert!(s2.warnings().iter().any(|w| w.contains("a read-only mount of vos-init")) && s2.warnings().iter().any(|w| w.contains("a read-only mount of vos-b")), "{:?}", s2.warnings());
+        assert!(
+            s2.warnings()
+                .iter()
+                .any(|w| w.contains("a read-only mount of vos-init"))
+                && s2
+                    .warnings()
+                    .iter()
+                    .any(|w| w.contains("a read-only mount of vos-b")),
+            "{:?}",
+            s2.warnings()
+        );
         t.file(LOCK, "");
         assert!(d.kernels.is_empty());
         // The other root mounted by ABRoot at /part-future: read there.
         let mut fss2 = fss.clone();
         fss2[2].mounted_at = Some("/part-future".into());
         let d = read(&s, &c, &fss2);
-        assert_eq!(d.json.at(&["roots", "1", "abimage", "digest"]).and_then(Value::as_str), Some("sha256:bb"));
-        assert_eq!(d.json.at(&["roots", "1", "empty"]), Some(&Value::Bool(false)));
+        assert_eq!(
+            d.json
+                .at(&["roots", "1", "abimage", "digest"])
+                .and_then(Value::as_str),
+            Some("sha256:bb")
+        );
+        assert_eq!(
+            d.json.at(&["roots", "1", "empty"]),
+            Some(&Value::Bool(false))
+        );
         assert_eq!(d.sources.len(), 1);
         // Not thin (a manual layout): still boot.abroot, but not the scheme.
         t.file(CONFIGS[1], "{\"thinProvisioning\": false}");
@@ -643,11 +934,27 @@ mod tests {
     /// add_to_boot puts boot.abroot last and the init kernels after /boot's.
     #[test]
     fn adds_to_boot() {
-        let boot = crate::json::parse(r#"{"loader": {}, "kernels": {"installed": [{"version": "x"}], "symlinks": {}}}"#).unwrap();
-        let d = Dump { json: Obj::new().set("present", "vos-a").build(), sources: vec![], root_note: String::new(), kernels: vec![Obj::new().set("version", "6").build()], btrfs_profiles: vec![] };
+        let boot = crate::json::parse(
+            r#"{"loader": {}, "kernels": {"installed": [{"version": "x"}], "symlinks": {}}}"#,
+        )
+        .unwrap();
+        let d = Dump {
+            json: Obj::new().set("present", "vos-a").build(),
+            sources: vec![],
+            root_note: String::new(),
+            kernels: vec![Obj::new().set("version", "6").build()],
+            btrfs_profiles: vec![],
+        };
         let b = add_to_boot(boot.clone(), Some(&d));
-        assert_eq!(b.at(&["kernels", "installed", "1", "version"]).and_then(Value::as_str), Some("6"));
-        assert_eq!(b.at(&["abroot", "present"]).and_then(Value::as_str), Some("vos-a"));
+        assert_eq!(
+            b.at(&["kernels", "installed", "1", "version"])
+                .and_then(Value::as_str),
+            Some("6")
+        );
+        assert_eq!(
+            b.at(&["abroot", "present"]).and_then(Value::as_str),
+            Some("vos-a")
+        );
         assert_eq!(add_to_boot(boot.clone(), None), boot);
     }
 }

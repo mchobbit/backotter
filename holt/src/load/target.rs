@@ -5,7 +5,7 @@
 use super::codes::{Note, NoteCode, Notes, Problem, ProblemCode, Problems};
 use super::fit::{self, Fit};
 use super::layout::{Disk, Layout};
-use super::{Options, Stage, RUN_DIR};
+use super::{Options, RUN_DIR, Stage};
 use crate::blockdev::{self, BlockDev, Kind};
 use crate::mounts::{self, Mount};
 use crate::parttable::{self, Table};
@@ -13,7 +13,12 @@ use crate::sys::Sys;
 use std::borrow::Cow;
 
 /// Where a live system mounts the medium it booted from.
-const MEDIUM_MOUNTS: [&str; 4] = ["/cdrom", "/run/live/medium", "/lib/live/mount/medium", "/run/initramfs/live"];
+const MEDIUM_MOUNTS: [&str; 4] = [
+    "/cdrom",
+    "/run/live/medium",
+    "/lib/live/mount/medium",
+    "/run/initramfs/live",
+];
 /// The rescue stick's config partition (stick-config.md).
 const STICK_CONFIG_LABEL: &str = "BACKOTTER";
 
@@ -50,7 +55,13 @@ impl TargetDisk {
     /// filesystem and container UUIDs.
     pub fn is_ours(&self, src: &Disk, layout_uuids: &[String]) -> bool {
         // An MBR's signature of 0 is no identity: a FAT boot sector has one.
-        let table = match (&self.table, src.table.as_ref().and_then(|t| t.id.as_ref()).filter(|id| id.as_str() != "0x00000000")) {
+        let table = match (
+            &self.table,
+            src.table
+                .as_ref()
+                .and_then(|t| t.id.as_ref())
+                .filter(|id| id.as_str() != "0x00000000"),
+        ) {
             (Some(t), Some(id)) => table_id(t).eq_ignore_ascii_case(id),
             _ => false,
         };
@@ -62,11 +73,18 @@ impl TargetDisk {
     }
 
     pub fn blank(&self) -> bool {
-        self.table.is_none() && self.signatures.is_empty() && self.in_use.is_empty() && self.parts.is_empty()
+        self.table.is_none()
+            && self.signatures.is_empty()
+            && self.in_use.is_empty()
+            && self.parts.is_empty()
     }
 
     pub fn describe(&self) -> String {
-        let mut s = format!("{} ({}", self.path(), crate::report::human(self.b.size_bytes));
+        let mut s = format!(
+            "{} ({}",
+            self.path(),
+            crate::report::human(self.b.size_bytes)
+        );
         if let Some(m) = &self.b.model {
             s += &format!(", {m}");
         }
@@ -106,13 +124,33 @@ fn host_pvs(sys: &Sys, all: &[BlockDev]) -> Vec<HostPv> {
     let mut out = Vec::new();
     // Not optical, floppy, zram or RAM disks: no PV there, and opening an
     // empty drive is slow and warns.
-    for b in all.iter().filter(|b| !matches!(b.kind, Kind::Rom | Kind::Floppy | Kind::Zram | Kind::Ram)) {
-        let Some(src) = sys.open_dev(&b.dev_path()) else { continue };
-        for c in crate::probe::probe_all(&src).into_iter().filter(|c| c.kind == "LVM2_member") {
-            let vg = |k: &str| c.extra.as_ref().and_then(|v| v.get(k)).and_then(crate::json::Value::as_str).map(str::to_string);
+    for b in all
+        .iter()
+        .filter(|b| !matches!(b.kind, Kind::Rom | Kind::Floppy | Kind::Zram | Kind::Ram))
+    {
+        let Some(src) = sys.open_dev(&b.dev_path()) else {
+            continue;
+        };
+        for c in crate::probe::probe_all(&src)
+            .into_iter()
+            .filter(|c| c.kind == "LVM2_member")
+        {
+            let vg = |k: &str| {
+                c.extra
+                    .as_ref()
+                    .and_then(|v| v.get(k))
+                    .and_then(crate::json::Value::as_str)
+                    .map(str::to_string)
+            };
             if let Some(name) = vg("name") {
                 let disks = super::release::bases(all, &b.name);
-                out.push(HostPv { dev: b.name.clone(), uuid: c.uuid.clone().unwrap_or_default(), vg: name, vg_uuid: vg("id").unwrap_or_default(), disks });
+                out.push(HostPv {
+                    dev: b.name.clone(),
+                    uuid: c.uuid.clone().unwrap_or_default(),
+                    vg: name,
+                    vg_uuid: vg("id").unwrap_or_default(),
+                    disks,
+                });
             }
         }
     }
@@ -145,7 +183,11 @@ pub fn parse_zpool_status(text: &str) -> Vec<(String, Vec<String>)> {
             out.push((n.trim().to_string(), vec![]));
         } else if let (Some(first), Some(cur)) = (t.split_whitespace().next(), out.last_mut()) {
             // illumos prints a vdev's device bare (c3t0d0s1) even with -P.
-            let bare = first.len() > 3 && first.starts_with('c') && first[1..].starts_with(|c: char| c.is_ascii_digit()) && first.contains('d') && !first.contains('-');
+            let bare = first.len() > 3
+                && first.starts_with('c')
+                && first[1..].starts_with(|c: char| c.is_ascii_digit())
+                && first.contains('d')
+                && !first.contains('-');
             if first.starts_with("/dev/") || bare {
                 cur.1.push(first.to_string());
             }
@@ -157,13 +199,22 @@ pub fn parse_zpool_status(text: &str) -> Vec<(String, Vec<String>)> {
 pub fn imported_pools(sys: &Sys) -> Vec<ImportedPool> {
     let roots: Vec<(String, String)> = sys
         .run("zpool", &["list", "-H", "-o", "name,altroot"])
-        .map(|o| o.lines().filter_map(|l| l.split_once('\t')).map(|(a, b)| (a.to_string(), b.trim().to_string())).collect())
+        .map(|o| {
+            o.lines()
+                .filter_map(|l| l.split_once('\t'))
+                .map(|(a, b)| (a.to_string(), b.trim().to_string()))
+                .collect()
+        })
         .unwrap_or_default();
     let status = sys.run("zpool", &["status", "-P"]).unwrap_or_default();
     parse_zpool_status(&status)
         .into_iter()
         .map(|(name, paths)| ImportedPool {
-            altroot: roots.iter().find(|(n, _)| *n == name).map(|(_, a)| a.clone()).unwrap_or_else(|| "-".into()),
+            altroot: roots
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, a)| a.clone())
+                .unwrap_or_else(|| "-".into()),
             devices: paths.iter().map(|p| resolve_name(sys, p)).collect(),
             name,
         })
@@ -173,7 +224,11 @@ pub fn imported_pools(sys: &Sys) -> Vec<ImportedPool> {
 /// The names of the pools a layout makes.
 pub fn layout_pools(layout: &Layout) -> Vec<String> {
     let names = layout_pool_names(layout);
-    names.iter().cloned().chain(names.iter().map(|n| temp_pool_name(n))).collect()
+    names
+        .iter()
+        .cloned()
+        .chain(names.iter().map(|n| temp_pool_name(n)))
+        .collect()
 }
 
 fn layout_pool_names(layout: &Layout) -> Vec<String> {
@@ -183,7 +238,11 @@ fn layout_pool_names(layout: &Layout) -> Vec<String> {
         .and_then(crate::json::Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|p| p.get("name").and_then(crate::json::Value::as_str).map(str::to_string))
+        .filter_map(|p| {
+            p.get("name")
+                .and_then(crate::json::Value::as_str)
+                .map(str::to_string)
+        })
         .collect()
 }
 
@@ -214,7 +273,10 @@ pub fn resolve_name(sys: &Sys, spec: &str) -> String {
         return spec.to_string();
     }
     // illumos' /dev/dsk names are links into /devices: the name is the one.
-    if let Some(n) = spec.strip_prefix("/dev/dsk/").or_else(|| spec.strip_prefix("/dev/rdsk/")) {
+    if let Some(n) = spec
+        .strip_prefix("/dev/dsk/")
+        .or_else(|| spec.strip_prefix("/dev/rdsk/"))
+    {
         return n.to_string();
     }
     std::fs::canonicalize(sys.p(spec))
@@ -231,14 +293,31 @@ pub fn scan(sys: &Sys, opts: &Options, ours: &[String]) -> System {
         return crate::other::load::scan(sys, fam, opts, ours);
     }
     let all = blockdev::scan(sys);
-    let mounts = sys.read("/proc/self/mountinfo").map(|t| mounts::parse_mountinfo(&t)).unwrap_or_default();
-    let swaps: Vec<String> =
-        sys.read("/proc/swaps").map(|t| mounts::parse_swaps(&t)).unwrap_or_default().into_iter().map(|s| resolve_name(sys, &s.file)).collect();
+    let mounts = sys
+        .read("/proc/self/mountinfo")
+        .map(|t| mounts::parse_mountinfo(&t))
+        .unwrap_or_default();
+    let swaps: Vec<String> = sys
+        .read("/proc/swaps")
+        .map(|t| mounts::parse_swaps(&t))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| resolve_name(sys, &s.file))
+        .collect();
     let pools = imported_pools(sys);
     let mut disks = Vec::new();
-    for b in all.iter().filter(|b| matches!(b.kind, Kind::Disk | Kind::Nbd)) {
-        let parts: Vec<BlockDev> = all.iter().filter(|p| p.parent.as_deref() == Some(b.name.as_str())).cloned().collect();
-        let table = sys.open_dev(&b.dev_path()).and_then(|src| parttable::read_table(&src, b.logical_block_size.max(512)));
+    for b in all
+        .iter()
+        .filter(|b| matches!(b.kind, Kind::Disk | Kind::Nbd))
+    {
+        let parts: Vec<BlockDev> = all
+            .iter()
+            .filter(|p| p.parent.as_deref() == Some(b.name.as_str()))
+            .cloned()
+            .collect();
+        let table = sys
+            .open_dev(&b.dev_path())
+            .and_then(|src| parttable::read_table(&src, b.logical_block_size.max(512)));
         let mut signatures = Vec::new();
         let mut uuids = Vec::new();
         if table.is_none() {
@@ -252,7 +331,10 @@ pub fn scan(sys: &Sys, opts: &Options, ours: &[String]) -> System {
         let mut boot_medium = false;
         let mut holds_root = false;
         for d in std::iter::once(b).chain(parts.iter()) {
-            for m in mounts.iter().filter(|m| m.devno == d.devno || resolve_name(sys, &m.source) == d.name) {
+            for m in mounts
+                .iter()
+                .filter(|m| m.devno == d.devno || resolve_name(sys, &m.source) == d.name)
+            {
                 if m.target == "/" {
                     holds_root = true;
                 }
@@ -260,7 +342,8 @@ pub fn scan(sys: &Sys, opts: &Options, ours: &[String]) -> System {
                     boot_medium = true;
                 }
                 // Mounts under the target tree are load's own (mount stage).
-                if !(m.target == opts.target || m.target.starts_with(&format!("{}/", opts.target))) {
+                if !(m.target == opts.target || m.target.starts_with(&format!("{}/", opts.target)))
+                {
                     hard_use.push(format!("{} is mounted at {}", d.name, m.target));
                 }
             }
@@ -273,9 +356,16 @@ pub fn scan(sys: &Sys, opts: &Options, ours: &[String]) -> System {
             // ZFS takes no holders, and its mounts name datasets, not devices.
             for p in pools.iter().filter(|p| p.devices.contains(&d.name)) {
                 if !p.is_ours(ours, &opts.target) {
-                    in_use.push(format!("{} is a vdev of the imported pool {}", d.name, p.name));
+                    in_use.push(format!(
+                        "{} is a vdev of the imported pool {}",
+                        d.name, p.name
+                    ));
                 }
-                if mounts.iter().any(|m| m.target == "/" && m.fstype == "zfs" && m.source.split('/').next() == Some(p.name.as_str())) {
+                if mounts.iter().any(|m| {
+                    m.target == "/"
+                        && m.fstype == "zfs"
+                        && m.source.split('/').next() == Some(p.name.as_str())
+                }) {
                     holds_root = true;
                 }
             }
@@ -289,29 +379,61 @@ pub fn scan(sys: &Sys, opts: &Options, ours: &[String]) -> System {
         // or the live medium through LVM, LUKS, md, or ZFS-on-LUKS left
         // holds_root and boot_medium false instead of refusing the disk.
         for name in super::release::stack(&all, &b.name) {
-            let Some(d) = all.iter().find(|x| x.name == name) else { continue };
+            let Some(d) = all.iter().find(|x| x.name == name) else {
+                continue;
+            };
             let matches_dev = |x: &str| x == d.name || d.dm_name.as_deref() == Some(x);
-            for m in mounts.iter().filter(|m| m.devno == d.devno || matches_dev(&resolve_name(sys, &m.source))) {
+            for m in mounts
+                .iter()
+                .filter(|m| m.devno == d.devno || matches_dev(&resolve_name(sys, &m.source)))
+            {
                 holds_root |= m.target == "/";
                 boot_medium |= MEDIUM_MOUNTS.contains(&m.target.as_str());
             }
             if d.udev.get("ID_FS_LABEL") == Some(STICK_CONFIG_LABEL) {
                 boot_medium = true;
             }
-            for p in pools.iter().filter(|p| p.devices.iter().any(|x| matches_dev(x))) {
-                if mounts.iter().any(|m| m.target == "/" && m.fstype == "zfs" && m.source.split('/').next() == Some(p.name.as_str())) {
+            for p in pools
+                .iter()
+                .filter(|p| p.devices.iter().any(|x| matches_dev(x)))
+            {
+                if mounts.iter().any(|m| {
+                    m.target == "/"
+                        && m.fstype == "zfs"
+                        && m.source.split('/').next() == Some(p.name.as_str())
+                }) {
                     holds_root = true;
                 }
             }
         }
-        if signatures.iter().any(|s| s.contains(&format!("LABEL={STICK_CONFIG_LABEL}"))) {
+        if signatures
+            .iter()
+            .any(|s| s.contains(&format!("LABEL={STICK_CONFIG_LABEL}")))
+        {
             boot_medium = true;
         }
         in_use.splice(0..0, hard_use.iter().cloned());
-        disks.push(TargetDisk { b: b.clone(), parts, table, signatures, uuids, in_use, hard_use, boot_medium, holds_root });
+        disks.push(TargetDisk {
+            b: b.clone(),
+            parts,
+            table,
+            signatures,
+            uuids,
+            in_use,
+            hard_use,
+            boot_medium,
+            holds_root,
+        });
     }
     let pvs = host_pvs(sys, &all);
-    System { disks, mounts, pools, pvs, devs: all, swaps }
+    System {
+        disks,
+        mounts,
+        pools,
+        pvs,
+        devs: all,
+        swaps,
+    }
 }
 
 impl System {
@@ -359,7 +481,10 @@ pub fn temp_pool_name(name: &str) -> String {
 
 impl Mapping {
     pub fn target_of(&self, src_disk: &str) -> Option<&str> {
-        self.pairs.iter().find(|(s, _)| s == src_disk).map(|(_, t)| t.as_str())
+        self.pairs
+            .iter()
+            .find(|(s, _)| s == src_disk)
+            .map(|(_, t)| t.as_str())
     }
 }
 
@@ -388,13 +513,31 @@ fn map_disks(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Map
     let mut m = Mapping::default();
     for (src, _) in &opts.maps {
         if layout.disk(src).is_none() {
-            m.problems.push(Problem::new(ProblemCode::MapUnknownSource, format!("--map {src}=...: the layout has no disk {src} (it has {})", names(layout))).with("disk", src));
+            m.problems.push(
+                Problem::new(
+                    ProblemCode::MapUnknownSource,
+                    format!(
+                        "--map {src}=...: the layout has no disk {src} (it has {})",
+                        names(layout)
+                    ),
+                )
+                .with("disk", src),
+            );
         }
     }
     let ours = layout_uuids(layout);
     for d in layout.disks.iter() {
         if !d.used {
-            m.notes.push(Note::new(NoteCode::SourceEmpty, format!("source disk {} holds nothing; it needs no target", d.describe())).with("disk", &d.name));
+            m.notes.push(
+                Note::new(
+                    NoteCode::SourceEmpty,
+                    format!(
+                        "source disk {} holds nothing; it needs no target",
+                        d.describe()
+                    ),
+                )
+                .with("disk", &d.name),
+            );
             continue;
         }
         let target = match opts.maps.iter().find(|(s, _)| *s == d.name) {
@@ -403,7 +546,14 @@ fn map_disks(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Map
                 match system.disk(&name) {
                     Some(t) => Some(t),
                     None => {
-                        m.problems.push(Problem::new(ProblemCode::NoSuchDisk, format!("--map {}={spec}: no whole disk {name} here", d.name)).with("disk", &d.name).with("target", &name));
+                        m.problems.push(
+                            Problem::new(
+                                ProblemCode::NoSuchDisk,
+                                format!("--map {}={spec}: no whole disk {name} here", d.name),
+                            )
+                            .with("disk", &d.name)
+                            .with("target", &name),
+                        );
                         continue;
                     }
                 }
@@ -418,7 +568,12 @@ fn map_disks(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Map
                         "source disk {} has no target: give --map {}=DISK (disks here: {})",
                         d.describe(),
                         d.name,
-                        system.disks.iter().map(TargetDisk::describe).collect::<Vec<_>>().join("; ")
+                        system
+                            .disks
+                            .iter()
+                            .map(TargetDisk::describe)
+                            .collect::<Vec<_>>()
+                            .join("; ")
                     ),
                 )
                 .with("disk", &d.name),
@@ -426,7 +581,14 @@ fn map_disks(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Map
             continue;
         };
         if let Some((other, _)) = m.pairs.iter().find(|(_, tn)| *tn == t.b.name) {
-            m.problems.push(Problem::new(ProblemCode::TargetTwice, format!("{} is the target of both {other} and {}", t.path(), d.name)).with("disk", &d.name).with("target", &t.b.name));
+            m.problems.push(
+                Problem::new(
+                    ProblemCode::TargetTwice,
+                    format!("{} is the target of both {other} and {}", t.path(), d.name),
+                )
+                .with("disk", &d.name)
+                .with("target", &t.b.name),
+            );
             continue;
         }
         check_target(d, t, opts, &ours, &mut m);
@@ -442,11 +604,33 @@ fn map_disks(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Map
     // (its initramfs's, GRUB's, which finds LVs by UUID) see every disk, and
     // so would its first boot: two groups of one name, or duplicate PVs.
     // LVM has no in-core name to give the layout's, as ZFS has.
-    let s = |v: &crate::json::Value, k: &str| v.get(k).and_then(crate::json::Value::as_str).unwrap_or_default().to_string();
-    for vg in layout.v.at(&["storage", "lvm", "volume_groups"]).and_then(crate::json::Value::as_array).into_iter().flatten() {
+    let s = |v: &crate::json::Value, k: &str| {
+        v.get(k)
+            .and_then(crate::json::Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    for vg in layout
+        .v
+        .at(&["storage", "lvm", "volume_groups"])
+        .and_then(crate::json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let (n, id) = (s(vg, "name"), s(vg, "id"));
-        let pv_ids: Vec<String> = vg.get("physical_volumes").and_then(crate::json::Value::as_array).into_iter().flatten().map(|p| s(p, "id")).filter(|u| !u.is_empty()).collect();
-        for pv in system.pvs.iter().filter(|pv| !pv.disks.iter().all(|d| targets.contains(d))) {
+        let pv_ids: Vec<String> = vg
+            .get("physical_volumes")
+            .and_then(crate::json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|p| s(p, "id"))
+            .filter(|u| !u.is_empty())
+            .collect();
+        for pv in system
+            .pvs
+            .iter()
+            .filter(|pv| !pv.disks.iter().all(|d| targets.contains(d)))
+        {
             let why = if !n.is_empty() && pv.vg == n {
                 format!("a volume group named {n}")
             } else if !id.is_empty() && pv.vg_uuid == id {
@@ -475,9 +659,21 @@ fn map_disks(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Map
     // shown to be on the targets, so it's renamed too: before, an empty
     // list passed (all() of nothing) and the layout's pool kept its name.
     let target_refs: Vec<&str> = targets.iter().map(String::as_str).collect();
-    for n in layout.v.at(&["storage", "zfs", "tools", "imported_pools"]).and_then(crate::json::Value::as_array).into_iter().flatten().filter_map(|p| p.get("name").and_then(crate::json::Value::as_str)) {
+    for n in layout
+        .v
+        .at(&["storage", "zfs", "tools", "imported_pools"])
+        .and_then(crate::json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p.get("name").and_then(crate::json::Value::as_str))
+    {
         if let Some(ip) = system.pools.iter().find(|ip| ip.name == n) {
-            if ip.devices.is_empty() || !ip.devices.iter().all(|d| vdev_on_targets(system, &target_refs, d)) {
+            if ip.devices.is_empty()
+                || !ip
+                    .devices
+                    .iter()
+                    .all(|d| vdev_on_targets(system, &target_refs, d))
+            {
                 m.pool_names.push((n.to_string(), temp_pool_name(n)));
                 m.notes.push(
                     Note::new(NoteCode::PoolRenamed, format!("ZFS pool {n}: a pool of that name is imported here, so it's {} here until close exports it", temp_pool_name(n)))
@@ -490,7 +686,13 @@ fn map_disks(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Map
     for e in &opts.erase {
         let name = resolve_name(sys, e);
         if !m.pairs.iter().any(|(_, t)| *t == name) {
-            m.problems.push(Problem::new(ProblemCode::EraseNotTarget, format!("--erase {e}: that isn't a target of this layout, so it isn't erased")).with("target", &name));
+            m.problems.push(
+                Problem::new(
+                    ProblemCode::EraseNotTarget,
+                    format!("--erase {e}: that isn't a target of this layout, so it isn't erased"),
+                )
+                .with("target", &name),
+            );
         }
     }
     m
@@ -503,7 +705,10 @@ fn map_disks(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Map
 /// are its disks' parts (other/load.rs names EFI label entries so).
 pub fn vdev_on_targets(system: &System, targets: &[&str], dev: &str) -> bool {
     let raw = dev.strip_suffix(".eli").unwrap_or(dev);
-    if system.disks.iter().any(|d| targets.contains(&d.b.name.as_str()) && (d.b.name == raw || d.parts.iter().any(|p| p.name == raw))) {
+    if system.disks.iter().any(|d| {
+        targets.contains(&d.b.name.as_str())
+            && (d.b.name == raw || d.parts.iter().any(|p| p.name == raw))
+    }) {
         return true;
     }
     if system.devs.is_empty() {
@@ -515,10 +720,20 @@ pub fn vdev_on_targets(system: &System, targets: &[&str], dev: &str) -> bool {
     let raw = if system.devs.iter().any(|b| b.name == raw) {
         raw
     } else {
-        system.devs.iter().find(|b| b.dm_name.as_deref() == Some(raw)).map_or(raw, |b| b.name.as_str())
+        system
+            .devs
+            .iter()
+            .find(|b| b.dm_name.as_deref() == Some(raw))
+            .map_or(raw, |b| b.name.as_str())
     };
     let bs = super::release::bases(&system.devs, raw);
-    !bs.is_empty() && bs.iter().all(|b| system.disks.iter().any(|d| d.b.name == *b && targets.contains(&d.b.name.as_str())))
+    !bs.is_empty()
+        && bs.iter().all(|b| {
+            system
+                .disks
+                .iter()
+                .any(|d| d.b.name == *b && targets.contains(&d.b.name.as_str()))
+        })
 }
 
 /// Whether T holds D's partition table as the partition stage writes it, by
@@ -529,7 +744,13 @@ pub fn partition_done(d: &Disk, t: &TargetDisk) -> bool {
     let Some(want) = &d.table else { return true };
     let Some(have) = &t.table else { return false };
     let ext = have.extents();
-    want.id.as_ref().is_none_or(|id| table_id(have).eq_ignore_ascii_case(id)) && d.parts.iter().all(|p| ext.iter().any(|&(n, s, len)| n == p.number && s == p.start_lba && len == p.sectors))
+    want.id
+        .as_ref()
+        .is_none_or(|id| table_id(have).eq_ignore_ascii_case(id))
+        && d.parts.iter().all(|p| {
+            ext.iter()
+                .any(|&(n, s, len)| n == p.number && s == p.start_lba && len == p.sectors)
+        })
 }
 
 /// Where the partition stage records what it did to target disk TGT (a
@@ -586,12 +807,20 @@ fn identity_on(fam: Option<crate::other::Family>, sys: &Sys, t: &TargetDisk) -> 
         };
         return (serial, t.b.wwid.clone().unwrap_or_default());
     }
-    let attr = |a: &str| sys.read_trim(&format!("/sys/block/{}/device/{a}", t.b.name)).unwrap_or_default();
+    let attr = |a: &str| {
+        sys.read_trim(&format!("/sys/block/{}/device/{a}", t.b.name))
+            .unwrap_or_default()
+    };
     (attr("serial"), attr("wwid"))
 }
 
 /// The record of D on T, T's kernel identity being (SERIAL, WWID).
-fn record_text(layout: &Layout, d: &Disk, t: &TargetDisk, (serial, wwid): &(String, String)) -> String {
+fn record_text(
+    layout: &Layout,
+    d: &Disk,
+    t: &TargetDisk,
+    (serial, wwid): &(String, String),
+) -> String {
     let mut s = format!(
         "layout {} {}\nsource {}\ntarget {} size={} serial={serial} wwid={wwid}\n",
         layout.hostname(),
@@ -615,14 +844,20 @@ fn records(layout: &Layout, system: &System, m: &Mapping, sys: &Sys) -> Vec<(Str
     m.pairs
         .iter()
         .filter_map(|(s, t)| Some((layout.disk(s)?, system.disk(t)?)))
-        .map(|(d, t)| (table_record(&t.b.name), table_record_text(layout, d, t, sys)))
+        .map(|(d, t)| {
+            (
+                table_record(&t.b.name),
+                table_record_text(layout, d, t, sys),
+            )
+        })
         .collect()
 }
 
 /// Whether this rescue session's partition stage wrote D's table on T (or,
 /// with no table, wiped T for D's content).
 pub fn load_wrote(layout: &Layout, d: &Disk, t: &TargetDisk, sys: &Sys) -> bool {
-    sys.read(&table_record(&t.b.name)).is_some_and(|r| r == table_record_text(layout, d, t, sys))
+    sys.read(&table_record(&t.b.name))
+        .is_some_and(|r| r == table_record_text(layout, d, t, sys))
 }
 
 /// Whether the partition stage counts as done on T: partition_done, and,
@@ -635,7 +870,13 @@ pub fn load_wrote(layout: &Layout, d: &Disk, t: &TargetDisk, sys: &Sys) -> bool 
 /// check, but the stage is the one that wipes and zeroes its target: named
 /// with --erase, it's done only by the record too, or the old filesystem
 /// there (the source's own, its UUID the layout's) would pass for format's.
-pub fn partition_counts_done(layout: &Layout, d: &Disk, t: &TargetDisk, opts: &Options, sys: &Sys) -> bool {
+pub fn partition_counts_done(
+    layout: &Layout,
+    d: &Disk,
+    t: &TargetDisk,
+    opts: &Options,
+    sys: &Sys,
+) -> bool {
     partition_done(d, t) && (!is_erased(opts, t) || load_wrote(layout, d, t, sys))
 }
 
@@ -649,14 +890,23 @@ pub fn unrecorded(layout: &Layout, d: &Disk, t: &TargetDisk, opts: &Options, sys
 /// Whether this run's partition stage wipes the targets: --only partition
 /// does; --through (and the plan, which ends in the --through command to
 /// run) skips it once status shows it done on every target, as exec does.
-pub(crate) fn partition_runs(layout: &Layout, opts: &Options, system: &System, sys: &Sys, m: &Mapping) -> bool {
+pub(crate) fn partition_runs(
+    layout: &Layout,
+    opts: &Options,
+    system: &System,
+    sys: &Sys,
+    m: &Mapping,
+) -> bool {
     if let Some(s) = opts.only {
         return s == Stage::Partition;
     }
-    let done = m.pairs.iter().all(|(s, t)| match (layout.disk(s), system.disk(t)) {
-        (Some(d), Some(t)) => partition_counts_done(layout, d, t, opts, sys),
-        _ => true,
-    });
+    let done = m
+        .pairs
+        .iter()
+        .all(|(s, t)| match (layout.disk(s), system.disk(t)) {
+            (Some(d), Some(t)) => partition_counts_done(layout, d, t, opts, sys),
+            _ => true,
+        });
     !(sys.privileged && done)
 }
 
@@ -671,15 +921,36 @@ fn loads_own(sys: &Sys, system: &System, opts: &Options, pools: &[String], disk:
     // active mounts and ZFS-on-LUKS pools under --target, allowing --erase to
     // wipe open target stacks without requiring `--only close` first.
     let stack = super::release::stack(&system.devs, disk);
-    let in_stack = |x: &str| stack.iter().any(|n| n == x || system.devs.iter().any(|b| b.name == *n && b.dm_name.as_deref() == Some(x)));
-    let under = |t: &str| t == opts.target || t.starts_with(&format!("{}/", opts.target.trim_end_matches('/')));
-    let devno = |n: &str| system.devs.iter().find(|b| b.name == n).map(|b| b.devno.clone());
-    let mounted = system
-        .mounts
-        .iter()
-        .filter(|m| under(&m.target))
-        .any(|m| stack.iter().any(|n| devno(n).as_deref() == Some(m.devno.as_str())) || in_stack(&resolve_name(sys, &m.source)));
-    mounted || system.pools.iter().any(|p| p.is_ours(pools, &opts.target) && p.devices.iter().any(|d| in_stack(d)))
+    let in_stack = |x: &str| {
+        stack.iter().any(|n| {
+            n == x
+                || system
+                    .devs
+                    .iter()
+                    .any(|b| b.name == *n && b.dm_name.as_deref() == Some(x))
+        })
+    };
+    let under = |t: &str| {
+        t == opts.target || t.starts_with(&format!("{}/", opts.target.trim_end_matches('/')))
+    };
+    let devno = |n: &str| {
+        system
+            .devs
+            .iter()
+            .find(|b| b.name == n)
+            .map(|b| b.devno.clone())
+    };
+    let mounted = system.mounts.iter().filter(|m| under(&m.target)).any(|m| {
+        stack
+            .iter()
+            .any(|n| devno(n).as_deref() == Some(m.devno.as_str()))
+            || in_stack(&resolve_name(sys, &m.source))
+    });
+    mounted
+        || system
+            .pools
+            .iter()
+            .any(|p| p.is_ours(pools, &opts.target) && p.devices.iter().any(|d| in_stack(d)))
 }
 
 /// What holds the targets named with --erase, let go of at the start of the
@@ -694,9 +965,15 @@ fn release_holders(layout: &Layout, opts: &Options, system: &System, sys: &Sys, 
     let runs = partition_runs(layout, opts, system, sys, m);
     if runs {
         for (src, tgt) in &m.pairs {
-            let (Some(d), Some(t)) = (layout.disk(src), system.disk(tgt)) else { continue };
+            let (Some(d), Some(t)) = (layout.disk(src), system.disk(tgt)) else {
+                continue;
+            };
             if unrecorded(layout, d, t, opts, sys) {
-                let what = if d.table.is_some() { "wrote this table (the source's table, as on the source's own disk as found" } else { "wiped this disk (its source has no table, its content goes on the disk itself" };
+                let what = if d.table.is_some() {
+                    "wrote this table (the source's table, as on the source's own disk as found"
+                } else {
+                    "wiped this disk (its source has no table, its content goes on the disk itself"
+                };
                 m.notes.push(
                     Note::new(NoteCode::PartitionRuns, format!("{src} -> {}: the partition stage runs: --erase and no record that load {what}; {}), so what's on it is let go of and wiped", t.path(), table_record(tgt)))
                         .with("disk", src)
@@ -708,8 +985,15 @@ fn release_holders(layout: &Layout, opts: &Options, system: &System, sys: &Sys, 
     if !m.ours_busy.is_empty() && runs {
         let pools = layout_pools(layout);
         for name in m.ours_busy.clone() {
-            let Some(t) = system.disk(&name) else { continue };
-            let src = m.pairs.iter().find(|(_, x)| *x == name).map(|(s, _)| s.clone()).unwrap_or_default();
+            let Some(t) = system.disk(&name) else {
+                continue;
+            };
+            let src = m
+                .pairs
+                .iter()
+                .find(|(_, x)| *x == name)
+                .map(|(s, _)| s.clone())
+                .unwrap_or_default();
             if loads_own(sys, system, opts, &pools, &name) {
                 m.problems.push(
                     Problem::new(
@@ -725,10 +1009,17 @@ fn release_holders(layout: &Layout, opts: &Options, system: &System, sys: &Sys, 
                 );
             } else if !t.hard_use.is_empty() {
                 m.problems.push(
-                    Problem::new(ProblemCode::InUse, format!("{src} -> {}: the target is in use ({}); refused even with --erase", t.path(), t.in_use.join("; ")))
-                        .with("disk", &src)
-                        .with("target", &name)
-                        .with("uses", t.in_use.clone()),
+                    Problem::new(
+                        ProblemCode::InUse,
+                        format!(
+                            "{src} -> {}: the target is in use ({}); refused even with --erase",
+                            t.path(),
+                            t.in_use.join("; ")
+                        ),
+                    )
+                    .with("disk", &src)
+                    .with("target", &name)
+                    .with("uses", t.in_use.clone()),
                 );
             } else if !m.held.contains(&name) {
                 m.held.push(name);
@@ -747,7 +1038,12 @@ fn release_holders(layout: &Layout, opts: &Options, system: &System, sys: &Sys, 
             .collect();
         let r = super::release::plan(sys, system, &m.held, &erased);
         for (disk, why) in r.problems {
-            let src = m.pairs.iter().find(|(_, t)| *t == disk).map(|(s, _)| s.clone()).unwrap_or_default();
+            let src = m
+                .pairs
+                .iter()
+                .find(|(_, t)| *t == disk)
+                .map(|(s, _)| s.clone())
+                .unwrap_or_default();
             m.problems.push(
                 Problem::new(ProblemCode::HeldUnreleasable, format!("{src} -> /dev/{disk}: the target is held, and what holds it can't be let go: {why}; refused even with --erase"))
                     .with("disk", &src)
@@ -757,8 +1053,20 @@ fn release_holders(layout: &Layout, opts: &Options, system: &System, sys: &Sys, 
         }
         for st in &r.steps {
             m.notes.push(
-                Note::new(NoteCode::Release, format!("--erase {}: {} ({}) before it's wiped", st.disks.iter().map(|d| format!("/dev/{d}")).collect::<Vec<_>>().join(", "), st.what(), st.stops.join(", ")))
-                    .with("targets", st.disks.clone()),
+                Note::new(
+                    NoteCode::Release,
+                    format!(
+                        "--erase {}: {} ({}) before it's wiped",
+                        st.disks
+                            .iter()
+                            .map(|d| format!("/dev/{d}"))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        st.what(),
+                        st.stops.join(", ")
+                    ),
+                )
+                .with("targets", st.disks.clone()),
             );
         }
         m.release = r.steps;
@@ -766,7 +1074,9 @@ fn release_holders(layout: &Layout, opts: &Options, system: &System, sys: &Sys, 
 }
 
 pub fn is_erased(opts: &Options, t: &TargetDisk) -> bool {
-    opts.erase.iter().any(|e| e == &t.path() || e == &t.b.name || resolve_tail(e) == t.b.name)
+    opts.erase
+        .iter()
+        .any(|e| e == &t.path() || e == &t.b.name || resolve_tail(e) == t.b.name)
 }
 
 /// A disk's most stable /dev/disk/by-id link (holt-json.md, the plan's
@@ -774,7 +1084,12 @@ pub fn is_erased(opts: &Options, t: &TargetDisk) -> bool {
 /// by-id link of the whole disk.  Linux only (udev's); None elsewhere, or
 /// where udev gives none.
 pub fn by_id(t: &TargetDisk) -> Option<String> {
-    let links: Vec<&String> = t.b.udev.links.iter().filter(|l| l.starts_with("/dev/disk/by-id/") && !l.contains("-part")).collect();
+    let links: Vec<&String> =
+        t.b.udev
+            .links
+            .iter()
+            .filter(|l| l.starts_with("/dev/disk/by-id/") && !l.contains("-part"))
+            .collect();
     let tail = |l: &str| l.trim_start_matches("/dev/disk/by-id/").to_string();
     if let Some(l) = links.iter().find(|l| tail(l).starts_with("wwn-")) {
         return Some(l.to_string());
@@ -796,24 +1111,48 @@ pub fn by_id(t: &TargetDisk) -> Option<String> {
 pub fn contents(sys: &Sys, t: &TargetDisk) -> Vec<crate::json::Value> {
     use crate::json::{Obj, Value};
     let mut out = Vec::new();
-    let devs: Vec<&BlockDev> = if t.table.is_none() { std::iter::once(&t.b).chain(t.parts.iter()).collect() } else { t.parts.iter().collect() };
+    let devs: Vec<&BlockDev> = if t.table.is_none() {
+        std::iter::once(&t.b).chain(t.parts.iter()).collect()
+    } else {
+        t.parts.iter().collect()
+    };
     for d in devs {
         let Some(src) = sys.open_dev(&d.dev_path()) else {
             // scan's own words for it: "vdb1: ext4 UUID=... LABEL=...".
-            for sig in t.signatures.iter().filter_map(|x| x.strip_prefix(&format!("{}: ", d.name))) {
+            for sig in t
+                .signatures
+                .iter()
+                .filter_map(|x| x.strip_prefix(&format!("{}: ", d.name)))
+            {
                 let sig = sig.strip_suffix(" (from udev)").unwrap_or(sig);
                 let (rest, label) = match sig.split_once(" LABEL=") {
                     Some((r, l)) => (r, Some(l.to_string())),
                     None => (sig, None),
                 };
                 let kind = rest.split(' ').next().unwrap_or(rest);
-                out.push(Obj::new().set("dev", d.name.as_str()).set("type", kind).set("label", label).set("size_bytes", d.size_bytes).set("used_bytes", Value::Null).build());
+                out.push(
+                    Obj::new()
+                        .set("dev", d.name.as_str())
+                        .set("type", kind)
+                        .set("label", label)
+                        .set("size_bytes", d.size_bytes)
+                        .set("used_bytes", Value::Null)
+                        .build(),
+                );
             }
             continue;
         };
         for c in crate::probe::probe_all(&src) {
             let used = used_bytes(&c.kind, &c.to_json());
-            out.push(Obj::new().set("dev", d.name.as_str()).set("type", c.kind.as_str()).set("label", c.label.clone()).set("size_bytes", d.size_bytes).set("used_bytes", used).build());
+            out.push(
+                Obj::new()
+                    .set("dev", d.name.as_str())
+                    .set("type", c.kind.as_str())
+                    .set("label", c.label.clone())
+                    .set("size_bytes", d.size_bytes)
+                    .set("used_bytes", used)
+                    .build(),
+            );
         }
     }
     out
@@ -826,7 +1165,9 @@ pub fn contents(sys: &Sys, t: &TargetDisk) -> Vec<crate::json::Value> {
 fn used_bytes(kind: &str, j: &crate::json::Value) -> Option<u64> {
     let u = |k: &str| j.get(k).and_then(crate::json::Value::as_u64);
     match kind {
-        "ext2" | "ext3" | "ext4" | "xfs" => u("blocks")?.saturating_sub(u("free_blocks")?).checked_mul(u("block_size")?),
+        "ext2" | "ext3" | "ext4" | "xfs" => u("blocks")?
+            .saturating_sub(u("free_blocks")?)
+            .checked_mul(u("block_size")?),
         "btrfs" => u("bytes_used"),
         _ => None,
     }
@@ -835,14 +1176,21 @@ fn used_bytes(kind: &str, j: &crate::json::Value) -> Option<u64> {
 /// Whether the mount at MOUNT_POINT is of something on T: one of its
 /// devices or what's stacked on them (LUKS, LVM, md), as scan reads mounts.
 fn holds_mount(sys: &Sys, system: &System, t: &TargetDisk, mount_point: &str) -> bool {
-    let Some(m) = system.mounts.iter().find(|m| m.target == mount_point) else { return false };
-    let mut names: Vec<String> = std::iter::once(t.b.name.clone()).chain(t.parts.iter().map(|p| p.name.clone())).collect();
+    let Some(m) = system.mounts.iter().find(|m| m.target == mount_point) else {
+        return false;
+    };
+    let mut names: Vec<String> = std::iter::once(t.b.name.clone())
+        .chain(t.parts.iter().map(|p| p.name.clone()))
+        .collect();
     names.extend(super::release::stack(&system.devs, &t.b.name));
     let src = resolve_name(sys, &m.source);
     names.iter().any(|n| {
         let b = system.devs.iter().find(|b| b.name == *n);
-        *n == src || b.is_some_and(|b| b.devno == m.devno || b.dm_name.as_deref() == Some(src.as_str()))
-    }) || std::iter::once(&t.b).chain(t.parts.iter()).any(|b| b.devno == m.devno)
+        *n == src
+            || b.is_some_and(|b| b.devno == m.devno || b.dm_name.as_deref() == Some(src.as_str()))
+    }) || std::iter::once(&t.b)
+        .chain(t.parts.iter())
+        .any(|b| b.devno == m.devno)
 }
 
 /// The mount point a local --repo is under: the longest mount here that
@@ -853,7 +1201,9 @@ fn repo_mount(system: &System, opts: &Options) -> Option<String> {
         .mounts
         .iter()
         .map(|m| m.target.as_str())
-        .filter(|t| *t == "/" || repo == *t || repo.starts_with(&format!("{}/", t.trim_end_matches('/'))))
+        .filter(|t| {
+            *t == "/" || repo == *t || repo.starts_with(&format!("{}/", t.trim_end_matches('/')))
+        })
         .max_by_key(|t| t.len())
         .map(str::to_string)
 }
@@ -863,20 +1213,49 @@ fn repo_mount(system: &System, opts: &Options) -> Option<String> {
 /// the disk the local --repo is on, one mounted or in use as swap, a
 /// read-only one, one whose sector size no source disk has.  A held disk,
 /// one that isn't blank and one of another size aren't refused.
-pub fn refusal(layout: &Layout, opts: &Options, system: &System, sys: &Sys, t: &TargetDisk) -> Option<(super::codes::RefusalCode, String)> {
+pub fn refusal(
+    layout: &Layout,
+    opts: &Options,
+    system: &System,
+    sys: &Sys,
+    t: &TargetDisk,
+) -> Option<(super::codes::RefusalCode, String)> {
     use super::codes::RefusalCode as R;
     let p = t.path();
     if t.boot_medium {
-        return Some((R::BootDisk, format!("{} is the disk this system booted from; never a target", t.b.name)));
+        return Some((
+            R::BootDisk,
+            format!(
+                "{} is the disk this system booted from; never a target",
+                t.b.name
+            ),
+        ));
     }
     if t.holds_root {
-        return Some((R::RunningRoot, format!("{} holds the running system's /; never a target", t.b.name)));
+        return Some((
+            R::RunningRoot,
+            format!("{} holds the running system's /; never a target", t.b.name),
+        ));
     }
-    if let Some(mp) = repo_mount(system, opts).filter(|mp| mp != "/" && holds_mount(sys, system, t, mp)) {
-        return Some((R::BackupDrive, format!("{p} holds {mp}, where the repository {} is; never a target", opts.repo.as_deref().unwrap_or_default())));
+    if let Some(mp) =
+        repo_mount(system, opts).filter(|mp| mp != "/" && holds_mount(sys, system, t, mp))
+    {
+        return Some((
+            R::BackupDrive,
+            format!(
+                "{p} holds {mp}, where the repository {} is; never a target",
+                opts.repo.as_deref().unwrap_or_default()
+            ),
+        ));
     }
     if !t.hard_use.is_empty() {
-        return Some((R::InUse, format!("{p} is in use ({}); refused even with --erase", t.in_use.join("; "))));
+        return Some((
+            R::InUse,
+            format!(
+                "{p} is in use ({}); refused even with --erase",
+                t.in_use.join("; ")
+            ),
+        ));
     }
     if t.b.read_only == Some(true) {
         return Some((R::ReadOnly, format!("{p} is read-only")));
@@ -884,7 +1263,10 @@ pub fn refusal(layout: &Layout, opts: &Options, system: &System, sys: &Sys, t: &
     let here = t.b.logical_block_size.max(512);
     let used: Vec<&Disk> = layout.disks.iter().filter(|d| d.used).collect();
     if !used.is_empty() && used.iter().all(|d| d.sector_size != here) {
-        return Some((R::SectorSize, format!("{p}: logical sector size {here} here, and no source disk has it")));
+        return Some((
+            R::SectorSize,
+            format!("{p}: logical sector size {here} here, and no source disk has it"),
+        ));
     }
     None
 }
@@ -893,7 +1275,11 @@ pub fn refusal(layout: &Layout, opts: &Options, system: &System, sys: &Sys, t: &
 /// disks (load_wrote, for any of them): a candidate that isn't a target
 /// has no source of its own.
 pub fn recorded_for_any(layout: &Layout, t: &TargetDisk, sys: &Sys) -> bool {
-    layout.disks.iter().filter(|d| d.used).any(|d| load_wrote(layout, d, t, sys))
+    layout
+        .disks
+        .iter()
+        .filter(|d| d.used)
+        .any(|d| load_wrote(layout, d, t, sys))
 }
 
 /// Never over the old system (holt-json.md, J19; under --json only): every
@@ -902,15 +1288,29 @@ pub fn recorded_for_any(layout: &Layout, t: &TargetDisk, sys: &Sys) -> bool {
 /// source machine's own disk as found carries the layout's identifiers
 /// too.  A target the mapping refused already (not_blank, held, in_use)
 /// isn't refused twice.
-pub fn erase_gate(layout: &Layout, opts: &Options, system: &System, sys: &Sys, m: &Mapping) -> Vec<Problem> {
+pub fn erase_gate(
+    layout: &Layout,
+    opts: &Options,
+    system: &System,
+    sys: &Sys,
+    m: &Mapping,
+) -> Vec<Problem> {
     let ours = layout_uuids(layout);
     let mut out = Vec::new();
     for (src, tgt) in &m.pairs {
-        let (Some(d), Some(t)) = (layout.disk(src), system.disk(tgt)) else { continue };
+        let (Some(d), Some(t)) = (layout.disk(src), system.disk(tgt)) else {
+            continue;
+        };
         if t.blank() || is_erased(opts, t) || load_wrote(layout, d, t, sys) {
             continue;
         }
-        let refused = m.problems.iter().any(|p| p.str_field("target") == Some(tgt.as_str()) && matches!(p.code, ProblemCode::NotBlank | ProblemCode::Held | ProblemCode::InUse));
+        let refused = m.problems.iter().any(|p| {
+            p.str_field("target") == Some(tgt.as_str())
+                && matches!(
+                    p.code,
+                    ProblemCode::NotBlank | ProblemCode::Held | ProblemCode::InUse
+                )
+        });
         if refused {
             continue;
         }
@@ -922,18 +1322,30 @@ pub fn erase_gate(layout: &Layout, opts: &Options, system: &System, sys: &Sys, m
             "it isn't blank, and this session has no record that load wrote it"
         };
         out.push(
-            Problem::new(ProblemCode::EraseRequired, format!("{src} -> {}: {what}; give --erase {} to wipe it", t.path(), t.path()))
-                .with("disk", src)
-                .with("target", tgt)
-                .with("ours", is_ours)
-                .with("same_identity", same),
+            Problem::new(
+                ProblemCode::EraseRequired,
+                format!(
+                    "{src} -> {}: {what}; give --erase {} to wipe it",
+                    t.path(),
+                    t.path()
+                ),
+            )
+            .with("disk", src)
+            .with("target", tgt)
+            .with("ours", is_ours)
+            .with("same_identity", same),
         );
     }
     out
 }
 
 fn names(layout: &Layout) -> String {
-    layout.disks.iter().map(|d| d.name.as_str()).collect::<Vec<_>>().join(", ")
+    layout
+        .disks
+        .iter()
+        .map(|d| d.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Every identifier the layout gives a filesystem, container or member.
@@ -956,13 +1368,29 @@ pub fn layout_uuids(layout: &Layout) -> Vec<String> {
 fn check_target(src: &Disk, t: &TargetDisk, opts: &Options, ours: &[String], m: &mut Mapping) {
     let who = format!("{} -> {}", src.name, t.path());
     // A problem about this pair: its source disk and target node.
-    let about = |code: ProblemCode, text: String| Problem::new(code, text).with("disk", &src.name).with("target", &t.b.name);
+    let about = |code: ProblemCode, text: String| {
+        Problem::new(code, text)
+            .with("disk", &src.name)
+            .with("target", &t.b.name)
+    };
     if t.boot_medium {
-        m.problems.push(about(ProblemCode::BootDisk, format!("{who}: {} is the disk this system booted from; never a target", t.path())));
+        m.problems.push(about(
+            ProblemCode::BootDisk,
+            format!(
+                "{who}: {} is the disk this system booted from; never a target",
+                t.path()
+            ),
+        ));
         return;
     }
     if t.holds_root {
-        m.problems.push(about(ProblemCode::RunningRoot, format!("{who}: {} holds the running system's /; never a target", t.path())));
+        m.problems.push(about(
+            ProblemCode::RunningRoot,
+            format!(
+                "{who}: {} holds the running system's /; never a target",
+                t.path()
+            ),
+        ));
         return;
     }
     // With --fit-largest the sizes are the fit's business (fit.rs), which
@@ -989,7 +1417,10 @@ fn check_target(src: &Disk, t: &TargetDisk, opts: &Options, ours: &[String], m: 
         );
     }
     if t.b.read_only == Some(true) {
-        m.problems.push(about(ProblemCode::ReadOnly, format!("{who}: the target is read-only")));
+        m.problems.push(about(
+            ProblemCode::ReadOnly,
+            format!("{who}: the target is read-only"),
+        ));
     }
     // Busy or written on by an earlier stage of this same layout is fine:
     // that's what status and the later stages expect to find.
@@ -1002,7 +1433,16 @@ fn check_target(src: &Disk, t: &TargetDisk, opts: &Options, ours: &[String], m: 
     }
     if !t.in_use.is_empty() && !is_ours {
         if !t.hard_use.is_empty() {
-            m.problems.push(about(ProblemCode::InUse, format!("{who}: the target is in use ({}); refused even with --erase", t.in_use.join("; "))).with("uses", t.in_use.clone()));
+            m.problems.push(
+                about(
+                    ProblemCode::InUse,
+                    format!(
+                        "{who}: the target is in use ({}); refused even with --erase",
+                        t.in_use.join("; ")
+                    ),
+                )
+                .with("uses", t.in_use.clone()),
+            );
             return;
         }
         if !erase {
@@ -1016,15 +1456,34 @@ fn check_target(src: &Disk, t: &TargetDisk, opts: &Options, ours: &[String], m: 
         m.held.push(t.b.name.clone());
     }
     if !t.blank() && !is_ours && !erase {
-        let what = if t.signatures.is_empty() { "a partition table".to_string() } else { t.signatures.join("; ") };
-        m.problems.push(about(ProblemCode::NotBlank, format!("{who}: the target isn't blank ({what}); give --erase {} to wipe it", t.path())).with("contents", t.signatures.clone()));
+        let what = if t.signatures.is_empty() {
+            "a partition table".to_string()
+        } else {
+            t.signatures.join("; ")
+        };
+        m.problems.push(
+            about(
+                ProblemCode::NotBlank,
+                format!(
+                    "{who}: the target isn't blank ({what}); give --erase {} to wipe it",
+                    t.path()
+                ),
+            )
+            .with("contents", t.signatures.clone()),
+        );
     }
     if t.b.size_bytes > src.size_bytes && opts.fit_largest.is_none() {
         m.notes.push(
-            Note::new(NoteCode::TargetBigger, format!("{who}: the target is bigger; the extra {} stays unused", crate::report::human(t.b.size_bytes - src.size_bytes)))
-                .with("disk", &src.name)
-                .with("target", &t.b.name)
-                .with("bytes", t.b.size_bytes - src.size_bytes),
+            Note::new(
+                NoteCode::TargetBigger,
+                format!(
+                    "{who}: the target is bigger; the extra {} stays unused",
+                    crate::report::human(t.b.size_bytes - src.size_bytes)
+                ),
+            )
+            .with("disk", &src.name)
+            .with("target", &t.b.name)
+            .with("bytes", t.b.size_bytes - src.size_bytes),
         );
         m.bigger.push(src.name.clone());
     }
@@ -1064,14 +1523,22 @@ pub fn prepare<'a>(layout: &'a Layout, opts: &Options, sys: &Sys) -> Prepared<'a
     if let Some(o) = &only {
         mapping.problems.extend(o.problems.iter().cloned());
         mapping.notes.extend(o.notes.iter().cloned());
-        mapping.problems.extend(left_out_pool_problems(opts, o, &mapping, &system));
+        mapping
+            .problems
+            .extend(left_out_pool_problems(opts, o, &mapping, &system));
     }
     let mut fit = Fit::default();
     if let Some(pct) = opts.fit_largest {
         let targets: Vec<fit::Target> = mapping
             .pairs
             .iter()
-            .filter_map(|(src, t)| system.disk(t).map(|t| fit::Target { disk: src.clone(), path: t.path(), size_bytes: t.b.size_bytes }))
+            .filter_map(|(src, t)| {
+                system.disk(t).map(|t| fit::Target {
+                    disk: src.clone(),
+                    path: t.path(),
+                    size_bytes: t.b.size_bytes,
+                })
+            })
             .collect();
         fit = fit::fit(&src.v, &targets, pct);
         mapping.problems.extend(fit.problems.iter().cloned());
@@ -1089,7 +1556,9 @@ pub fn prepare<'a>(layout: &'a Layout, opts: &Options, sys: &Sys) -> Prepared<'a
     if let Some(v) = fit.v.clone() {
         match Layout::from_json(v) {
             Ok(l) => out = Cow::Owned(l),
-            Err(e) => mapping.problems.push(format!("--fit-largest: the layout it fits isn't one load can read back: {e}")),
+            Err(e) => mapping.problems.push(format!(
+                "--fit-largest: the layout it fits isn't one load can read back: {e}"
+            )),
         }
     }
     for p in fitted_already(src, &out, &system, &o2, &mapping) {
@@ -1097,13 +1566,23 @@ pub fn prepare<'a>(layout: &'a Layout, opts: &Options, sys: &Sys) -> Prepared<'a
     }
     release_holders(&out, &o2, &system, sys, &mut mapping);
     mapping.records = records(&out, &system, &mapping, sys);
-    Prepared { system, mapping, layout: out, fit }
+    Prepared {
+        system,
+        mapping,
+        layout: out,
+        fit,
+    }
 }
 
 /// --pools' refusals: a --map of a disk of a pool it leaves untouched, and
 /// a target disk here that holds one of those pools (its vdev's label has
 /// the pool's GUID): load would write over a pool it was told to leave.
-pub fn left_out_pool_problems(opts: &Options, only: &crate::load::layout::OnlyPools, m: &Mapping, system: &System) -> Vec<Problem> {
+pub fn left_out_pool_problems(
+    opts: &Options,
+    only: &crate::load::layout::OnlyPools,
+    m: &Mapping,
+    system: &System,
+) -> Vec<Problem> {
     let mut out = Vec::new();
     for (src, dst) in &opts.maps {
         if only.disks.contains(src) {
@@ -1131,27 +1610,55 @@ pub fn left_out_pool_problems(opts: &Options, only: &crate::load::layout::OnlyPo
 /// same one again, every later stage would read the disk as the source's and
 /// write over what's on it.  `planned` is the layout this run would write,
 /// fitted or not; a target that already holds it has nothing wrong with it.
-fn fitted_already(src: &Layout, planned: &Layout, system: &System, opts: &Options, m: &Mapping) -> Vec<Problem> {
+fn fitted_already(
+    src: &Layout,
+    planned: &Layout,
+    system: &System,
+    opts: &Options,
+    m: &Mapping,
+) -> Vec<Problem> {
     let mut out = Vec::new();
     for (name, tgt) in &m.pairs {
-        let (Some(d), Some(plan), Some(t)) = (src.disk(name), planned.disk(name), system.disk(tgt)) else { continue };
+        let (Some(d), Some(plan), Some(t)) = (src.disk(name), planned.disk(name), system.disk(tgt))
+        else {
+            continue;
+        };
         // --erase wipes the table, which is what the message below asks for.
         if is_erased(opts, t) {
             continue;
         }
-        let (Some(want), Some(have)) = (d.table.as_ref().and_then(|x| x.id.as_ref()), t.table.as_ref()) else { continue };
+        let (Some(want), Some(have)) = (
+            d.table.as_ref().and_then(|x| x.id.as_ref()),
+            t.table.as_ref(),
+        ) else {
+            continue;
+        };
         if !table_id(have).eq_ignore_ascii_case(want) {
             continue;
         }
         // What this run plans is already there, by the same check status
         // makes of the partition stage: the stages go on from it.
         let ext = have.extents();
-        if plan.parts.iter().all(|q| ext.iter().any(|&(n, s, len)| n == q.number && s == q.start_lba && len == q.sectors)) {
+        if plan.parts.iter().all(|q| {
+            ext.iter()
+                .any(|&(n, s, len)| n == q.number && s == q.start_lba && len == q.sectors)
+        }) {
             continue;
         }
-        let target = fit::Target { disk: name.clone(), path: t.path(), size_bytes: t.b.size_bytes };
-        let Some((n, by)) = fit::wrote(&src.v, &target, &ext) else { continue };
-        let part = d.parts.iter().find(|q| q.number == n).map(|q| q.name.clone()).unwrap_or_else(|| format!("partition {n}"));
+        let target = fit::Target {
+            disk: name.clone(),
+            path: t.path(),
+            size_bytes: t.b.size_bytes,
+        };
+        let Some((n, by)) = fit::wrote(&src.v, &target, &ext) else {
+            continue;
+        };
+        let part = d
+            .parts
+            .iter()
+            .find(|q| q.number == n)
+            .map(|q| q.name.clone())
+            .unwrap_or_else(|| format!("partition {n}"));
         let text = format!(
             "{name} -> {}: the table there is this layout's, fitted to the disk ({part} is {} {} there); run the stages with the --fit-largest PCT that wrote it, or --erase {} to start again",
             t.path(),
@@ -1160,7 +1667,13 @@ fn fitted_already(src: &Layout, planned: &Layout, system: &System, opts: &Option
             t.path()
         );
         // bytes: how much the partition differs, below 0 smaller.
-        out.push(Problem::new(ProblemCode::FittedOtherPct, text).with("disk", name).with("target", tgt).with("partition", &part).with("bytes", by * d.sector_size as i64));
+        out.push(
+            Problem::new(ProblemCode::FittedOtherPct, text)
+                .with("disk", name)
+                .with("target", tgt)
+                .with("partition", &part)
+                .with("bytes", by * d.sector_size as i64),
+        );
     }
     out
 }
@@ -1172,7 +1685,7 @@ fn resolve_tail(spec: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::load::layout::{sample, Layout};
+    use crate::load::layout::{Layout, sample};
     use crate::sys::FakeRunner;
     use crate::testutil::Tree;
 
@@ -1193,11 +1706,17 @@ mod tests {
     /// 16 GiB, vdc 8 GiB.
     fn tree() -> Tree {
         let t = Tree::new("load-target");
-        t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", format!("{}\n", 33554432));
-        t.disk("vdc", "253:32", &[], 512).file("/sys/block/vdc/size", format!("{}\n", 16777216));
-        t.disk("sda", "8:0", &[], 512).file("/sys/block/sda/size", "30000000\n");
+        t.disk("vdb", "253:16", &[], 512)
+            .file("/sys/block/vdb/size", format!("{}\n", 33554432));
+        t.disk("vdc", "253:32", &[], 512)
+            .file("/sys/block/vdc/size", format!("{}\n", 16777216));
+        t.disk("sda", "8:0", &[], 512)
+            .file("/sys/block/sda/size", "30000000\n");
         t.partition("sda", "sda3", "8:3", 3, 2048, 65536, &[]);
-        t.file("/run/udev/data/b8:3", "E:ID_FS_TYPE=vfat\nE:ID_FS_LABEL=BACKOTTER\n");
+        t.file(
+            "/run/udev/data/b8:3",
+            "E:ID_FS_TYPE=vfat\nE:ID_FS_LABEL=BACKOTTER\n",
+        );
         t.file("/proc/self/mountinfo", "");
         t.file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
         t.symlink("/dev/disk/by-id/virtio-tgt", "../../vdb");
@@ -1225,14 +1744,34 @@ mod tests {
     /// number.
     #[test]
     fn used_bytes_overflow_is_null() {
-        let j = |b: u64, f: u64, bs: u64| crate::json::parse(&format!(r#"{{"blocks": {b}, "free_blocks": {f}, "block_size": {bs}}}"#)).unwrap();
-        assert_eq!(used_bytes("ext4", &j(1 << 20, 1 << 18, 4096)), Some(((1 << 20) - (1 << 18)) * 4096));
+        let j = |b: u64, f: u64, bs: u64| {
+            crate::json::parse(&format!(
+                r#"{{"blocks": {b}, "free_blocks": {f}, "block_size": {bs}}}"#
+            ))
+            .unwrap()
+        };
+        assert_eq!(
+            used_bytes("ext4", &j(1 << 20, 1 << 18, 4096)),
+            Some(((1 << 20) - (1 << 18)) * 4096)
+        );
         assert_eq!(used_bytes("xfs", &j(10, 20, 4096)), Some(0));
         assert_eq!(used_bytes("ext4", &j(1 << 60, 0, 65536)), None);
         assert_eq!(used_bytes("xfs", &j(u64::MAX, 1, 4096)), None);
-        assert_eq!(used_bytes("btrfs", &crate::json::parse(r#"{"bytes_used": 12345}"#).unwrap()), Some(12345));
+        assert_eq!(
+            used_bytes(
+                "btrfs",
+                &crate::json::parse(r#"{"bytes_used": 12345}"#).unwrap()
+            ),
+            Some(12345)
+        );
         assert_eq!(used_bytes("vfat", &j(1, 0, 512)), None);
-        assert_eq!(used_bytes("ext4", &crate::json::parse(r#"{"blocks": 10, "block_size": 4096}"#).unwrap()), None);
+        assert_eq!(
+            used_bytes(
+                "ext4",
+                &crate::json::parse(r#"{"blocks": 10, "block_size": 4096}"#).unwrap()
+            ),
+            None
+        );
     }
 
     /// RustAudit1 HD2-04: off Linux the partition record names the target
@@ -1247,9 +1786,17 @@ mod tests {
         let s = sys(&t);
         let l = layout();
         let d = l.disk("vda").unwrap();
-        let base = scan(&s, &opts(&["--map", "vda=vdb"]), &[]).disks.into_iter().find(|d| d.b.name == "vdb").unwrap();
+        let base = scan(&s, &opts(&["--map", "vda=vdb"]), &[])
+            .disks
+            .into_iter()
+            .find(|d| d.b.name == "vdb")
+            .unwrap();
         let with = |serial: &str, wwid: Option<&str>| TargetDisk {
-            b: BlockDev { serial: Some(serial.into()), wwid: wwid.map(str::to_string), ..base.b.clone() },
+            b: BlockDev {
+                serial: Some(serial.into()),
+                wwid: wwid.map(str::to_string),
+                ..base.b.clone()
+            },
             parts: base.parts.clone(),
             table: None,
             signatures: vec![],
@@ -1259,18 +1806,43 @@ mod tests {
             boot_medium: false,
             holds_root: false,
         };
-        let (old, new) = (with("OLD-1", None), with("NEW-2", Some("naa.5000c500a1b2c3d4")));
+        let (old, new) = (
+            with("OLD-1", None),
+            with("NEW-2", Some("naa.5000c500a1b2c3d4")),
+        );
         let bsd = Some(crate::other::Family::FreeBsd);
-        assert_eq!(identity_on(bsd, &s, &old), ("OLD-1".to_string(), String::new()));
-        assert_eq!(identity_on(bsd, &s, &new), ("NEW-2".to_string(), "naa.5000c500a1b2c3d4".to_string()));
+        assert_eq!(
+            identity_on(bsd, &s, &old),
+            ("OLD-1".to_string(), String::new())
+        );
+        assert_eq!(
+            identity_on(bsd, &s, &new),
+            ("NEW-2".to_string(), "naa.5000c500a1b2c3d4".to_string())
+        );
         let rec = |x: &TargetDisk| record_text(&l, d, x, &identity_on(bsd, &s, x));
-        assert!(rec(&old).contains(&format!("\ntarget vdb size={} serial=OLD-1 wwid=\n", base.b.size_bytes)), "{}", rec(&old));
+        assert!(
+            rec(&old).contains(&format!(
+                "\ntarget vdb size={} serial=OLD-1 wwid=\n",
+                base.b.size_bytes
+            )),
+            "{}",
+            rec(&old)
+        );
         assert_ne!(rec(&old), rec(&new));
         // Linux: sysfs's, whatever the scan found.
-        assert_eq!(identity_on(None, &s, &old), ("SYSFS-1".to_string(), String::new()));
-        assert_eq!(table_record_text(&l, d, &old, &s), record_text(&l, d, &old, &kernel_identity(&s, &old)));
+        assert_eq!(
+            identity_on(None, &s, &old),
+            ("SYSFS-1".to_string(), String::new())
+        );
+        assert_eq!(
+            table_record_text(&l, d, &old, &s),
+            record_text(&l, d, &old, &kernel_identity(&s, &old))
+        );
         if crate::other::Family::current().is_none() {
-            assert_eq!(table_record_text(&l, d, &old, &s), table_record_text(&l, d, &new, &s));
+            assert_eq!(
+                table_record_text(&l, d, &old, &s),
+                table_record_text(&l, d, &new, &s)
+            );
         }
         // OpenBSD and NetBSD: the scan's serial is the disklabel's DUID,
         // which partition writes; the record leaves it out (RT10j review),
@@ -1278,11 +1850,30 @@ mod tests {
         // for it before.
         for fam in [crate::other::Family::OpenBsd, crate::other::Family::NetBsd] {
             let duid = |x: &str| with(x, None);
-            assert_eq!(identity_on(Some(fam), &s, &duid("52fcb0b7cd1d05e5")), (String::new(), String::new()), "{fam:?}");
-            assert_eq!(identity_on(Some(fam), &s, &new), (String::new(), "naa.5000c500a1b2c3d4".to_string()), "{fam:?}");
+            assert_eq!(
+                identity_on(Some(fam), &s, &duid("52fcb0b7cd1d05e5")),
+                (String::new(), String::new()),
+                "{fam:?}"
+            );
+            assert_eq!(
+                identity_on(Some(fam), &s, &new),
+                (String::new(), "naa.5000c500a1b2c3d4".to_string()),
+                "{fam:?}"
+            );
             let rec = |x: &TargetDisk| record_text(&l, d, x, &identity_on(Some(fam), &s, x));
-            assert_eq!(rec(&duid("0000000000000000")), rec(&duid("52fcb0b7cd1d05e5")), "{fam:?}");
-            assert!(rec(&old).contains(&format!("\ntarget vdb size={} serial= wwid=\n", base.b.size_bytes)), "{}", rec(&old));
+            assert_eq!(
+                rec(&duid("0000000000000000")),
+                rec(&duid("52fcb0b7cd1d05e5")),
+                "{fam:?}"
+            );
+            assert!(
+                rec(&old).contains(&format!(
+                    "\ntarget vdb size={} serial= wwid=\n",
+                    base.b.size_bytes
+                )),
+                "{}",
+                rec(&old)
+            );
         }
     }
 
@@ -1294,44 +1885,23 @@ mod tests {
         use crate::blockdev::{BlockDev, Kind};
         let t = tree();
         let s = sys(&t);
-        let base = scan(&s, &opts(&["--map", "vda=vdb"]), &[]).disks.into_iter().find(|d| d.b.name == "vdb").unwrap();
-        let part = |n: &str, d: &str| BlockDev { name: n.into(), kind: Kind::Partition, parent: Some(d.into()), ..BlockDev::default() };
-        let disk = |n: &str, p: &str| TargetDisk { b: BlockDev { name: n.into(), ..base.b.clone() }, parts: vec![part(p, n)], table: None, signatures: vec![], uuids: vec![], in_use: vec![], hard_use: vec![], boot_medium: false, holds_root: false };
-        let (sda, sdaa) = (disk("sda", "sda2"), disk("sdaa", "sdaa1"));
-        let dm = |n: &str, dm: &str, slaves: &[&str]| BlockDev { name: n.into(), kind: Kind::Dm, dm_name: Some(dm.into()), slaves: slaves.iter().map(|x| x.to_string()).collect(), ..BlockDev::default() };
-        let devs = vec![sda.b.clone(), sda.parts[0].clone(), sdaa.b.clone(), sdaa.parts[0].clone(), dm("dm-0", "luks-a", &["sda2"]), dm("dm-1", "luks-b", &["sda2", "sdaa1"])];
-        let j = sample::bios_mbr().replace(
-            "\"zfs\": {\"pools_from_labels\": [], \"tools\": null}",
-            "\"zfs\": {\"pools_from_labels\": [], \"tools\": {\"imported_pools\": [{\"name\": \"rpool\", \"vdevs\": {}}], \"datasets\": []}}",
-        );
-        let l = Layout::from_json(crate::json::parse(&j).unwrap()).unwrap();
-        let o = opts(&["--map", "vda=sda"]);
-        let renamed = |devices: &[&str]| {
-            let pools = vec![ImportedPool { name: "rpool".into(), altroot: "-".into(), devices: devices.iter().map(|x| x.to_string()).collect() }];
-            let system = System { disks: vec![disk("sda", "sda2"), disk("sdaa", "sdaa1")], mounts: vec![], pools, pvs: vec![], devs: devs.clone(), swaps: vec![] };
-            let m = map_disks(&l, &o, &system, &s);
-            assert_eq!(m.pairs, vec![("vda".to_string(), "sda".to_string())]);
-            let r = m.pool_names == vec![("rpool".to_string(), temp_pool_name("rpool"))];
-            assert_eq!(r, m.notes.iter().any(|n| n.contains("a pool of that name is imported here")), "{:?}", m.notes);
-            assert!(r || m.pool_names.is_empty(), "{:?}", m.pool_names);
-            r
+        let base = scan(&s, &opts(&["--map", "vda=vdb"]), &[])
+            .disks
+            .into_iter()
+            .find(|d| d.b.name == "vdb")
+            .unwrap();
+        let part = |n: &str, d: &str| BlockDev {
+            name: n.into(),
+            kind: Kind::Partition,
+            parent: Some(d.into()),
+            ..BlockDev::default()
         };
-        assert!(renamed(&["sdaa1"]), "sdaa1 isn't on sda");
-        assert!(!renamed(&["sda2"]));
-        assert!(!renamed(&["dm-0"]), "dm-0 is over sda2");
-        assert!(!renamed(&["luks-a"]), "mdev: /dev/mapper/luks-a resolves to its dm name");
-        assert!(renamed(&["dm-1"]), "dm-1 is over sdaa1 too");
-        assert!(renamed(&[]), "no vdevs read: not shown to be on the targets");
-    }
-
-    /// illumos' zpool names a vdev by slice (c3t0d0s1); scan names its
-    /// disks' EFI label entries so (omnios58's dump: c3t0d0s0, s1, s8).
-    #[test]
-    fn an_illumos_slice_vdev_is_on_its_disk() {
-        use crate::blockdev::{BlockDev, Kind};
-        let disk = |n: &str| TargetDisk {
-            b: BlockDev { name: n.into(), kind: Kind::Disk, ..BlockDev::default() },
-            parts: [1, 2, 9].iter().map(|&i| BlockDev { name: crate::other::illumos::slice_name(n, i), kind: Kind::Partition, parent: Some(n.into()), ..BlockDev::default() }).collect(),
+        let disk = |n: &str, p: &str| TargetDisk {
+            b: BlockDev {
+                name: n.into(),
+                ..base.b.clone()
+            },
+            parts: vec![part(p, n)],
             table: None,
             signatures: vec![],
             uuids: vec![],
@@ -1340,8 +1910,114 @@ mod tests {
             boot_medium: false,
             holds_root: false,
         };
-        let system = System { disks: vec![disk("c3t0d0"), disk("c3t0d01")], mounts: vec![], pools: vec![], pvs: vec![], devs: vec![], swaps: vec![] };
-        for (dev, want) in [("c3t0d0s1", true), ("c3t0d0s8", true), ("c3t0d0", true), ("c3t0d0s3", false), ("c3t0d01s1", false), ("c3t0d0s10", false)] {
+        let (sda, sdaa) = (disk("sda", "sda2"), disk("sdaa", "sdaa1"));
+        let dm = |n: &str, dm: &str, slaves: &[&str]| BlockDev {
+            name: n.into(),
+            kind: Kind::Dm,
+            dm_name: Some(dm.into()),
+            slaves: slaves.iter().map(|x| x.to_string()).collect(),
+            ..BlockDev::default()
+        };
+        let devs = vec![
+            sda.b.clone(),
+            sda.parts[0].clone(),
+            sdaa.b.clone(),
+            sdaa.parts[0].clone(),
+            dm("dm-0", "luks-a", &["sda2"]),
+            dm("dm-1", "luks-b", &["sda2", "sdaa1"]),
+        ];
+        let j = sample::bios_mbr().replace(
+            "\"zfs\": {\"pools_from_labels\": [], \"tools\": null}",
+            "\"zfs\": {\"pools_from_labels\": [], \"tools\": {\"imported_pools\": [{\"name\": \"rpool\", \"vdevs\": {}}], \"datasets\": []}}",
+        );
+        let l = Layout::from_json(crate::json::parse(&j).unwrap()).unwrap();
+        let o = opts(&["--map", "vda=sda"]);
+        let renamed = |devices: &[&str]| {
+            let pools = vec![ImportedPool {
+                name: "rpool".into(),
+                altroot: "-".into(),
+                devices: devices.iter().map(|x| x.to_string()).collect(),
+            }];
+            let system = System {
+                disks: vec![disk("sda", "sda2"), disk("sdaa", "sdaa1")],
+                mounts: vec![],
+                pools,
+                pvs: vec![],
+                devs: devs.clone(),
+                swaps: vec![],
+            };
+            let m = map_disks(&l, &o, &system, &s);
+            assert_eq!(m.pairs, vec![("vda".to_string(), "sda".to_string())]);
+            let r = m.pool_names == vec![("rpool".to_string(), temp_pool_name("rpool"))];
+            assert_eq!(
+                r,
+                m.notes
+                    .iter()
+                    .any(|n| n.contains("a pool of that name is imported here")),
+                "{:?}",
+                m.notes
+            );
+            assert!(r || m.pool_names.is_empty(), "{:?}", m.pool_names);
+            r
+        };
+        assert!(renamed(&["sdaa1"]), "sdaa1 isn't on sda");
+        assert!(!renamed(&["sda2"]));
+        assert!(!renamed(&["dm-0"]), "dm-0 is over sda2");
+        assert!(
+            !renamed(&["luks-a"]),
+            "mdev: /dev/mapper/luks-a resolves to its dm name"
+        );
+        assert!(renamed(&["dm-1"]), "dm-1 is over sdaa1 too");
+        assert!(
+            renamed(&[]),
+            "no vdevs read: not shown to be on the targets"
+        );
+    }
+
+    /// illumos' zpool names a vdev by slice (c3t0d0s1); scan names its
+    /// disks' EFI label entries so (omnios58's dump: c3t0d0s0, s1, s8).
+    #[test]
+    fn an_illumos_slice_vdev_is_on_its_disk() {
+        use crate::blockdev::{BlockDev, Kind};
+        let disk = |n: &str| TargetDisk {
+            b: BlockDev {
+                name: n.into(),
+                kind: Kind::Disk,
+                ..BlockDev::default()
+            },
+            parts: [1, 2, 9]
+                .iter()
+                .map(|&i| BlockDev {
+                    name: crate::other::illumos::slice_name(n, i),
+                    kind: Kind::Partition,
+                    parent: Some(n.into()),
+                    ..BlockDev::default()
+                })
+                .collect(),
+            table: None,
+            signatures: vec![],
+            uuids: vec![],
+            in_use: vec![],
+            hard_use: vec![],
+            boot_medium: false,
+            holds_root: false,
+        };
+        let system = System {
+            disks: vec![disk("c3t0d0"), disk("c3t0d01")],
+            mounts: vec![],
+            pools: vec![],
+            pvs: vec![],
+            devs: vec![],
+            swaps: vec![],
+        };
+        for (dev, want) in [
+            ("c3t0d0s1", true),
+            ("c3t0d0s8", true),
+            ("c3t0d0", true),
+            ("c3t0d0s3", false),
+            ("c3t0d01s1", false),
+            ("c3t0d0s10", false),
+        ] {
             assert_eq!(vdev_on_targets(&system, &["c3t0d0"], dev), want, "{dev}");
         }
     }
@@ -1353,13 +2029,29 @@ mod tests {
             parse_zpool_status(text),
             vec![
                 ("rpool".to_string(), vec!["/dev/vda3".to_string()]),
-                ("tank".to_string(), vec!["/dev/disk/by-id/ata-A-part1".to_string(), "/dev/sdb1".to_string()])
+                (
+                    "tank".to_string(),
+                    vec![
+                        "/dev/disk/by-id/ata-A-part1".to_string(),
+                        "/dev/sdb1".to_string()
+                    ]
+                )
             ]
         );
-        let p = ImportedPool { name: "rpool".into(), altroot: "/mnt/bko-target".into(), devices: vec![] };
+        let p = ImportedPool {
+            name: "rpool".into(),
+            altroot: "/mnt/bko-target".into(),
+            devices: vec![],
+        };
         assert!(p.is_ours(&["rpool".into()], "/mnt/bko-target"));
         assert!(!p.is_ours(&["rpool".into()], "/mnt/elsewhere"));
-        assert!(!ImportedPool { altroot: "-".into(), ..p }.is_ours(&["rpool".into()], "/mnt/bko-target"));
+        assert!(
+            !ImportedPool {
+                altroot: "-".into(),
+                ..p
+            }
+            .is_ours(&["rpool".into()], "/mnt/bko-target")
+        );
     }
 
     #[test]
@@ -1370,16 +2062,38 @@ mod tests {
         // vdc is 8 GiB, half of the source's 16: too small to fit.
         let o = opts(&["--map", "vda=vdc", "--fit-largest", "50"]);
         let p = prepare(&l, &o, &s);
-        assert_eq!(p.mapping.pairs, vec![("vda".to_string(), "vdc".to_string())]);
-        assert!(p.mapping.problems.iter().any(|x| x.contains("more than 50%")), "{:?}", p.mapping.problems);
+        assert_eq!(
+            p.mapping.pairs,
+            vec![("vda".to_string(), "vdc".to_string())]
+        );
+        assert!(
+            p.mapping
+                .problems
+                .iter()
+                .any(|x| x.contains("more than 50%")),
+            "{:?}",
+            p.mapping.problems
+        );
         // Without the flag it's the old refusal, which names the flag.
         let o = opts(&["--map", "vda=vdc"]);
         let p = prepare(&l, &o, &s);
-        assert!(p.mapping.problems.iter().any(|x| x.contains("the target is smaller") && x.contains("--fit-largest PCT")), "{:?}", p.mapping.problems);
+        assert!(
+            p.mapping
+                .problems
+                .iter()
+                .any(|x| x.contains("the target is smaller") && x.contains("--fit-largest PCT")),
+            "{:?}",
+            p.mapping.problems
+        );
         // The same size: the flag changes nothing, and says nothing.
         let o = opts(&["--map", "vda=vdb", "--fit-largest", "10"]);
         let p = prepare(&l, &o, &s);
-        assert!(p.mapping.problems.is_empty() && p.mapping.notes.is_empty(), "{:?} {:?}", p.mapping.problems, p.mapping.notes);
+        assert!(
+            p.mapping.problems.is_empty() && p.mapping.notes.is_empty(),
+            "{:?} {:?}",
+            p.mapping.problems,
+            p.mapping.notes
+        );
         assert!(!p.fit.changed() && p.fit.disks.is_empty() && p.mapping.bigger.is_empty());
         assert!(matches!(p.layout, Cow::Borrowed(_)));
     }
@@ -1390,7 +2104,9 @@ mod tests {
         let s = sys(&t);
         let p = |a: &[&str]| {
             let o = opts(a);
-            map(&layout(), &o, &scan(&s, &o, &[]), &s).problems.join("\n")
+            map(&layout(), &o, &scan(&s, &o, &[]), &s)
+                .problems
+                .join("\n")
         };
         assert!(p(&[]).contains("has no target"));
         assert!(p(&["--map", "vda=vdc"]).contains("smaller"));
@@ -1413,37 +2129,118 @@ mod tests {
         };
         let one = |m: &Mapping, code: C| -> Problem {
             let p: Vec<&Problem> = m.problems.iter().filter(|p| p.code == code).collect();
-            assert_eq!(p.len(), 1, "{code:?} in {:?}", m.problems.iter().map(|p| (p.code, p.text.clone())).collect::<Vec<_>>());
+            assert_eq!(
+                p.len(),
+                1,
+                "{code:?} in {:?}",
+                m.problems
+                    .iter()
+                    .map(|p| (p.code, p.text.clone()))
+                    .collect::<Vec<_>>()
+            );
             p[0].clone()
         };
-        let f = |p: &Problem, k: &str| p.field(k).map(crate::json::Value::compact).unwrap_or_default();
+        let f = |p: &Problem, k: &str| {
+            p.field(k)
+                .map(crate::json::Value::compact)
+                .unwrap_or_default()
+        };
         let p = one(&m(&[]), C::NotMapped);
-        assert!(p.starts_with("source disk vda (16 GiB) has no target: give --map vda=DISK"), "{p}");
+        assert!(
+            p.starts_with("source disk vda (16 GiB) has no target: give --map vda=DISK"),
+            "{p}"
+        );
         assert_eq!(p.str_field("disk"), Some("vda"));
         let p = one(&m(&["--map", "vda=vdc"]), C::TargetTooSmall);
-        assert_eq!(p.text, "vda -> /dev/vdc: the target is smaller (8 GiB < 16 GiB); version 1 needs the same size or bigger, or --fit-largest PCT to fit the layout to it");
-        assert_eq!((p.str_field("disk"), p.str_field("target")), (Some("vda"), Some("vdc")));
-        assert_eq!((f(&p, "target_bytes"), f(&p, "source_bytes")), ((8u64 << 30).to_string(), (16u64 << 30).to_string()));
+        assert_eq!(
+            p.text,
+            "vda -> /dev/vdc: the target is smaller (8 GiB < 16 GiB); version 1 needs the same size or bigger, or --fit-largest PCT to fit the layout to it"
+        );
+        assert_eq!(
+            (p.str_field("disk"), p.str_field("target")),
+            (Some("vda"), Some("vdc"))
+        );
+        assert_eq!(
+            (f(&p, "target_bytes"), f(&p, "source_bytes")),
+            ((8u64 << 30).to_string(), (16u64 << 30).to_string())
+        );
         let p = one(&m(&["--map", "vda=sda", "--erase", "sda"]), C::BootDisk);
-        assert_eq!(p.text, "vda -> /dev/sda: /dev/sda is the disk this system booted from; never a target");
+        assert_eq!(
+            p.text,
+            "vda -> /dev/sda: /dev/sda is the disk this system booted from; never a target"
+        );
         let p = one(&m(&["--map", "vdz=vdb"]), C::MapUnknownSource);
-        assert_eq!((p.text.as_str(), p.str_field("disk")), ("--map vdz=...: the layout has no disk vdz (it has vda)", Some("vdz")));
+        assert_eq!(
+            (p.text.as_str(), p.str_field("disk")),
+            (
+                "--map vdz=...: the layout has no disk vdz (it has vda)",
+                Some("vdz")
+            )
+        );
         let p = one(&m(&["--map", "vda=vdq"]), C::NoSuchDisk);
-        assert_eq!((p.text.as_str(), p.str_field("disk"), p.str_field("target")), ("--map vda=vdq: no whole disk vdq here", Some("vda"), Some("vdq")));
-        let p = one(&m(&["--map", "vda=vdb", "--erase", "vdc"]), C::EraseNotTarget);
-        assert_eq!((p.text.as_str(), p.str_field("target")), ("--erase vdc: that isn't a target of this layout, so it isn't erased", Some("vdc")));
+        assert_eq!(
+            (p.text.as_str(), p.str_field("disk"), p.str_field("target")),
+            (
+                "--map vda=vdq: no whole disk vdq here",
+                Some("vda"),
+                Some("vdq")
+            )
+        );
+        let p = one(
+            &m(&["--map", "vda=vdb", "--erase", "vdc"]),
+            C::EraseNotTarget,
+        );
+        assert_eq!(
+            (p.text.as_str(), p.str_field("target")),
+            (
+                "--erase vdc: that isn't a target of this layout, so it isn't erased",
+                Some("vdc")
+            )
+        );
         // A path: the text as given, the target its disk's name.
-        let p = one(&m(&["--map", "vda=vdb", "--erase", "/dev/vdc"]), C::EraseNotTarget);
-        assert_eq!((p.text.as_str(), p.str_field("target")), ("--erase /dev/vdc: that isn't a target of this layout, so it isn't erased", Some("vdc")));
+        let p = one(
+            &m(&["--map", "vda=vdb", "--erase", "/dev/vdc"]),
+            C::EraseNotTarget,
+        );
+        assert_eq!(
+            (p.text.as_str(), p.str_field("target")),
+            (
+                "--erase /dev/vdc: that isn't a target of this layout, so it isn't erased",
+                Some("vdc")
+            )
+        );
         // The rescue system's /, a 4 KiB-sector disk, a read-only one, a
         // bigger one and one with someone else's table.
-        t.disk("vde", "253:64", &[], 4096).file("/sys/block/vde/size", format!("{}
-", 33554432));
-        t.disk("vdf", "253:80", &[], 512).file("/sys/block/vdf/size", format!("{}
-", 33554432)).file("/sys/block/vdf/ro", "1
-");
-        t.disk("vdg", "253:96", &[], 512).file("/sys/block/vdg/size", format!("{}
-", 2 * 33554432));
+        t.disk("vde", "253:64", &[], 4096).file(
+            "/sys/block/vde/size",
+            format!(
+                "{}
+",
+                33554432
+            ),
+        );
+        t.disk("vdf", "253:80", &[], 512)
+            .file(
+                "/sys/block/vdf/size",
+                format!(
+                    "{}
+",
+                    33554432
+                ),
+            )
+            .file(
+                "/sys/block/vdf/ro",
+                "1
+",
+            );
+        t.disk("vdg", "253:96", &[], 512).file(
+            "/sys/block/vdg/size",
+            format!(
+                "{}
+",
+                2 * 33554432
+            ),
+        );
         let mut other = vec![0u8; 1 << 20];
         other[440..444].copy_from_slice(&0xdeadbeefu32.to_le_bytes());
         other[446 + 4] = 0x83;
@@ -1451,48 +2248,132 @@ mod tests {
         other[446 + 12..446 + 16].copy_from_slice(&1024u32.to_le_bytes());
         other[510] = 0x55;
         other[511] = 0xaa;
-        t.disk("vdh", "253:112", &other, 512).file("/sys/block/vdh/size", format!("{}
-", 33554432));
-        t.disk("vdi", "253:128", &[], 512).file("/sys/block/vdi/size", format!("{}
-", 33554432));
-        t.file("/proc/self/mountinfo", "30 1 253:128 / / rw - ext4 /dev/vdi rw
-");
+        t.disk("vdh", "253:112", &other, 512).file(
+            "/sys/block/vdh/size",
+            format!(
+                "{}
+",
+                33554432
+            ),
+        );
+        t.disk("vdi", "253:128", &[], 512).file(
+            "/sys/block/vdi/size",
+            format!(
+                "{}
+",
+                33554432
+            ),
+        );
+        t.file(
+            "/proc/self/mountinfo",
+            "30 1 253:128 / / rw - ext4 /dev/vdi rw
+",
+        );
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         let m = |a: &[&str]| {
             let o = opts(a);
             map(&layout(), &o, &scan(&s, &o, &[]), &s)
         };
         let p = one(&m(&["--map", "vda=vde"]), C::SectorSize);
-        assert_eq!(p.text, "vda -> /dev/vde: logical sector size 4096 here, 512 on the source; version 1 needs them equal");
-        assert_eq!((f(&p, "here"), f(&p, "source")), ("4096".to_string(), "512".to_string()));
-        assert_eq!(one(&m(&["--map", "vda=vdf"]), C::ReadOnly).text, "vda -> /dev/vdf: the target is read-only");
+        assert_eq!(
+            p.text,
+            "vda -> /dev/vde: logical sector size 4096 here, 512 on the source; version 1 needs them equal"
+        );
+        assert_eq!(
+            (f(&p, "here"), f(&p, "source")),
+            ("4096".to_string(), "512".to_string())
+        );
+        assert_eq!(
+            one(&m(&["--map", "vda=vdf"]), C::ReadOnly).text,
+            "vda -> /dev/vdf: the target is read-only"
+        );
         let p = one(&m(&["--map", "vda=vdh"]), C::NotBlank);
-        assert!(p.text.starts_with("vda -> /dev/vdh: the target isn't blank ("), "{p}");
-        assert!(p.text.ends_with("); give --erase /dev/vdh to wipe it"), "{p}");
+        assert!(
+            p.text
+                .starts_with("vda -> /dev/vdh: the target isn't blank ("),
+            "{p}"
+        );
+        assert!(
+            p.text.ends_with("); give --erase /dev/vdh to wipe it"),
+            "{p}"
+        );
         assert_eq!(p.str_field("target"), Some("vdh"));
-        assert!(p.field("contents").and_then(crate::json::Value::as_array).is_some());
-        assert!(m(&["--map", "vda=vdh", "--erase", "vdh"]).problems.iter().all(|p| p.code != C::NotBlank));
-        assert_eq!(one(&m(&["--map", "vda=vdi", "--erase", "vdi"]), C::RunningRoot).text, "vda -> /dev/vdi: /dev/vdi holds the running system's /; never a target");
+        assert!(
+            p.field("contents")
+                .and_then(crate::json::Value::as_array)
+                .is_some()
+        );
+        assert!(
+            m(&["--map", "vda=vdh", "--erase", "vdh"])
+                .problems
+                .iter()
+                .all(|p| p.code != C::NotBlank)
+        );
+        assert_eq!(
+            one(&m(&["--map", "vda=vdi", "--erase", "vdi"]), C::RunningRoot).text,
+            "vda -> /dev/vdi: /dev/vdi holds the running system's /; never a target"
+        );
         let big = m(&["--map", "vda=vdg"]);
         assert!(big.problems.is_empty(), "{:?}", big.problems);
-        let n = big.notes.iter().find(|n| n.code == NoteCode::TargetBigger).unwrap();
-        assert_eq!(n.text, "vda -> /dev/vdg: the target is bigger; the extra 16 GiB stays unused");
-        assert_eq!((n.str_field("disk"), n.str_field("target"), n.field("bytes").and_then(crate::json::Value::as_u64)), (Some("vda"), Some("vdg"), Some(16 << 30)));
+        let n = big
+            .notes
+            .iter()
+            .find(|n| n.code == NoteCode::TargetBigger)
+            .unwrap();
+        assert_eq!(
+            n.text,
+            "vda -> /dev/vdg: the target is bigger; the extra 16 GiB stays unused"
+        );
+        assert_eq!(
+            (
+                n.str_field("disk"),
+                n.str_field("target"),
+                n.field("bytes").and_then(crate::json::Value::as_u64)
+            ),
+            (Some("vda"), Some("vdg"), Some(16 << 30))
+        );
         // The source empty, a note of its own.
         let empty = sample::bios_mbr().replacen(r#""disks": ["#, r#""disks": [{"name": "vdy", "kind": "disk", "size_bytes": 1048576, "logical_sector_size": 512, "partition_table": null, "partitions": [], "content": null},"#, 1);
         let el = Layout::from_json(crate::json::parse(&empty).unwrap()).unwrap();
         let o = opts(&["--map", "vda=vdb"]);
         let em = map(&el, &o, &scan(&s, &o, &[]), &s);
-        let n = em.notes.iter().find(|n| n.contains("holds nothing")).unwrap_or_else(|| panic!("{:?}", em.notes));
-        assert_eq!((n.code, n.str_field("disk")), (NoteCode::SourceEmpty, Some("vdy")));
+        let n = em
+            .notes
+            .iter()
+            .find(|n| n.contains("holds nothing"))
+            .unwrap_or_else(|| panic!("{:?}", em.notes));
+        assert_eq!(
+            (n.code, n.str_field("disk")),
+            (NoteCode::SourceEmpty, Some("vdy"))
+        );
         // --fit-largest past its percentage: fit's own code, through prepare.
         let o = opts(&["--map", "vda=vdc", "--fit-largest", "50"]);
         let l = layout();
         let pr = prepare(&l, &o, &s);
-        let p = pr.mapping.problems.iter().find(|p| p.code == C::FitOverPct).unwrap_or_else(|| panic!("{:?}", pr.mapping.problems));
-        assert!(p.text.contains("more than 50%") && p.text.starts_with("vda -> /dev/vdc: --fit-largest 50%: "), "{p}");
-        assert_eq!((p.str_field("disk"), p.str_field("target"), p.field("given_pct").and_then(crate::json::Value::as_u64)), (Some("vda"), Some("vdc"), Some(50)));
-        assert!(p.field("needed_pct").and_then(crate::json::Value::as_u64).is_some_and(|n| n > 50));
+        let p = pr
+            .mapping
+            .problems
+            .iter()
+            .find(|p| p.code == C::FitOverPct)
+            .unwrap_or_else(|| panic!("{:?}", pr.mapping.problems));
+        assert!(
+            p.text.contains("more than 50%")
+                && p.text.starts_with("vda -> /dev/vdc: --fit-largest 50%: "),
+            "{p}"
+        );
+        assert_eq!(
+            (
+                p.str_field("disk"),
+                p.str_field("target"),
+                p.field("given_pct").and_then(crate::json::Value::as_u64)
+            ),
+            (Some("vda"), Some("vdc"), Some(50))
+        );
+        assert!(
+            p.field("needed_pct")
+                .and_then(crate::json::Value::as_u64)
+                .is_some_and(|n| n > 50)
+        );
     }
 
     /// The held, unreleasable, in-use and release codes, on the old vg0.
@@ -1508,25 +2389,74 @@ mod tests {
         };
         let held = m(&["--map", "vda=vdb"]);
         let p = held.problems.iter().find(|p| p.code == C::Held).unwrap();
-        assert_eq!(p.text, "vda -> /dev/vdb: the target is held (vdb2 is held by dm-0, dm-1); give --erase /dev/vdb to let go of what holds it and wipe it");
-        assert_eq!(p.field("uses").map(crate::json::Value::compact).as_deref(), Some(r#"["vdb2 is held by dm-0, dm-1"]"#));
+        assert_eq!(
+            p.text,
+            "vda -> /dev/vdb: the target is held (vdb2 is held by dm-0, dm-1); give --erase /dev/vdb to let go of what holds it and wipe it"
+        );
+        assert_eq!(
+            p.field("uses").map(crate::json::Value::compact).as_deref(),
+            Some(r#"["vdb2 is held by dm-0, dm-1"]"#)
+        );
         let m2 = m(&["--map", "vda=vdb", "--erase", "/dev/vdb"]);
-        let n = m2.notes.iter().find(|n| n.code == NoteCode::Release).unwrap();
-        assert_eq!(n.text, "--erase /dev/vdb: volume group vg0 deactivated (dm-0 (vg0-root), dm-1 (vg0-swap)) before it's wiped");
-        assert_eq!(n.field("targets").map(crate::json::Value::compact).as_deref(), Some(r#"["vdb"]"#));
-        t.file("/proc/swaps", "Filename	Type	Size	Used	Priority
+        let n = m2
+            .notes
+            .iter()
+            .find(|n| n.code == NoteCode::Release)
+            .unwrap();
+        assert_eq!(
+            n.text,
+            "--erase /dev/vdb: volume group vg0 deactivated (dm-0 (vg0-root), dm-1 (vg0-swap)) before it's wiped"
+        );
+        assert_eq!(
+            n.field("targets")
+                .map(crate::json::Value::compact)
+                .as_deref(),
+            Some(r#"["vdb"]"#)
+        );
+        t.file(
+            "/proc/swaps",
+            "Filename	Type	Size	Used	Priority
 /dev/dm-1                               partition	1048572	0	-2
-");
+",
+        );
         let m3 = m(&["--map", "vda=vdb", "--erase", "/dev/vdb"]);
-        let p = m3.problems.iter().find(|p| p.code == C::HeldUnreleasable).unwrap_or_else(|| panic!("{:?}", m3.problems));
-        assert_eq!(p.text, "vda -> /dev/vdb: the target is held, and what holds it can't be let go: dm-1 (vg0-swap) is in use as swap; refused even with --erase");
-        assert_eq!((p.str_field("disk"), p.str_field("target"), p.str_field("why")), (Some("vda"), Some("vdb"), Some("dm-1 (vg0-swap) is in use as swap")));
-        t.file("/proc/swaps", "Filename	Type	Size	Used	Priority
-");
-        t.file("/proc/self/mountinfo", "30 1 253:18 / /mnt/old rw - ext4 /dev/vdb2 rw
-");
+        let p = m3
+            .problems
+            .iter()
+            .find(|p| p.code == C::HeldUnreleasable)
+            .unwrap_or_else(|| panic!("{:?}", m3.problems));
+        assert_eq!(
+            p.text,
+            "vda -> /dev/vdb: the target is held, and what holds it can't be let go: dm-1 (vg0-swap) is in use as swap; refused even with --erase"
+        );
+        assert_eq!(
+            (
+                p.str_field("disk"),
+                p.str_field("target"),
+                p.str_field("why")
+            ),
+            (
+                Some("vda"),
+                Some("vdb"),
+                Some("dm-1 (vg0-swap) is in use as swap")
+            )
+        );
+        t.file(
+            "/proc/swaps",
+            "Filename	Type	Size	Used	Priority
+",
+        );
+        t.file(
+            "/proc/self/mountinfo",
+            "30 1 253:18 / /mnt/old rw - ext4 /dev/vdb2 rw
+",
+        );
         let m4 = m(&["--map", "vda=vdb", "--erase", "/dev/vdb"]);
-        let p = m4.problems.iter().find(|p| p.code == C::InUse).unwrap_or_else(|| panic!("{:?}", m4.problems));
+        let p = m4
+            .problems
+            .iter()
+            .find(|p| p.code == C::InUse)
+            .unwrap_or_else(|| panic!("{:?}", m4.problems));
         assert!(p.text.ends_with("refused even with --erase"), "{p}");
         assert!(p.field("uses").is_some());
     }
@@ -1535,11 +2465,19 @@ mod tests {
     fn a_same_named_volume_group_elsewhere_is_refused() {
         let t = tree();
         // vdd: a whole-disk PV of the volume group vg0.
-        t.disk("vdd", "253:48", &crate::probe::lvm::sample::pv(512, 1 << 20), 512);
+        t.disk(
+            "vdd",
+            "253:48",
+            &crate::probe::lvm::sample::pv(512, 1 << 20),
+            512,
+        );
         // Privileged: scan reads the devices.
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         let with = |vg: &str| {
-            let j = sample::bios_mbr().replace(r#""lvm": {"volume_groups": []}"#, &format!(r#""lvm": {{"volume_groups": [{{"name": "{vg}"}}]}}"#));
+            let j = sample::bios_mbr().replace(
+                r#""lvm": {"volume_groups": []}"#,
+                &format!(r#""lvm": {{"volume_groups": [{{"name": "{vg}"}}]}}"#),
+            );
             assert_ne!(j, sample::bios_mbr());
             Layout::from_json(crate::json::parse(&j).unwrap()).unwrap()
         };
@@ -1558,10 +2496,20 @@ mod tests {
             system.disk("vdd").map(|d| &d.signatures)
         );
         let vm = map(&with("vg0"), &o, &system, &s);
-        let dup = vm.problems.iter().find(|p| p.code == crate::load::codes::ProblemCode::DuplicateVg).unwrap();
-        assert_eq!((dup.str_field("vg"), dup.str_field("dev")), (Some("vg0"), Some("vdd")));
+        let dup = vm
+            .problems
+            .iter()
+            .find(|p| p.code == crate::load::codes::ProblemCode::DuplicateVg)
+            .unwrap();
+        assert_eq!(
+            (dup.str_field("vg"), dup.str_field("dev")),
+            (Some("vg0"), Some("vdd"))
+        );
         let p = vm.problems.join("\n");
-        assert!(p.contains("a volume group named vg0 is on vdd (vdd), which isn't a target"), "{p}");
+        assert!(
+            p.contains("a volume group named vg0 is on vdd (vdd), which isn't a target"),
+            "{p}"
+        );
         assert!(map(&with("ubuntu-vg"), &o, &system, &s).problems.is_empty());
         // Renamed, but with the same UUIDs (vgrename keeps them).
         let ids = |vg: &str, id: &str, pv: &str| {
@@ -1571,14 +2519,40 @@ mod tests {
             );
             Layout::from_json(crate::json::parse(&j).unwrap()).unwrap()
         };
-        let p = map(&ids("ubuntu-vg", "Yb3kFa-0Pz1-AbCd-EfGh-IjKl-MnOp-QrStUv", "x"), &o, &system, &s).problems.join("\n");
-        assert!(p.contains("volume group ubuntu-vg's UUID (as vg0) is on vdd"), "{p}");
-        let p = map(&ids("ubuntu-vg", "y", "Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff"), &o, &system, &s).problems.join("\n");
-        assert!(p.contains("the UUID of one of ubuntu-vg's PVs (in vg0) is on vdd"), "{p}");
-        assert!(map(&ids("ubuntu-vg", "y", "z"), &o, &system, &s).problems.is_empty());
+        let p = map(
+            &ids("ubuntu-vg", "Yb3kFa-0Pz1-AbCd-EfGh-IjKl-MnOp-QrStUv", "x"),
+            &o,
+            &system,
+            &s,
+        )
+        .problems
+        .join("\n");
+        assert!(
+            p.contains("volume group ubuntu-vg's UUID (as vg0) is on vdd"),
+            "{p}"
+        );
+        let p = map(
+            &ids("ubuntu-vg", "y", "Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff"),
+            &o,
+            &system,
+            &s,
+        )
+        .problems
+        .join("\n");
+        assert!(
+            p.contains("the UUID of one of ubuntu-vg's PVs (in vg0) is on vdd"),
+            "{p}"
+        );
+        assert!(
+            map(&ids("ubuntu-vg", "y", "z"), &o, &system, &s)
+                .problems
+                .is_empty()
+        );
         // On a target, it's the old system's, which load replaces.
         let o = opts(&["--map", "vda=vdd", "--erase", "vdd"]);
-        let p = map(&with("vg0"), &o, &scan(&s, &o, &[]), &s).problems.join("\n");
+        let p = map(&with("vg0"), &o, &scan(&s, &o, &[]), &s)
+            .problems
+            .join("\n");
         assert!(!p.contains("volume group named"), "{p}");
     }
 
@@ -1593,7 +2567,10 @@ mod tests {
             t.file(&format!("/sys/block/vdb/vdb2/holders/{dm}"), "");
             t.disk(&dm, &format!("252:{i}"), &vec![0u8; 65536], 512)
                 .file(&format!("/sys/block/{dm}/dm/name"), format!("vg0-{lv}\n"))
-                .file(&format!("/sys/block/{dm}/dm/uuid"), format!("LVM-{vg}{}\n", i.to_string().repeat(32)))
+                .file(
+                    &format!("/sys/block/{dm}/dm/uuid"),
+                    format!("LVM-{vg}{}\n", i.to_string().repeat(32)),
+                )
                 .file(&format!("/sys/block/{dm}/slaves/vdb2"), "");
         }
     }
@@ -1617,15 +2594,41 @@ mod tests {
         let m = map(&layout(), &o, &scan(&s, &o, &[]), &s);
         assert!(m.problems.is_empty(), "{:?}", m.problems);
         assert_eq!(m.release.len(), 1);
-        assert_eq!(m.release[0].action, super::super::release::Action::Lvm { vg: "vg0".into(), pvs: vec!["/dev/vdb2".into()] });
+        assert_eq!(
+            m.release[0].action,
+            super::super::release::Action::Lvm {
+                vg: "vg0".into(),
+                pvs: vec!["/dev/vdb2".into()]
+            }
+        );
         assert!(m.notes.iter().any(|n| n == "--erase /dev/vdb: volume group vg0 deactivated (dm-0 (vg0-root), dm-1 (vg0-swap)) before it's wiped"), "{:?}", m.notes);
         let b = super::super::commands::build(&layout(), &o, &m);
-        let text: String = b.stage(super::super::Stage::Partition).iter().map(|c| c.shell()).collect();
-        let at = |x: &str| text.find(x).unwrap_or_else(|| panic!("no {x:?} in\n{text}"));
-        assert!(at("# volume group vg0 deactivated (dm-0 (vg0-root), dm-1 (vg0-swap))\n") < at("vgchange --devicesfile '' --devices /dev/vdb2 --activate n vg0"), "{text}");
-        assert!(text.starts_with("# --erase /dev/vdb: what this system started on it"), "{text}");
-        assert!(at("vgchange --devicesfile") < at("O_EXCL\nudevadm settle\n"), "{text}");
-        assert!(at("O_EXCL\nudevadm settle\n") < at("wipefs --all /dev/vdb\n"), "{text}");
+        let text: String = b
+            .stage(super::super::Stage::Partition)
+            .iter()
+            .map(|c| c.shell())
+            .collect();
+        let at = |x: &str| {
+            text.find(x)
+                .unwrap_or_else(|| panic!("no {x:?} in\n{text}"))
+        };
+        assert!(
+            at("# volume group vg0 deactivated (dm-0 (vg0-root), dm-1 (vg0-swap))\n")
+                < at("vgchange --devicesfile '' --devices /dev/vdb2 --activate n vg0"),
+            "{text}"
+        );
+        assert!(
+            text.starts_with("# --erase /dev/vdb: what this system started on it"),
+            "{text}"
+        );
+        assert!(
+            at("vgchange --devicesfile") < at("O_EXCL\nudevadm settle\n"),
+            "{text}"
+        );
+        assert!(
+            at("O_EXCL\nudevadm settle\n") < at("wipefs --all /dev/vdb\n"),
+            "{text}"
+        );
 
         // The swap LV in use: refused even with --erase, and nothing let go.
         t.file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n/dev/dm-1                               partition\t1048572\t0\t-2\n");
@@ -1635,8 +2638,13 @@ mod tests {
         assert!(m.release.is_empty());
         // A partition mounted: refused as before, --erase or not.
         t.file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
-        t.file("/proc/self/mountinfo", "30 1 253:18 / /mnt/old rw - ext4 /dev/vdb2 rw\n");
-        let p = map(&layout(), &o, &scan(&s, &o, &[]), &s).problems.join("\n");
+        t.file(
+            "/proc/self/mountinfo",
+            "30 1 253:18 / /mnt/old rw - ext4 /dev/vdb2 rw\n",
+        );
+        let p = map(&layout(), &o, &scan(&s, &o, &[]), &s)
+            .problems
+            .join("\n");
         assert!(p.contains("the target is in use (vdb2 is mounted at /mnt/old; vdb2 is held by dm-0, dm-1); refused even with --erase"), "{p}");
     }
 
@@ -1665,60 +2673,141 @@ mod tests {
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         let l = layout();
         let run = |a: &[&str]| prepare(&l, &opts(a), &s).mapping;
-        let lvm = super::super::release::Action::Lvm { vg: "vg0".into(), pvs: vec!["/dev/vdb2".into()] };
+        let lvm = super::super::release::Action::Lvm {
+            vg: "vg0".into(),
+            pvs: vec!["/dev/vdb2".into()],
+        };
         let o = opts(&["--map", "vda=vdb"]);
         let system = scan(&s, &o, &[]);
-        assert!(system.disk("vdb").unwrap().is_ours(l.disk("vda").unwrap(), &layout_uuids(&l)));
-        assert!(!partition_done(l.disk("vda").unwrap(), system.disk("vdb").unwrap()));
+        assert!(
+            system
+                .disk("vdb")
+                .unwrap()
+                .is_ours(l.disk("vda").unwrap(), &layout_uuids(&l))
+        );
+        assert!(!partition_done(
+            l.disk("vda").unwrap(),
+            system.disk("vdb").unwrap()
+        ));
 
         // Without --erase: as before, neither refused nor let go of.
         let m = run(&["--map", "vda=vdb"]);
-        assert!(m.problems.is_empty() && m.release.is_empty(), "{:?} {:?}", m.problems, m.release);
+        assert!(
+            m.problems.is_empty() && m.release.is_empty(),
+            "{:?} {:?}",
+            m.problems,
+            m.release
+        );
 
         // With it, the plan and a --through run let go of vg0, then wipe.
-        for a in [&["--map", "vda=vdb", "--erase", "/dev/vdb"][..], &["--map", "vda=vdb", "--erase", "/dev/vdb", "--through", "mount"]] {
+        for a in [
+            &["--map", "vda=vdb", "--erase", "/dev/vdb"][..],
+            &[
+                "--map",
+                "vda=vdb",
+                "--erase",
+                "/dev/vdb",
+                "--through",
+                "mount",
+            ],
+        ] {
             let m = run(a);
             assert!(m.problems.is_empty(), "{a:?}: {:?}", m.problems);
-            assert_eq!(m.release.iter().map(|x| &x.action).collect::<Vec<_>>(), vec![&lvm], "{a:?}");
+            assert_eq!(
+                m.release.iter().map(|x| &x.action).collect::<Vec<_>>(),
+                vec![&lvm],
+                "{a:?}"
+            );
             let b = super::super::commands::build(&l, &opts(a), &m);
-            let text: String = b.stage(super::super::Stage::Partition).iter().map(|c| c.shell()).collect();
-            let at = |x: &str| text.find(x).unwrap_or_else(|| panic!("no {x:?} in\n{text}"));
-            assert!(at("vgchange --devicesfile '' --devices /dev/vdb2 --activate n vg0") < at("wipefs --all /dev/vdb\n"), "{text}");
+            let text: String = b
+                .stage(super::super::Stage::Partition)
+                .iter()
+                .map(|c| c.shell())
+                .collect();
+            let at = |x: &str| {
+                text.find(x)
+                    .unwrap_or_else(|| panic!("no {x:?} in\n{text}"))
+            };
+            assert!(
+                at("vgchange --devicesfile '' --devices /dev/vdb2 --activate n vg0")
+                    < at("wipefs --all /dev/vdb\n"),
+                "{text}"
+            );
         }
         // The same refusals: an LV mounted outside --target.
-        t.file("/proc/self/mountinfo", "30 1 252:0 / /mnt/old rw - ext4 /dev/mapper/vg0-root rw\n");
-        let p = run(&["--map", "vda=vdb", "--erase", "/dev/vdb"]).problems.join("\n");
+        t.file(
+            "/proc/self/mountinfo",
+            "30 1 252:0 / /mnt/old rw - ext4 /dev/mapper/vg0-root rw\n",
+        );
+        let p = run(&["--map", "vda=vdb", "--erase", "/dev/vdb"])
+            .problems
+            .join("\n");
         assert!(p.contains("vda -> /dev/vdb: the target is held, and what holds it can't be let go: dm-0 (vg0-root) is mounted at /mnt/old; refused even with --erase"), "{p}");
         // A partition mounted: refused with --erase, as before without.
-        t.file("/proc/self/mountinfo", "30 1 253:18 / /mnt/old rw - ext4 /dev/vdb2 rw\n");
+        t.file(
+            "/proc/self/mountinfo",
+            "30 1 253:18 / /mnt/old rw - ext4 /dev/vdb2 rw\n",
+        );
         let m = run(&["--map", "vda=vdb", "--erase", "/dev/vdb"]);
         assert!(m.problems.join("\n").contains("vda -> /dev/vdb: the target is in use (vdb2 is mounted at /mnt/old; vdb2 is held by dm-0, dm-1); refused even with --erase"), "{:?}", m.problems);
         let m = run(&["--map", "vda=vdb"]);
-        assert!(m.problems.is_empty() && m.release.is_empty(), "{:?}", m.problems);
+        assert!(
+            m.problems.is_empty() && m.release.is_empty(),
+            "{:?}",
+            m.problems
+        );
 
         // An LV mounted under --target, from an earlier partial run: load's
         // own, so nothing is let go of; the partition stage runs (the table
         // isn't the layout's), and wipefs couldn't open the disk under it,
         // so with --erase the plan refuses it.  Without, taken as it is.
-        t.file("/proc/self/mountinfo", "30 1 252:0 / /mnt/bko-target rw - ext4 /dev/mapper/vg0-root rw\n");
-        for a in [&["--map", "vda=vdb", "--erase", "/dev/vdb"][..], &["--map", "vda=vdb", "--erase", "/dev/vdb", "--through", "mount"]] {
+        t.file(
+            "/proc/self/mountinfo",
+            "30 1 252:0 / /mnt/bko-target rw - ext4 /dev/mapper/vg0-root rw\n",
+        );
+        for a in [
+            &["--map", "vda=vdb", "--erase", "/dev/vdb"][..],
+            &[
+                "--map",
+                "vda=vdb",
+                "--erase",
+                "/dev/vdb",
+                "--through",
+                "mount",
+            ],
+        ] {
             let m = run(a);
             assert!(m.release.is_empty(), "{a:?}: {:?}", m.release);
             let p = m.problems.join("\n");
             assert!(p.contains("vda -> /dev/vdb: the partition stage would wipe it, but load's own is on it, from an earlier stage (mounted under /mnt/bko-target, or a pool of the layout's imported there); `--only close` first lets go of it"), "{a:?}: {p}");
         }
         let m = run(&["--map", "vda=vdb"]);
-        assert!(m.problems.is_empty() && m.release.is_empty(), "{:?} {:?}", m.problems, m.release);
+        assert!(
+            m.problems.is_empty() && m.release.is_empty(),
+            "{:?} {:?}",
+            m.problems,
+            m.release
+        );
         t.file("/proc/self/mountinfo", "");
 
         // Another stage alone never reaches the partition stage.
-        let m = run(&["--map", "vda=vdb", "--erase", "/dev/vdb", "--only", "status"]);
-        assert!(m.problems.is_empty() && m.release.is_empty(), "{:?}", m.problems);
+        let m = run(&[
+            "--map", "vda=vdb", "--erase", "/dev/vdb", "--only", "status",
+        ]);
+        assert!(
+            m.problems.is_empty() && m.release.is_empty(),
+            "{:?}",
+            m.problems
+        );
     }
 
     /// The sample layout's own table, every partition at its sectors.
     fn own_table() -> Vec<u8> {
-        mbr(&[(0, 2048, 1953792), (1, 1955840, 3905536), (2, 5861376, 27693056)])
+        mbr(&[
+            (0, 2048, 1953792),
+            (1, 1955840, 3905536),
+            (2, 5861376, 27693056),
+        ])
     }
 
     /// The source's own disk as found, its table unchanged (the usual
@@ -1735,22 +2824,51 @@ mod tests {
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         let l = layout();
         let run = |a: &[&str]| prepare(&l, &opts(a), &s).mapping;
-        let lvm = super::super::release::Action::Lvm { vg: "vg0".into(), pvs: vec!["/dev/vdb2".into()] };
+        let lvm = super::super::release::Action::Lvm {
+            vg: "vg0".into(),
+            pvs: vec!["/dev/vdb2".into()],
+        };
         let o = opts(&["--map", "vda=vdb"]);
         let (d, system) = (l.disk("vda").unwrap(), scan(&s, &o, &[]));
         let vdb = system.disk("vdb").unwrap();
         assert!(partition_done(d, vdb));
-        let partition = |a: &[&str]| super::super::status::rows(&l, &opts(a), &s).0.into_iter().find(|r| r.0 == Stage::Partition).map(|r| (r.1, r.2)).unwrap();
+        let partition = |a: &[&str]| {
+            super::super::status::rows(&l, &opts(a), &s)
+                .0
+                .into_iter()
+                .find(|r| r.0 == Stage::Partition)
+                .map(|r| (r.1, r.2))
+                .unwrap()
+        };
         use super::super::status::State;
         let erase = ["--map", "vda=vdb", "--erase", "/dev/vdb"];
-        let through = ["--map", "vda=vdb", "--erase", "/dev/vdb", "--through", "mount"];
+        let through = [
+            "--map",
+            "vda=vdb",
+            "--erase",
+            "/dev/vdb",
+            "--through",
+            "mount",
+        ];
         let note = "vda -> /dev/vdb: the partition stage runs: --erase and no record that load wrote this table";
 
         // Without --erase: as before, the stage done and nothing let go of.
-        for a in [&["--map", "vda=vdb"][..], &["--map", "vda=vdb", "--through", "mount"]] {
+        for a in [
+            &["--map", "vda=vdb"][..],
+            &["--map", "vda=vdb", "--through", "mount"],
+        ] {
             let m = run(a);
-            assert!(m.problems.is_empty() && m.release.is_empty(), "{a:?}: {:?} {:?}", m.problems, m.release);
-            assert!(!m.notes.iter().any(|n| n.contains(note)), "{a:?}: {:?}", m.notes);
+            assert!(
+                m.problems.is_empty() && m.release.is_empty(),
+                "{a:?}: {:?} {:?}",
+                m.problems,
+                m.release
+            );
+            assert!(
+                !m.notes.iter().any(|n| n.contains(note)),
+                "{a:?}: {:?}",
+                m.notes
+            );
         }
         assert_eq!(partition(&["--map", "vda=vdb"]).0, State::Done);
 
@@ -1758,17 +2876,45 @@ mod tests {
         for a in [&erase[..], &through] {
             let m = run(a);
             assert!(m.problems.is_empty(), "{a:?}: {:?}", m.problems);
-            assert_eq!(m.release.iter().map(|x| &x.action).collect::<Vec<_>>(), vec![&lvm], "{a:?}");
-            assert!(m.notes.iter().any(|n| n.starts_with(note) && n.contains(&format!("{RUN_DIR}/partitioned/vdb"))), "{a:?}: {:?}", m.notes);
+            assert_eq!(
+                m.release.iter().map(|x| &x.action).collect::<Vec<_>>(),
+                vec![&lvm],
+                "{a:?}"
+            );
+            assert!(
+                m.notes
+                    .iter()
+                    .any(|n| n.starts_with(note)
+                        && n.contains(&format!("{RUN_DIR}/partitioned/vdb"))),
+                "{a:?}: {:?}",
+                m.notes
+            );
             let b = super::super::commands::build(&l, &opts(a), &m);
-            let text: String = b.stage(Stage::Partition).iter().map(|c| c.shell()).collect();
-            let at = |x: &str| text.find(x).unwrap_or_else(|| panic!("no {x:?} in\n{text}"));
-            assert!(at("vgchange --devicesfile '' --devices /dev/vdb2 --activate n vg0") < at("wipefs --all /dev/vdb\n"), "{text}");
-            assert_eq!(m.records, vec![(table_record("vdb"), table_record_text(&l, d, vdb, &s))]);
+            let text: String = b
+                .stage(Stage::Partition)
+                .iter()
+                .map(|c| c.shell())
+                .collect();
+            let at = |x: &str| {
+                text.find(x)
+                    .unwrap_or_else(|| panic!("no {x:?} in\n{text}"))
+            };
+            assert!(
+                at("vgchange --devicesfile '' --devices /dev/vdb2 --activate n vg0")
+                    < at("wipefs --all /dev/vdb\n"),
+                "{text}"
+            );
+            assert_eq!(
+                m.records,
+                vec![(table_record("vdb"), table_record_text(&l, d, vdb, &s))]
+            );
         }
         assert_eq!(partition(&erase), (State::NotDone, "/dev/vdb: the source's table, but no record that load wrote it, and --erase wipes it".to_string()));
         // The same refusals: an LV mounted outside --target.
-        t.file("/proc/self/mountinfo", "30 1 252:0 / /mnt/old rw - ext4 /dev/mapper/vg0-root rw\n");
+        t.file(
+            "/proc/self/mountinfo",
+            "30 1 252:0 / /mnt/old rw - ext4 /dev/mapper/vg0-root rw\n",
+        );
         for a in [&erase[..], &through] {
             let p = run(a).problems.join("\n");
             assert!(p.contains("vda -> /dev/vdb: the target is held, and what holds it can't be let go: dm-0 (vg0-root) is mounted at /mnt/old; refused even with --erase"), "{a:?}: {p}");
@@ -1777,7 +2923,10 @@ mod tests {
         t.file("/proc/self/mountinfo", "");
 
         // A record of another layout's table (another dump) is no record.
-        t.file(&table_record("vdb"), table_record_text(&l, d, vdb, &s).replace("layout deb13 ", "layout other "));
+        t.file(
+            &table_record("vdb"),
+            table_record_text(&l, d, vdb, &s).replace("layout deb13 ", "layout other "),
+        );
         assert_eq!(run(&erase).release.len(), 1);
         assert_eq!(partition(&erase).0, State::NotDone);
 
@@ -1787,41 +2936,93 @@ mod tests {
         t.file(&table_record("vdb"), table_record_text(&l, d, vdb, &s));
         for a in [&erase[..], &through] {
             let m = run(a);
-            assert!(m.problems.is_empty() && m.release.is_empty(), "{a:?}: {:?} {:?}", m.problems, m.release);
-            assert!(!m.notes.iter().any(|n| n.contains(note)), "{a:?}: {:?}", m.notes);
+            assert!(
+                m.problems.is_empty() && m.release.is_empty(),
+                "{a:?}: {:?} {:?}",
+                m.problems,
+                m.release
+            );
+            assert!(
+                !m.notes.iter().any(|n| n.contains(note)),
+                "{a:?}: {:?}",
+                m.notes
+            );
         }
         assert_eq!(partition(&erase).0, State::Done);
         // udev's serial and WWID coming (or going) between runs leave the
         // record standing: it names the disk by sysfs only.  The kernel's
         // own serial changing is another disk.
-        t.file("/run/udev/data/b253:16", "E:ID_SERIAL_SHORT=SER123\nE:ID_WWN=0x5000c500a1b2c3d4\n");
-        assert_eq!(scan(&s, &o, &[]).disk("vdb").unwrap().b.serial.as_deref(), Some("SER123"));
+        t.file(
+            "/run/udev/data/b253:16",
+            "E:ID_SERIAL_SHORT=SER123\nE:ID_WWN=0x5000c500a1b2c3d4\n",
+        );
+        assert_eq!(
+            scan(&s, &o, &[]).disk("vdb").unwrap().b.serial.as_deref(),
+            Some("SER123")
+        );
         assert_eq!(partition(&erase).0, State::Done);
         assert!(run(&through).release.is_empty());
         t.file("/sys/block/vdb/device/serial", "OTHER\n");
         assert_eq!(partition(&erase).0, State::NotDone);
         std::fs::remove_file(t.p("/sys/block/vdb/device/serial")).unwrap();
         assert_eq!(partition(&erase).0, State::Done);
-        let m = run(&["--map", "vda=vdb", "--erase", "/dev/vdb", "--only", "partition"]);
+        let m = run(&[
+            "--map",
+            "vda=vdb",
+            "--erase",
+            "/dev/vdb",
+            "--only",
+            "partition",
+        ]);
         assert!(m.problems.is_empty(), "{:?}", m.problems);
-        assert_eq!(m.release.iter().map(|x| &x.action).collect::<Vec<_>>(), vec![&lvm]);
+        assert_eq!(
+            m.release.iter().map(|x| &x.action).collect::<Vec<_>>(),
+            vec![&lvm]
+        );
 
         // Load's own under --target (the mount stage's, of this session):
         // a rerun goes on from it, but --only partition would wipe the disk
         // under it, so the plan refuses it rather than wipefs failing.
-        t.file("/proc/self/mountinfo", "30 1 252:0 / /mnt/bko-target rw - ext4 /dev/mapper/vg0-root rw\n");
+        t.file(
+            "/proc/self/mountinfo",
+            "30 1 252:0 / /mnt/bko-target rw - ext4 /dev/mapper/vg0-root rw\n",
+        );
         for a in [&erase[..], &through] {
             let m = run(a);
-            assert!(m.problems.is_empty() && m.release.is_empty(), "{a:?}: {:?} {:?}", m.problems, m.release);
+            assert!(
+                m.problems.is_empty() && m.release.is_empty(),
+                "{a:?}: {:?} {:?}",
+                m.problems,
+                m.release
+            );
         }
-        let m = run(&["--map", "vda=vdb", "--erase", "/dev/vdb", "--only", "partition"]);
+        let m = run(&[
+            "--map",
+            "vda=vdb",
+            "--erase",
+            "/dev/vdb",
+            "--only",
+            "partition",
+        ]);
         assert!(m.release.is_empty(), "{:?}", m.release);
         let p = m.problems.join("\n");
         assert!(p.contains("vda -> /dev/vdb: the partition stage would wipe it, but load's own is on it, from an earlier stage (mounted under /mnt/bko-target"), "{p}");
         assert!(p.contains("`--only close` first lets go of it"), "{p}");
         // A partition mounted there, too: the same refusal, not wipefs's.
-        t.file("/proc/self/mountinfo", "30 1 253:18 / /mnt/bko-target rw - ext4 /dev/vdb2 rw\n");
-        let p = run(&["--map", "vda=vdb", "--erase", "/dev/vdb", "--only", "partition"]).problems.join("\n");
+        t.file(
+            "/proc/self/mountinfo",
+            "30 1 253:18 / /mnt/bko-target rw - ext4 /dev/vdb2 rw\n",
+        );
+        let p = run(&[
+            "--map",
+            "vda=vdb",
+            "--erase",
+            "/dev/vdb",
+            "--only",
+            "partition",
+        ])
+        .problems
+        .join("\n");
         assert!(p.contains("vda -> /dev/vdb: the partition stage would wipe it, but load's own is on it, from an earlier stage (mounted under /mnt/bko-target"), "{p}");
         assert!(!p.contains("refused even with --erase"), "{p}");
     }
@@ -1837,17 +3038,37 @@ mod tests {
         let j = sample::bios_mbr();
         let j = if alone {
             let (a, rest) = j.split_at(j.find("\"disks\": [").unwrap());
-            format!("{a}\"disks\": [{VDX}],\n    {}", &rest[rest.find("\"md_arrays\"").unwrap()..])
+            format!(
+                "{a}\"disks\": [{VDX}],\n    {}",
+                &rest[rest.find("\"md_arrays\"").unwrap()..]
+            )
         } else {
-            j.replace("\"content\": null, \"boot_code\": {\"kind\": \"grub2\"}\n    }]", &format!("\"content\": null, \"boot_code\": {{\"kind\": \"grub2\"}}\n    }}, {VDX}]"))
+            j.replace(
+                "\"content\": null, \"boot_code\": {\"kind\": \"grub2\"}\n    }]",
+                &format!(
+                    "\"content\": null, \"boot_code\": {{\"kind\": \"grub2\"}}\n    }}, {VDX}]"
+                ),
+            )
         };
         let l = Layout::from_json(crate::json::parse(&j).unwrap()).unwrap();
-        assert_eq!(l.disks.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), if alone { vec!["vdx"] } else { vec!["vda", "vdx"] });
+        assert_eq!(
+            l.disks.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(),
+            if alone {
+                vec!["vdx"]
+            } else {
+                vec!["vda", "vdx"]
+            }
+        );
         l
     }
 
     fn row(l: &Layout, a: &[&str], s: &Sys, st: Stage) -> (super::super::status::State, String) {
-        super::super::status::rows(l, &opts(a), s).0.into_iter().find(|r| r.0 == st).map(|r| (r.1, r.2)).unwrap()
+        super::super::status::rows(l, &opts(a), s)
+            .0
+            .into_iter()
+            .find(|r| r.0 == st)
+            .map(|r| (r.1, r.2))
+            .unwrap()
     }
 
     /// The whole-disk XFS layout onto the source's own disk, the old XFS
@@ -1860,31 +3081,69 @@ mod tests {
     fn a_disk_with_no_table_named_with_erase_is_wiped_until_recorded() {
         use super::super::status::State;
         let t = tree();
-        t.disk("vdc", "253:32", &crate::probe::xfs::sample::image(""), 512).file("/sys/block/vdc/size", "16777216\n");
+        t.disk("vdc", "253:32", &crate::probe::xfs::sample::image(""), 512)
+            .file("/sys/block/vdc/size", "16777216\n");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         let l = with_vdx(true);
         let plain = ["--map", "vdx=vdc"];
         let erase = ["--map", "vdx=vdc", "--erase", "/dev/vdc"];
-        let through = ["--map", "vdx=vdc", "--erase", "/dev/vdc", "--through", "mount"];
+        let through = [
+            "--map",
+            "vdx=vdc",
+            "--erase",
+            "/dev/vdc",
+            "--through",
+            "mount",
+        ];
         assert_eq!(row(&l, &plain, &s, Stage::Partition).0, State::Nothing);
-        assert_eq!(row(&l, &plain, &s, Stage::Format).0, State::Done, "the old XFS passes format's check");
+        assert_eq!(
+            row(&l, &plain, &s, Stage::Format).0,
+            State::Done,
+            "the old XFS passes format's check"
+        );
         let m = prepare(&l, &opts(&plain), &s).mapping;
-        assert!(m.problems.is_empty() && !m.notes.iter().any(|n| n.contains("no record")), "{:?} {:?}", m.problems, m.notes);
+        assert!(
+            m.problems.is_empty() && !m.notes.iter().any(|n| n.contains("no record")),
+            "{:?} {:?}",
+            m.problems,
+            m.notes
+        );
 
-        assert_eq!(row(&l, &erase, &s, Stage::Partition), (State::NotDone, "/dev/vdc: no record that load wiped it, and --erase wipes it".to_string()));
+        assert_eq!(
+            row(&l, &erase, &s, Stage::Partition),
+            (
+                State::NotDone,
+                "/dev/vdc: no record that load wiped it, and --erase wipes it".to_string()
+            )
+        );
         for a in [&erase[..], &through] {
             let m = prepare(&l, &opts(a), &s).mapping;
             assert!(m.problems.is_empty(), "{a:?}: {:?}", m.problems);
             assert!(m.notes.iter().any(|n| n.starts_with("vdx -> /dev/vdc: the partition stage runs: --erase and no record that load wiped this disk (its source has no table")), "{a:?}: {:?}", m.notes);
             let vdc = scan(&s, &opts(a), &[]);
-            assert_eq!(m.records, vec![(table_record("vdc"), table_record_text(&l, l.disk("vdx").unwrap(), vdc.disk("vdc").unwrap(), &s))]);
-            assert!(m.records[0].1.contains("no table: wiped\n"), "{:?}", m.records);
+            assert_eq!(
+                m.records,
+                vec![(
+                    table_record("vdc"),
+                    table_record_text(&l, l.disk("vdx").unwrap(), vdc.disk("vdc").unwrap(), &s)
+                )]
+            );
+            assert!(
+                m.records[0].1.contains("no table: wiped\n"),
+                "{:?}",
+                m.records
+            );
         }
         let (path, text) = prepare(&l, &opts(&erase), &s).mapping.records.remove(0);
         t.file(&path, text);
         assert_eq!(row(&l, &erase, &s, Stage::Partition).0, State::Done);
         let m = prepare(&l, &opts(&through), &s).mapping;
-        assert!(m.problems.is_empty() && !m.notes.iter().any(|n| n.contains("no record")), "{:?} {:?}", m.problems, m.notes);
+        assert!(
+            m.problems.is_empty() && !m.notes.iter().any(|n| n.contains("no record")),
+            "{:?} {:?}",
+            m.problems,
+            m.notes
+        );
     }
 
     /// A disk with a table (vda -> vdb, the old vg0 on it) and one without
@@ -1900,29 +3159,63 @@ mod tests {
         t.file("/dev/vdb", own_table());
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         let l = with_vdx(false);
-        let erase = ["--map", "vda=vdb", "--map", "vdx=vdc", "--erase", "/dev/vdb", "--erase", "/dev/vdc"];
-        let through = ["--map", "vda=vdb", "--map", "vdx=vdc", "--erase", "/dev/vdb", "--erase", "/dev/vdc", "--through", "mount"];
-        let lvm = super::super::release::Action::Lvm { vg: "vg0".into(), pvs: vec!["/dev/vdb2".into()] };
+        let erase = [
+            "--map", "vda=vdb", "--map", "vdx=vdc", "--erase", "/dev/vdb", "--erase", "/dev/vdc",
+        ];
+        let through = [
+            "--map",
+            "vda=vdb",
+            "--map",
+            "vdx=vdc",
+            "--erase",
+            "/dev/vdb",
+            "--erase",
+            "/dev/vdc",
+            "--through",
+            "mount",
+        ];
+        let lvm = super::super::release::Action::Lvm {
+            vg: "vg0".into(),
+            pvs: vec!["/dev/vdb2".into()],
+        };
         let runs = |a: &[&str]| {
             let m = prepare(&l, &opts(a), &s).mapping;
             assert!(m.problems.is_empty(), "{a:?}: {:?}", m.problems);
-            m.release.iter().map(|x| x.action.clone()).collect::<Vec<_>>()
+            m.release
+                .iter()
+                .map(|x| x.action.clone())
+                .collect::<Vec<_>>()
         };
         // No records: both disks unrecorded, the stage runs.
         assert_eq!(row(&l, &erase, &s, Stage::Partition).0, State::NotDone);
         assert_eq!(runs(&through), vec![lvm.clone()]);
         let records = prepare(&l, &opts(&erase), &s).mapping.records;
-        assert_eq!(records.iter().map(|r| r.0.clone()).collect::<Vec<_>>(), vec![format!("{RUN_DIR}/partitioned/vdb"), format!("{RUN_DIR}/partitioned/vdc")]);
+        assert_eq!(
+            records.iter().map(|r| r.0.clone()).collect::<Vec<_>>(),
+            vec![
+                format!("{RUN_DIR}/partitioned/vdb"),
+                format!("{RUN_DIR}/partitioned/vdc")
+            ]
+        );
         // vdb's alone: vdc still unrecorded, so the stage still runs.
         t.file(&records[0].0, records[0].1.as_str());
         let (st, why) = row(&l, &erase, &s, Stage::Partition);
-        assert_eq!((st, why.as_str()), (State::Partly, "/dev/vdc: no record that load wiped it, and --erase wipes it"));
+        assert_eq!(
+            (st, why.as_str()),
+            (
+                State::Partly,
+                "/dev/vdc: no record that load wiped it, and --erase wipes it"
+            )
+        );
         assert_eq!(runs(&through), vec![lvm.clone()]);
         // Both: done, by status and by the plan alike.
         t.file(&records[1].0, records[1].1.as_str());
         assert_eq!(row(&l, &erase, &s, Stage::Partition).0, State::Done);
         assert!(runs(&through).is_empty() && runs(&erase).is_empty());
-        t.file("/proc/self/mountinfo", "30 1 252:0 / /mnt/bko-target rw - ext4 /dev/mapper/vg0-root rw\n");
+        t.file(
+            "/proc/self/mountinfo",
+            "30 1 252:0 / /mnt/bko-target rw - ext4 /dev/mapper/vg0-root rw\n",
+        );
         assert_eq!(row(&l, &through, &s, Stage::Partition).0, State::Done);
         assert!(runs(&through).is_empty() && runs(&erase).is_empty());
     }

@@ -4,7 +4,11 @@
 
 // Test-only code, public for the integration tests (so not cfg(test)): a
 // failure to set up a fixture should panic the test there and then.
-#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test fixtures: a setup failure fails the test")]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "test fixtures: a setup failure fails the test"
+)]
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -77,7 +81,9 @@ pub struct Tree {
 
 impl Tree {
     pub fn new(tag: &str) -> Tree {
-        Tree { dir: TempDir::new(tag) }
+        Tree {
+            dir: TempDir::new(tag),
+        }
     }
     pub fn root(&self) -> &Path {
         self.dir.path()
@@ -117,8 +123,14 @@ impl Tree {
         let b = format!("/sys/block/{name}");
         self.file(&format!("{b}/dev"), format!("{devno}\n"))
             .file(&format!("{b}/size"), format!("{}\n", image.len() / 512))
-            .file(&format!("{b}/queue/logical_block_size"), format!("{sector}\n"))
-            .file(&format!("{b}/queue/physical_block_size"), format!("{sector}\n"))
+            .file(
+                &format!("{b}/queue/logical_block_size"),
+                format!("{sector}\n"),
+            )
+            .file(
+                &format!("{b}/queue/physical_block_size"),
+                format!("{sector}\n"),
+            )
             .file(&format!("{b}/queue/rotational"), "0\n")
             .file(&format!("{b}/removable"), "0\n")
             .file(&format!("{b}/ro"), "0\n")
@@ -130,7 +142,16 @@ impl Tree {
     /// A partition of `disk`: sysfs entry (start and size in 512-byte units)
     /// and /dev node with the matching slice of `image`.
     #[allow(clippy::too_many_arguments)]
-    pub fn partition(&self, disk: &str, name: &str, devno: &str, number: u32, start: u64, size: u64, image: &[u8]) -> &Tree {
+    pub fn partition(
+        &self,
+        disk: &str,
+        name: &str,
+        devno: &str,
+        number: u32,
+        start: u64,
+        size: u64,
+        image: &[u8],
+    ) -> &Tree {
         let b = format!("/sys/block/{disk}/{name}");
         let s = (start * 512) as usize;
         let e = ((start + size) * 512) as usize;
@@ -160,12 +181,26 @@ pub fn golden_json(dir: &str, name: &str, v: &crate::json::Value) {
         }
     }
     let text = v.pretty() + "\n";
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(dir).join(format!("{name}.json"));
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(dir)
+        .join(format!("{name}.json"));
     if std::env::var("BKO_HOLT_JSON_GOLDEN").as_deref() == Ok("bless") {
-        std::fs::create_dir_all(path.parent().expect("a fixtures directory")).expect("make the fixtures directory");
+        std::fs::create_dir_all(path.parent().expect("a fixtures directory"))
+            .expect("make the fixtures directory");
         std::fs::write(&path, &text).expect("write the golden");
         return;
     }
-    let want = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e} (BKO_HOLT_JSON_GOLDEN=bless writes it)", path.display()));
-    assert_eq!(text, want, "{}: the document changed (BKO_HOLT_JSON_GOLDEN=bless writes it again)", path.display());
+    let want = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "{}: {e} (BKO_HOLT_JSON_GOLDEN=bless writes it)",
+            path.display()
+        )
+    });
+    assert_eq!(
+        text,
+        want,
+        "{}: the document changed (BKO_HOLT_JSON_GOLDEN=bless writes it again)",
+        path.display()
+    );
 }

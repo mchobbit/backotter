@@ -17,8 +17,16 @@ pub struct Package {
 }
 
 impl Package {
-    pub fn new(name: impl Into<String>, version: impl Into<String>, arch: impl Into<String>) -> Package {
-        Package { name: name.into(), version: version.into(), arch: arch.into() }
+    pub fn new(
+        name: impl Into<String>,
+        version: impl Into<String>,
+        arch: impl Into<String>,
+    ) -> Package {
+        Package {
+            name: name.into(),
+            version: version.into(),
+            arch: arch.into(),
+        }
     }
 }
 
@@ -60,7 +68,9 @@ pub fn parse_dpkg_status(text: &str) -> Vec<Package> {
 pub fn pacman_packages(sys: &Sys) -> Vec<Package> {
     let mut out = Vec::new();
     for d in sys.list("/var/lib/pacman/local") {
-        let Some(t) = sys.read(&format!("/var/lib/pacman/local/{d}/desc")) else { continue };
+        let Some(t) = sys.read(&format!("/var/lib/pacman/local/{d}/desc")) else {
+            continue;
+        };
         let field = |k: &str| {
             let mut it = t.lines();
             it.by_ref().find(|l| l.trim() == k)?;
@@ -79,7 +89,12 @@ pub fn pacman_packages(sys: &Sys) -> Vec<Package> {
 pub fn parse_apk_installed(text: &str) -> Vec<Package> {
     let mut out = Vec::new();
     for block in text.split("\n\n") {
-        let f = |k: &str| block.lines().find_map(|l| l.strip_prefix(k)).map(|v| v.trim().to_string());
+        let f = |k: &str| {
+            block
+                .lines()
+                .find_map(|l| l.strip_prefix(k))
+                .map(|v| v.trim().to_string())
+        };
         if let (Some(n), Some(v)) = (f("P:"), f("V:")) {
             out.push(Package::new(n, v, f("A:").unwrap_or_default()));
         }
@@ -91,7 +106,12 @@ pub fn parse_apk_installed(text: &str) -> Vec<Package> {
 /// Installed packages from rpm (Fedora): its database is SQLite, so rpm
 /// itself reads it.
 pub fn rpm_packages(sys: &Sys) -> Vec<Package> {
-    let Some(t) = sys.run("rpm", &["-qa", "--qf", "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n"]) else { return Vec::new() };
+    let Some(t) = sys.run(
+        "rpm",
+        &["-qa", "--qf", "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n"],
+    ) else {
+        return Vec::new();
+    };
     let mut out: Vec<Package> = t
         .lines()
         .filter_map(|l| {
@@ -116,13 +136,24 @@ pub fn parse_xbps_pkgdb(text: &str) -> Vec<Package> {
         let Some(j) = rest[i..].find('>') else { break };
         let tag = &rest[i + 1..i + j];
         let after = &rest[i + j + 1..];
-        let body = || after.split('<').next().unwrap_or("").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">");
+        let body = || {
+            after
+                .split('<')
+                .next()
+                .unwrap_or("")
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+        };
         match tag {
             "dict" => depth += 1,
             "/dict" => {
                 if depth == 2 {
                     if !ver.is_empty() {
-                        let v = ver.strip_prefix(&format!("{name}-")).unwrap_or(&ver).to_string();
+                        let v = ver
+                            .strip_prefix(&format!("{name}-"))
+                            .unwrap_or(&ver)
+                            .to_string();
                         out.push(Package::new(name.clone(), v, arch.clone()));
                     }
                     name.clear();
@@ -154,13 +185,21 @@ pub fn split_eopkg(dir: &str) -> Option<(&str, &str)> {
     let r = dir.rfind('-')?;
     let v = dir[..r].rfind('-')?;
     let (name, ver, rel) = (&dir[..v], &dir[v + 1..r], &dir[r + 1..]);
-    (!name.is_empty() && !ver.is_empty() && !rel.is_empty() && rel.bytes().all(|c| c.is_ascii_digit())).then(|| (name, &dir[v + 1..]))
+    (!name.is_empty()
+        && !ver.is_empty()
+        && !rel.is_empty()
+        && rel.bytes().all(|c| c.is_ascii_digit()))
+    .then(|| (name, &dir[v + 1..]))
 }
 
 /// The text of `<tag>` in `xml`'s first `<tag>...</tag>` after `after`
 /// (the whole text when `after` is empty), entities left as they are.
 fn xml_text<'a>(xml: &'a str, after: &str, tag: &str) -> Option<&'a str> {
-    let from = if after.is_empty() { 0 } else { xml.find(after)? + after.len() };
+    let from = if after.is_empty() {
+        0
+    } else {
+        xml.find(after)? + after.len()
+    };
     let open = format!("<{tag}>");
     let i = from + xml[from..].find(&open)? + open.len();
     let j = i + xml[i..].find(&format!("</{tag}>"))?;
@@ -179,10 +218,23 @@ pub fn eopkg_packages(sys: &Sys) -> Vec<Package> {
         if d.starts_with('.') {
             continue;
         }
-        let meta = sys.read(&format!("{EOPKG_PACKAGES}/{d}/metadata.xml")).unwrap_or_default();
-        let by_meta = xml_text(&meta, "<Package>", "Name").and_then(|n| d.strip_prefix(n)?.strip_prefix('-').filter(|v| split_eopkg(&format!("x-{v}")).is_some()).map(|v| (n, v)));
-        let Some((n, v)) = by_meta.or_else(|| split_eopkg(&d)) else { continue };
-        out.push(Package::new(n, v, xml_text(&meta, "<Package>", "Architecture").unwrap_or("")));
+        let meta = sys
+            .read(&format!("{EOPKG_PACKAGES}/{d}/metadata.xml"))
+            .unwrap_or_default();
+        let by_meta = xml_text(&meta, "<Package>", "Name").and_then(|n| {
+            d.strip_prefix(n)?
+                .strip_prefix('-')
+                .filter(|v| split_eopkg(&format!("x-{v}")).is_some())
+                .map(|v| (n, v))
+        });
+        let Some((n, v)) = by_meta.or_else(|| split_eopkg(&d)) else {
+            continue;
+        };
+        out.push(Package::new(
+            n,
+            v,
+            xml_text(&meta, "<Package>", "Architecture").unwrap_or(""),
+        ));
     }
     out.sort();
     out
@@ -206,8 +258,13 @@ pub fn is_portage_version(v: &str) -> bool {
         }
         core = &core[..i];
     }
-    let core = core.strip_suffix(|c: char| c.is_ascii_lowercase()).unwrap_or(core);
-    !core.is_empty() && core.split('.').all(|p| !p.is_empty() && p.bytes().all(|c| c.is_ascii_digit()))
+    let core = core
+        .strip_suffix(|c: char| c.is_ascii_lowercase())
+        .unwrap_or(core);
+    !core.is_empty()
+        && core
+            .split('.')
+            .all(|p| !p.is_empty() && p.bytes().all(|c| c.is_ascii_digit()))
 }
 
 /// A Portage PF ("font-adobe-100dpi-1.0.4", "grub-2.16-r1") split into the
@@ -242,8 +299,14 @@ pub fn portage_packages(sys: &Sys) -> Vec<Package> {
                 continue;
             }
             let pf = sys.read_trim(&format!("{dir}/PF")).unwrap_or(d);
-            let Some((n, v)) = split_pf(&pf) else { continue };
-            out.push(Package::new(n, v, sys.read_trim(&format!("{dir}/CHOST")).unwrap_or_default()));
+            let Some((n, v)) = split_pf(&pf) else {
+                continue;
+            };
+            out.push(Package::new(
+                n,
+                v,
+                sys.read_trim(&format!("{dir}/CHOST")).unwrap_or_default(),
+            ));
         }
     }
     out.sort();
@@ -258,7 +321,9 @@ pub fn is_slackware(sys: &Sys) -> bool {
 /// pkgtools' database (Slackware): installpkg's ADM_DIR, where
 /// /var/log/packages is a link to it since 15.0 (a directory before).
 pub fn pkgtools_dir(sys: &Sys) -> Option<&'static str> {
-    ["/var/lib/pkgtools/packages", "/var/log/packages"].into_iter().find(|d| sys.is_dir(d))
+    ["/var/lib/pkgtools/packages", "/var/log/packages"]
+        .into_iter()
+        .find(|d| sys.is_dir(d))
 }
 
 /// A pkgtools package's file name, NAME-VERSION-ARCH-BUILD, split at its
@@ -270,13 +335,16 @@ pub fn pkgtools_dir(sys: &Sys) -> Option<&'static str> {
 pub fn split_pkgtools(file: &str) -> Option<(&str, String, &str)> {
     let mut it = file.rsplitn(4, '-');
     let (build, arch, ver, name) = (it.next()?, it.next()?, it.next()?, it.next()?);
-    (!name.is_empty() && !ver.is_empty() && !arch.is_empty() && !build.is_empty()).then(|| (name, format!("{ver}-{build}"), arch))
+    (!name.is_empty() && !ver.is_empty() && !arch.is_empty() && !build.is_empty())
+        .then(|| (name, format!("{ver}-{build}"), arch))
 }
 
 /// Installed packages from pkgtools' database (Slackware): a file a
 /// package, named NAME-VERSION-ARCH-BUILD (split_pkgtools).
 pub fn pkgtools_packages(sys: &Sys) -> Vec<Package> {
-    let Some(dir) = pkgtools_dir(sys) else { return Vec::new() };
+    let Some(dir) = pkgtools_dir(sys) else {
+        return Vec::new();
+    };
     let mut out: Vec<Package> = sys
         .list(dir)
         .iter()
@@ -309,7 +377,12 @@ pub fn installed_packages(sys: &Sys) -> Vec<Package> {
     if let Some(t) = sys.read("/lib/apk/db/installed") {
         return parse_apk_installed(&t);
     }
-    if let Some(f) = sys.list("/var/db/xbps").into_iter().filter(|f| f.starts_with("pkgdb-") && f.ends_with(".plist")).max() {
+    if let Some(f) = sys
+        .list("/var/db/xbps")
+        .into_iter()
+        .filter(|f| f.starts_with("pkgdb-") && f.ends_with(".plist"))
+        .max()
+    {
         if let Some(t) = sys.read(&format!("/var/db/xbps/{f}")) {
             return parse_xbps_pkgdb(&t);
         }
@@ -328,83 +401,205 @@ pub fn installed_packages(sys: &Sys) -> Vec<Package> {
 
 /// The packages that make up the storage and boot stack.
 pub const PACKAGES: &[&str] = &[
-    "grub-pc", "grub-pc-bin", "grub-efi-amd64", "grub-efi-amd64-bin", "grub-efi-amd64-signed", "grub-efi-ia32",
-    "grub-efi-ia32-bin", "grub-efi-arm64", "grub-efi-arm64-signed", "grub2-common", "grub-common", "shim-signed",
-    "shim-unsigned", "shim-helpers-amd64-signed", "mokutil", "efibootmgr", "systemd-boot", "systemd-boot-efi",
-    "systemd-ukify", "refind", "syslinux", "extlinux", "syslinux-efi", "os-prober", "linux-image-amd64",
-    "linux-image-cloud-amd64", "linux-image-rt-amd64", "initramfs-tools", "dracut", "tiny-initramfs", "mdadm",
-    "lvm2", "thin-provisioning-tools", "cryptsetup", "cryptsetup-initramfs", "cryptsetup-bin", "clevis-luks",
-    "systemd-cryptsetup", "tpm2-tools", "zfsutils-linux", "zfs-initramfs", "zfs-dracut", "zfs-dkms", "btrfs-progs",
-    "xfsprogs", "e2fsprogs", "dosfstools", "exfatprogs", "ntfs-3g", "jfsutils", "f2fs-tools", "nilfs-tools", "bcachefs-tools",
+    "grub-pc",
+    "grub-pc-bin",
+    "grub-efi-amd64",
+    "grub-efi-amd64-bin",
+    "grub-efi-amd64-signed",
+    "grub-efi-ia32",
+    "grub-efi-ia32-bin",
+    "grub-efi-arm64",
+    "grub-efi-arm64-signed",
+    "grub2-common",
+    "grub-common",
+    "shim-signed",
+    "shim-unsigned",
+    "shim-helpers-amd64-signed",
+    "mokutil",
+    "efibootmgr",
+    "systemd-boot",
+    "systemd-boot-efi",
+    "systemd-ukify",
+    "refind",
+    "syslinux",
+    "extlinux",
+    "syslinux-efi",
+    "os-prober",
+    "linux-image-amd64",
+    "linux-image-cloud-amd64",
+    "linux-image-rt-amd64",
+    "initramfs-tools",
+    "dracut",
+    "tiny-initramfs",
+    "mdadm",
+    "lvm2",
+    "thin-provisioning-tools",
+    "cryptsetup",
+    "cryptsetup-initramfs",
+    "cryptsetup-bin",
+    "clevis-luks",
+    "systemd-cryptsetup",
+    "tpm2-tools",
+    "zfsutils-linux",
+    "zfs-initramfs",
+    "zfs-dracut",
+    "zfs-dkms",
+    "btrfs-progs",
+    "xfsprogs",
+    "e2fsprogs",
+    "dosfstools",
+    "exfatprogs",
+    "ntfs-3g",
+    "jfsutils",
+    "f2fs-tools",
+    "nilfs-tools",
+    "bcachefs-tools",
     // Arch's and Fedora's names for the same.
-    "grub", "grub2-pc", "grub2-efi-x64", "grub2-tools", "shim-x64", "mkinitcpio", "linux", "linux-lts", "kernel-core",
-    "zfs-utils", "selinux-policy-targeted",
+    "grub",
+    "grub2-pc",
+    "grub2-efi-x64",
+    "grub2-tools",
+    "shim-x64",
+    "mkinitcpio",
+    "linux",
+    "linux-lts",
+    "kernel-core",
+    "zfs-utils",
+    "selinux-policy-targeted",
     // ARM64's (crate::arch): Debian's and Ubuntu's, Fedora's, Chimera's;
     // names no amd64 system has, so no fingerprint changes.
-    "grub-efi-arm64-bin", "shim-helpers-arm64-signed", "linux-image-arm64", "linux-image-cloud-arm64", "grub2-efi-aa64", "shim-aa64", "grub-arm64-efi",
+    "grub-efi-arm64-bin",
+    "shim-helpers-arm64-signed",
+    "linux-image-arm64",
+    "linux-image-cloud-arm64",
+    "grub2-efi-aa64",
+    "shim-aa64",
+    "grub-arm64-efi",
     // Alpine's.
-    "grub-bios", "grub-efi", "mkinitfs", "linux-virt",
+    "grub-bios",
+    "grub-efi",
+    "mkinitfs",
+    "linux-virt",
     // EndeavourOS's and Manjaro's.
-    "kernel-install-for-dracut", "eos-dracut", "mhwd",
+    "kernel-install-for-dracut",
+    "eos-dracut",
+    "mhwd",
     // BigLinux's: grub-btrfs's snapshot menu (with Timeshift's hook) and the
     // one-preset mkinitcpio; only names no other guest has, so no other
     // fingerprint changes.
-    "grub-btrfs", "grub-btrfs-timeshift", "faster-mkinitcpio",
+    "grub-btrfs",
+    "grub-btrfs-timeshift",
+    "faster-mkinitcpio",
     // Garuda's ("grub-btrfs", "snapper" and "dracut" are above): the dracut
     // hook load keys on, its kernel, and how snapshots reach the boot menu.
-    "garuda-dracut-support", "linux-garuda", "snap-pac", "snapper-support",
+    "garuda-dracut-support",
+    "linux-garuda",
+    "snap-pac",
+    "snapper-support",
     // Omarchy's, openSUSE's and Void's.
-    "limine", "limine-mkinitcpio-hook", "limine-snapper-sync", "grub2", "grub2-i386-pc", "grub2-x86_64-efi", "kernel-default", "snapper", "linux-base",
-    "multipath-tools", "dmraid", "nvme-cli", "open-iscsi",
+    "limine",
+    "limine-mkinitcpio-hook",
+    "limine-snapper-sync",
+    "grub2",
+    "grub2-i386-pc",
+    "grub2-x86_64-efi",
+    "kernel-default",
+    "snapper",
+    "linux-base",
+    "multipath-tools",
+    "dmraid",
+    "nvme-cli",
+    "open-iscsi",
     // Chimera's ("grub", "linux-lts", "initramfs-tools", "systemd-boot" and
     // the rest are above): its ZFS userland is "zfs", built for the kernel
     // by ckms (zfs-ckms) or prebuilt (linux-*-zfs-bin).
-    "grub-i386-pc", "grub-x86_64-efi", "linux-stable", "linux-lts-zfs-bin", "linux-stable-zfs-bin", "zfs", "zfs-ckms", "ckms",
+    "grub-i386-pc",
+    "grub-x86_64-efi",
+    "linux-stable",
+    "linux-lts-zfs-bin",
+    "linux-stable-zfs-bin",
+    "zfs",
+    "zfs-ckms",
+    "ckms",
     "cryptsetup-scripts",
     // Gentoo's ("grub", "dracut", "lvm2" and the rest are above, by bare
     // name): its kernels, installkernel and the initramfs generators it
     // can call, systemd-utils (udev, and systemd-boot without systemd).
-    "gentoo-kernel-bin", "gentoo-kernel", "gentoo-sources", "installkernel", "genkernel", "ugrd", "systemd-utils", "zfs-kmod",
+    "gentoo-kernel-bin",
+    "gentoo-kernel",
+    "gentoo-sources",
+    "installkernel",
+    "genkernel",
+    "ugrd",
+    "systemd-utils",
+    "zfs-kmod",
     // PikaOS's: booster, its kernel by metapackage (linux-image-K-pikaos is
     // versioned, as Debian's linux-image-K are, and boot.kernels lists K),
     // rEFInd's theme and btrfs snapshot menu, zram swap.
-    "booster", "kernel-pika", "kernel-pika-runtime", "pika-refind-theme", "refind-btrfs", "zram-tools",
+    "booster",
+    "kernel-pika",
+    "kernel-pika-runtime",
+    "pika-refind-theme",
+    "refind-btrfs",
+    "zram-tools",
     // AnduinOS's: its own GRUB (signed on the machine with a MOK), Ubuntu's
     // shim repackaged, the toolkit that signs and deploys them, and its
     // Btrfs snapshot manager; names no other guest has.
-    "anduinos-grub", "anduinos-shim-signed", "anduinos-secureboot-toolkit", "anduinos-btrfs-snapshots-manager",
+    "anduinos-grub",
+    "anduinos-shim-signed",
+    "anduinos-secureboot-toolkit",
+    "anduinos-btrfs-snapshots-manager",
     // Proxmox VE's ("zfs-initramfs" is above): proxmox-boot-tool, its kernel
     // by metapackage, and the product (pve-manager's version is the PVE
     // release, os.product).
-    "proxmox-kernel-helper", "proxmox-default-kernel", "proxmox-ve", "pve-manager",
+    "proxmox-kernel-helper",
+    "proxmox-default-kernel",
+    "proxmox-ve",
+    "pve-manager",
     // Slackware's ("grub" and "efibootmgr" are above): its loaders, its
     // initrd tool, its kernels (huge, or generic with an initrd) and their
     // modules, and its updater.
-    "lilo", "elilo", "mkinitrd", "kernel-huge", "kernel-generic", "kernel-modules", "slackpkg",
+    "lilo",
+    "elilo",
+    "mkinitrd",
+    "kernel-huge",
+    "kernel-generic",
+    "kernel-modules",
+    "slackpkg",
     // Guix System's, from its system profile's manifest ("grub", "grub-efi",
     // "cryptsetup", "btrfs-progs", "e2fsprogs" and "efibootmgr" are above):
     // its kernel and its init.
-    "linux-libre", "shepherd",
+    "linux-libre",
+    "shepherd",
     // TrueNAS's ("grub-pc", "grub-efi-amd64-bin" and "zfs-initramfs" are
     // above): its middleware, by the names its packages are guessed to have
     // (docs/design/truenas.md; none on another system, so no fingerprint
     // changes).
-    "truenas", "middlewared",
+    "truenas",
+    "middlewared",
     // ZFSBootMenu's ("zfs", "dracut" and "linux" are above): its package
     // (generate-zbm's images; the release EFI has none), and Void's
     // mainline kernel series (docs/design/zfsbootmenu.md).
-    "zfsbootmenu", "linux-mainline",
+    "zfsbootmenu",
+    "linux-mainline",
     // Solus's ("linux-lts", "shim-signed", "dracut" and "efibootmgr" are
     // above): clr-boot-manager, which writes shim, systemd-boot and the
     // kernels to the ESP, its kernel, and usysconf, which runs it after
     // each eopkg transaction (docs/design/solus.md).  systemd-boot is
     // systemd's own file there, and "systemd" every guest has.
-    "clr-boot-manager", "linux-current", "usysconf",
+    "clr-boot-manager",
+    "linux-current",
+    "usysconf",
     // Qubes OS's dom0 ("grub2-efi-x64", "dracut", "lvm2" and the rest are
     // above): the Xen hypervisor GRUB boots and its tools, dom0's newer
     // kernel series, and Qubes's own core and release (docs/design/qubes.md;
     // names no other guest has, so no fingerprint changes).
-    "xen", "xen-hypervisor", "xen-runtime", "kernel-latest", "qubes-core-dom0", "qubes-release",
+    "xen",
+    "xen-hypervisor",
+    "xen-runtime",
+    "kernel-latest",
+    "qubes-core-dom0",
+    "qubes-release",
 ];
 
 /// debconf answers from /var/cache/debconf/config.dat whose names start with
@@ -463,11 +658,30 @@ Version: 1
     #[test]
     fn package_order_and_lookup() {
         // Sorted by name, then version, then arch, as the tuples were.
-        let mut p = vec![Package::new("b", "1", ""), Package::new("a", "2", "x"), Package::new("a", "10", "y"), Package::new("a", "2", "w")];
+        let mut p = vec![
+            Package::new("b", "1", ""),
+            Package::new("a", "2", "x"),
+            Package::new("a", "10", "y"),
+            Package::new("a", "2", "w"),
+        ];
         p.sort();
-        let t: Vec<(&str, &str, &str)> = p.iter().map(|p| (p.name.as_str(), p.version.as_str(), p.arch.as_str())).collect();
-        assert_eq!(t, [("a", "10", "y"), ("a", "2", "w"), ("a", "2", "x"), ("b", "1", "")]);
-        assert_eq!(find_package(&p, "a").map(|p| p.version.as_str()), Some("10"));
+        let t: Vec<(&str, &str, &str)> = p
+            .iter()
+            .map(|p| (p.name.as_str(), p.version.as_str(), p.arch.as_str()))
+            .collect();
+        assert_eq!(
+            t,
+            [
+                ("a", "10", "y"),
+                ("a", "2", "w"),
+                ("a", "2", "x"),
+                ("b", "1", "")
+            ]
+        );
+        assert_eq!(
+            find_package(&p, "a").map(|p| p.version.as_str()),
+            Some("10")
+        );
         assert!(has_package(&p, "b") && !has_package(&p, "c") && !has_package(&[], "a"));
     }
 
@@ -490,7 +704,10 @@ Version: 1
         assert_eq!(
             d,
             vec![
-                ("grub-pc/install_devices".into(), "/dev/disk/by-id/ata-QEMU_HARDDISK_QM00001".into()),
+                (
+                    "grub-pc/install_devices".into(),
+                    "/dev/disk/by-id/ata-QEMU_HARDDISK_QM00001".into()
+                ),
                 ("grub2/update_nvram".into(), "true".into())
             ]
         );
@@ -501,7 +718,10 @@ Version: 1
         let db = "<?xml version=\"1.0\"?>\n<plist version=\"1.0\">\n<dict>\n\t<key>dracut</key>\n\t<dict>\n\t\t<key>architecture</key>\n\t\t<string>x86_64-musl</string>\n\t\t<key>pkgver</key>\n\t\t<string>dracut-105_1</string>\n\t\t<key>run_depends</key>\n\t\t<array>\n\t\t\t<string>bash&gt;=0</string>\n\t\t</array>\n\t\t<key>alternatives</key>\n\t\t<dict>\n\t\t\t<key>x</key>\n\t\t\t<array><string>a:b</string></array>\n\t\t</dict>\n\t</dict>\n\t<key>grub</key>\n\t<dict>\n\t\t<key>pkgver</key>\n\t\t<string>grub-2.12_3</string>\n\t\t<key>architecture</key>\n\t\t<string>x86_64-musl</string>\n\t</dict>\n\t<key>_XBPS_ALTERNATIVES_</key>\n\t<dict>\n\t\t<key>x</key>\n\t\t<array><string>dracut</string></array>\n\t</dict>\n</dict>\n</plist>\n";
         assert_eq!(
             parse_xbps_pkgdb(db),
-            vec![Package::new("dracut", "105_1", "x86_64-musl"), Package::new("grub", "2.12_3", "x86_64-musl")]
+            vec![
+                Package::new("dracut", "105_1", "x86_64-musl"),
+                Package::new("grub", "2.12_3", "x86_64-musl")
+            ]
         );
     }
 
@@ -516,7 +736,11 @@ Version: 1
             ("linux-firmware-20261019", "linux-firmware", "20261019"),
             ("openssl-3.5.4_p1", "openssl", "3.5.4_p1"),
             ("python-3.14.0_rc3-r2", "python", "3.14.0_rc3-r2"),
-            ("foo-1.2b_beta2_p20250101-r10", "foo", "1.2b_beta2_p20250101-r10"),
+            (
+                "foo-1.2b_beta2_p20250101-r10",
+                "foo",
+                "1.2b_beta2_p20250101-r10",
+            ),
             ("xf86-video-r128-6.12.1", "xf86-video-r128", "6.12.1"),
             ("avahi-0-r3", "avahi", "0-r3"),
             ("libsigc++-2.12.1-r1", "libsigc++", "2.12.1-r1"),
@@ -524,10 +748,25 @@ Version: 1
         ] {
             assert_eq!(split_pf(pf), Some((n, v)), "{pf}");
         }
-        for pf in ["grub", "grub-", "-1.0", "foo-r1", "foo-1.0_gamma", "foo-1..2", "foo-1.0ab", "foo-v1.0", "foo-1.0-rc"] {
+        for pf in [
+            "grub",
+            "grub-",
+            "-1.0",
+            "foo-r1",
+            "foo-1.0_gamma",
+            "foo-1..2",
+            "foo-1.0ab",
+            "foo-v1.0",
+            "foo-1.0-rc",
+        ] {
             assert_eq!(split_pf(pf), None, "{pf}");
         }
-        assert!(is_portage_version("2.03.39") && is_portage_version("1.0a_pre") && !is_portage_version("") && !is_portage_version("_p1"));
+        assert!(
+            is_portage_version("2.03.39")
+                && is_portage_version("1.0a_pre")
+                && !is_portage_version("")
+                && !is_portage_version("_p1")
+        );
     }
 
     /// /var/db/pkg read as Portage keeps it, before dpkg's (a Gentoo can
@@ -536,21 +775,42 @@ Version: 1
     #[test]
     fn portage_vdb() {
         let t = Tree::new("portage-vdb");
-        t.file("/etc/gentoo-release", "Gentoo Base System release 2.18
-")
-            .file("/var/db/pkg/sys-boot/grub-2.16-r1/PF", "grub-2.16-r1
-")
-            .file("/var/db/pkg/sys-boot/grub-2.16-r1/CHOST", "x86_64-pc-linux-gnu
-")
-            .file("/var/db/pkg/sys-kernel/dracut-112/PF", "dracut-112
-")
-            .file("/var/db/pkg/sys-kernel/dracut-112/CHOST", "x86_64-pc-linux-gnu
-")
-            .file("/var/db/pkg/sys-kernel/-MERGING-dracut-113/PF", "dracut-113
-")
-            .dir("/var/db/pkg/virtual/dist-kernel-6.18.63")
-            .file("/var/db/pkg/sys-kernel/stray", "x")
-            .file("/var/lib/dpkg/status", "Package: dpkg\nStatus: install ok installed\nVersion: 1.22\n");
+        t.file(
+            "/etc/gentoo-release",
+            "Gentoo Base System release 2.18
+",
+        )
+        .file(
+            "/var/db/pkg/sys-boot/grub-2.16-r1/PF",
+            "grub-2.16-r1
+",
+        )
+        .file(
+            "/var/db/pkg/sys-boot/grub-2.16-r1/CHOST",
+            "x86_64-pc-linux-gnu
+",
+        )
+        .file(
+            "/var/db/pkg/sys-kernel/dracut-112/PF",
+            "dracut-112
+",
+        )
+        .file(
+            "/var/db/pkg/sys-kernel/dracut-112/CHOST",
+            "x86_64-pc-linux-gnu
+",
+        )
+        .file(
+            "/var/db/pkg/sys-kernel/-MERGING-dracut-113/PF",
+            "dracut-113
+",
+        )
+        .dir("/var/db/pkg/virtual/dist-kernel-6.18.63")
+        .file("/var/db/pkg/sys-kernel/stray", "x")
+        .file(
+            "/var/lib/dpkg/status",
+            "Package: dpkg\nStatus: install ok installed\nVersion: 1.22\n",
+        );
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         assert_eq!(
             installed_packages(&s),
@@ -561,32 +821,60 @@ Version: 1
             ]
         );
         std::fs::remove_file(t.p("/etc/gentoo-release")).unwrap();
-        assert_eq!(installed_packages(&s), vec![Package::new("dpkg", "1.22", "")]);
+        assert_eq!(
+            installed_packages(&s),
+            vec![Package::new("dpkg", "1.22", "")]
+        );
     }
 
     #[test]
     fn pkgtools() {
-        assert_eq!(split_pkgtools("kernel-huge-5.15.161-x86_64-1"), Some(("kernel-huge", "5.15.161-1".to_string(), "x86_64")));
-        assert_eq!(split_pkgtools("glibc-zoneinfo-2025b-noarch-1_slack15.0"), Some(("glibc-zoneinfo", "2025b-1_slack15.0".to_string(), "noarch")));
-        assert_eq!(split_pkgtools("lilo-24.2-x86_64-6"), Some(("lilo", "24.2-6".to_string(), "x86_64")));
+        assert_eq!(
+            split_pkgtools("kernel-huge-5.15.161-x86_64-1"),
+            Some(("kernel-huge", "5.15.161-1".to_string(), "x86_64"))
+        );
+        assert_eq!(
+            split_pkgtools("glibc-zoneinfo-2025b-noarch-1_slack15.0"),
+            Some(("glibc-zoneinfo", "2025b-1_slack15.0".to_string(), "noarch"))
+        );
+        assert_eq!(
+            split_pkgtools("lilo-24.2-x86_64-6"),
+            Some(("lilo", "24.2-6".to_string(), "x86_64"))
+        );
         assert_eq!(split_pkgtools("a-b-c"), None);
         assert_eq!(split_pkgtools("-1-x86_64-1"), None);
         let t = Tree::new("pkgtools");
         t.file("/etc/slackware-version", "Slackware 15.0\n")
-            .file("/var/lib/pkgtools/packages/lilo-24.2-x86_64-6", "PACKAGE NAME: lilo-24.2-x86_64-6\n")
-            .file("/var/lib/pkgtools/packages/kernel-huge-5.15.161-x86_64-1", "")
+            .file(
+                "/var/lib/pkgtools/packages/lilo-24.2-x86_64-6",
+                "PACKAGE NAME: lilo-24.2-x86_64-6\n",
+            )
+            .file(
+                "/var/lib/pkgtools/packages/kernel-huge-5.15.161-x86_64-1",
+                "",
+            )
             .file("/var/lib/pkgtools/packages/broken", "")
             .symlink("/var/log/packages", "../lib/pkgtools/packages")
             // A full install's rpm (series ap) has a database too.
             .dir("/var/lib/rpm");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         let p = installed_packages(&s);
-        assert_eq!(p, vec![Package::new("kernel-huge", "5.15.161-1", "x86_64"), Package::new("lilo", "24.2-6", "x86_64")]);
+        assert_eq!(
+            p,
+            vec![
+                Package::new("kernel-huge", "5.15.161-1", "x86_64"),
+                Package::new("lilo", "24.2-6", "x86_64")
+            ]
+        );
         // Before 15.0, /var/log/packages was the directory.
         let t = Tree::new("pkgtools-old");
-        t.file("/etc/slackware-version", "Slackware 14.2\n").file("/var/log/packages/elilo-3.16-x86_64-1", "");
+        t.file("/etc/slackware-version", "Slackware 14.2\n")
+            .file("/var/log/packages/elilo-3.16-x86_64-1", "");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
-        assert_eq!(pkgtools_packages(&s), vec![Package::new("elilo", "3.16-1", "x86_64")]);
+        assert_eq!(
+            pkgtools_packages(&s),
+            vec![Package::new("elilo", "3.16-1", "x86_64")]
+        );
     }
 
     /// Names from the Solus 4.9 ISO's eopkg database (eopkg 4.4.2): the
@@ -605,7 +893,11 @@ Version: 1
             ("usysconf-0.5.13-49", "usysconf", "0.5.13-49"),
             ("usysconf-epoch-1.0.0-26", "usysconf-epoch", "1.0.0-26"),
             ("aalib-1.4.0_5-9", "aalib", "1.4.0_5-9"),
-            ("linux-firmware-amdgpu-20260309-103", "linux-firmware-amdgpu", "20260309-103"),
+            (
+                "linux-firmware-amdgpu-20260309-103",
+                "linux-firmware-amdgpu",
+                "20260309-103",
+            ),
         ] {
             assert_eq!(split_eopkg(d), Some((n, v)), "{d}");
         }
@@ -621,17 +913,29 @@ Version: 1
     fn eopkg_database() {
         let t = Tree::new("eopkg-db");
         let meta = |src: &str, n: &str, v: &str, r: &str| {
-            format!("<PISI>\n    <Source>\n        <Name>{src}</Name>\n        <Packager>\n            <Name>Someone</Name>\n        </Packager>\n    </Source>\n    <Package>\n        <Name>{n}</Name>\n        <History>\n            <Update release=\"{r}\">\n                <Version>{v}</Version>\n                <Name>Someone</Name>\n            </Update>\n        </History>\n        <Architecture>x86_64</Architecture>\n    </Package>\n</PISI>")
+            format!(
+                "<PISI>\n    <Source>\n        <Name>{src}</Name>\n        <Packager>\n            <Name>Someone</Name>\n        </Packager>\n    </Source>\n    <Package>\n        <Name>{n}</Name>\n        <History>\n            <Update release=\"{r}\">\n                <Version>{v}</Version>\n                <Name>Someone</Name>\n            </Update>\n        </History>\n        <Architecture>x86_64</Architecture>\n    </Package>\n</PISI>"
+            )
         };
-        for (src, n, v, r) in [("clr-boot-manager", "clr-boot-manager", "3.6.0", "39"), ("linux-firmware", "linux-firmware-amdgpu", "20260309", "103"), ("shim-signed", "shim-signed", "15.8", "7")] {
+        for (src, n, v, r) in [
+            ("clr-boot-manager", "clr-boot-manager", "3.6.0", "39"),
+            ("linux-firmware", "linux-firmware-amdgpu", "20260309", "103"),
+            ("shim-signed", "shim-signed", "15.8", "7"),
+        ] {
             let d = format!("{EOPKG_PACKAGES}/{n}-{v}-{r}");
-            t.file(&format!("{d}/metadata.xml"), meta(src, n, v, r)).file(&format!("{d}/files.xml"), "<Files>\n</Files>");
+            t.file(&format!("{d}/metadata.xml"), meta(src, n, v, r))
+                .file(&format!("{d}/files.xml"), "<Files>\n</Files>");
         }
         // No metadata.xml: the directory's name alone.
         t.dir(&format!("{EOPKG_PACKAGES}/usysconf-epoch-1.0.0-26"));
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         let x = |n: &str, v: &str, a: &str| Package::new(n, v, a);
-        let want = vec![x("clr-boot-manager", "3.6.0-39", "x86_64"), x("linux-firmware-amdgpu", "20260309-103", "x86_64"), x("shim-signed", "15.8-7", "x86_64"), x("usysconf-epoch", "1.0.0-26", "")];
+        let want = vec![
+            x("clr-boot-manager", "3.6.0-39", "x86_64"),
+            x("linux-firmware-amdgpu", "20260309-103", "x86_64"),
+            x("shim-signed", "15.8-7", "x86_64"),
+            x("usysconf-epoch", "1.0.0-26", ""),
+        ];
         assert_eq!(eopkg_packages(&s), want);
         assert_eq!(installed_packages(&s), want);
     }

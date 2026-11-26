@@ -35,24 +35,40 @@ fn needs(c: &Value) -> Option<(u64, String)> {
         // (dev_item's) is this one's.
         "btrfs" => {
             let one = u(c, "num_devices").is_none_or(|n| n <= 1);
-            let b = c.at(&["device"]).and_then(|d| u(d, "total_bytes")).or_else(|| u(c, "total_bytes").filter(|_| one))?;
+            let b = c
+                .at(&["device"])
+                .and_then(|d| u(d, "total_bytes"))
+                .or_else(|| u(c, "total_bytes").filter(|_| one))?;
             Some((b, "btrfs (its device item's total_bytes)".into()))
         }
         // The payload's offset, and its end where its size is fixed; a
         // dynamic one needs at least a sector past the offset.
         "crypto_LUKS" => {
             let seg = c.at(&["segments", "0"]);
-            let off = seg.and_then(|s| u(s, "offset")).or_else(|| u(c, "data_offset_bytes"))?;
+            let off = seg
+                .and_then(|s| u(s, "offset"))
+                .or_else(|| u(c, "data_offset_bytes"))?;
             match seg.and_then(|s| u(s, "size")) {
-                Some(n) => Some((off + n, format!("LUKS container (payload {} at {})", human(n), human(off)))),
-                None => Some((off + 512, format!("LUKS container (payload at {})", human(off)))),
+                Some(n) => Some((
+                    off + n,
+                    format!("LUKS container (payload {} at {})", human(n), human(off)),
+                )),
+                None => Some((
+                    off + 512,
+                    format!("LUKS container (payload at {})", human(off)),
+                )),
             }
         }
         // md's v1 superblock: the data area (kernel super_1_load refuses a
         // device smaller); 0.90's: the size each member gives the array.
         "linux_raid_member" => match (u(c, "data_offset_bytes"), u(c, "data_size_bytes")) {
-            (Some(off), Some(n)) if n > 0 => Some((off + n, format!("md member (data {} at {})", human(n), human(off)))),
-            _ => u(c, "component_size_bytes").filter(|&n| n > 0).map(|n| (n, "md member (component size)".into())),
+            (Some(off), Some(n)) if n > 0 => Some((
+                off + n,
+                format!("md member (data {} at {})", human(n), human(off)),
+            )),
+            _ => u(c, "component_size_bytes")
+                .filter(|&n| n > 0)
+                .map(|n| (n, "md member (component size)".into())),
         },
         // v0 swap has no last_page: its header is a bitmap.
         "swap" if c.get("version").and_then(Value::as_str) == Some("0") => None,
@@ -77,7 +93,9 @@ fn named(d: &Value) -> String {
 }
 
 fn check(out: &mut Vec<Problem>, dev: &str, size: Option<u64>, c: Option<&Value>) {
-    let (Some(size), Some(c)) = (size.filter(|&s| s > 0), c.filter(|c| !c.is_null())) else { return };
+    let (Some(size), Some(c)) = (size.filter(|&s| s > 0), c.filter(|c| !c.is_null())) else {
+        return;
+    };
     let Some((need, what)) = needs(c) else { return };
     if need > size {
         let text = format!(
@@ -94,7 +112,12 @@ fn check(out: &mut Vec<Problem>, dev: &str, size: Option<u64>, c: Option<&Value>
 pub fn problems(v: &Value) -> Vec<Problem> {
     let mut out = Vec::new();
     for sect in ["disks", "md_arrays", "dm_devices", "softraid_volumes"] {
-        for d in v.at(&["storage", sect]).and_then(Value::as_array).into_iter().flatten() {
+        for d in v
+            .at(&["storage", sect])
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             if d.get("kind").and_then(Value::as_str) == Some("ram") {
                 continue;
             }
@@ -104,7 +127,16 @@ pub fn problems(v: &Value) -> Vec<Problem> {
             // A GELI provider (FreeBSD's): its content against its provsize.
             let geli = |out: &mut Vec<Problem>, p: &Value| {
                 if let Some(g) = p.get("geli").filter(|g| !g.is_null()) {
-                    let prov = g.get("provider").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("{}.eli", p.get("name").and_then(Value::as_str).unwrap_or("?")));
+                    let prov = g
+                        .get("provider")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| {
+                            format!(
+                                "{}.eli",
+                                p.get("name").and_then(Value::as_str).unwrap_or("?")
+                            )
+                        });
                     check(out, &prov, u(g, "provsize"), g.get("content"));
                 }
             };
@@ -112,7 +144,12 @@ pub fn problems(v: &Value) -> Vec<Problem> {
             for k in ["partitions", "label_partitions"] {
                 for p in d.get(k).and_then(Value::as_array).into_iter().flatten() {
                     let size = u(p, "size_bytes").or_else(|| u(p, "sectors").map(|n| n * sector));
-                    check(&mut out, p.get("name").and_then(Value::as_str).unwrap_or("?"), size, p.get("content"));
+                    check(
+                        &mut out,
+                        p.get("name").and_then(Value::as_str).unwrap_or("?"),
+                        size,
+                        p.get("content"),
+                    );
                     geli(&mut out, p);
                 }
             }
@@ -142,7 +179,10 @@ mod tests {
     }
 
     fn ext4(blocks: u64) -> String {
-        format!(r#"{{"type": "ext4", "block_size": 4096, "blocks": {blocks}, "size_bytes": {}}}"#, blocks * 4096)
+        format!(
+            r#"{{"type": "ext4", "block_size": 4096, "blocks": {blocks}, "size_bytes": {}}}"#,
+            blocks * 4096
+        )
     }
 
     /// The motivating dump: a full 64 MiB ext4 on a 28 MiB vda2.
@@ -150,7 +190,13 @@ mod tests {
     fn an_ext4_bigger_than_its_partition() {
         let p = problems(&dump(28 * M, &ext4(16384), ""));
         assert_eq!(p.len(), 1, "{p:?}");
-        assert_eq!((p[0].code, p[0].str_field("dev")), (crate::load::codes::ProblemCode::LayoutInconsistent, Some("vda1")));
+        assert_eq!(
+            (p[0].code, p[0].str_field("dev")),
+            (
+                crate::load::codes::ProblemCode::LayoutInconsistent,
+                Some("vda1")
+            )
+        );
         assert!(p[0].starts_with("vda1: the dump's ext4 is 64 MiB (67108864 bytes), bigger than vda1 itself, 28 MiB (29360128 bytes): the dump is inconsistent"), "{}", p[0]);
         // Exactly the partition, and a little smaller: nothing to say.
         assert!(problems(&dump(28 * M, &ext4(7168), "")).is_empty());
@@ -158,7 +204,15 @@ mod tests {
         // One block over is over.
         assert_eq!(problems(&dump(28 * M, &ext4(7169), "")).len(), 1);
         // blocks and block_size alone are enough.
-        assert_eq!(problems(&dump(28 * M, r#"{"type": "ext2", "block_size": 1024, "blocks": 30000}"#, "")).len(), 1);
+        assert_eq!(
+            problems(&dump(
+                28 * M,
+                r#"{"type": "ext2", "block_size": 1024, "blocks": 30000}"#,
+                ""
+            ))
+            .len(),
+            1
+        );
     }
 
     /// Bytes, not sectors: a partition with sectors only is the disk's
@@ -185,23 +239,91 @@ mod tests {
     fn every_kind_with_a_size() {
         let big = 30 * M;
         for (c, what) in [
-            (format!(r#"{{"type": "xfs", "block_size": 4096, "blocks": {}, "size_bytes": {big}}}"#, big / 4096), "xfs is 30 MiB"),
-            (format!(r#"{{"type": "f2fs", "block_size": 4096, "blocks": {}, "size_bytes": {big}}}"#, big / 4096), "f2fs is 30 MiB"),
-            (format!(r#"{{"type": "vfat", "total_sectors": {}, "size_bytes": {big}}}"#, big / 512), "vfat is 30 MiB"),
-            (format!(r#"{{"type": "swap", "version": "1", "page_size": 4096, "last_page": {}, "size_bytes": {big}}}"#, big / 4096 - 1), "swap is 30 MiB"),
-            (format!(r#"{{"type": "jfs", "size_bytes": {big}}}"#), "jfs is 30 MiB"),
-            (format!(r#"{{"type": "nilfs2", "size_bytes": {big}}}"#), "nilfs2 is 30 MiB"),
-            (format!(r#"{{"type": "ntfs", "size_bytes": {big}}}"#), "ntfs is 30 MiB"),
-            (format!(r#"{{"type": "exfat", "size_bytes": {big}}}"#), "exfat is 30 MiB"),
-            (format!(r#"{{"type": "btrfs", "total_bytes": {big}, "num_devices": 1, "device": {{"devid": 1, "total_bytes": {big}}}}}"#), "btrfs (its device item's total_bytes) is 30 MiB"),
-            (format!(r#"{{"type": "crypto_LUKS", "segments": [{{"offset": "{big}", "size": "dynamic"}}]}}"#), "LUKS container (payload at 30 MiB) is 30 MiB"),
-            (format!(r#"{{"type": "crypto_LUKS", "segments": [{{"offset": "16777216", "size": "{}"}}]}}"#, 14 * M), "LUKS container (payload 14 MiB at 16 MiB) is 30 MiB"),
-            (format!(r#"{{"type": "linux_raid_member", "metadata": "1.2", "data_offset_bytes": {}, "data_size_bytes": {}}}"#, 2 * M, 28 * M), "md member (data 28 MiB at 2 MiB) is 30 MiB"),
-            (format!(r#"{{"type": "linux_raid_member", "metadata": "0.90", "component_size_bytes": {big}}}"#), "md member (component size) is 30 MiB"),
+            (
+                format!(
+                    r#"{{"type": "xfs", "block_size": 4096, "blocks": {}, "size_bytes": {big}}}"#,
+                    big / 4096
+                ),
+                "xfs is 30 MiB",
+            ),
+            (
+                format!(
+                    r#"{{"type": "f2fs", "block_size": 4096, "blocks": {}, "size_bytes": {big}}}"#,
+                    big / 4096
+                ),
+                "f2fs is 30 MiB",
+            ),
+            (
+                format!(
+                    r#"{{"type": "vfat", "total_sectors": {}, "size_bytes": {big}}}"#,
+                    big / 512
+                ),
+                "vfat is 30 MiB",
+            ),
+            (
+                format!(
+                    r#"{{"type": "swap", "version": "1", "page_size": 4096, "last_page": {}, "size_bytes": {big}}}"#,
+                    big / 4096 - 1
+                ),
+                "swap is 30 MiB",
+            ),
+            (
+                format!(r#"{{"type": "jfs", "size_bytes": {big}}}"#),
+                "jfs is 30 MiB",
+            ),
+            (
+                format!(r#"{{"type": "nilfs2", "size_bytes": {big}}}"#),
+                "nilfs2 is 30 MiB",
+            ),
+            (
+                format!(r#"{{"type": "ntfs", "size_bytes": {big}}}"#),
+                "ntfs is 30 MiB",
+            ),
+            (
+                format!(r#"{{"type": "exfat", "size_bytes": {big}}}"#),
+                "exfat is 30 MiB",
+            ),
+            (
+                format!(
+                    r#"{{"type": "btrfs", "total_bytes": {big}, "num_devices": 1, "device": {{"devid": 1, "total_bytes": {big}}}}}"#
+                ),
+                "btrfs (its device item's total_bytes) is 30 MiB",
+            ),
+            (
+                format!(
+                    r#"{{"type": "crypto_LUKS", "segments": [{{"offset": "{big}", "size": "dynamic"}}]}}"#
+                ),
+                "LUKS container (payload at 30 MiB) is 30 MiB",
+            ),
+            (
+                format!(
+                    r#"{{"type": "crypto_LUKS", "segments": [{{"offset": "16777216", "size": "{}"}}]}}"#,
+                    14 * M
+                ),
+                "LUKS container (payload 14 MiB at 16 MiB) is 30 MiB",
+            ),
+            (
+                format!(
+                    r#"{{"type": "linux_raid_member", "metadata": "1.2", "data_offset_bytes": {}, "data_size_bytes": {}}}"#,
+                    2 * M,
+                    28 * M
+                ),
+                "md member (data 28 MiB at 2 MiB) is 30 MiB",
+            ),
+            (
+                format!(
+                    r#"{{"type": "linux_raid_member", "metadata": "0.90", "component_size_bytes": {big}}}"#
+                ),
+                "md member (component size) is 30 MiB",
+            ),
         ] {
             let p = problems(&dump(28 * M, &c, ""));
             assert_eq!(p.len(), 1, "{c}: {p:?}");
-            assert!(p[0].starts_with(&format!("vda1: the dump's {what} ")), "{c}: {}", p[0]);
+            assert!(
+                p[0].starts_with(&format!("vda1: the dump's {what} ")),
+                "{c}: {}",
+                p[0]
+            );
             // The same on a partition big enough for it is fine.
             assert!(problems(&dump(31 * M, &c, "")).is_empty(), "{c}");
         }
@@ -211,10 +333,17 @@ mod tests {
     /// both, its device item's this one.
     #[test]
     fn a_btrfs_of_two_devices_is_held_to_its_own_device_item() {
-        let c = format!(r#"{{"type": "btrfs", "total_bytes": {}, "num_devices": 2, "device": {{"devid": 1, "total_bytes": {}}}}}"#, 56 * M, 28 * M);
+        let c = format!(
+            r#"{{"type": "btrfs", "total_bytes": {}, "num_devices": 2, "device": {{"devid": 1, "total_bytes": {}}}}}"#,
+            56 * M,
+            28 * M
+        );
         assert!(problems(&dump(28 * M, &c, "")).is_empty());
         // Without a device item, the total says nothing about one device.
-        let c = format!(r#"{{"type": "btrfs", "total_bytes": {}, "num_devices": 2}}"#, 56 * M);
+        let c = format!(
+            r#"{{"type": "btrfs", "total_bytes": {}, "num_devices": 2}}"#,
+            56 * M
+        );
         assert!(problems(&dump(28 * M, &c, "")).is_empty());
     }
 
@@ -223,18 +352,32 @@ mod tests {
     /// is over, and the partition's own content (LUKS) is fine.
     #[test]
     fn a_filesystem_on_a_mapping_is_held_to_the_mapping() {
-        let luks = r#"{"type": "crypto_LUKS", "segments": [{"offset": "16777216", "size": "dynamic"}]}"#;
-        let dm = |fs: &str| format!(r#"{{"name": "dm-0", "kind": "dm", "size_bytes": {}, "slaves": ["vda1"], "content": {fs}, "dm": {{"dm_name": "cryptroot", "target": "crypt"}}}}"#, 12 * M);
+        let luks =
+            r#"{"type": "crypto_LUKS", "segments": [{"offset": "16777216", "size": "dynamic"}]}"#;
+        let dm = |fs: &str| {
+            format!(
+                r#"{{"name": "dm-0", "kind": "dm", "size_bytes": {}, "slaves": ["vda1"], "content": {fs}, "dm": {{"dm_name": "cryptroot", "target": "crypt"}}}}"#,
+                12 * M
+            )
+        };
         assert!(problems(&dump(28 * M, luks, &dm(&ext4(3072)))).is_empty());
         let p = problems(&dump(28 * M, luks, &dm(&ext4(4096))));
         assert_eq!(p.len(), 1, "{p:?}");
         assert!(p[0].starts_with("dm-0 (cryptroot): the dump's ext4 is 16 MiB (16777216 bytes), bigger than dm-0 (cryptroot) itself, 12 MiB"), "{}", p[0]);
         // An LV: the same.
-        let lv = format!(r#"{{"name": "dm-1", "kind": "dm", "size_bytes": {}, "slaves": ["vda1"], "content": {}, "dm": {{"dm_name": "vg0-root", "target": "linear"}}}}"#, 8 * M, ext4(4096));
+        let lv = format!(
+            r#"{{"name": "dm-1", "kind": "dm", "size_bytes": {}, "slaves": ["vda1"], "content": {}, "dm": {{"dm_name": "vg0-root", "target": "linear"}}}}"#,
+            8 * M,
+            ext4(4096)
+        );
         let pv = r#"{"type": "LVM2_member", "device_size": 29360128}"#;
         let p = problems(&dump(28 * M, pv, &lv));
         assert_eq!(p.len(), 1, "{p:?}");
-        assert!(p[0].starts_with("dm-1 (vg0-root): the dump's ext4 is 16 MiB"), "{}", p[0]);
+        assert!(
+            p[0].starts_with("dm-1 (vg0-root): the dump's ext4 is 16 MiB"),
+            "{}",
+            p[0]
+        );
     }
 
     /// md arrays and zvols are held to their own size; a GELI provider's
@@ -259,7 +402,11 @@ mod tests {
         .unwrap();
         let p = problems(&v);
         assert_eq!(p.len(), 2, "{p:?}");
-        assert!(p[0].starts_with("zd0: the dump's swap is 9 MiB"), "{}", p[0]);
+        assert!(
+            p[0].starts_with("zd0: the dump's swap is 9 MiB"),
+            "{}",
+            p[0]
+        );
         assert!(p[1].starts_with("vtbd0p2.eli: the dump's ext4 is 16 MiB (16777216 bytes), bigger than vtbd0p2.eli itself, 16 MiB (16776704 bytes)"), "{}", p[1]);
     }
 
@@ -279,7 +426,11 @@ mod tests {
         ] {
             assert!(problems(&dump(28 * M, c, "")).is_empty(), "{c}");
         }
-        let v = parse(&format!(r#"{{"storage": {{"disks": [{{"name": "sr0", "size_bytes": 0, "content": {}}}]}}}}"#, ext4(4096))).unwrap();
+        let v = parse(&format!(
+            r#"{{"storage": {{"disks": [{{"name": "sr0", "size_bytes": 0, "content": {}}}]}}}}"#,
+            ext4(4096)
+        ))
+        .unwrap();
         assert!(problems(&v).is_empty());
         let v = parse(&format!(r#"{{"storage": {{"disks": [{{"name": "ram0", "kind": "ram", "size_bytes": 4096, "content": {}}}]}}}}"#, ext4(4096))).unwrap();
         assert!(problems(&v).is_empty());

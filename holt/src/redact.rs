@@ -40,7 +40,18 @@ pub enum Kind {
 impl Kind {
     /// Every kind, in the summary's order (report-bug's `--no-redact` line
     /// names them all from here, so it can't drift).
-    pub const ALL: [Kind; 10] = [Kind::Hostname, Kind::MachineId, Kind::Uuid, Kind::Serial, Kind::Label, Kind::User, Kind::KeyFile, Kind::Mac, Kind::Id, Kind::Secret];
+    pub const ALL: [Kind; 10] = [
+        Kind::Hostname,
+        Kind::MachineId,
+        Kind::Uuid,
+        Kind::Serial,
+        Kind::Label,
+        Kind::User,
+        Kind::KeyFile,
+        Kind::Mac,
+        Kind::Id,
+        Kind::Secret,
+    ];
 
     pub fn plural(self) -> &'static str {
         match self {
@@ -52,14 +63,19 @@ impl Kind {
             Kind::User => "user names",
             Kind::KeyFile => "key-file paths",
             Kind::Mac => "MAC addresses",
-            Kind::Id => "other identifiers (ZFS GUIDs, hostids, disk signatures, FAT/NTFS serials, DUIDs)",
+            Kind::Id => {
+                "other identifiers (ZFS GUIDs, hostids, disk signatures, FAT/NTFS serials, DUIDs)"
+            }
             Kind::Secret => "repositories and password-file paths",
         }
     }
 
     /// Whether the summary may print the originals (on the terminal only).
     pub fn shown(self) -> bool {
-        matches!(self, Kind::Hostname | Kind::Label | Kind::User | Kind::KeyFile | Kind::Serial | Kind::Secret)
+        matches!(
+            self,
+            Kind::Hostname | Kind::Label | Kind::User | Kind::KeyFile | Kind::Serial | Kind::Secret
+        )
     }
 }
 
@@ -95,7 +111,8 @@ impl Edge {
             Edge::Word | Edge::Right | Edge::Left => is_alnum(c),
             Edge::Hex => is_hex(c),
         };
-        (self == Edge::Right || i == 0 || !edge(b[i - 1])) && (self == Edge::Left || b.get(i + len).is_none_or(|&c| !edge(c)))
+        (self == Edge::Right || i == 0 || !edge(b[i - 1]))
+            && (self == Edge::Left || b.get(i + len).is_none_or(|&c| !edge(c)))
     }
 }
 
@@ -130,11 +147,30 @@ enum Ident {
 
 const HOST_KEYS: [&str; 4] = ["hostname", "creation_host", "homehost", "nodename"];
 const SERIAL_KEYS: [&str; 4] = ["serial", "wwid", "serial_number", "wwn"];
-const LABEL_KEYS: [&str; 5] = ["label", "partlabel", "boot_sector_label", "volume_label", "fs_label"];
-const GUID_KEYS: [&str; 6] = ["guid", "pool_guid", "top_guid", "vdev_guid", "load_guid", "vdev_root_guid"];
+const LABEL_KEYS: [&str; 5] = [
+    "label",
+    "partlabel",
+    "boot_sector_label",
+    "volume_label",
+    "fs_label",
+];
+const GUID_KEYS: [&str; 6] = [
+    "guid",
+    "pool_guid",
+    "top_guid",
+    "vdev_guid",
+    "load_guid",
+    "vdev_root_guid",
+];
 const HEX_KEYS: [&str; 5] = ["disk_signature", "duid", "hostid", "ufsid", "volume_id"];
 /// Keys whose UUID values are well known, not identifiers.
-const TYPE_KEYS: [&str; 5] = ["type", "type_guid", "parttype", "partition_type", "vendor_guid"];
+const TYPE_KEYS: [&str; 5] = [
+    "type",
+    "type_guid",
+    "parttype",
+    "partition_type",
+    "vendor_guid",
+];
 /// EFI vendors and the like: the same on every machine.
 const WELL_KNOWN: [&str; 7] = [
     crate::efi::GLOBAL,
@@ -147,9 +183,36 @@ const WELL_KNOWN: [&str; 7] = [
 ];
 /// Hostnames installers give and live systems use: they identify no one.
 const GENERIC_HOSTS: [&str; 42] = [
-    "", "(none)", "localhost", "localhost.localdomain", "localdomain", "<system>", "any", "debian", "ubuntu", "ubuntu-server", "fedora",
-    "archlinux", "archiso", "alpine", "nixos", "freebsd", "openbsd", "netbsd", "dragonfly", "omnios", "openindiana", "haiku", "void",
-    "voidlinux", "mint", "zorin", "pop-os", "rocky", "backotter", "rescue",
+    "",
+    "(none)",
+    "localhost",
+    "localhost.localdomain",
+    "localdomain",
+    "<system>",
+    "any",
+    "debian",
+    "ubuntu",
+    "ubuntu-server",
+    "fedora",
+    "archlinux",
+    "archiso",
+    "alpine",
+    "nixos",
+    "freebsd",
+    "openbsd",
+    "netbsd",
+    "dragonfly",
+    "omnios",
+    "openindiana",
+    "haiku",
+    "void",
+    "voidlinux",
+    "mint",
+    "zorin",
+    "pop-os",
+    "rocky",
+    "backotter",
+    "rescue",
     // PikaOS's installer copies the live system's hostname into every install.
     "pikaos",
     // Kali's installer's default hostname.
@@ -157,38 +220,110 @@ const GENERIC_HOSTS: [&str; 42] = [
     // Proxmox VE's installer's default hostname.
     "pve",
     // Guix System: its installer's and `guix system image`'s hostnames.
-    "gnu", "guix",
+    "gnu",
+    "guix",
     // Vanilla OS's installer names every install so (the first-setup
     // renames it), and LVM records it as each VG's creation_host.
     "vanilla",
     // TrueNAS's installer's default hostname.
     "truenas",
     // The ZFSBootMenu Void guests' hostnames (testvm/make-void-zfs.sh).
-    "void-zbm", "void-zbm-enc",
+    "void-zbm",
+    "void-zbm-enc",
     // Solus: its live system's hostname, and the solus49 guest's
     // (testvm/make-solus.sh names it after the guest).
-    "solus", "solus49",
+    "solus",
+    "solus49",
     // Qubes OS: dom0's hostname on every install.
     "dom0",
 ];
 /// Labels (lower case, trailing digits and '*' dropped) that installers
 /// and partitioners write: kept, because they help and identify no one.
 const GENERIC_LABELS: [&str; 88] = [
-    "", "efi", "esp", "efi system partition", "efi system", "efi-system", "efiboot", "bios", "biosboot", "bios boot partition",
+    "",
+    "efi",
+    "esp",
+    "efi system partition",
+    "efi system",
+    "efi-system",
+    "efiboot",
+    "bios",
+    "biosboot",
+    "bios boot partition",
     // Hybrid ISO images (xorriso: EFISYS, Gap1, Appended2...) and BackOtter's
     // and Haiku's own images.
-    "efisys", "iso", "iso9660", "gap", "appended", "haiku esp", "backotter root", "backotter config",
-    "bios boot", "boot", "root", "rootfs", "swap", "home", "var", "tmp", "usr", "srv", "data", "system", "grub", "grub2", "loader",
-    "zfs", "zroot", "rpool", "bpool", "gptboot", "gptzfs", "gptswap", "freebsd", "freebsd-boot", "freebsd-zfs", "freebsd-swap",
-    "freebsd-ufs", "haiku", "redox", "genode", "noname", "no name", "linux", "linux filesystem", "linux swap", "primary", "logical",
-    "microsoft reserved partition", "basic data partition", "keystore-rpool", "nixboot", "nixos", "backotter", "zram",
+    "efisys",
+    "iso",
+    "iso9660",
+    "gap",
+    "appended",
+    "haiku esp",
+    "backotter root",
+    "backotter config",
+    "bios boot",
+    "boot",
+    "root",
+    "rootfs",
+    "swap",
+    "home",
+    "var",
+    "tmp",
+    "usr",
+    "srv",
+    "data",
+    "system",
+    "grub",
+    "grub2",
+    "loader",
+    "zfs",
+    "zroot",
+    "rpool",
+    "bpool",
+    "gptboot",
+    "gptzfs",
+    "gptswap",
+    "freebsd",
+    "freebsd-boot",
+    "freebsd-zfs",
+    "freebsd-swap",
+    "freebsd-ufs",
+    "haiku",
+    "redox",
+    "genode",
+    "noname",
+    "no name",
+    "linux",
+    "linux filesystem",
+    "linux swap",
+    "primary",
+    "logical",
+    "microsoft reserved partition",
+    "basic data partition",
+    "keystore-rpool",
+    "nixboot",
+    "nixos",
+    "backotter",
+    "zram",
     // PikaOS's installers: GPT names, and pikainstall's file system labels
     // (the 2.0.5 GTK installer's auto_xfs labels /boot's ext4 "PikaOS").
-    "linux-efi", "linux-boot", "linux-root", "linux-home", "pikaboot", "pikaroot", "pikahome", "pikaos",
+    "linux-efi",
+    "linux-boot",
+    "linux-root",
+    "linux-home",
+    "pikaboot",
+    "pikaroot",
+    "pikahome",
+    "pikaos",
     // Vanilla OS's installer (ABRoot): the GPT names it gives and copies
     // to the file system labels, the VG names, and the roots' and init
     // LV's labels, the same on every install (crate::abroot).
-    "vos-a", "vos-b", "vos-var", "vos-boot", "vos-init", "vos-efi", "vos-root",
+    "vos-a",
+    "vos-b",
+    "vos-var",
+    "vos-boot",
+    "vos-init",
+    "vos-efi",
+    "vos-root",
     // elementary OS's installer (distinst): the LUKS mapping its encrypted
     // install opens the PV as (its VG is "data", above).
     "cryptdata",
@@ -197,25 +332,59 @@ const GENERIC_LABELS: [&str; 88] = [
     "soluslivexfce",
     // Ubuntu Core's pc gadget: GPT names and file system labels, and the
     // LUKS2 labels of its encrypted ones (crate::snapcore).
-    "ubuntu-seed", "ubuntu-boot", "ubuntu-save", "ubuntu-data", "ubuntu-save-enc", "ubuntu-data-enc",
+    "ubuntu-seed",
+    "ubuntu-boot",
+    "ubuntu-save",
+    "ubuntu-data",
+    "ubuntu-save-enc",
+    "ubuntu-data-enc",
     // Qubes OS's installer: its VG and its two thin pools, the same on
     // every install (docs/design/qubes.md).
-    "qubes_dom0", "root-pool", "vm-pool",
+    "qubes_dom0",
+    "root-pool",
+    "vm-pool",
 ];
 /// The qubes Qubes OS 4.3 makes itself (its initial setup's system and
 /// default qubes, its templates, Whonix's): kept in qube names
 /// (storage.qubes) and the LV names made from them; a qube the user named
 /// is redacted like a hostname.
 const GENERIC_QUBES: [&str; 14] = [
-    "dom0", "sys-net", "sys-firewall", "sys-usb", "sys-whonix", "default-dvm", "default-mgmt-dvm", "personal", "work", "untrusted", "vault", "anon-whonix", "fedora-44-xfce", "debian-13-xfce",
+    "dom0",
+    "sys-net",
+    "sys-firewall",
+    "sys-usb",
+    "sys-whonix",
+    "default-dvm",
+    "default-mgmt-dvm",
+    "personal",
+    "work",
+    "untrusted",
+    "vault",
+    "anon-whonix",
+    "fedora-44-xfce",
+    "debian-13-xfce",
 ];
 
 /// A stock qube's name (GENERIC_QUBES, a template's fedora-N-* or
 /// debian-N-*, or Whonix's whonix-*).
 fn generic_qube(q: &str) -> bool {
     let l = q.to_ascii_lowercase();
-    let template = |p: &str| l.strip_prefix(p).and_then(|r| r.split_once('-')).is_some_and(|(n, rest)| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()) && ["xfce", "minimal", "gnome", "kde"].iter().any(|f| rest == *f || rest.starts_with(&format!("{f}-"))));
-    GENERIC_QUBES.contains(&l.as_str()) || l.starts_with("whonix-") || template("fedora-") || template("debian-") || l.ends_with("-dm") && GENERIC_QUBES.contains(&l.trim_end_matches("-dm"))
+    let template = |p: &str| {
+        l.strip_prefix(p)
+            .and_then(|r| r.split_once('-'))
+            .is_some_and(|(n, rest)| {
+                !n.is_empty()
+                    && n.bytes().all(|c| c.is_ascii_digit())
+                    && ["xfce", "minimal", "gnome", "kde"]
+                        .iter()
+                        .any(|f| rest == *f || rest.starts_with(&format!("{f}-")))
+            })
+    };
+    GENERIC_QUBES.contains(&l.as_str())
+        || l.starts_with("whonix-")
+        || template("fedora-")
+        || template("debian-")
+        || l.ends_with("-dm") && GENERIC_QUBES.contains(&l.trim_end_matches("-dm"))
 }
 /// Ubuntu names the datasets for /home and /root USERDATA/home_ID and
 /// USERDATA/root_ID.
@@ -245,10 +414,37 @@ pub struct Collector {
 /// A release medium's volume label: a system's name, its version and an
 /// architecture ("Ubuntu-Server 26.04.1 LTS amd64", "Fedora-S-dvd-x86_64-44").
 fn release_label(low: &str) -> bool {
-    const SYSTEMS: [&str; 21] = ["ubuntu", "debian", "fedora", "rocky", "alma", "arch", "linuxmint", "mint", "pop", "zorin", "opensuse", "nixos", "pikaos", "kali", "proxmox", "guix", "truenas", "elementary", "elementaryos", "solus", "qubes"];
+    const SYSTEMS: [&str; 21] = [
+        "ubuntu",
+        "debian",
+        "fedora",
+        "rocky",
+        "alma",
+        "arch",
+        "linuxmint",
+        "mint",
+        "pop",
+        "zorin",
+        "opensuse",
+        "nixos",
+        "pikaos",
+        "kali",
+        "proxmox",
+        "guix",
+        "truenas",
+        "elementary",
+        "elementaryos",
+        "solus",
+        "qubes",
+    ];
     const ARCHES: [&str; 5] = ["amd64", "x86_64", "x86-64", "arm64", "aarch64"];
-    let first = low.split(|c: char| !c.is_ascii_alphanumeric()).next().unwrap_or("");
-    SYSTEMS.contains(&first) && ARCHES.iter().any(|a| low.contains(a)) && low.bytes().any(|c| c.is_ascii_digit())
+    let first = low
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .next()
+        .unwrap_or("");
+    SYSTEMS.contains(&first)
+        && ARCHES.iter().any(|a| low.contains(a))
+        && low.bytes().any(|c| c.is_ascii_digit())
 }
 
 fn is_hex(c: u8) -> bool {
@@ -264,7 +460,10 @@ fn hex_val(c: u8) -> u8 {
 }
 
 fn hex_bytes(h: &str) -> Vec<u8> {
-    h.as_bytes().chunks(2).map(|p| (hex_val(p[0]) << 4) | hex_val(*p.get(1).unwrap_or(&b'0'))).collect()
+    h.as_bytes()
+        .chunks(2)
+        .map(|p| (hex_val(p[0]) << 4) | hex_val(*p.get(1).unwrap_or(&b'0')))
+        .collect()
 }
 
 /// The UUID-shaped runs in `s`: 8-4-4-4-12 hex digits, not inside a longer
@@ -278,7 +477,9 @@ fn lvm_spans(s: &str) -> Vec<(usize, usize)> {
         .into_iter()
         .filter(|&(a, b)| {
             let t = &s.as_bytes()[a..b];
-            t.iter().any(u8::is_ascii_digit) && t.iter().any(u8::is_ascii_alphabetic) && !t.iter().all(|&c| is_hex(c) || c == b'-')
+            t.iter().any(u8::is_ascii_digit)
+                && t.iter().any(u8::is_ascii_alphabetic)
+                && !t.iter().all(|&c| is_hex(c) || c == b'-')
         })
         .collect()
 }
@@ -295,7 +496,10 @@ fn mac_spans(s: &str) -> Vec<(usize, usize)> {
         let mut from = 0;
         while let Some(i) = s[from..].find(pre) {
             let st = from + i + pre.len();
-            if b.len() >= st + 12 && b[st..st + 12].iter().all(|&c| is_hex(c)) && b.get(st + 12).is_none_or(|&c| !is_hex(c)) {
+            if b.len() >= st + 12
+                && b[st..st + 12].iter().all(|&c| is_hex(c))
+                && b.get(st + 12).is_none_or(|&c| !is_hex(c))
+            {
                 out.push((st, st + 12));
             }
             from = st;
@@ -327,12 +531,19 @@ fn load_option_macs(h: &str) -> Vec<String> {
     let end = i.saturating_add(path_len).min(b.len());
     let mut out = Vec::new();
     while i + 4 <= end {
-        let (ty, sub, len) = (b[i], b[i + 1], usize::from(u16::from_le_bytes([b[i + 2], b[i + 3]])));
+        let (ty, sub, len) = (
+            b[i],
+            b[i + 1],
+            usize::from(u16::from_le_bytes([b[i + 2], b[i + 3]])),
+        );
         if len < 4 || i + len > end || (ty, sub) == (0x7f, 0xff) {
             break;
         }
         if (ty, sub) == (3, 11) && len >= 10 {
-            let mac: String = b[i + 4..i + 10].iter().map(|x| format!("{x:02x}")).collect();
+            let mac: String = b[i + 4..i + 10]
+                .iter()
+                .map(|x| format!("{x:02x}"))
+                .collect();
             if mac.bytes().any(|c| c != b'0') && mac != "ffffffffffff" && !out.contains(&mac) {
                 out.push(mac);
             }
@@ -349,7 +560,9 @@ fn pattern_spans(s: &str, groups: &[usize], sep: u8, ok: fn(u8) -> bool) -> Vec<
     let mut i = 0;
     while i + len <= b.len() {
         let before_ok = i == 0 || !(is_alnum(b[i - 1]) || (sep == b':' && b[i - 1] == b':'));
-        let after_ok = b.get(i + len).is_none_or(|&c| !(is_alnum(c) || (sep == b':' && c == b':')));
+        let after_ok = b
+            .get(i + len)
+            .is_none_or(|&c| !(is_alnum(c) || (sep == b':' && c == b':')));
         if before_ok && after_ok && fits(&b[i..i + len], groups, sep, ok) {
             out.push((i, i + len));
             i += len;
@@ -380,7 +593,11 @@ fn fits(t: &[u8], groups: &[usize], sep: u8, ok: fn(u8) -> bool) -> bool {
 /// A user name as /etc/passwd allows it.
 fn user_like(u: &str) -> bool {
     let b = u.as_bytes();
-    !b.is_empty() && b.len() <= 32 && (b[0].is_ascii_alphabetic() || b[0] == b'_') && b.iter().all(|&c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
+    !b.is_empty()
+        && b.len() <= 32
+        && (b[0].is_ascii_alphabetic() || b[0] == b'_')
+        && b.iter()
+            .all(|&c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
 }
 
 impl Collector {
@@ -479,7 +696,9 @@ impl Collector {
                         self.pool_labels.insert(l.to_string());
                     }
                 }
-                if key == "md_arrays" || v.get("type").and_then(Value::as_str) == Some("linux_raid_member") {
+                if key == "md_arrays"
+                    || v.get("type").and_then(Value::as_str) == Some("linux_raid_member")
+                {
                     if let Some(l) = v.get("label").and_then(Value::as_str) {
                         self.md_labels.insert(l.to_string());
                     }
@@ -514,7 +733,9 @@ impl Collector {
             if n != 0 {
                 self.add(Ident::Dec(n, 8));
             }
-        } else if (GUID_KEYS.contains(&key) || (key == "value" && GUID_KEYS.contains(&parent))) && n >= 10_000_000 {
+        } else if (GUID_KEYS.contains(&key) || (key == "value" && GUID_KEYS.contains(&parent)))
+            && n >= 10_000_000
+        {
             self.add(Ident::Dec(n, 16));
         }
     }
@@ -526,7 +747,11 @@ impl Collector {
         // Family Controller"): learned from the load option itself.
         if key == "load_option_hex" {
             for d in load_option_macs(s) {
-                if !self.idents.iter().any(|i| matches!(i, Ident::Hex(x, _, _) if *x == d)) {
+                if !self
+                    .idents
+                    .iter()
+                    .any(|i| matches!(i, Ident::Hex(x, _, _) if *x == d))
+                {
                     self.add(Ident::Hex(d.clone(), d, Kind::Mac));
                 }
             }
@@ -546,7 +771,9 @@ impl Collector {
         // letters: scan's lvm_spans wants a digit and a letter so that words
         // don't pass, and vanilla3's lvol0_pmspare had a UUID of letters only
         // (V8, docs/design/vanillaos.md).
-        if (key == "id" || key.ends_with("uuid")) && pattern_spans(t, &[6, 4, 4, 4, 4, 4, 6], b'-', is_alnum) == [(0, t.len())] {
+        if (key == "id" || key.ends_with("uuid"))
+            && pattern_spans(t, &[6, 4, 4, 4, 4, 4, 6], b'-', is_alnum) == [(0, t.len())]
+        {
             self.add(Ident::Lvm(t.replace('-', "")));
         }
         // A qube the user named (storage.qubes): redacted as a hostname is,
@@ -576,7 +803,11 @@ impl Collector {
         } else if LABEL_KEYS.contains(&key) && !t.is_empty() {
             // md names its arrays "host:N" after the host that made them.
             if let Some((h, n)) = t.rsplit_once(':') {
-                if !h.is_empty() && !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()) && !h.contains(['/', ' ']) {
+                if !h.is_empty()
+                    && !n.is_empty()
+                    && n.bytes().all(|c| c.is_ascii_digit())
+                    && !h.contains(['/', ' '])
+                {
                     self.add(Ident::Name(Kind::Hostname, h.to_string()));
                 }
             }
@@ -604,16 +835,28 @@ impl Collector {
                 if let Ok(n) = t.parse::<u64>() {
                     self.add(Ident::Dec(n, 16));
                 }
-            } else if t.bytes().all(|c| is_hex(c) || c == b'-') && t.bytes().filter(|&c| is_hex(c)).count() >= 8 && uuid_spans(t).is_empty() && !is_mbr_partuuid(t) {
+            } else if t.bytes().all(|c| is_hex(c) || c == b'-')
+                && t.bytes().filter(|&c| is_hex(c)).count() >= 8
+                && uuid_spans(t).is_empty()
+                && !is_mbr_partuuid(t)
+            {
                 self.hex(t, Kind::Id);
             }
         }
     }
 
     fn hex(&mut self, form: &str, kind: Kind) {
-        let digits: String = form.chars().filter(char::is_ascii_hexdigit).collect::<String>().to_ascii_lowercase();
+        let digits: String = form
+            .chars()
+            .filter(char::is_ascii_hexdigit)
+            .collect::<String>()
+            .to_ascii_lowercase();
         if digits.len() >= 8 && digits.bytes().any(|c| c != b'0') {
-            if !self.idents.iter().any(|i| matches!(i, Ident::Hex(d, _, _) if *d == digits)) {
+            if !self
+                .idents
+                .iter()
+                .any(|i| matches!(i, Ident::Hex(d, _, _) if *d == digits))
+            {
                 self.add(Ident::Hex(digits, form.to_string(), kind));
             }
         }
@@ -651,7 +894,11 @@ impl Collector {
         for (a, b) in mac_spans(s) {
             let d = s[a..b].replace(':', "").to_ascii_lowercase();
             if d.bytes().any(|c| c != b'0') && d != "ffffffffffff" {
-                if !self.idents.iter().any(|i| matches!(i, Ident::Hex(x, _, _) if *x == d)) {
+                if !self
+                    .idents
+                    .iter()
+                    .any(|i| matches!(i, Ident::Hex(x, _, _) if *x == d))
+                {
                     self.add(Ident::Hex(d, s[a..b].to_string(), Kind::Mac));
                 }
             }
@@ -671,13 +918,23 @@ impl Collector {
                 // (RustAudit1 HD4-01).
                 let head = &s[..from + i];
                 let path_char = |c: char| c.is_alphanumeric() || "/_-.".contains(c);
-                let linked_home = ["/var", "/usr"].iter().any(|p| head.strip_suffix(p).is_some_and(|h| !h.chars().next_back().is_some_and(path_char)));
-                if pre == "/home/" && head.chars().next_back().is_some_and(path_char) && !linked_home {
+                let linked_home = ["/var", "/usr"].iter().any(|p| {
+                    head.strip_suffix(p)
+                        .is_some_and(|h| !h.chars().next_back().is_some_and(path_char))
+                });
+                if pre == "/home/"
+                    && head.chars().next_back().is_some_and(path_char)
+                    && !linked_home
+                {
                     from = st;
                     continue;
                 }
                 let rest = &s[st..];
-                let end = rest.find(|c: char| "/\"' \t\n:,;)]}".contains(c) || (pre == "USERDATA/" && c == '_')).unwrap_or(rest.len());
+                let end = rest
+                    .find(|c: char| {
+                        "/\"' \t\n:,;)]}".contains(c) || (pre == "USERDATA/" && c == '_')
+                    })
+                    .unwrap_or(rest.len());
                 let u = &rest[..end];
                 if user_like(u) && !GENERIC_USERS.contains(&u) {
                     self.add(Ident::Name(Kind::User, u.to_string()));
@@ -699,28 +956,64 @@ impl Collector {
 /// it there.
 fn link_serials(s: &str) -> Vec<String> {
     let mut out = Vec::new();
-    for (pre, buses) in [("by-id/", &["ata-", "scsi-", "usb-", "nvme-", "mmc-", "ieee1394-", "memstick-", "virtio-", "cciss-"][..]), ("diskid/", &["DISK-"][..])] {
+    for (pre, buses) in [
+        (
+            "by-id/",
+            &[
+                "ata-",
+                "scsi-",
+                "usb-",
+                "nvme-",
+                "mmc-",
+                "ieee1394-",
+                "memstick-",
+                "virtio-",
+                "cciss-",
+            ][..],
+        ),
+        ("diskid/", &["DISK-"][..]),
+    ] {
         let mut from = 0;
         while let Some(i) = s[from..].find(pre) {
             let st = from + i + pre.len();
             from = st;
             let rest = &s[st..];
-            let name = &rest[..rest.find(|c: char| c == '"' || c == '/' || c.is_whitespace() || c == ',').unwrap_or(rest.len())];
-            let Some(bus) = buses.iter().find(|b| name.starts_with(**b)) else { continue };
+            let name = &rest[..rest
+                .find(|c: char| c == '"' || c == '/' || c.is_whitespace() || c == ',')
+                .unwrap_or(rest.len())];
+            let Some(bus) = buses.iter().find(|b| name.starts_with(**b)) else {
+                continue;
+            };
             let mut id = &name[bus.len()..];
             // -part3 (udev), -0:0 (a USB LUN), p3 / s1a (FreeBSD's slices).
-            if let Some(p) = id.rfind("-part").filter(|&p| id[p + 5..].bytes().all(|c| c.is_ascii_digit()) && p + 5 < id.len()) {
+            if let Some(p) = id
+                .rfind("-part")
+                .filter(|&p| id[p + 5..].bytes().all(|c| c.is_ascii_digit()) && p + 5 < id.len())
+            {
                 id = &id[..p];
             }
-            if let Some(p) = id.rfind('-').filter(|&p| id[p + 1..].contains(':') && id[p + 1..].bytes().all(|c| c.is_ascii_digit() || c == b':')) {
+            if let Some(p) = id.rfind('-').filter(|&p| {
+                id[p + 1..].contains(':')
+                    && id[p + 1..].bytes().all(|c| c.is_ascii_digit() || c == b':')
+            }) {
                 id = &id[..p];
             }
             let mut segs: Vec<&str> = id.split('_').collect();
             // nvme-MODEL_SERIAL_1: the namespace.
-            if segs.len() > 2 && segs.last().is_some_and(|l| l.len() <= 2 && l.bytes().all(|c| c.is_ascii_digit())) {
+            if segs.len() > 2
+                && segs
+                    .last()
+                    .is_some_and(|l| l.len() <= 2 && l.bytes().all(|c| c.is_ascii_digit()))
+            {
                 segs.pop();
             }
-            let ser = if *bus == "DISK-" { strip_slice(id) } else if segs.len() >= 2 { segs.last().copied().unwrap_or("") } else { "" };
+            let ser = if *bus == "DISK-" {
+                strip_slice(id)
+            } else if segs.len() >= 2 {
+                segs.last().copied().unwrap_or("")
+            } else {
+                ""
+            };
             if ser.len() >= 4 && !out.iter().any(|x| x == ser) {
                 out.push(ser.to_string());
             }
@@ -749,7 +1042,10 @@ fn strip_slice(id: &str) -> &str {
 
 fn is_mbr_partuuid(t: &str) -> bool {
     let b = t.as_bytes();
-    b.len() == 11 && b[8] == b'-' && b[..8].iter().all(|&c| is_hex(c)) && b[9..].iter().all(|&c| is_hex(c))
+    b.len() == 11
+        && b[8] == b'-'
+        && b[..8].iter().all(|&c| is_hex(c))
+        && b[9..].iter().all(|&c| is_hex(c))
 }
 
 pub fn is_blob_key(key: &str) -> bool {
@@ -778,7 +1074,13 @@ impl Sealer {
     fn new(c: Collector) -> Sealer {
         let corpus_lc = c.corpus.to_ascii_lowercase();
         let corpus_hex = corpus_lc.replace(['-', ':'], "");
-        Sealer { c, corpus_lc, corpus_hex, r: Redactor::default(), counters: HashMap::new() }
+        Sealer {
+            c,
+            corpus_lc,
+            corpus_hex,
+            r: Redactor::default(),
+            counters: HashMap::new(),
+        }
     }
 
     /// The next free number for pseudonyms made by `f`: one that appears
@@ -806,22 +1108,46 @@ impl Sealer {
 
     fn sub(&mut self, from: impl Into<String>, to: impl Into<String>, edge: Edge) {
         let (from, to) = (from.into(), to.into());
-        if from.is_empty() || from == to || self.r.subs.iter().any(|s| s.from == from && s.to == to && s.edge == edge) {
+        if from.is_empty()
+            || from == to
+            || self
+                .r
+                .subs
+                .iter()
+                .any(|s| s.from == from && s.to == to && s.edge == edge)
+        {
             return;
         }
-        self.r.subs.push(Sub { from, to, edge, in_keys: true });
+        self.r.subs.push(Sub {
+            from,
+            to,
+            edge,
+            in_keys: true,
+        });
     }
 
     /// Only as the whole value of one of `kind`'s keys (a short label, a
     /// hostname that is also a word the dump uses).
     fn whole(&mut self, kind: Kind, from: &str, to: &str) {
-        if !from.is_empty() && from != to && !self.r.whole_subs.iter().any(|(k, f, _)| *k == kind && f == from) {
-            self.r.whole_subs.push((kind, from.to_string(), to.to_string()));
+        if !from.is_empty()
+            && from != to
+            && !self
+                .r
+                .whole_subs
+                .iter()
+                .any(|(k, f, _)| *k == kind && f == from)
+        {
+            self.r
+                .whole_subs
+                .push((kind, from.to_string(), to.to_string()));
         }
     }
 
     fn word_sub(&self, from: &str) -> bool {
-        self.r.subs.iter().any(|s| s.from == from && s.edge == Edge::Word)
+        self.r
+            .subs
+            .iter()
+            .any(|s| s.from == from && s.edge == Edge::Word)
     }
 
     fn bin(&mut self, from: Vec<u8>, to: Vec<u8>, short: bool) {
@@ -839,7 +1165,11 @@ impl Sealer {
     }
 
     fn entry(&mut self, kind: Kind, original: impl Into<String>, pseudonym: impl Into<String>) {
-        self.r.entries.push(Entry { kind, original: original.into(), pseudonym: pseudonym.into() });
+        self.r.entries.push(Entry {
+            kind,
+            original: original.into(),
+            pseudonym: pseudonym.into(),
+        });
     }
 
     fn kept(&mut self, kind: Kind, what: &str, why: &str) {
@@ -895,7 +1225,12 @@ impl Sealer {
             }
         }
         // Longest first; ties in a stable order.
-        self.r.subs.sort_by(|a, b| b.from.len().cmp(&a.from.len()).then_with(|| a.from.cmp(&b.from)));
+        self.r.subs.sort_by(|a, b| {
+            b.from
+                .len()
+                .cmp(&a.from.len())
+                .then_with(|| a.from.cmp(&b.from))
+        });
         self.r.bin.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
         self.r.index();
         self.r
@@ -903,14 +1238,19 @@ impl Sealer {
 
     fn generic_host(&self, h: &str) -> bool {
         let l = h.to_ascii_lowercase();
-        GENERIC_HOSTS.contains(&l.as_str()) || self.c.os_words.contains(&l) || l.starts_with("localhost")
+        GENERIC_HOSTS.contains(&l.as_str())
+            || self.c.os_words.contains(&l)
+            || l.starts_with("localhost")
     }
 
     fn label(&mut self, l: &str, hosts: &[String]) {
         let low = l.to_ascii_lowercase();
         let stem = low.trim_end_matches(|c: char| c.is_ascii_digit() || c == '*');
         // md's array name, "host:0": named through its host.
-        let host_part = l.rsplit_once(':').filter(|(_, n)| n.bytes().all(|c| c.is_ascii_digit())).map(|(h, _)| h);
+        let host_part = l
+            .rsplit_once(':')
+            .filter(|(_, n)| n.bytes().all(|c| c.is_ascii_digit()))
+            .map(|(h, _)| h);
         if let Some(h) = host_part {
             if hosts.iter().any(|x| x == h) && self.word_sub(h) {
                 return;
@@ -924,25 +1264,51 @@ impl Sealer {
         // (Anaconda's localhost.localdomain:pv00): load gives md the two
         // parts apart (--homehost, --name), so the pseudonym keeps them
         // apart.  The name after the host is a label like any other.
-        let parts = l.split_once(':').filter(|_| self.c.md_labels.contains(l)).filter(|(h, n)| {
-            let host_like = h.bytes().next().is_some_and(|c| c.is_ascii_alphabetic()) && h.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-'));
-            let name_like = !n.is_empty() && n.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'-'));
-            host_like && name_like && !n.bytes().all(|c| c.is_ascii_digit()) && !hosts.iter().any(|x| contains_word(n, x))
-        });
+        let parts = l
+            .split_once(':')
+            .filter(|_| self.c.md_labels.contains(l))
+            .filter(|(h, n)| {
+                let host_like = h.bytes().next().is_some_and(|c| c.is_ascii_alphabetic())
+                    && h.bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-'));
+                let name_like = !n.is_empty()
+                    && n.bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'-'));
+                host_like
+                    && name_like
+                    && !n.bytes().all(|c| c.is_ascii_digit())
+                    && !hosts.iter().any(|x| contains_word(n, x))
+            });
         if let Some((h, n)) = parts {
             if !self.generic_host(h) {
                 self.name(Kind::Hostname, h, "host");
             }
             self.label(n, hosts);
-            let pseudo = |r: &Redactor, k: Kind, o: &str| r.entries.iter().find(|e| e.kind == k && e.original == o).map_or(o.to_string(), |e| e.pseudonym.clone());
-            let to = format!("{}:{}", pseudo(&self.r, Kind::Hostname, h), pseudo(&self.r, Kind::Label, n));
+            let pseudo = |r: &Redactor, k: Kind, o: &str| {
+                r.entries
+                    .iter()
+                    .find(|e| e.kind == k && e.original == o)
+                    .map_or(o.to_string(), |e| e.pseudonym.clone())
+            };
+            let to = format!(
+                "{}:{}",
+                pseudo(&self.r, Kind::Hostname, h),
+                pseudo(&self.r, Kind::Label, n)
+            );
             self.whole(Kind::Label, l, &to);
             return;
         }
-        if hosts.iter().any(|h| contains_word(l, h) && self.word_sub(h)) {
+        if hosts
+            .iter()
+            .any(|h| contains_word(l, h) && self.word_sub(h))
+        {
             return;
         }
-        if GENERIC_LABELS.contains(&stem) || GENERIC_LABELS.contains(&low.as_str()) || self.c.os_words.contains(stem) || release_label(&low) {
+        if GENERIC_LABELS.contains(&stem)
+            || GENERIC_LABELS.contains(&low.as_str())
+            || self.c.os_words.contains(stem)
+            || release_label(&low)
+        {
             self.kept(Kind::Label, l, "a default name");
             return;
         }
@@ -958,23 +1324,39 @@ impl Sealer {
     /// only as a whole value and in the places such names go (LABEL=,
     /// by-label/, /home/).
     fn name(&mut self, kind: Kind, orig: &str, tag: &'static str) {
-        if self.r.entries.iter().any(|e| e.kind == kind && e.original == orig) {
+        if self
+            .r
+            .entries
+            .iter()
+            .any(|e| e.kind == kind && e.original == orig)
+        {
             return;
         }
         if kind == Kind::Serial && orig.trim().len() < 4 {
             self.kept(kind, orig, "too short to identify anything");
             return;
         }
-        let upper = !orig.bytes().any(|c| c.is_ascii_lowercase()) && orig.bytes().any(|c| c.is_ascii_uppercase());
+        let upper = !orig.bytes().any(|c| c.is_ascii_lowercase())
+            && orig.bytes().any(|c| c.is_ascii_uppercase());
         let dash = orig.contains('-');
         let p = self.next(tag, |n| {
-            let base = if dash { format!("{tag}-{n}") } else { format!("{tag}{n}") };
-            vec![if upper { base.to_ascii_uppercase() } else { base }]
+            let base = if dash {
+                format!("{tag}-{n}")
+            } else {
+                format!("{tag}{n}")
+            };
+            vec![if upper {
+                base.to_ascii_uppercase()
+            } else {
+                base
+            }]
         });
         let pseudo = p[0].clone();
         self.entry(kind, orig, &pseudo);
         let min = if kind == Kind::Hostname { 3 } else { 4 };
-        let wordy = orig.len() >= min && !self.c.vocab.contains(orig) && !self.c.os_words.contains(&orig.to_ascii_lowercase());
+        let wordy = orig.len() >= min
+            && !self.c.vocab.contains(orig)
+            && !self.c.os_words.contains(&orig.to_ascii_lowercase());
         if wordy {
             self.sub(orig, &pseudo, Edge::Word);
         } else {
@@ -985,18 +1367,41 @@ impl Sealer {
             self.sub(trimmed, &pseudo, Edge::Word);
             self.sub(trimmed, &pseudo, Edge::Left);
             if orig.contains(' ') {
-                self.sub(orig.trim().replace(' ', "_"), pseudo.replace(' ', "_"), Edge::Word);
+                self.sub(
+                    orig.trim().replace(' ', "_"),
+                    pseudo.replace(' ', "_"),
+                    Edge::Word,
+                );
             }
         }
         if dash && wordy {
             // device-mapper doubles a name's dashes: vg-name--x becomes vg--name--x.
-            self.sub(orig.replace('-', "--"), pseudo.replace('-', "--"), Edge::Word);
+            self.sub(
+                orig.replace('-', "--"),
+                pseudo.replace('-', "--"),
+                Edge::Word,
+            );
         }
         match kind {
             Kind::Label => {
-                let esc = |s: &str| s.replace('\\', "\\x5c").replace(' ', "\\x20").replace('/', "\\x2f");
-                for pre in ["LABEL=", "PARTLABEL=", "by-label/", "by-partlabel/", "label=", "partlabel="] {
-                    let (f, t) = if pre.starts_with("by-") { (esc(orig), esc(&pseudo)) } else { (orig.to_string(), pseudo.clone()) };
+                let esc = |s: &str| {
+                    s.replace('\\', "\\x5c")
+                        .replace(' ', "\\x20")
+                        .replace('/', "\\x2f")
+                };
+                for pre in [
+                    "LABEL=",
+                    "PARTLABEL=",
+                    "by-label/",
+                    "by-partlabel/",
+                    "label=",
+                    "partlabel=",
+                ] {
+                    let (f, t) = if pre.starts_with("by-") {
+                        (esc(orig), esc(&pseudo))
+                    } else {
+                        (orig.to_string(), pseudo.clone())
+                    };
                     self.sub(format!("{pre}{f}"), format!("{pre}{t}"), Edge::Word);
                     self.sub(format!("{pre}\"{f}\""), format!("{pre}\"{t}\""), Edge::Any);
                 }
@@ -1006,19 +1411,36 @@ impl Sealer {
                 // ZFS dataset rpool/home/USER or zroot/home/USER, FreeBSD's
                 // /usr/home/USER), where a name too short to be wordy has
                 // no other sub (RustAudit1 H5-02).
-                self.sub(format!("/home/{orig}"), format!("/home/{pseudo}"), Edge::Right);
-                self.sub(format!("USERDATA/{orig}_"), format!("USERDATA/{pseudo}_"), Edge::Any);
+                self.sub(
+                    format!("/home/{orig}"),
+                    format!("/home/{pseudo}"),
+                    Edge::Right,
+                );
+                self.sub(
+                    format!("USERDATA/{orig}_"),
+                    format!("USERDATA/{pseudo}_"),
+                    Edge::Any,
+                );
             }
             _ => {}
         }
     }
 
     fn path(&mut self, kind: Kind, orig: &str) {
-        if self.r.entries.iter().any(|e| e.kind == kind && e.original == orig) {
+        if self
+            .r
+            .entries
+            .iter()
+            .any(|e| e.kind == kind && e.original == orig)
+        {
             return;
         }
         if kind == Kind::KeyFile && orig.starts_with("/run/keystore/") {
-            self.kept(kind, orig, "Ubuntu's ZFS keystore, the same on every install");
+            self.kept(
+                kind,
+                orig,
+                "Ubuntu's ZFS keystore, the same on every install",
+            );
             return;
         }
         let pseudo = if kind == Kind::KeyFile {
@@ -1026,7 +1448,11 @@ impl Sealer {
             // restored tree, or on a stick); the file's name goes, wherever
             // load puts the file.
             let (dir, base) = orig.rsplit_once('/').unwrap_or(("", orig));
-            let ext = base.rsplit_once('.').map(|(_, e)| format!(".{e}")).filter(|e| e.len() <= 5).unwrap_or_default();
+            let ext = base
+                .rsplit_once('.')
+                .map(|(_, e)| format!(".{e}"))
+                .filter(|e| e.len() <= 5)
+                .unwrap_or_default();
             let p = self.next("keyfile", |n| vec![format!("keyfile{n}{ext}")]);
             if base.len() >= 3 {
                 self.sub(format!("/{base}"), format!("/{}", p[0]), Edge::Right);
@@ -1041,7 +1467,12 @@ impl Sealer {
 
     /// A string to strip: `stripped1`, `stripped2`... anywhere it appears.
     fn strip(&mut self, orig: &str) {
-        if self.r.entries.iter().any(|e| e.kind == Kind::Id && e.original == orig) {
+        if self
+            .r
+            .entries
+            .iter()
+            .any(|e| e.kind == Kind::Id && e.original == orig)
+        {
             return;
         }
         let p = self.next("stripped", |n| vec![format!("stripped{n}")])[0].clone();
@@ -1050,7 +1481,12 @@ impl Sealer {
         // In values and text wherever it is, but never in an object key:
         // bko-holt's keys are its own words, not the user's.
         if !self.r.subs.iter().any(|s| s.from == orig) {
-            self.r.subs.push(Sub { from: orig.to_string(), to: p, edge: Edge::Any, in_keys: false });
+            self.r.subs.push(Sub {
+                from: orig.to_string(),
+                to: p,
+                edge: Edge::Any,
+                in_keys: false,
+            });
         }
     }
 
@@ -1059,10 +1495,19 @@ impl Sealer {
         if WELL_KNOWN.contains(&canon.as_str()) || self.c.types.contains(&canon) {
             return;
         }
-        if self.r.entries.iter().any(|e| e.original == canon || e.original == crate::bytes::hex(&b)) {
+        if self
+            .r
+            .entries
+            .iter()
+            .any(|e| e.original == canon || e.original == crate::bytes::hex(&b))
+        {
             return;
         }
-        let tag = if kind == Kind::MachineId { "mid" } else { "uuid" };
+        let tag = if kind == Kind::MachineId {
+            "mid"
+        } else {
+            "uuid"
+        };
         let first = if kind == Kind::MachineId { 0xbd } else { 0xbc };
         let forms = self.next(tag, |n| {
             let mut p = [0u8; 16];
@@ -1075,9 +1520,25 @@ impl Sealer {
         let p: Vec<u8> = hex_bytes(&forms[0]);
         let pc = crate::bytes::uuid(&p);
         let (oh, ph) = (crate::bytes::hex(&b), crate::bytes::hex(&p));
-        self.entry(kind, if kind == Kind::MachineId { oh.clone() } else { canon.clone() }, if kind == Kind::MachineId { ph.clone() } else { pc.clone() });
+        self.entry(
+            kind,
+            if kind == Kind::MachineId {
+                oh.clone()
+            } else {
+                canon.clone()
+            },
+            if kind == Kind::MachineId {
+                ph.clone()
+            } else {
+                pc.clone()
+            },
+        );
         let colon = |h: &str| format!("{}:{}:{}:{}", &h[0..8], &h[8..16], &h[16..24], &h[24..32]);
-        for (f, t) in [(canon.clone(), pc.clone()), (oh.clone(), ph.clone()), (colon(&oh), colon(&ph))] {
+        for (f, t) in [
+            (canon.clone(), pc.clone()),
+            (oh.clone(), ph.clone()),
+            (colon(&oh), colon(&ph)),
+        ] {
             self.sub(&f, &t, Edge::Any);
             self.sub(f.to_ascii_uppercase(), t.to_ascii_uppercase(), Edge::Any);
             self.ascii_bin(&f, &t);
@@ -1096,10 +1557,26 @@ impl Sealer {
     }
 
     fn lvm(&mut self, s: &str) {
-        if self.r.entries.iter().any(|e| e.original.replace('-', "") == s) {
+        if self
+            .r
+            .entries
+            .iter()
+            .any(|e| e.original.replace('-', "") == s)
+        {
             return;
         }
-        let dashed = |x: &str| format!("{}-{}-{}-{}-{}-{}-{}", &x[0..6], &x[6..10], &x[10..14], &x[14..18], &x[18..22], &x[22..26], &x[26..32]);
+        let dashed = |x: &str| {
+            format!(
+                "{}-{}-{}-{}-{}-{}-{}",
+                &x[0..6],
+                &x[6..10],
+                &x[10..14],
+                &x[14..18],
+                &x[18..22],
+                &x[22..26],
+                &x[26..32]
+            )
+        };
         // Both forms checked against the dump: a redacted dump redacted
         // again (check_plan on a corpus dump) has pseudonyms that appear only
         // dashed (a PV's UUID), which a new one mustn't take.
@@ -1116,13 +1593,22 @@ impl Sealer {
     }
 
     fn hex(&mut self, digits: &str, form: &str, kind: Kind) {
-        if self.r.entries.iter().any(|e| e.original.to_ascii_lowercase().replace([':', '-'], "") == digits) || self.r.subs.iter().any(|s| s.from == digits) {
+        if self
+            .r
+            .entries
+            .iter()
+            .any(|e| e.original.to_ascii_lowercase().replace([':', '-'], "") == digits)
+            || self.r.subs.iter().any(|s| s.from == digits)
+        {
             return;
         }
         let l = digits.len();
         let pd = self.next("hex", |n| {
             let tail = format!("{n:x}");
-            vec![format!("bc{}{tail}", "0".repeat(l.saturating_sub(2 + tail.len())))]
+            vec![format!(
+                "bc{}{tail}",
+                "0".repeat(l.saturating_sub(2 + tail.len()))
+            )]
         })[0]
             .clone();
         // The separators where the first form had them.
@@ -1140,13 +1626,31 @@ impl Sealer {
         };
         let (of, pf) = (shape(digits), shape(&pd));
         let upper_first = form.bytes().any(|c| c.is_ascii_uppercase());
-        self.entry(kind, if upper_first { of.to_ascii_uppercase() } else { of.clone() }, if upper_first { pf.to_ascii_uppercase() } else { pf.clone() });
+        self.entry(
+            kind,
+            if upper_first {
+                of.to_ascii_uppercase()
+            } else {
+                of.clone()
+            },
+            if upper_first {
+                pf.to_ascii_uppercase()
+            } else {
+                pf.clone()
+            },
+        );
         let mut pairs = vec![(digits.to_string(), pd.clone())];
         if of != digits {
             pairs.push((of.clone(), pf.clone()));
         }
         if kind == Kind::Mac {
-            let sep = |d: &str, s: char| d.as_bytes().chunks(2).map(|c| String::from_utf8_lossy(c).into_owned()).collect::<Vec<_>>().join(&s.to_string());
+            let sep = |d: &str, s: char| {
+                d.as_bytes()
+                    .chunks(2)
+                    .map(|c| String::from_utf8_lossy(c).into_owned())
+                    .collect::<Vec<_>>()
+                    .join(&s.to_string())
+            };
             pairs.push((sep(digits, ':'), sep(&pd, ':')));
             pairs.push((sep(digits, '-'), sep(&pd, '-')));
         }
@@ -1161,7 +1665,13 @@ impl Sealer {
         // | dd ... seek=440`, load::commands), which neither the hex subs
         // nor unredact would map (microos, M3, docs/design/aeon.md).
         if digits.len() == 8 && kind == Kind::Id {
-            let oct = |d: &str| hex_bytes(d).iter().rev().map(|b| format!("\\{b:03o}")).collect::<String>();
+            let oct = |d: &str| {
+                hex_bytes(d)
+                    .iter()
+                    .rev()
+                    .map(|b| format!("\\{b:03o}"))
+                    .collect::<String>()
+            };
             self.sub(oct(digits), oct(&pd), Edge::Any);
         }
         // Up to 8 bytes only in EFI load options: in boot code, a run of
@@ -1187,9 +1697,14 @@ impl Sealer {
             // both case forms' pseudonym, and unredact couldn't tell which
             // the original was (void-zbm's 0x00bab10c): skip those.
             let letters = |s: &str| s.bytes().any(|c| c.is_ascii_alphabetic());
-            let needs = { let oh = format!("{n:0w$x}"); oh.len() >= 8 && letters(&oh) };
+            let needs = {
+                let oh = format!("{n:0w$x}");
+                oh.len() >= 8 && letters(&oh)
+            };
             let forms = loop {
-                let f = self.next("dec", |k| vec![(base + k).to_string(), format!("{:0w$x}", base + k)]);
+                let f = self.next("dec", |k| {
+                    vec![(base + k).to_string(), format!("{:0w$x}", base + k)]
+                });
                 if !needs || letters(&f[1]) {
                     break f;
                 }
@@ -1226,7 +1741,16 @@ pub const RECOVERY_KEY_MARK: &str = "<recovery-key>";
 pub fn scrub_recovery_keys(s: &str) -> std::borrow::Cow<'_, str> {
     const LEN: usize = 8 * 5 + 7;
     let b = s.as_bytes();
-    let is_key = |w: &[u8]| w.len() == LEN && w.iter().enumerate().all(|(i, c)| if i % 6 == 5 { *c == b'-' } else { c.is_ascii_digit() });
+    let is_key = |w: &[u8]| {
+        w.len() == LEN
+            && w.iter().enumerate().all(|(i, c)| {
+                if i % 6 == 5 {
+                    *c == b'-'
+                } else {
+                    c.is_ascii_digit()
+                }
+            })
+    };
     if b.len() < LEN || !b.windows(LEN).any(is_key) {
         return std::borrow::Cow::Borrowed(s);
     }
@@ -1277,7 +1801,9 @@ fn scrub_passwords_as(s: &str, whole: bool) -> std::borrow::Cow<'_, str> {
     // Where a key may start: not inside a word or a path; `\n` and `\t`
     // are a JSON string's escapes.
     let starts = |i: usize| {
-        let Some(&p) = i.checked_sub(1).and_then(|j| b.get(j)) else { return true };
+        let Some(&p) = i.checked_sub(1).and_then(|j| b.get(j)) else {
+            return true;
+        };
         let at = |j: usize| i.checked_sub(j).and_then(|k| b.get(k)).copied();
         match p {
             b'_' => true,
@@ -1308,7 +1834,11 @@ fn scrub_passwords_as(s: &str, whole: bool) -> std::borrow::Cow<'_, str> {
             j += 1;
         }
         let rest = &b[j..];
-        let find = |from: usize, end: &dyn Fn(&[u8]) -> bool| (from..=rest.len()).find(|&k| k == rest.len() || end(&rest[k..])).unwrap_or(rest.len());
+        let find = |from: usize, end: &dyn Fn(&[u8]) -> bool| {
+            (from..=rest.len())
+                .find(|&k| k == rest.len() || end(&rest[k..]))
+                .unwrap_or(rest.len())
+        };
         let span = if whole && i == 0 {
             Some((0, rest.len()))
         } else if i > 0 && b[i - 1] == b'"' {
@@ -1329,7 +1859,12 @@ fn scrub_passwords_as(s: &str, whole: bool) -> std::borrow::Cow<'_, str> {
                 Some((1, find(1, &|r| r[0] == b'"' || r[0] == b'\n')))
             }
         } else {
-            Some((0, find(0, &|r| r[0].is_ascii_whitespace() || b"\"'\\".contains(&r[0]))))
+            Some((
+                0,
+                find(0, &|r| {
+                    r[0].is_ascii_whitespace() || b"\"'\\".contains(&r[0])
+                }),
+            ))
         };
         match span.map(|(a, e)| (j + a, j + e)) {
             Some((a, e)) if e > a && &s[a..e] != PASSWORD_MARK => {
@@ -1353,7 +1888,11 @@ fn contains_word(hay: &str, w: &str) -> bool {
     if n.is_empty() || n.len() > h.len() {
         return false;
     }
-    (0..=h.len() - n.len()).any(|i| &h[i..i + n.len()] == n && (i == 0 || !is_alnum(h[i - 1])) && h.get(i + n.len()).is_none_or(|&c| !is_alnum(c)))
+    (0..=h.len() - n.len()).any(|i| {
+        &h[i..i + n.len()] == n
+            && (i == 0 || !is_alnum(h[i - 1]))
+            && h.get(i + n.len()).is_none_or(|&c| !is_alnum(c))
+    })
 }
 
 /// Rewrites JSON and text with the pseudonyms a `Collector` chose.
@@ -1383,14 +1922,20 @@ impl Redactor {
         self.by_first.clear();
         self.whole.clear();
         for (i, s) in self.subs.iter().enumerate() {
-            self.by_first.entry(s.from.as_bytes()[0]).or_default().push(i);
+            self.by_first
+                .entry(s.from.as_bytes()[0])
+                .or_default()
+                .push(i);
         }
         self.bin_first.clear();
         for (i, (f, _, _)) in self.bin.iter().enumerate() {
             self.bin_first.entry(f[0]).or_default().push(i);
         }
         for (k, f, t) in &self.whole_subs {
-            self.whole.entry(f.clone()).or_default().push((*k, t.clone()));
+            self.whole
+                .entry(f.clone())
+                .or_default()
+                .push((*k, t.clone()));
         }
         let mut back: BTreeMap<String, String> = BTreeMap::new();
         for s in &self.subs {
@@ -1400,7 +1945,8 @@ impl Redactor {
             back.entry(t.clone()).or_insert_with(|| f.clone());
         }
         self.back = back.into_iter().collect();
-        self.back.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
+        self.back
+            .sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
         self.back_first.clear();
         for (i, (to, _)) in self.back.iter().enumerate() {
             self.back_first.entry(to.as_bytes()[0]).or_default().push(i);
@@ -1438,7 +1984,11 @@ impl Redactor {
                 for &k in cands {
                     let sub = &self.subs[k];
                     let f = sub.from.as_bytes();
-                    if b[i..].starts_with(f) && (words || sub.edge != Edge::Word) && (sub.in_keys || !key) && sub.edge.fits(b, i, f.len()) {
+                    if b[i..].starts_with(f)
+                        && (words || sub.edge != Edge::Word)
+                        && (sub.in_keys || !key)
+                        && sub.edge.fits(b, i, f.len())
+                    {
                         out.extend_from_slice(sub.to.as_bytes());
                         i += f.len();
                         continue 'outer;
@@ -1448,7 +1998,8 @@ impl Redactor {
             out.push(b[i]);
             i += 1;
         }
-        String::from_utf8(out).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+        String::from_utf8(out)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
     }
 
     /// Pseudonyms back to the originals: for checking, never for the bundle.
@@ -1479,7 +2030,16 @@ impl Redactor {
     #[must_use = "the redacted copy is the one to show; the original still holds the identifiers"]
     pub fn value(&self, v: &Value) -> Value {
         match v {
-            Value::Obj(kv) => Value::Obj(kv.iter().map(|(k, x)| (self.key(k), if k == "os" { x.clone() } else { self.val(x, k) })).collect()),
+            Value::Obj(kv) => Value::Obj(
+                kv.iter()
+                    .map(|(k, x)| {
+                        (
+                            self.key(k),
+                            if k == "os" { x.clone() } else { self.val(x, k) },
+                        )
+                    })
+                    .collect(),
+            ),
             _ => self.val(v, ""),
         }
     }
@@ -1487,7 +2047,20 @@ impl Redactor {
     /// `value` undone: for checking that nothing but identifiers changed.
     pub fn unredact_value(&self, v: &Value) -> Value {
         match v {
-            Value::Obj(kv) => Value::Obj(kv.iter().map(|(k, x)| (self.unredact(k), if k == "os" { x.clone() } else { self.unval(x, k) })).collect()),
+            Value::Obj(kv) => Value::Obj(
+                kv.iter()
+                    .map(|(k, x)| {
+                        (
+                            self.unredact(k),
+                            if k == "os" {
+                                x.clone()
+                            } else {
+                                self.unval(x, k)
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
             _ => self.unval(v, ""),
         }
     }
@@ -1496,18 +2069,37 @@ impl Redactor {
         match v {
             Value::Str(s) if is_hex_blob_key(key) && s.len() % 2 == 0 && s.bytes().all(is_hex) => {
                 let upper = s.bytes().any(|c| c.is_ascii_uppercase());
-                let out = crate::bytes::hex(&self.unbytes(&hex_bytes(&s.to_ascii_lowercase()), true));
+                let out =
+                    crate::bytes::hex(&self.unbytes(&hex_bytes(&s.to_ascii_lowercase()), true));
                 Value::Str(if upper { out.to_ascii_uppercase() } else { out })
             }
             Value::Str(s) if is_b64_key(key) => match crate::bytes::unbase64(s) {
-                Some(b) if crate::bytes::base64(&b) == *s => Value::Str(crate::bytes::base64(&self.unbytes(&b, false))),
+                Some(b) if crate::bytes::base64(&b) == *s => {
+                    Value::Str(crate::bytes::base64(&self.unbytes(&b, false)))
+                }
                 _ => Value::Str(s.clone()),
             },
             Value::Str(s) => Value::Str(self.unredact(s)),
-            Value::UInt(n) => Value::UInt(self.nums.iter().find(|(_, p)| p == n).map(|(o, _)| *o).unwrap_or(*n)),
-            Value::Int(n) if *n > 0 => Value::Int(self.nums.iter().find(|(_, p)| *p == *n as u64).map(|(o, _)| *o as i64).unwrap_or(*n)),
+            Value::UInt(n) => Value::UInt(
+                self.nums
+                    .iter()
+                    .find(|(_, p)| p == n)
+                    .map(|(o, _)| *o)
+                    .unwrap_or(*n),
+            ),
+            Value::Int(n) if *n > 0 => Value::Int(
+                self.nums
+                    .iter()
+                    .find(|(_, p)| *p == *n as u64)
+                    .map(|(o, _)| *o as i64)
+                    .unwrap_or(*n),
+            ),
             Value::Arr(a) => Value::Arr(a.iter().map(|x| self.unval(x, key)).collect()),
-            Value::Obj(kv) => Value::Obj(kv.iter().map(|(k, x)| (self.unredact(k), self.unval(x, k))).collect()),
+            Value::Obj(kv) => Value::Obj(
+                kv.iter()
+                    .map(|(k, x)| (self.unredact(k), self.unval(x, k)))
+                    .collect(),
+            ),
             other => other.clone(),
         }
     }
@@ -1539,25 +2131,40 @@ impl Redactor {
                 Value::Str(if upper { out.to_ascii_uppercase() } else { out })
             }
             Value::Str(s) if is_b64_key(key) => match crate::bytes::unbase64(s) {
-                Some(b) if crate::bytes::base64(&b) == *s => Value::Str(crate::bytes::base64(&self.bytes(&b, false))),
+                Some(b) if crate::bytes::base64(&b) == *s => {
+                    Value::Str(crate::bytes::base64(&self.bytes(&b, false)))
+                }
                 _ => Value::Str(s.clone()),
             },
             // A string that is a password= item (boot.lilo's options): its
             // value is the rest of it, spaces and all.
-            Value::Str(s) => match self.whole.get(s).and_then(|ts| ts.iter().find(|(k, _)| kind_key(*k, key))) {
+            Value::Str(s) => match self
+                .whole
+                .get(s)
+                .and_then(|ts| ts.iter().find(|(k, _)| kind_key(*k, key)))
+            {
                 Some((_, t)) => Value::Str(t.clone()),
                 None => Value::Str(self.text(&scrub_passwords_as(s, true))),
             },
             Value::UInt(n) => Value::UInt(self.num(*n)),
             Value::Int(n) if *n > 0 => Value::Int(self.num(*n as u64) as i64),
             Value::Arr(a) => Value::Arr(a.iter().map(|x| self.val(x, key)).collect()),
-            Value::Obj(kv) => Value::Obj(kv.iter().map(|(k, x)| (self.key(k), self.val(x, k))).collect()),
+            Value::Obj(kv) => Value::Obj(
+                kv.iter()
+                    .map(|(k, x)| (self.key(k), self.val(x, k)))
+                    .collect(),
+            ),
             other => other.clone(),
         }
     }
 
     fn num(&self, n: u64) -> u64 {
-        self.nums.iter().find(|(a, _)| *a == n).map(|(_, p)| *p).filter(|p| *p <= i64::MAX as u64 || n > i64::MAX as u64).unwrap_or(n)
+        self.nums
+            .iter()
+            .find(|(a, _)| *a == n)
+            .map(|(_, p)| *p)
+            .filter(|p| *p <= i64::MAX as u64 || n > i64::MAX as u64)
+            .unwrap_or(n)
     }
 
     /// Identifiers in binary: EFI load options (`short`: their 4-byte MBR
@@ -1567,7 +2174,12 @@ impl Redactor {
         let mut out = b.to_vec();
         let mut i = 0;
         'outer: while i < out.len() {
-            for &k in self.bin_first.get(&out[i]).map(Vec::as_slice).unwrap_or(&[]) {
+            for &k in self
+                .bin_first
+                .get(&out[i])
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+            {
                 let (f, t, s) = &self.bin[k];
                 if (!*s || short) && out[i..].starts_with(f) {
                     out[i..i + f.len()].copy_from_slice(t);
@@ -1603,7 +2215,10 @@ impl Redactor {
                 continue;
             };
             let id = out[i + at..i + at + 4].to_vec();
-            let found = self.bin.iter().find(|(f, t, short)| *short && if redacting { *f == id } else { *t == id });
+            let found = self
+                .bin
+                .iter()
+                .find(|(f, t, short)| *short && if redacting { *f == id } else { *t == id });
             if let Some((f, t, _)) = found {
                 out[i + at..i + at + 4].copy_from_slice(if redacting { t } else { f });
             }
@@ -1618,7 +2233,9 @@ impl Redactor {
                 continue;
             }
             let b = text.as_bytes();
-            let found = text.match_indices(s.from.as_str()).any(|(i, _)| s.edge.fits(b, i, s.from.len()));
+            let found = text
+                .match_indices(s.from.as_str())
+                .any(|(i, _)| s.edge.fits(b, i, s.from.len()));
             if found && !out.contains(&s.from) {
                 out.push(s.from.clone());
             }
@@ -1641,17 +2258,31 @@ impl Redactor {
             for (k, es) in &by {
                 // Stripped strings are other identifiers, but none of those
                 // the plural names: a line of their own, never shown.
-                let (es, stripped): (Vec<&Entry>, Vec<&Entry>) = es.iter().copied().partition(|e| *k != Kind::Id || !self.stripped.contains(&e.pseudonym));
+                let (es, stripped): (Vec<&Entry>, Vec<&Entry>) = es
+                    .iter()
+                    .copied()
+                    .partition(|e| *k != Kind::Id || !self.stripped.contains(&e.pseudonym));
                 if !stripped.is_empty() {
-                    s += &format!("  {} strings given to strip (--strip-file)\n", stripped.len());
+                    s += &format!(
+                        "  {} strings given to strip (--strip-file)\n",
+                        stripped.len()
+                    );
                 }
                 if es.is_empty() {
                     continue;
                 }
                 s += &format!("  {} {}", es.len(), k.plural());
                 if originals && k.shown() {
-                    let list: Vec<String> = es.iter().take(8).map(|e| format!("{} -> {}", e.original, e.pseudonym)).collect();
-                    s += &format!(": {}{}", list.join(", "), if es.len() > 8 { ", ..." } else { "" });
+                    let list: Vec<String> = es
+                        .iter()
+                        .take(8)
+                        .map(|e| format!("{} -> {}", e.original, e.pseudonym))
+                        .collect();
+                    s += &format!(
+                        ": {}{}",
+                        list.join(", "),
+                        if es.len() > 8 { ", ..." } else { "" }
+                    );
                 }
                 s.push('\n');
             }
@@ -1747,18 +2378,46 @@ mod tests {
         assert!(c.learn_strip("attic"));
         assert!(!c.learn_strip("ab") && !c.learn_strip("   "));
         let r = c.seal();
-        let t = r.text("hint: Mittens the cat; in the atticroom; Grandma's attic; host alice-laptop\n");
-        assert_eq!(t, format!("hint: stripped1; in the stripped2room; Grandma's stripped2; host {}\n", r.text("alice-laptop")));
-        assert_eq!(r.unredact(&t), "hint: Mittens the cat; in the atticroom; Grandma's attic; host alice-laptop\n");
-        let ids: Vec<&Entry> = r.entries.iter().filter(|e| e.pseudonym.starts_with("stripped")).collect();
+        let t =
+            r.text("hint: Mittens the cat; in the atticroom; Grandma's attic; host alice-laptop\n");
+        assert_eq!(
+            t,
+            format!(
+                "hint: stripped1; in the stripped2room; Grandma's stripped2; host {}\n",
+                r.text("alice-laptop")
+            )
+        );
+        assert_eq!(
+            r.unredact(&t),
+            "hint: Mittens the cat; in the atticroom; Grandma's attic; host alice-laptop\n"
+        );
+        let ids: Vec<&Entry> = r
+            .entries
+            .iter()
+            .filter(|e| e.pseudonym.starts_with("stripped"))
+            .collect();
         assert_eq!(ids.len(), 2);
         assert!(ids.iter().all(|e| e.kind == Kind::Id));
         let shown = r.summary(true);
-        assert!(!shown.contains("Mittens") && !shown.contains("attic"), "{shown}");
+        assert!(
+            !shown.contains("Mittens") && !shown.contains("attic"),
+            "{shown}"
+        );
         // Counted on a line of their own, not as GUIDs or hostids.
-        assert!(shown.contains("  2 strings given to strip (--strip-file)\n"), "{shown}");
-        let ids = r.entries.iter().filter(|e| e.kind == Kind::Id && !e.pseudonym.starts_with("stripped")).count();
-        assert_eq!(shown.contains(&format!("  {ids} other identifiers (")), ids > 0, "{shown}");
+        assert!(
+            shown.contains("  2 strings given to strip (--strip-file)\n"),
+            "{shown}"
+        );
+        let ids = r
+            .entries
+            .iter()
+            .filter(|e| e.kind == Kind::Id && !e.pseudonym.starts_with("stripped"))
+            .count();
+        assert_eq!(
+            shown.contains(&format!("  {ids} other identifiers (")),
+            ids > 0,
+            "{shown}"
+        );
         assert_eq!(shown.contains("other identifiers"), ids > 0, "{shown}");
         // A string that is one of bko-holt's keys: values and text lose
         // it, keys keep it, so the report's JSON is still a layout.
@@ -1766,14 +2425,29 @@ mod tests {
         assert!(c.learn_strip("disk") && c.learn_strip("boot"));
         let r = c.seal();
         let v = parse(r#"{"storage":{"disks":[{"name":"vda","boot":true,"mounts":["/boot"],"note":"disk of mine"}]},"boot":{"disk":"vda"}}"#).unwrap();
-        assert_eq!(r.value(&v).compact(), r#"{"storage":{"disks":[{"name":"vda","boot":true,"mounts":["/stripped2"],"note":"stripped1 of mine"}]},"boot":{"disk":"vda"}}"#);
+        assert_eq!(
+            r.value(&v).compact(),
+            r#"{"storage":{"disks":[{"name":"vda","boot":true,"mounts":["/stripped2"],"note":"stripped1 of mine"}]},"boot":{"disk":"vda"}}"#
+        );
         assert_eq!(r.unredact_value(&r.value(&v)).compact(), v.compact());
-        assert_eq!(r.summary(false).lines().nth(1), Some("  2 strings given to strip (--strip-file)"));
+        assert_eq!(
+            r.summary(false).lines().nth(1),
+            Some("  2 strings given to strip (--strip-file)")
+        );
         // Every kind, once each, in ALL.
         for k in Kind::ALL {
             assert_eq!(Kind::ALL.iter().filter(|x| **x == k).count(), 1);
             match k {
-                Kind::Hostname | Kind::MachineId | Kind::Uuid | Kind::Serial | Kind::Label | Kind::User | Kind::KeyFile | Kind::Mac | Kind::Id | Kind::Secret => {}
+                Kind::Hostname
+                | Kind::MachineId
+                | Kind::Uuid
+                | Kind::Serial
+                | Kind::Label
+                | Kind::User
+                | Kind::KeyFile
+                | Kind::Mac
+                | Kind::Id
+                | Kind::Secret => {}
             }
         }
     }
@@ -1784,8 +2458,23 @@ mod tests {
         let (r, red) = redact(&d);
         let t = text(&r);
         for gone in [
-            "alice", "0427e0213c4d4e42a9c7f7cd7d18d98e", "S62ANJ0R123456X", "5002538e40a1b2c3", "daaf2a80", "DAAF2A80", "56ae978f", "3051-B739",
-            "6c3e5f0e", "Abc123", "75f651e9", "15105800815207446011", "545037285", "Photos", "photos", "525400123456", "MAC:5254",
+            "alice",
+            "0427e0213c4d4e42a9c7f7cd7d18d98e",
+            "S62ANJ0R123456X",
+            "5002538e40a1b2c3",
+            "daaf2a80",
+            "DAAF2A80",
+            "56ae978f",
+            "3051-B739",
+            "6c3e5f0e",
+            "Abc123",
+            "75f651e9",
+            "15105800815207446011",
+            "545037285",
+            "Photos",
+            "photos",
+            "525400123456",
+            "MAC:5254",
         ] {
             assert!(!t.contains(gone), "{gone} is still in:\n{t}");
         }
@@ -1794,63 +2483,165 @@ mod tests {
         // The same pseudonym in every form.
         let host = s(&["host", "hostname"]);
         assert_eq!(host, "host-1");
-        assert_eq!(s(&["storage", "lvm", "volume_groups", "0", "name"]), "host-1-vg");
-        assert_eq!(s(&["storage", "dm_devices", "1", "dm_name"]), "host--1--vg-root");
-        assert_eq!(s(&["storage", "fstab", "2", "spec"]), "/dev/mapper/host--1--vg-root");
+        assert_eq!(
+            s(&["storage", "lvm", "volume_groups", "0", "name"]),
+            "host-1-vg"
+        );
+        assert_eq!(
+            s(&["storage", "dm_devices", "1", "dm_name"]),
+            "host--1--vg-root"
+        );
+        assert_eq!(
+            s(&["storage", "fstab", "2", "spec"]),
+            "/dev/mapper/host--1--vg-root"
+        );
         assert_eq!(s(&["storage", "md_arrays", "0", "label"]), "host-1:0");
-        assert_eq!(s(&["storage", "lvm", "volume_groups", "0", "creation_host"]), host);
-        let fat = s(&["storage", "disks", "0", "partitions", "0", "content", "uuid"]);
+        assert_eq!(
+            s(&["storage", "lvm", "volume_groups", "0", "creation_host"]),
+            host
+        );
+        let fat = s(&[
+            "storage",
+            "disks",
+            "0",
+            "partitions",
+            "0",
+            "content",
+            "uuid",
+        ]);
         assert!(fat.starts_with("BC00-000"), "{fat}");
         assert_eq!(s(&["storage", "fstab", "0", "spec"]), format!("UUID={fat}"));
-        assert_eq!(s(&["storage", "disks", "0", "partitions", "0", "links", "0"]), format!("/dev/disk/by-uuid/{fat}"));
-        let luks = s(&["storage", "disks", "0", "partitions", "1", "content", "uuid"]);
+        assert_eq!(
+            s(&["storage", "disks", "0", "partitions", "0", "links", "0"]),
+            format!("/dev/disk/by-uuid/{fat}")
+        );
+        let luks = s(&[
+            "storage",
+            "disks",
+            "0",
+            "partitions",
+            "1",
+            "content",
+            "uuid",
+        ]);
         assert!(luks.starts_with("bc000000-0000-4000-8000-"), "{luks}");
-        assert_eq!(s(&["storage", "crypttab", "0", "name"]), format!("luks-{luks}"));
-        assert_eq!(s(&["storage", "dm_devices", "0", "dm_uuid"]), format!("CRYPT-LUKS2-{}-luks-{luks}", luks.replace('-', "")));
+        assert_eq!(
+            s(&["storage", "crypttab", "0", "name"]),
+            format!("luks-{luks}")
+        );
+        assert_eq!(
+            s(&["storage", "dm_devices", "0", "dm_uuid"]),
+            format!("CRYPT-LUKS2-{}-luks-{luks}", luks.replace('-', ""))
+        );
         let vg = s(&["storage", "lvm", "volume_groups", "0", "uuid"]);
-        assert!(s(&["storage", "dm_devices", "1", "dm_uuid"]).starts_with(&format!("LVM-{}", vg.replace('-', ""))));
+        assert!(
+            s(&["storage", "dm_devices", "1", "dm_uuid"])
+                .starts_with(&format!("LVM-{}", vg.replace('-', "")))
+        );
         // GPT's disk GUID keeps its case.
-        assert!(s(&["storage", "disks", "0", "partition_table", "disk_guid"]).starts_with("BC000000-0000-4000-8000-"));
+        assert!(
+            s(&["storage", "disks", "0", "partition_table", "disk_guid"])
+                .starts_with("BC000000-0000-4000-8000-")
+        );
         // Labels: as values, in LABEL=, and in key-file specs; user names in
         // /home and in Ubuntu's USERDATA datasets.
-        let photos = s(&["storage", "disks", "0", "partitions", "1", "content", "label"]);
+        let photos = s(&[
+            "storage",
+            "disks",
+            "0",
+            "partitions",
+            "1",
+            "content",
+            "label",
+        ]);
         assert!(photos.starts_with("label"), "{photos}");
-        assert_ne!(photos, s(&["storage", "disks", "0", "partitions", "1", "partlabel"]));
-        assert_eq!(s(&["storage", "fstab", "1", "spec"]), format!("LABEL={photos}"));
-        assert_eq!(s(&["storage", "fstab", "1", "file"]), format!("/home/user1/{photos}"));
-        assert_eq!(s(&["storage", "zfs", "pools", "0", "datasets", "0", "name"]), "tank/USERDATA/user1_k3j4l2");
-        assert_eq!(s(&["storage", "crypttab", "0", "key_file"]), "/etc/keys/keyfile1.key:LABEL=KEYS");
+        assert_ne!(
+            photos,
+            s(&["storage", "disks", "0", "partitions", "1", "partlabel"])
+        );
+        assert_eq!(
+            s(&["storage", "fstab", "1", "spec"]),
+            format!("LABEL={photos}")
+        );
+        assert_eq!(
+            s(&["storage", "fstab", "1", "file"]),
+            format!("/home/user1/{photos}")
+        );
+        assert_eq!(
+            s(&["storage", "zfs", "pools", "0", "datasets", "0", "name"]),
+            "tank/USERDATA/user1_k3j4l2"
+        );
+        assert_eq!(
+            s(&["storage", "crypttab", "0", "key_file"]),
+            "/etc/keys/keyfile1.key:LABEL=KEYS"
+        );
         // ZFS's GUID as a number, and as GRUB's hex.
-        let g = r.at(&["storage", "zfs", "pools", "0", "pool_guid"]).and_then(Value::as_u64).unwrap();
+        let g = r
+            .at(&["storage", "zfs", "pools", "0", "pool_guid"])
+            .and_then(Value::as_u64)
+            .unwrap();
         assert_eq!(g.to_string().len(), "15105800815207446011".len());
         assert_ne!(g, 15105800815207446011);
-        assert!(r.at(&["storage", "zfs", "pools", "0", "hostid"]).and_then(Value::as_u64).unwrap() != 545037285);
+        assert!(
+            r.at(&["storage", "zfs", "pools", "0", "hostid"])
+                .and_then(Value::as_u64)
+                .unwrap()
+                != 545037285
+        );
         // MBR-style ids stay inside load options; the PXE entry's MAC goes.
         let lo = s(&["boot", "efi", "entries", "0", "load_option_hex"]);
         assert!(!lo.contains("8f97ae56700deb499dd119b174f48d8b"), "{lo}");
         assert!(!lo.contains("525400123456"), "{lo}");
         assert_eq!(lo.len(), 60);
-        assert!(s(&["boot", "efi", "entries", "0", "description"]).contains("(MAC:bc0000000"), "{t}");
-        assert_eq!(s(&["boot", "cmdline"]), "BOOT_IMAGE=/vmlinuz root=/dev/mapper/host--1--vg-root ro quiet");
+        assert!(
+            s(&["boot", "efi", "entries", "0", "description"]).contains("(MAC:bc0000000"),
+            "{t}"
+        );
+        assert_eq!(
+            s(&["boot", "cmdline"]),
+            "BOOT_IMAGE=/vmlinuz root=/dev/mapper/host--1--vg-root ro quiet"
+        );
         let ser = s(&["storage", "disks", "0", "serial"]);
-        assert_eq!(s(&["storage", "disks", "0", "links", "2"]), format!("/dev/diskid/DISK-{ser}p1"));
-        assert_eq!(s(&["storage", "disks", "0", "links", "0"]), format!("/dev/disk/by-id/ata-Samsung_SSD_870_EVO_500GB_{ser}"));
+        assert_eq!(
+            s(&["storage", "disks", "0", "links", "2"]),
+            format!("/dev/diskid/DISK-{ser}p1")
+        );
+        assert_eq!(
+            s(&["storage", "disks", "0", "links", "0"]),
+            format!("/dev/disk/by-id/ata-Samsung_SSD_870_EVO_500GB_{ser}")
+        );
         // A PXE entry whose description names no MAC (as the Lenovo A100's,
         // with a made-up MAC): its device path's MAC() node is learned and
         // goes all the same.
         let lo = "0100000058005500450046004900200050005800450020004900500076003400000002010c00d041030a0000000001010600001c010106000000030b250002a1b2c3d4e5000000000000000000000000000000000000000000000000000000030c1b0000000000000000000000000000000000000000000000000000007fff0400";
         assert_eq!(load_option_macs(lo), ["02a1b2c3d4e5"]);
-        assert!(load_option_macs("zz").is_empty() && load_option_macs("0100").is_empty() && load_option_macs("").is_empty());
+        assert!(
+            load_option_macs("zz").is_empty()
+                && load_option_macs("0100").is_empty()
+                && load_option_macs("").is_empty()
+        );
         let pxe = parse(&format!(r#"{{"os": {{"id": "slackware"}}, "boot": {{"efi": {{"entries": [{{"description": "UEFI: PXE IPv4 Realtek PCIe GBE Family Controller", "load_option_hex": "{lo}"}}]}}}}}}"#)).unwrap();
         let (r, red) = redact(&pxe);
         let t = text(&r);
-        assert!(!t.contains("02a1b2c3d4e5") && !t.to_ascii_lowercase().contains("02a1b2c3d4e5"), "{t}");
+        assert!(
+            !t.contains("02a1b2c3d4e5") && !t.to_ascii_lowercase().contains("02a1b2c3d4e5"),
+            "{t}"
+        );
         assert!(red.leaks(&t).is_empty(), "{:?}", red.leaks(&t));
-        assert_eq!(r.at(&["boot", "efi", "entries", "0", "load_option_hex"]).and_then(Value::as_str).map(str::len), Some(lo.len()));
+        assert_eq!(
+            r.at(&["boot", "efi", "entries", "0", "load_option_hex"])
+                .and_then(Value::as_str)
+                .map(str::len),
+            Some(lo.len())
+        );
         // A CD drive's serial is only in its by-id link.
         let cd = parse(r#"{"os": {"id": "debian"}, "other_devices": [{"name": "sr0", "serial": null, "links": ["/dev/disk/by-id/ata-QEMU_DVD-ROM_QM00003"]}]}"#).unwrap();
         let (r, _) = redact(&cd);
-        assert_eq!(r.at(&["other_devices", "0", "links", "0"]).and_then(Value::as_str), Some("/dev/disk/by-id/ata-QEMU_DVD-ROM_SERIAL1"));
+        assert_eq!(
+            r.at(&["other_devices", "0", "links", "0"])
+                .and_then(Value::as_str),
+            Some("/dev/disk/by-id/ata-QEMU_DVD-ROM_SERIAL1")
+        );
     }
 
     #[test]
@@ -1858,12 +2649,39 @@ mod tests {
         let (r, red) = redact(&dump());
         let s = |p: &[&str]| r.at(p).and_then(Value::as_str).unwrap().to_string();
         // Types, sizes, models, device names, generic labels, pool names.
-        assert_eq!(s(&["storage", "disks", "0", "partitions", "0", "type"]), "c12a7328-f81f-11d2-ba4b-00a0c93ec93b");
-        assert_eq!(s(&["storage", "disks", "0", "partitions", "1", "type"]), "0fc63daf-8483-4772-8e79-3d69d8477de4");
-        assert_eq!(r.at(&["storage", "disks", "0", "size_bytes"]).and_then(Value::as_u64), Some(512110190592));
-        assert_eq!(s(&["storage", "disks", "0", "model"]), "Samsung SSD 870 EVO 500GB");
-        assert_eq!(s(&["storage", "disks", "0", "partitions", "0", "partlabel"]), "EFI System Partition");
-        assert_eq!(s(&["storage", "disks", "0", "partitions", "0", "content", "label"]), "EFI");
+        assert_eq!(
+            s(&["storage", "disks", "0", "partitions", "0", "type"]),
+            "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+        );
+        assert_eq!(
+            s(&["storage", "disks", "0", "partitions", "1", "type"]),
+            "0fc63daf-8483-4772-8e79-3d69d8477de4"
+        );
+        assert_eq!(
+            r.at(&["storage", "disks", "0", "size_bytes"])
+                .and_then(Value::as_u64),
+            Some(512110190592)
+        );
+        assert_eq!(
+            s(&["storage", "disks", "0", "model"]),
+            "Samsung SSD 870 EVO 500GB"
+        );
+        assert_eq!(
+            s(&["storage", "disks", "0", "partitions", "0", "partlabel"]),
+            "EFI System Partition"
+        );
+        assert_eq!(
+            s(&[
+                "storage",
+                "disks",
+                "0",
+                "partitions",
+                "0",
+                "content",
+                "label"
+            ]),
+            "EFI"
+        );
         assert_eq!(s(&["storage", "zfs", "pools", "0", "name"]), "tank");
         assert_eq!(s(&["os", "id"]), "debian");
         assert_eq!(s(&["storage", "fstab", "0", "file"]), "/boot/efi");
@@ -1885,7 +2703,10 @@ mod tests {
                     out.push(q.clone());
                     go(x, &q, out)
                 }),
-                Value::Arr(a) => a.iter().enumerate().for_each(|(i, x)| go(x, &format!("{p}/{i}"), out)),
+                Value::Arr(a) => a
+                    .iter()
+                    .enumerate()
+                    .for_each(|(i, x)| go(x, &format!("{p}/{i}"), out)),
                 _ => {}
             }
         }
@@ -1907,11 +2728,17 @@ mod tests {
     fn hostid_hex_maps_back_in_its_case() {
         // ZFSBootMenu's 0x00bab10c: an 8-digit hostid, whose first
         // pseudonyms' hex forms have no letters.
-        for (cmd, other) in [("spl.spl_hostid=0x00bab10c", "00BAB10C"), ("spl.spl_hostid=0x00BAB10C", "00bab10c")] {
+        for (cmd, other) in [
+            ("spl.spl_hostid=0x00bab10c", "00BAB10C"),
+            ("spl.spl_hostid=0x00BAB10C", "00bab10c"),
+        ] {
             let d = parse(&format!(r#"{{"storage": {{"zfs": {{"pools": [{{"hostid": 12235020}}]}}}}, "boot": {{"cmdline": "{cmd}", "x": "{other}"}}}}"#)).unwrap();
             let (r, red) = redact(&d);
             let s = r.pretty();
-            assert!(!s.to_ascii_lowercase().contains("bab10c") && !s.contains("12235020"), "{s}");
+            assert!(
+                !s.to_ascii_lowercase().contains("bab10c") && !s.contains("12235020"),
+                "{s}"
+            );
             assert_eq!(red.unredact_value(&r).pretty(), d.pretty());
         }
     }
@@ -1927,8 +2754,16 @@ mod tests {
         let other = parse(r#"{"host": {"hostname": "bob-desktop"}, "os": {"id": "debian"}, "x": "alice-laptop and bob-desktop"}"#).unwrap();
         c.learn(&other);
         let r = c.seal();
-        assert_eq!(r.value(&other).get("x").and_then(Value::as_str), Some("host-1 and host-2"));
-        assert_eq!(r.value(&dump()).at(&["host", "hostname"]).and_then(Value::as_str), Some("host-1"));
+        assert_eq!(
+            r.value(&other).get("x").and_then(Value::as_str),
+            Some("host-1 and host-2")
+        );
+        assert_eq!(
+            r.value(&dump())
+                .at(&["host", "hostname"])
+                .and_then(Value::as_str),
+            Some("host-1")
+        );
     }
 
     #[test]
@@ -1945,24 +2780,40 @@ mod tests {
         let (r, red) = redact(&d);
         assert_eq!(r.pretty(), d.pretty(), "{}", red.summary(true));
         assert!(red.entries.is_empty(), "{:?}", red.entries);
-        assert!(red.kept.iter().any(|(k, w, _)| *k == Kind::Serial && w == "1"));
+        assert!(
+            red.kept
+                .iter()
+                .any(|(k, w, _)| *k == Kind::Serial && w == "1")
+        );
         // A hostname that is also a word the dump uses (a key part) is
         // replaced only where it's a hostname's whole value.
         let d = parse(r#"{"host": {"hostname": "data"}, "os": {"id": "debian"}, "x": {"data_offset": "data"}, "y": "/srv/data"}"#).unwrap();
         let (r, red) = redact(&d);
-        assert_eq!(r.at(&["host", "hostname"]).and_then(Value::as_str), Some("host1"));
-        assert_eq!(r.at(&["x", "data_offset"]).and_then(Value::as_str), Some("data"));
+        assert_eq!(
+            r.at(&["host", "hostname"]).and_then(Value::as_str),
+            Some("host1")
+        );
+        assert_eq!(
+            r.at(&["x", "data_offset"]).and_then(Value::as_str),
+            Some("data")
+        );
         assert_eq!(r.get("y").and_then(Value::as_str), Some("/srv/data"));
         assert_eq!(red.unredact("host1"), "data");
         // A disk signature of decimal digits stays out of longer numbers.
         let d = parse(r#"{"os": {"id": "debian"}, "t": {"disk_signature": "12345678"}, "p": "start=112345678901 0x12345678 12345678-01"}"#).unwrap();
         let (r, _) = redact(&d);
-        assert_eq!(r.get("p").and_then(Value::as_str), Some("start=112345678901 0xbc000001 bc000001-01"));
+        assert_eq!(
+            r.get("p").and_then(Value::as_str),
+            Some("start=112345678901 0xbc000001 bc000001-01")
+        );
     }
 
     #[test]
     fn boot_code_keeps_its_length() {
-        let guid = [0x8fu8, 0x97, 0xae, 0x56, 0x70, 0x0d, 0xeb, 0x49, 0x9d, 0xd1, 0x19, 0xb1, 0x74, 0xf4, 0x8d, 0x8b];
+        let guid = [
+            0x8fu8, 0x97, 0xae, 0x56, 0x70, 0x0d, 0xeb, 0x49, 0x9d, 0xd1, 0x19, 0xb1, 0x74, 0xf4,
+            0x8d, 0x8b,
+        ];
         let mut img = vec![0xeb, 0x63, 0x90];
         img.extend_from_slice(&guid);
         img.extend_from_slice(b"search --fs-uuid 56ae978f-0d70-49eb-9dd1-19b174f48d8b");
@@ -1972,28 +2823,62 @@ mod tests {
         ))
         .unwrap();
         let (r, _) = redact(&d);
-        let out = crate::bytes::unbase64(r.at(&["p", "boot_code", "image_b64"]).and_then(Value::as_str).unwrap()).unwrap();
+        let out = crate::bytes::unbase64(
+            r.at(&["p", "boot_code", "image_b64"])
+                .and_then(Value::as_str)
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(out.len(), img.len());
         assert_eq!(&out[..3], &img[..3]);
         assert!(!crate::bytes::contains(&out, &guid));
         assert!(!crate::bytes::contains(&out, b"56ae978f"));
-        assert!(crate::bytes::contains(&out, b"search --fs-uuid bc000000-0000-4000-8000-000000000001"), "{:?}", String::from_utf8_lossy(&out));
+        assert!(
+            crate::bytes::contains(
+                &out,
+                b"search --fs-uuid bc000000-0000-4000-8000-000000000001"
+            ),
+            "{:?}",
+            String::from_utf8_lossy(&out)
+        );
     }
 
     #[test]
     fn spans() {
-        assert_eq!(uuid_spans("UUID=56ae978f-0d70-49eb-9dd1-19b174f48d8b,x"), vec![(5, 41)]);
+        assert_eq!(
+            uuid_spans("UUID=56ae978f-0d70-49eb-9dd1-19b174f48d8b,x"),
+            vec![(5, 41)]
+        );
         assert!(uuid_spans("x56ae978f-0d70-49eb-9dd1-19b174f48d8b").is_empty());
-        assert_eq!(md_spans("md-uuid-75f651e9:d640a5a9:c9fdc179:785e99b1").len(), 1);
+        assert_eq!(
+            md_spans("md-uuid-75f651e9:d640a5a9:c9fdc179:785e99b1").len(),
+            1
+        );
         assert_eq!(lvm_spans("Abc123-DEFg-4h5I-J6kl-7MN8-op9Q-R0st1u").len(), 1);
         assert!(lvm_spans("abcdef-abcd-abcd-abcd-abcd-abcd-abcdef").is_empty());
         assert_eq!(mac_spans("52:54:00:12:34:56").len(), 1);
         assert!(mac_spans("75f651e9:d640a5a9").is_empty());
         assert!(is_mbr_partuuid("02290173-01"));
-        assert_eq!(link_serials("/dev/disk/by-id/ata-QEMU_DVD-ROM_QM00003"), vec!["QM00003"]);
-        assert_eq!(link_serials("/dev/disk/by-id/nvme-Samsung_SSD_970_EVO_Plus_1TB_S4EWNX0N123456_1-part2"), vec!["S4EWNX0N123456"]);
-        assert_eq!(link_serials("/dev/disk/by-id/usb-Kingston_DataTraveler_3.0_E0D55EA5741C1661A9A1233D-0:0-part1"), vec!["E0D55EA5741C1661A9A1233D"]);
-        assert_eq!(link_serials("/dev/diskid/DISK-S5Y1NJ0R123456Xp2"), vec!["S5Y1NJ0R123456X"]);
+        assert_eq!(
+            link_serials("/dev/disk/by-id/ata-QEMU_DVD-ROM_QM00003"),
+            vec!["QM00003"]
+        );
+        assert_eq!(
+            link_serials(
+                "/dev/disk/by-id/nvme-Samsung_SSD_970_EVO_Plus_1TB_S4EWNX0N123456_1-part2"
+            ),
+            vec!["S4EWNX0N123456"]
+        );
+        assert_eq!(
+            link_serials(
+                "/dev/disk/by-id/usb-Kingston_DataTraveler_3.0_E0D55EA5741C1661A9A1233D-0:0-part1"
+            ),
+            vec!["E0D55EA5741C1661A9A1233D"]
+        );
+        assert_eq!(
+            link_serials("/dev/diskid/DISK-S5Y1NJ0R123456Xp2"),
+            vec!["S5Y1NJ0R123456X"]
+        );
         assert_eq!(link_serials("/dev/diskid/DISK-QM00001s1a"), vec!["QM00001"]);
         assert!(link_serials("/dev/disk/by-id/wwn-0x5002538e40a1b2c3 /dev/disk/by-id/dm-name-root /dev/disk/by-id/scsi-35002538e40a1b2c3").is_empty());
         assert!(user_like("alice") && !user_like("lost+found") && !user_like(""));
@@ -2017,15 +2902,31 @@ mod tests {
         ))
         .unwrap();
         let (r, red) = redact(&d);
-        assert_ne!(r.at(&["p", "uuid"]).and_then(Value::as_str), Some("122A-10FD"));
-        let out = crate::bytes::unbase64(r.at(&["p", "esp_image", "0", "b64"]).and_then(Value::as_str).unwrap()).unwrap();
+        assert_ne!(
+            r.at(&["p", "uuid"]).and_then(Value::as_str),
+            Some("122A-10FD")
+        );
+        let out = crate::bytes::unbase64(
+            r.at(&["p", "esp_image", "0", "b64"])
+                .and_then(Value::as_str)
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(out.len(), img.len());
         for i in [0, 512] {
-            assert_ne!(&out[i + 67..i + 71], &[0xfd, 0x10, 0x2a, 0x12], "boot sector at {i}");
+            assert_ne!(
+                &out[i + 67..i + 71],
+                &[0xfd, 0x10, 0x2a, 0x12],
+                "boot sector at {i}"
+            );
             assert_eq!(&out[i..i + 67], &bs[..67]);
             assert_eq!(&out[i + 71..i + 512], &bs[71..]);
         }
-        assert_eq!(&out[1024..], &other[..], "a 4-byte run elsewhere is left alone");
+        assert_eq!(
+            &out[1024..],
+            &other[..],
+            "a 4-byte run elsewhere is left alone"
+        );
         // And back: check_plan's proof that the redacted dump maps to the original.
         assert_eq!(red.unredact_value(&r).compact(), d.compact());
     }
@@ -2044,11 +2945,36 @@ mod tests {
         )
         .unwrap();
         let (r, red) = redact(&d);
-        let s = |i: &str| r.at(&["storage", "md_arrays", i, "label"]).and_then(Value::as_str).unwrap().to_string();
-        assert_eq!(s("0"), "localhost.localdomain:boot", "{}", red.summary(true));
-        assert!(s("1").starts_with("localhost.localdomain:label") && !s("1").contains("pv00"), "{}", s("1"));
-        assert!(s("2").starts_with("host") && s("2").contains(":label") && !s("2").contains("oldbox") && !s("2").contains("media"), "{}", s("2"));
-        assert!(s("3").starts_with("localhost:label") && !s("3").contains("abc"), "{}", s("3"));
+        let s = |i: &str| {
+            r.at(&["storage", "md_arrays", i, "label"])
+                .and_then(Value::as_str)
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(
+            s("0"),
+            "localhost.localdomain:boot",
+            "{}",
+            red.summary(true)
+        );
+        assert!(
+            s("1").starts_with("localhost.localdomain:label") && !s("1").contains("pv00"),
+            "{}",
+            s("1")
+        );
+        assert!(
+            s("2").starts_with("host")
+                && s("2").contains(":label")
+                && !s("2").contains("oldbox")
+                && !s("2").contains("media"),
+            "{}",
+            s("2")
+        );
+        assert!(
+            s("3").starts_with("localhost:label") && !s("3").contains("abc"),
+            "{}",
+            s("3")
+        );
         assert!(!r.compact().contains("pv00"), "{}", r.compact());
         assert_eq!(red.unredact_value(&r).compact(), d.compact());
     }
@@ -2065,17 +2991,69 @@ mod tests {
         .unwrap();
         let (r, red) = redact(&d);
         let s = |p: &[&str]| r.at(p).and_then(Value::as_str).unwrap().to_string();
-        let home = s(&["storage", "disks", "0", "partitions", "0", "content", "label"]);
+        let home = s(&[
+            "storage",
+            "disks",
+            "0",
+            "partitions",
+            "0",
+            "content",
+            "label",
+        ]);
         assert!(home.starts_with("label") && !home.contains(':'), "{home}");
-        assert_eq!(s(&["storage", "fstab", "0", "spec"]), format!("LABEL={home}"));
+        assert_eq!(
+            s(&["storage", "fstab", "0", "spec"]),
+            format!("LABEL={home}")
+        );
         assert_eq!(s(&["storage", "fstab", "0", "file"]), "/home");
-        assert_eq!(s(&["storage", "disks", "0", "partitions", "0", "links", "0"]), format!("/dev/disk/by-label/{home}"));
-        assert_eq!(s(&["storage", "fstab", "1", "spec"]), format!("PARTLABEL={}", s(&["storage", "disks", "0", "partitions", "1", "partlabel"])));
-        assert_eq!(s(&["storage", "fstab", "2", "spec"]), format!("LABEL={}", s(&["storage", "disks", "0", "partitions", "1", "content", "label"])));
-        let md = s(&["storage", "disks", "0", "partitions", "2", "content", "label"]);
+        assert_eq!(
+            s(&["storage", "disks", "0", "partitions", "0", "links", "0"]),
+            format!("/dev/disk/by-label/{home}")
+        );
+        assert_eq!(
+            s(&["storage", "fstab", "1", "spec"]),
+            format!(
+                "PARTLABEL={}",
+                s(&["storage", "disks", "0", "partitions", "1", "partlabel"])
+            )
+        );
+        assert_eq!(
+            s(&["storage", "fstab", "2", "spec"]),
+            format!(
+                "LABEL={}",
+                s(&[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partitions",
+                    "1",
+                    "content",
+                    "label"
+                ])
+            )
+        );
+        let md = s(&[
+            "storage",
+            "disks",
+            "0",
+            "partitions",
+            "2",
+            "content",
+            "label",
+        ]);
         assert!(md.starts_with("host") && md.contains(":label"), "{md}");
-        assert!(!r.compact().contains("ab:xy") && !r.compact().contains("photos:old"), "{}", r.compact());
-        assert!(red.entries.iter().all(|e| e.kind != Kind::Hostname || e.original == "oldbox"), "{}", red.summary(true));
+        assert!(
+            !r.compact().contains("ab:xy") && !r.compact().contains("photos:old"),
+            "{}",
+            r.compact()
+        );
+        assert!(
+            red.entries
+                .iter()
+                .all(|e| e.kind != Kind::Hostname || e.original == "oldbox"),
+            "{}",
+            red.summary(true)
+        );
         assert_eq!(red.unredact_value(&r).compact(), d.compact());
     }
 
@@ -2092,7 +3070,9 @@ mod tests {
         let (r, red) = redact(&d);
         assert_eq!(r.pretty(), d.pretty(), "{}", red.summary(true));
         // A home directory is still a user's.
-        let d = parse(r#"{"os": {"id": "debian"}, "x": "/home/alice/notes", "y": "HOME=/home/alice"}"#).unwrap();
+        let d =
+            parse(r#"{"os": {"id": "debian"}, "x": "/home/alice/notes", "y": "HOME=/home/alice"}"#)
+                .unwrap();
         let (r, _) = redact(&d);
         assert!(!r.pretty().contains("alice"), "{}", r.pretty());
     }
@@ -2202,7 +3182,11 @@ mod tests {
         let (r, red) = redact(&d);
         let t = r.pretty();
         assert!(red.leaks(&t).is_empty(), "{:?}\n{t}", red.leaks(&t));
-        let vg = r.at(&["storage", "lvm", "volume_groups", "0", "uuid"]).and_then(Value::as_str).unwrap().to_string();
+        let vg = r
+            .at(&["storage", "lvm", "volume_groups", "0", "uuid"])
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
         assert_ne!(vg, "bkoLVM-0000-0000-0000-0000-0000-000001");
         let (r2, red2) = redact(&r);
         let t2 = r2.pretty();
@@ -2218,7 +3202,20 @@ mod tests {
         let (r, red) = redact(&d);
         let t = r.pretty();
         assert!(!t.contains(id) && !t.contains(&id.replace('-', "")), "{t}");
-        assert!(r.at(&["storage", "lvm", "volume_groups", "0", "logical_volumes", "0", "id"]).and_then(Value::as_str).unwrap().starts_with("bkoLVM-"));
+        assert!(
+            r.at(&[
+                "storage",
+                "lvm",
+                "volume_groups",
+                "0",
+                "logical_volumes",
+                "0",
+                "id"
+            ])
+            .and_then(Value::as_str)
+            .unwrap()
+            .starts_with("bkoLVM-")
+        );
         assert!(red.leaks(&t).is_empty(), "{:?}", red.leaks(&t));
     }
 
@@ -2243,13 +3240,35 @@ mod tests {
         let raw_sig = crate::load::commands::pmbr_signature(disk(&d).as_ref());
         let red_sig = crate::load::commands::pmbr_signature(disk(&r).as_ref());
         assert_eq!(raw_sig, Some(0x922b9cd8));
-        let u = r.at(&["storage", "disks", "0", "partition_table", "protective_mbr", "entries", "0", "uuid"]).and_then(Value::as_str).unwrap();
+        let u = r
+            .at(&[
+                "storage",
+                "disks",
+                "0",
+                "partition_table",
+                "protective_mbr",
+                "entries",
+                "0",
+                "uuid",
+            ])
+            .and_then(Value::as_str)
+            .unwrap();
         assert!(is_mbr_partuuid(u) && u.ends_with("-01"), "{u}");
         assert_eq!(red_sig, Some(u32::from_str_radix(&u[..8], 16).unwrap()));
         assert_ne!(red_sig, raw_sig);
         // load's plan line for it: the octal bytes map both ways, and leaks sees them.
-        let oct = |n: u32| n.to_le_bytes().iter().map(|b| format!("\\{b:03o}")).collect::<String>();
-        let line = |n: u32| format!("sh -c 'printf '\\''{}'\\'' | dd of=/dev/sdq bs=1 seek=440 count=4 conv=notrunc status=none'", oct(n));
+        let oct = |n: u32| {
+            n.to_le_bytes()
+                .iter()
+                .map(|b| format!("\\{b:03o}"))
+                .collect::<String>()
+        };
+        let line = |n: u32| {
+            format!(
+                "sh -c 'printf '\\''{}'\\'' | dd of=/dev/sdq bs=1 seek=440 count=4 conv=notrunc status=none'",
+                oct(n)
+            )
+        };
         let (raw_line, red_line) = (line(raw_sig.unwrap()), line(red_sig.unwrap()));
         assert_eq!(red.text(&raw_line), red_line);
         assert_eq!(red.unredact(&red_line), raw_line);
@@ -2284,10 +3303,21 @@ mod tests {
         for l in ["ubuntu-seed", "ubuntu-data-enc"] {
             assert!(c.contains(l), "{l}: {c}");
         }
-        assert!(!c.contains(key) && c.contains("typed <recovery-key> at the prompt"), "{c}");
-        assert_eq!(scrub_recovery_keys(&format!("a{key}b {key}")), "a<recovery-key>b <recovery-key>");
+        assert!(
+            !c.contains(key) && c.contains("typed <recovery-key> at the prompt"),
+            "{c}"
+        );
+        assert_eq!(
+            scrub_recovery_keys(&format!("a{key}b {key}")),
+            "a<recovery-key>b <recovery-key>"
+        );
         // Not a key: seven groups, a group of four or six digits, ...
-        for not in ["12345-00001-65535-00256-54321-00000-11111", "12345-0001-65535-00256-54321-00000-11111-22222", "12345 00001 65535 00256 54321 00000 11111 22222", "é"] {
+        for not in [
+            "12345-00001-65535-00256-54321-00000-11111",
+            "12345-0001-65535-00256-54321-00000-11111-22222",
+            "12345 00001 65535 00256 54321 00000 11111 22222",
+            "é",
+        ] {
             assert_eq!(scrub_recovery_keys(not), not);
         }
     }
@@ -2304,7 +3334,12 @@ mod tests {
         let (r, _) = redact(&d);
         let c = r.compact();
         assert!(!c.contains("alicebank") && c.contains("qubes_dom0"), "{c}");
-        assert!(generic_qube("debian-13-xfce") && generic_qube("fedora-45-minimal") && generic_qube("sys-net-dm") && !generic_qube("fedora-work"));
+        assert!(
+            generic_qube("debian-13-xfce")
+                && generic_qube("fedora-45-minimal")
+                && generic_qube("sys-net-dm")
+                && !generic_qube("fedora-work")
+        );
         assert!(release_label("qubes-r4-3-2-x86-64"));
     }
 
@@ -2323,8 +3358,24 @@ mod tests {
         let (r, red) = redact(&d);
         let c = r.pretty();
         assert!(!c.contains("bob"), "{c}");
-        assert_eq!(r.at(&["storage", "mounts", "0", "source"]).and_then(Value::as_str), Some("rpool/home/user1"));
-        assert_eq!(r.at(&["storage", "zfs", "pools", "0", "datasets", "1", "mountpoint"]).and_then(Value::as_str), Some("/usr/home/user1"));
+        assert_eq!(
+            r.at(&["storage", "mounts", "0", "source"])
+                .and_then(Value::as_str),
+            Some("rpool/home/user1")
+        );
+        assert_eq!(
+            r.at(&[
+                "storage",
+                "zfs",
+                "pools",
+                "0",
+                "datasets",
+                "1",
+                "mountpoint"
+            ])
+            .and_then(Value::as_str),
+            Some("/usr/home/user1")
+        );
         assert_eq!(red.unredact_value(&r).compact(), d.compact());
         assert!(red.leaks(&c).is_empty());
         // Not inside a longer name: bobby is another user, not learned here.
@@ -2343,16 +3394,43 @@ mod tests {
         let m = PASSWORD_MARK;
         for (from, to) in [
             ("password=s3cret\n", format!("password={m}\n")),
-            ("  password = s3cret # x\n", format!("  password = {m} # x\n")),
-            ("password=\"my pass phrase\"\nimage=/v\n", format!("password=\"{m}\"\nimage=/v\n")),
+            (
+                "  password = s3cret # x\n",
+                format!("  password = {m} # x\n"),
+            ),
+            (
+                "password=\"my pass phrase\"\nimage=/v\n",
+                format!("password=\"{m}\"\nimage=/v\n"),
+            ),
             ("PASSWORD=x1", format!("PASSWORD={m}")),
-            (r#"{"options":["password=my pass phrase","boot=/dev/vda"]}"#, format!(r#"{{"options":["password={m}","boot=/dev/vda"]}}"#)),
-            (r#"{"options":["password=a\"b c","x"]}"#, format!(r#"{{"options":["password={m}","x"]}}"#)),
-            (r#"{"text":"EOF'\npassword=\"my pass\"\nimage=\"/v\"\n"}"#, format!(r#"{{"text":"EOF'\npassword=\"{m}\"\nimage=\"/v\"\n"}}"#)),
-            (r#"{"problems":["/etc/lilo.conf's password=pa$$ has a quote"]}"#, format!(r#"{{"problems":["/etc/lilo.conf's password={m} has a quote"]}}"#)),
-            ("sh -c 'x --password=hunter2'", format!("sh -c 'x --password={m}'")),
-            ("RESTIC_PASSWORD=hunter2 restic", format!("RESTIC_PASSWORD={m} restic")),
-            ("//nas/s /mnt cifs username=u,password=pw,uid=1 0 0", format!("//nas/s /mnt cifs username=u,password={m} 0 0")),
+            (
+                r#"{"options":["password=my pass phrase","boot=/dev/vda"]}"#,
+                format!(r#"{{"options":["password={m}","boot=/dev/vda"]}}"#),
+            ),
+            (
+                r#"{"options":["password=a\"b c","x"]}"#,
+                format!(r#"{{"options":["password={m}","x"]}}"#),
+            ),
+            (
+                r#"{"text":"EOF'\npassword=\"my pass\"\nimage=\"/v\"\n"}"#,
+                format!(r#"{{"text":"EOF'\npassword=\"{m}\"\nimage=\"/v\"\n"}}"#),
+            ),
+            (
+                r#"{"problems":["/etc/lilo.conf's password=pa$$ has a quote"]}"#,
+                format!(r#"{{"problems":["/etc/lilo.conf's password={m} has a quote"]}}"#),
+            ),
+            (
+                "sh -c 'x --password=hunter2'",
+                format!("sh -c 'x --password={m}'"),
+            ),
+            (
+                "RESTIC_PASSWORD=hunter2 restic",
+                format!("RESTIC_PASSWORD={m} restic"),
+            ),
+            (
+                "//nas/s /mnt cifs username=u,password=pw,uid=1 0 0",
+                format!("//nas/s /mnt cifs username=u,password={m} 0 0"),
+            ),
         ] {
             assert_eq!(scrub_passwords(from), to, "{from}");
             assert_eq!(scrub_passwords(&to), to, "{to}: again");
@@ -2369,15 +3447,25 @@ mod tests {
             "password",
             "password=",
         ] {
-            assert!(matches!(scrub_passwords(same), std::borrow::Cow::Borrowed(_)), "{same}");
+            assert!(
+                matches!(scrub_passwords(same), std::borrow::Cow::Borrowed(_)),
+                "{same}"
+            );
         }
         // A JSON string that is an item: its value is all the rest of it.
         let d = parse(r#"{"os": {"id": "slackware"}, "boot": {"lilo": {"options": ["password=my pass phrase", "boot=/dev/vda"], "images": [{"options": ["label=Linux", "password = x y"]}]}}}"#).unwrap();
         for r in [redact(&d).1, Collector::new().seal()] {
             let c = r.value(&d).compact();
             assert!(!c.contains("pass phrase") && !c.contains("x y"), "{c}");
-            assert!(c.contains(&format!(r#"["password={m}","boot=/dev/vda"]"#)) && c.contains(&format!(r#""password = {m}""#)), "{c}");
-            assert_eq!(r.text("password=\"my pass phrase\"\n"), format!("password=\"{m}\"\n"));
+            assert!(
+                c.contains(&format!(r#"["password={m}","boot=/dev/vda"]"#))
+                    && c.contains(&format!(r#""password = {m}""#)),
+                "{c}"
+            );
+            assert_eq!(
+                r.text("password=\"my pass phrase\"\n"),
+                format!("password=\"{m}\"\n")
+            );
         }
     }
 
@@ -2392,18 +3480,33 @@ mod tests {
             let mut c = Collector::new();
             c.learn_text(text);
             let r = c.seal();
-            r.entries.iter().filter(|e| e.kind == Kind::User).map(|e| e.original.clone()).collect::<Vec<_>>()
+            r.entries
+                .iter()
+                .filter(|e| e.kind == Kind::User)
+                .map(|e| e.original.clone())
+                .collect::<Vec<_>>()
         };
-        assert_eq!(users("error: lstat /var/home/bob/.cache/x: permission denied\n"), ["bob"]);
+        assert_eq!(
+            users("error: lstat /var/home/bob/.cache/x: permission denied\n"),
+            ["bob"]
+        );
         assert_eq!(users("cwd \"/usr/home/carol/y\""), ["carol"]);
         assert_eq!(users("/var/home/dave"), ["dave"]);
-        for not in ["root@h:/usr/obj/home/builder/sys/X86_64_GENERIC", "/sysroot/var/home/erin/x", "/srv/usr/home/fred", "/opt/myvar/home/gina"] {
+        for not in [
+            "root@h:/usr/obj/home/builder/sys/X86_64_GENERIC",
+            "/sysroot/var/home/erin/x",
+            "/srv/usr/home/fred",
+            "/opt/myvar/home/gina",
+        ] {
             assert_eq!(users(not), Vec::<String>::new(), "{not}");
         }
         let mut c = Collector::new();
         let text = "lstat /var/home/bob/.cache/x\n/usr/home/carol/y\n";
         c.learn_text(text);
         let r = c.seal();
-        assert_eq!(r.text(text), "lstat /var/home/user1/.cache/x\n/usr/home/user2/y\n");
+        assert_eq!(
+            r.text(text),
+            "lstat /var/home/user1/.cache/x\n/usr/home/user2/y\n"
+        );
     }
 }

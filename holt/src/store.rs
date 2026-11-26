@@ -72,7 +72,9 @@ pub const SYSTEMS: &[StoreSystem] = &[
         initramfs_bios: "NixOS: each generation's kernel and initrd are in /boot/kernels, restored with /boot; nothing to rebuild",
         uefi_grub: "NixOS: UEFI GRUB's EFI image and grub.cfg came back with the ESP and /boot; only the boot entry is made",
         bios_grub: None,
-        systemd_boot: Some("NixOS: systemd-boot, its loader entries and every generation's kernel and initrd came back with the ESP; only the boot entry is made"),
+        systemd_boot: Some(
+            "NixOS: systemd-boot, its loader entries and every generation's kernel and initrd came back with the ESP; only the boot entry is made",
+        ),
         efi_prefix_by_number: false,
     },
     StoreSystem {
@@ -81,12 +83,17 @@ pub const SYSTEMS: &[StoreSystem] = &[
         store: "/gnu/store",
         store_name: "the Guix store",
         #[cfg(test)]
-        profile_bins: &["/run/current-system/profile/sbin", "/run/current-system/profile/bin"],
+        profile_bins: &[
+            "/run/current-system/profile/sbin",
+            "/run/current-system/profile/bin",
+        ],
         grub_install: None,
         initramfs_uefi: GUIX_INITRAMFS,
         initramfs_bios: GUIX_INITRAMFS,
         uefi_grub: "Guix System: UEFI GRUB's EFI image came back with the ESP, and grub.cfg (which names each generation's kernel and initrd in the store) with /; only the boot entry is made, and the image's prefix set to /boot's partition number where it names one",
-        bios_grub: Some("Guix System: its store holds no GRUB to install with (guix system init ran the installer's); the source's own boot.img and core.img came back in /boot/grub/i386-pc, and the rescue system's grub-bios-setup writes them to each disk; grub.cfg, which names each generation's kernel and initrd in the store, stays as restored"),
+        bios_grub: Some(
+            "Guix System: its store holds no GRUB to install with (guix system init ran the installer's); the source's own boot.img and core.img came back in /boot/grub/i386-pc, and the rescue system's grub-bios-setup writes them to each disk; grub.cfg, which names each generation's kernel and initrd in the store, stays as restored",
+        ),
         systemd_boot: None,
         efi_prefix_by_number: true,
     },
@@ -163,7 +170,9 @@ impl Sx {
     pub fn text(&self) -> Option<String> {
         match self {
             Sx::Str(s) | Sx::Sym(s) | Sx::Num(s) => Some(s.clone()),
-            Sx::List(l) if l.first().and_then(Sx::sym) == Some("string-append") => l[1..].iter().map(Sx::text).collect(),
+            Sx::List(l) if l.first().and_then(Sx::sym) == Some("string-append") => {
+                l[1..].iter().map(Sx::text).collect()
+            }
             _ => None,
         }
     }
@@ -175,7 +184,12 @@ impl Sx {
 /// deeper than 256 (`MAX_DEPTH`) doesn't read either, so a crafted or damaged
 /// file can't overflow the stack.
 pub fn parse_sexps(text: &str) -> Vec<Sx> {
-    let mut r = Reader { b: text.as_bytes(), i: 0, depth: 0, too_deep: false };
+    let mut r = Reader {
+        b: text.as_bytes(),
+        i: 0,
+        depth: 0,
+        too_deep: false,
+    };
     let mut out = Vec::new();
     while let Some(d) = r.datum() {
         out.push(d);
@@ -312,7 +326,9 @@ impl Reader<'_> {
                                     if self.peek() == Some(b';') {
                                         self.i += 1;
                                     }
-                                    let ch = u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)?;
+                                    let ch = u32::from_str_radix(hex, 16)
+                                        .ok()
+                                        .and_then(char::from_u32)?;
                                     s.extend(ch.to_string().as_bytes());
                                 }
                                 b'\n' => {
@@ -348,7 +364,17 @@ impl Reader<'_> {
                 Some(b'v') if self.b[self.i..].starts_with(b"#vu8(") => {
                     self.i += 5;
                     let items = self.items()?;
-                    items.iter().map(|x| if let Sx::Num(n) = x { n.parse::<u8>().ok() } else { None }).collect::<Option<Vec<u8>>>().map(Sx::Bytes)
+                    items
+                        .iter()
+                        .map(|x| {
+                            if let Sx::Num(n) = x {
+                                n.parse::<u8>().ok()
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Option<Vec<u8>>>()
+                        .map(Sx::Bytes)
                 }
                 _ => match self.atom().as_str() {
                     "#t" | "#true" => Some(Sx::Bool(true)),
@@ -362,7 +388,11 @@ impl Reader<'_> {
                     return None;
                 }
                 let digits = a.strip_prefix(['-', '+']).unwrap_or(&a);
-                Some(if digits.starts_with(|c: char| c.is_ascii_digit()) { Sx::Num(a) } else { Sx::Sym(a) })
+                Some(if digits.starts_with(|c: char| c.is_ascii_digit()) {
+                    Sx::Num(a)
+                } else {
+                    Sx::Sym(a)
+                })
             }
         }
     }
@@ -377,8 +407,15 @@ impl Reader<'_> {
 /// read the same way.
 pub fn parse_manifest(text: &str) -> Vec<(String, String, String, String)> {
     let mut out = Vec::new();
-    let Some(m) = parse_sexps(text).into_iter().find(|d| d.list().and_then(|l| l.first()).and_then(Sx::sym) == Some("manifest")) else { return out };
-    let Some([Sx::List(pkgs), ..]) = m.field("packages") else { return out };
+    let Some(m) = parse_sexps(text)
+        .into_iter()
+        .find(|d| d.list().and_then(|l| l.first()).and_then(Sx::sym) == Some("manifest"))
+    else {
+        return out;
+    };
+    let Some([Sx::List(pkgs), ..]) = m.field("packages") else {
+        return out;
+    };
     for p in pkgs {
         if let Some([Sx::Str(n), Sx::Str(v), Sx::Str(o), Sx::Str(path), ..]) = p.list() {
             out.push((n.clone(), v.clone(), o.clone(), path.clone()));
@@ -408,9 +445,17 @@ fn resolve(sys: &Sys, abs: &str) -> Option<String> {
 /// architecture; an output other than "out" is NAME:OUTPUT, as `guix
 /// package -I` prints it.
 pub fn guix_packages(sys: &Sys) -> Vec<crate::boot::Package> {
-    let Some(m) = resolve(sys, &format!("{GUIX_SYSTEM_PROFILE}/profile/manifest")).and_then(|p| sys.read(&p)) else { return Vec::new() };
-    let mut out: Vec<crate::boot::Package> =
-        parse_manifest(&m).into_iter().map(|(n, v, o, _)| crate::boot::Package::new(if o == "out" { n } else { format!("{n}:{o}") }, v, "")).collect();
+    let Some(m) =
+        resolve(sys, &format!("{GUIX_SYSTEM_PROFILE}/profile/manifest")).and_then(|p| sys.read(&p))
+    else {
+        return Vec::new();
+    };
+    let mut out: Vec<crate::boot::Package> = parse_manifest(&m)
+        .into_iter()
+        .map(|(n, v, o, _)| {
+            crate::boot::Package::new(if o == "out" { n } else { format!("{n}:{o}") }, v, "")
+        })
+        .collect();
     out.sort();
     out.dedup();
     out
@@ -424,7 +469,10 @@ pub fn guix_packages(sys: &Sys) -> Vec<crate::boot::Package> {
 /// or "name" (another string: --root='s UUID or label).
 pub fn device_of(d: &Sx) -> Option<(&'static str, String)> {
     match d {
-        Sx::Str(s) => Some((if s.starts_with('/') { "device" } else { "name" }, s.clone())),
+        Sx::Str(s) => Some((
+            if s.starts_with('/') { "device" } else { "name" },
+            s.clone(),
+        )),
         Sx::List(l) => match l.first().and_then(Sx::sym) {
             Some("uuid") => {
                 let ty = l.get(1).and_then(Sx::sym).unwrap_or("");
@@ -452,10 +500,28 @@ fn uuid_text(b: &[u8], ty: &str) -> String {
     match b.len() {
         16 if ty == "iso9660" && b.iter().all(u8::is_ascii_digit) => {
             let d = String::from_utf8_lossy(b);
-            format!("{}-{}-{}-{}-{}-{}-{}", &d[..4], &d[4..6], &d[6..8], &d[8..10], &d[10..12], &d[12..14], &d[14..])
+            format!(
+                "{}-{}-{}-{}-{}-{}-{}",
+                &d[..4],
+                &d[4..6],
+                &d[6..8],
+                &d[8..10],
+                &d[10..12],
+                &d[12..14],
+                &d[14..]
+            )
         }
-        16 => format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..]),
-        4 if matches!(ty, "fat" | "fat32" | "fat16" | "vfat" | "") => format!("{:02X}{:02X}-{:02X}{:02X}", b[3], b[2], b[1], b[0]),
+        16 => format!(
+            "{}-{}-{}-{}-{}",
+            &h[..8],
+            &h[8..12],
+            &h[12..16],
+            &h[16..20],
+            &h[20..]
+        ),
+        4 if matches!(ty, "fat" | "fat32" | "fat16" | "vfat" | "") => {
+            format!("{:02X}{:02X}-{:02X}{:02X}", b[3], b[2], b[1], b[0])
+        }
         _ => h,
     }
 }
@@ -478,10 +544,15 @@ fn device_json(d: Option<&Sx>) -> Value {
 /// null; the label is `title` here (redaction takes `label` keys for file
 /// system labels).
 pub fn parameters_json(text: &str) -> Option<Obj> {
-    let p = parse_sexps(text).into_iter().find(|d| d.list().and_then(|l| l.first()).and_then(Sx::sym) == Some("boot-parameters"))?;
+    let p = parse_sexps(text)
+        .into_iter()
+        .find(|d| d.list().and_then(|l| l.first()).and_then(Sx::sym) == Some("boot-parameters"))?;
     let one = |k: &str| p.field(k).and_then(|v| v.first());
     let text_of = |k: &str| one(k).and_then(Sx::text);
-    let args: Vec<String> = one("kernel-arguments").and_then(Sx::list).map(|l| l.iter().filter_map(Sx::text).collect()).unwrap_or_default();
+    let args: Vec<String> = one("kernel-arguments")
+        .and_then(Sx::list)
+        .map(|l| l.iter().filter_map(Sx::text).collect())
+        .unwrap_or_default();
     let store = Sx::List(p.field("store").map(<[Sx]>::to_vec).unwrap_or_default());
     let store_one = |k: &str| store.field(k).and_then(|v| v.first());
     Some(
@@ -494,14 +565,23 @@ pub fn parameters_json(text: &str) -> Option<Obj> {
             .set("initrd", text_of("initrd"))
             .set("bootloader_name", text_of("bootloader-name"))
             .set("store_device", device_json(store_one("device")))
-            .set("store_mount_point", store_one("mount-point").and_then(Sx::text))
-            .set("store_directory_prefix", store_one("directory-prefix").and_then(Sx::text)),
+            .set(
+                "store_mount_point",
+                store_one("mount-point").and_then(Sx::text),
+            )
+            .set(
+                "store_directory_prefix",
+                store_one("directory-prefix").and_then(Sx::text),
+            ),
     )
 }
 
 /// N in `system-N-link`.
 fn generation_number(name: &str) -> Option<u64> {
-    name.strip_prefix("system-")?.strip_suffix("-link")?.parse().ok()
+    name.strip_prefix("system-")?
+        .strip_suffix("-link")?
+        .parse()
+        .ok()
 }
 
 /// What grub.cfg's `search` commands look for ({kind: fs-uuid, label or
@@ -514,7 +594,9 @@ pub fn grub_cfg_searches(text: &str) -> (Vec<(String, String)>, Vec<String>) {
     let mut roots: Vec<String> = Vec::new();
     for raw in text.lines() {
         let w = crate::boot::shell_words(raw.trim());
-        let Some(cmd) = w.first().map(String::as_str) else { continue };
+        let Some(cmd) = w.first().map(String::as_str) else {
+            continue;
+        };
         let found = match cmd {
             "search.fs_uuid" => w.get(1).map(|v| ("fs-uuid", v.clone())),
             "search.fs_label" => w.get(1).map(|v| ("label", v.clone())),
@@ -528,7 +610,10 @@ pub fn grub_cfg_searches(text: &str) -> (Vec<(String, String)>, Vec<String>) {
                 } else {
                     "file"
                 };
-                w.iter().skip(1).rfind(|x| !x.starts_with('-')).map(|v| (kind, v.clone()))
+                w.iter()
+                    .skip(1)
+                    .rfind(|x| !x.starts_with('-'))
+                    .map(|v| (kind, v.clone()))
             }
             "linux" | "linuxefi" => {
                 for a in &w[1..] {
@@ -554,8 +639,13 @@ pub fn grub_cfg_searches(text: &str) -> (Vec<(String, String)>, Vec<String>) {
 /// The root a kernel argument names: `root=R` (Guix 1.5.0) or `--root=R`
 /// (older), R without a `UUID=` or `LABEL=` prefix.
 pub fn root_arg(a: &str) -> Option<&str> {
-    let r = a.strip_prefix("--root=").or_else(|| a.strip_prefix("root="))?;
-    let r = r.strip_prefix("UUID=").or_else(|| r.strip_prefix("LABEL=")).unwrap_or(r);
+    let r = a
+        .strip_prefix("--root=")
+        .or_else(|| a.strip_prefix("root="))?;
+    let r = r
+        .strip_prefix("UUID=")
+        .or_else(|| r.strip_prefix("LABEL="))
+        .unwrap_or(r);
     (!r.is_empty()).then_some(r)
 }
 
@@ -571,7 +661,9 @@ fn core_img_part(sys: &Sys) -> Option<String> {
     let path = "/boot/grub/i386-pc/core.img";
     let b = sys.read_bytes(path)?;
     match crate::load::grubprefix::core_prefix(&b) {
-        Ok(p) => p.as_deref().and_then(crate::load::grubprefix::numbered_partition),
+        Ok(p) => p
+            .as_deref()
+            .and_then(crate::load::grubprefix::numbered_partition),
         Err(e) => {
             sys.warn(format!("Guix: {path}: {e}"));
             None
@@ -591,16 +683,28 @@ pub fn guix_json(sys: &Sys) -> Option<Value> {
     if !is_guix(sys) {
         return None;
     }
-    let current = sys.readlink(GUIX_SYSTEM_PROFILE).and_then(|l| generation_number(l.rsplit('/').next().unwrap_or(&l)));
-    let mut gens: Vec<(u64, String)> = sys.list("/var/guix/profiles").into_iter().filter_map(|n| generation_number(&n).map(|g| (g, n))).collect();
+    let current = sys
+        .readlink(GUIX_SYSTEM_PROFILE)
+        .and_then(|l| generation_number(l.rsplit('/').next().unwrap_or(&l)));
+    let mut gens: Vec<(u64, String)> = sys
+        .list("/var/guix/profiles")
+        .into_iter()
+        .filter_map(|n| generation_number(&n).map(|g| (g, n)))
+        .collect();
     gens.sort();
     let list: Vec<Value> = gens
         .iter()
         .map(|(n, name)| {
             let link = format!("/var/guix/profiles/{name}");
             let dir = resolve(sys, &link);
-            let mut o = Obj::new().set("number", *n).set("system", sys.readlink(&link));
-            match dir.as_deref().and_then(|d| sys.read(&format!("{d}/parameters"))).and_then(|t| parameters_json(&t)) {
+            let mut o = Obj::new()
+                .set("number", *n)
+                .set("system", sys.readlink(&link));
+            match dir
+                .as_deref()
+                .and_then(|d| sys.read(&format!("{d}/parameters")))
+                .and_then(|t| parameters_json(&t))
+            {
                 Some(p) => o.0.extend(p.0),
                 None => {
                     sys.warn(format!("Guix: {link}'s boot parameters can't be read"));
@@ -615,12 +719,26 @@ pub fn guix_json(sys: &Sys) -> Option<Value> {
         .map(|m| parse_manifest(&m))
         .unwrap_or_default()
         .into_iter()
-        .find(|(n, _, o, path)| matches!(n.as_str(), "grub-pc" | "grub" | "grub-efi") && o == "out" && sys.is_dir(&format!("{path}/lib/grub/i386-pc")))
+        .find(|(n, _, o, path)| {
+            matches!(n.as_str(), "grub-pc" | "grub" | "grub-efi")
+                && o == "out"
+                && sys.is_dir(&format!("{path}/lib/grub/i386-pc"))
+        })
         .map(|(_, _, _, path)| path);
     let cfg = "/boot/grub/grub.cfg";
     let grub_cfg = resolve(sys, cfg).and_then(|p| sys.read(&p)).map(|t| {
         let (searches, roots) = grub_cfg_searches(&t);
-        Obj::new().set("path", cfg).set("searches", searches.into_iter().map(|(k, v)| Obj::new().set("kind", k).set("value", v).build()).collect::<Vec<_>>()).set("roots", roots).build()
+        Obj::new()
+            .set("path", cfg)
+            .set(
+                "searches",
+                searches
+                    .into_iter()
+                    .map(|(k, v)| Obj::new().set("kind", k).set("value", v).build())
+                    .collect::<Vec<_>>(),
+            )
+            .set("roots", roots)
+            .build()
     });
     Some(
         Obj::new()
@@ -646,7 +764,9 @@ mod tests {
 
     #[test]
     fn reader() {
-        let d = parse_sexps("; a comment\n(a \"b\\\"c\\x41;\" 12 -3 #t #f #vu8(1 255) #(x y) 'q [z]) #| block |# #;(skipped) last");
+        let d = parse_sexps(
+            "; a comment\n(a \"b\\\"c\\x41;\" 12 -3 #t #f #vu8(1 255) #(x y) 'q [z]) #| block |# #;(skipped) last",
+        );
         assert_eq!(
             d,
             vec![
@@ -666,8 +786,14 @@ mod tests {
             ]
         );
         // What doesn't read ends the list; what came before stays.
-        assert_eq!(parse_sexps("(a) (b"), vec![Sx::List(vec![Sx::Sym("a".into())])]);
-        assert_eq!(parse_sexps("(a) )"), vec![Sx::List(vec![Sx::Sym("a".into())])]);
+        assert_eq!(
+            parse_sexps("(a) (b"),
+            vec![Sx::List(vec![Sx::Sym("a".into())])]
+        );
+        assert_eq!(
+            parse_sexps("(a) )"),
+            vec![Sx::List(vec![Sx::Sym("a".into())])]
+        );
         assert_eq!(parse_sexps("#vu8(1 300)"), vec![]);
         assert!(parse_sexps("").is_empty());
     }
@@ -683,14 +809,24 @@ mod tests {
         let deep = |n: usize| format!("{}x{}", "(".repeat(n), ")".repeat(n));
         assert_eq!(parse_sexps(&deep(MAX_DEPTH - 1)).len(), 1);
         assert!(parse_sexps(&deep(MAX_DEPTH)).is_empty());
-        assert_eq!(parse_sexps(&format!("(a) {}", deep(1 << 16))), vec![Sx::List(vec![Sx::Sym("a".into())])]);
+        assert_eq!(
+            parse_sexps(&format!("(a) {}", deep(1 << 16))),
+            vec![Sx::List(vec![Sx::Sym("a".into())])]
+        );
         // A `#;` whose datum would be the one too deep (after a quote, the
         // datum's own skip_space meets it) ends the read too: it doesn't
         // read the commented-out `a` as the quoted datum.
         let commented = |n: usize| format!("{}'#;a b{}", "(".repeat(n), ")".repeat(n));
         assert!(parse_sexps(&commented(MAX_DEPTH - 2)).is_empty());
         // Nor when nothing reads after it: `'#;a)` quotes nothing.
-        assert!(parse_sexps(&format!("{}'#;a{}", "(".repeat(MAX_DEPTH - 2), ")".repeat(MAX_DEPTH - 2))).is_empty());
+        assert!(
+            parse_sexps(&format!(
+                "{}'#;a{}",
+                "(".repeat(MAX_DEPTH - 2),
+                ")".repeat(MAX_DEPTH - 2)
+            ))
+            .is_empty()
+        );
         let mut want = Sx::List(vec![Sx::Sym("quote".into()), Sx::Sym("b".into())]);
         for _ in 0..MAX_DEPTH - 3 {
             want = Sx::List(vec![want]);
@@ -716,11 +852,27 @@ mod tests {
     fn manifest() {
         let m = parse_manifest(MANIFEST);
         assert_eq!(m.len(), 4, "{m:?}");
-        assert_eq!(m[0], ("grub".into(), "2.12".into(), "out".into(), "/gnu/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-grub-2.12".into()));
+        assert_eq!(
+            m[0],
+            (
+                "grub".into(),
+                "2.12".into(),
+                "out".into(),
+                "/gnu/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-grub-2.12".into()
+            )
+        );
         assert_eq!(m[3].2, "debug");
         // Version 3 is positional too; an entry that isn't is skipped.
         let v3 = "(manifest (version 3) (packages ((\"e2fsprogs\" \"1.47.2\" \"out\" \"/gnu/store/x-e2fsprogs-1.47.2\" (propagated-inputs ()) (search-paths ())) (broken))))";
-        assert_eq!(parse_manifest(v3), vec![("e2fsprogs".into(), "1.47.2".into(), "out".into(), "/gnu/store/x-e2fsprogs-1.47.2".into())]);
+        assert_eq!(
+            parse_manifest(v3),
+            vec![(
+                "e2fsprogs".into(),
+                "1.47.2".into(),
+                "out".into(),
+                "/gnu/store/x-e2fsprogs-1.47.2".into()
+            )]
+        );
         assert!(parse_manifest("(not-a-manifest)").is_empty());
         assert!(parse_manifest("(manifest (version 4))").is_empty());
     }
@@ -742,24 +894,65 @@ mod tests {
     #[test]
     fn parameters() {
         let p = parameters_json(PARAMETERS).unwrap().build();
-        assert_eq!(p.at(&["title"]).and_then(Value::as_str), Some("GNU with Linux-Libre 6.17.7"));
-        assert_eq!(p.at(&["root_device", "kind"]).and_then(Value::as_str), Some("uuid"));
-        assert_eq!(p.at(&["root_device", "value"]).and_then(Value::as_str), Some("10111213-1415-1617-1819-1a1b1c1d1e1f"));
-        assert!(p.at(&["kernel"]).and_then(Value::as_str).unwrap().ends_with("-linux-libre-6.17.7/bzImage"));
-        assert_eq!(p.at(&["kernel_arguments"]).and_then(Value::as_array).unwrap().len(), 4);
-        assert_eq!(p.at(&["bootloader_name"]).and_then(Value::as_str), Some("grub-efi"));
+        assert_eq!(
+            p.at(&["title"]).and_then(Value::as_str),
+            Some("GNU with Linux-Libre 6.17.7")
+        );
+        assert_eq!(
+            p.at(&["root_device", "kind"]).and_then(Value::as_str),
+            Some("uuid")
+        );
+        assert_eq!(
+            p.at(&["root_device", "value"]).and_then(Value::as_str),
+            Some("10111213-1415-1617-1819-1a1b1c1d1e1f")
+        );
+        assert!(
+            p.at(&["kernel"])
+                .and_then(Value::as_str)
+                .unwrap()
+                .ends_with("-linux-libre-6.17.7/bzImage")
+        );
+        assert_eq!(
+            p.at(&["kernel_arguments"])
+                .and_then(Value::as_array)
+                .unwrap()
+                .len(),
+            4
+        );
+        assert_eq!(
+            p.at(&["bootloader_name"]).and_then(Value::as_str),
+            Some("grub-efi")
+        );
         assert!(p.at(&["store_device"]).unwrap().is_null());
-        assert_eq!(p.at(&["store_mount_point"]).and_then(Value::as_str), Some("/"));
+        assert_eq!(
+            p.at(&["store_mount_point"]).and_then(Value::as_str),
+            Some("/")
+        );
         assert!(p.at(&["store_directory_prefix"]).unwrap().is_null());
         // A label, an older initrd spelled with string-append, a FAT UUID.
         let old = "(boot-parameters (label \"x\") (root-device (file-system-label \"my-root\")) (initrd (string-append \"/gnu/store/i-initrd\" \"/initrd.cpio.gz\")) (store (device (uuid fat #vu8(171 205 18 52)))))";
         let p = parameters_json(old).unwrap().build();
-        assert_eq!(p.at(&["root_device", "kind"]).and_then(Value::as_str), Some("label"));
-        assert_eq!(p.at(&["root_device", "value"]).and_then(Value::as_str), Some("my-root"));
-        assert_eq!(p.at(&["initrd"]).and_then(Value::as_str), Some("/gnu/store/i-initrd/initrd.cpio.gz"));
-        assert_eq!(p.at(&["store_device", "value"]).and_then(Value::as_str), Some("3412-CDAB"));
+        assert_eq!(
+            p.at(&["root_device", "kind"]).and_then(Value::as_str),
+            Some("label")
+        );
+        assert_eq!(
+            p.at(&["root_device", "value"]).and_then(Value::as_str),
+            Some("my-root")
+        );
+        assert_eq!(
+            p.at(&["initrd"]).and_then(Value::as_str),
+            Some("/gnu/store/i-initrd/initrd.cpio.gz")
+        );
+        assert_eq!(
+            p.at(&["store_device", "value"]).and_then(Value::as_str),
+            Some("3412-CDAB")
+        );
         assert!(p.at(&["kernel"]).unwrap().is_null());
-        assert_eq!(device_of(&Sx::Str("/dev/vda2".into())), Some(("device", "/dev/vda2".into())));
+        assert_eq!(
+            device_of(&Sx::Str("/dev/vda2".into())),
+            Some(("device", "/dev/vda2".into()))
+        );
         assert!(parameters_json("(manifest)").is_none());
     }
 
@@ -768,17 +961,40 @@ mod tests {
     #[test]
     fn parameters_1_5() {
         let iso = "#vu8(49 57 55 48 48 49 48 49 49 57 49 49 51 51 56 51)";
-        let t = format!("(boot-parameters (version 1) (label \"GNU with Linux-Libre 6.17.12\") (root-device (uuid iso9660 {iso})) (kernel \"/gnu/store/p-linux-libre-6.17.12/bzImage\") (kernel-arguments (\"quiet\" \"modprobe.blacklist=radeon,amdgpu\")) (initrd \"/gnu/store/i-raw-initrd/initrd.cpio.gz\") (bootloader-name grub-efi) (bootloader-menu-entries ()) (locale \"en_US.utf8\") (store (device (uuid iso9660 {iso})) (mount-point \"/\") (directory-prefix #f) (crypto-devices ())))");
+        let t = format!(
+            "(boot-parameters (version 1) (label \"GNU with Linux-Libre 6.17.12\") (root-device (uuid iso9660 {iso})) (kernel \"/gnu/store/p-linux-libre-6.17.12/bzImage\") (kernel-arguments (\"quiet\" \"modprobe.blacklist=radeon,amdgpu\")) (initrd \"/gnu/store/i-raw-initrd/initrd.cpio.gz\") (bootloader-name grub-efi) (bootloader-menu-entries ()) (locale \"en_US.utf8\") (store (device (uuid iso9660 {iso})) (mount-point \"/\") (directory-prefix #f) (crypto-devices ())))"
+        );
         let p = parameters_json(&t).unwrap().build();
         assert_eq!(p.at(&["version"]).and_then(Value::as_str), Some("1"));
-        assert_eq!(p.at(&["root_device", "kind"]).and_then(Value::as_str), Some("uuid"));
-        assert_eq!(p.at(&["root_device", "value"]).and_then(Value::as_str), Some("1970-01-01-19-11-33-83"));
-        assert_eq!(p.at(&["store_device", "value"]).and_then(Value::as_str), Some("1970-01-01-19-11-33-83"));
-        let a: Vec<&str> = p.at(&["kernel_arguments"]).and_then(Value::as_array).unwrap().iter().filter_map(Value::as_str).collect();
+        assert_eq!(
+            p.at(&["root_device", "kind"]).and_then(Value::as_str),
+            Some("uuid")
+        );
+        assert_eq!(
+            p.at(&["root_device", "value"]).and_then(Value::as_str),
+            Some("1970-01-01-19-11-33-83")
+        );
+        assert_eq!(
+            p.at(&["store_device", "value"]).and_then(Value::as_str),
+            Some("1970-01-01-19-11-33-83")
+        );
+        let a: Vec<&str> = p
+            .at(&["kernel_arguments"])
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
         assert_eq!(a, vec!["quiet", "modprobe.blacklist=radeon,amdgpu"]);
-        assert_eq!(p.at(&["bootloader_name"]).and_then(Value::as_str), Some("grub-efi"));
+        assert_eq!(
+            p.at(&["bootloader_name"]).and_then(Value::as_str),
+            Some("grub-efi")
+        );
         // An iso9660 UUID that isn't digits is DCE hex: unknown, not a failure.
-        assert_eq!(uuid_text(&[0xffu8; 16], "iso9660"), "ffffffff-ffff-ffff-ffff-ffffffffffff");
+        assert_eq!(
+            uuid_text(&[0xffu8; 16], "iso9660"),
+            "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        );
     }
 
     /// The ISO's grub.cfg, in small: a top-level search outside any entry,
@@ -787,7 +1003,9 @@ mod tests {
     #[test]
     fn grub_cfg_1_5() {
         let u = "31393730-3031-3031-3139-313133333833";
-        let cfg = format!("# This file was generated from your Guix configuration.\nsearch --fs-uuid --set {u}\n# search --file --set /gnu/store/l-grub-locales/en@quot.mo\n  # search --label --set commented\nmenuentry \"GNU with Linux-Libre 6.17.12\" {{\n  search --fs-uuid --set {u}\n  linux /gnu/store/p-linux-libre-6.17.12/bzImage root={u} gnu.system=/gnu/store/s-system gnu.load=/gnu/store/s-system/boot quiet modprobe.blacklist=radeon,amdgpu\n  initrd /gnu/store/i/initrd.cpio.gz\n}}\n");
+        let cfg = format!(
+            "# This file was generated from your Guix configuration.\nsearch --fs-uuid --set {u}\n# search --file --set /gnu/store/l-grub-locales/en@quot.mo\n  # search --label --set commented\nmenuentry \"GNU with Linux-Libre 6.17.12\" {{\n  search --fs-uuid --set {u}\n  linux /gnu/store/p-linux-libre-6.17.12/bzImage root={u} gnu.system=/gnu/store/s-system gnu.load=/gnu/store/s-system/boot quiet modprobe.blacklist=radeon,amdgpu\n  initrd /gnu/store/i/initrd.cpio.gz\n}}\n"
+        );
         let (s, r) = grub_cfg_searches(&cfg);
         assert_eq!(s, vec![("fs-uuid".to_string(), u.to_string())]);
         assert_eq!(r, vec![u.to_string()]);
@@ -804,7 +1022,15 @@ mod tests {
         let cfg = "# Generated\nsearch --fs-uuid --set 10111213-1415-1617-1819-1a1b1c1d1e1f\nmenuentry \"GNU with Linux-Libre 6.17.7\" {\n  search --fs-uuid --set 10111213-1415-1617-1819-1a1b1c1d1e1f\n  linux /gnu/store/k-linux-libre-6.17.7/bzImage --root=10111213-1415-1617-1819-1a1b1c1d1e1f --system=/gnu/store/s-system console=ttyS0\n  initrd /gnu/store/i/initrd.cpio.gz\n}\nsubmenu \"GNU system, old configurations...\" {\n  menuentry \"x\" {\n    search --label --set my-root\n    search --file --set /gnu/store/k/bzImage\n    linux /@/gnu/store/k/bzImage --root=my-root\n  }\n}\nsearch.fs_uuid ABCD-1234 root\n";
         let (s, r) = grub_cfg_searches(cfg);
         let s: Vec<(&str, &str)> = s.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
-        assert_eq!(s, vec![("fs-uuid", "10111213-1415-1617-1819-1a1b1c1d1e1f"), ("label", "my-root"), ("file", "/gnu/store/k/bzImage"), ("fs-uuid", "ABCD-1234")]);
+        assert_eq!(
+            s,
+            vec![
+                ("fs-uuid", "10111213-1415-1617-1819-1a1b1c1d1e1f"),
+                ("label", "my-root"),
+                ("file", "/gnu/store/k/bzImage"),
+                ("fs-uuid", "ABCD-1234")
+            ]
+        );
         assert_eq!(r, vec!["10111213-1415-1617-1819-1a1b1c1d1e1f", "my-root"]);
     }
 
@@ -812,20 +1038,36 @@ mod tests {
     fn table() {
         assert_eq!(system(Some("nixos")).unwrap().store, "/nix/store");
         assert!(system(Some("guix")).unwrap().grub_install.is_none());
-        assert_eq!(system(Some("nixos")).unwrap().grub_install, Some("bin/grub-install"));
+        assert_eq!(
+            system(Some("nixos")).unwrap().grub_install,
+            Some("bin/grub-install")
+        );
         assert!(system(Some("debian")).is_none() && system(None).is_none());
         for s in SYSTEMS {
             for d in s.profile_bins {
-                assert!(crate::sys::SYSTEM_PATH.split(':').any(|p| p == *d), "{d} isn't on the dump's PATH");
+                assert!(
+                    crate::sys::SYSTEM_PATH.split(':').any(|p| p == *d),
+                    "{d} isn't on the dump's PATH"
+                );
             }
         }
         let nix = system(Some("nixos")).unwrap();
         let plain = nix.bios_grub_pick("/mnt/bko-target");
-        assert!(plain.starts_with("g=$(for d in /mnt/bko-target/nix/store/"), "{plain}");
+        assert!(
+            plain.starts_with("g=$(for d in /mnt/bko-target/nix/store/"),
+            "{plain}"
+        );
         let hostile = "/mnt/new d'isk\"$HOME`id`\nz";
         let quoted = nix.bios_grub_pick(hostile);
         assert!(!quoted.contains(hostile), "{quoted}");
-        assert!(std::process::Command::new("sh").args(["-n", "-c", &quoted]).status().unwrap().success(), "{quoted}");
+        assert!(
+            std::process::Command::new("sh")
+                .args(["-n", "-c", &quoted])
+                .status()
+                .unwrap()
+                .success(),
+            "{quoted}"
+        );
     }
 
     /// The profile chain resolved under the dump's root (absolute links
@@ -840,12 +1082,18 @@ mod tests {
             .dir("/gnu/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-grub-2.12/lib/grub/i386-pc")
             .file(&format!("{sys1}/parameters"), PARAMETERS)
             .symlink(&format!("{sys1}/profile"), prof)
-            .file(&format!("{sys2}/parameters"), PARAMETERS.replace("6.17.7", "6.17.9"))
+            .file(
+                &format!("{sys2}/parameters"),
+                PARAMETERS.replace("6.17.7", "6.17.9"),
+            )
             .symlink(&format!("{sys2}/profile"), prof)
             .symlink("/var/guix/profiles/system-1-link", sys1)
             .symlink("/var/guix/profiles/system-2-link", sys2)
             .symlink("/var/guix/profiles/system", "system-2-link")
-            .file("/boot/grub/grub.cfg", "search --fs-uuid --set 10111213-1415-1617-1819-1a1b1c1d1e1f\n");
+            .file(
+                "/boot/grub/grub.cfg",
+                "search --fs-uuid --set 10111213-1415-1617-1819-1a1b1c1d1e1f\n",
+            );
         let sys = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         assert!(is_guix(&sys));
         let p = guix_packages(&sys);
@@ -857,9 +1105,19 @@ mod tests {
         let g = v.at(&["generations"]).and_then(Value::as_array).unwrap();
         assert_eq!(g.len(), 2);
         assert_eq!(g[1].at(&["system"]).and_then(Value::as_str), Some(sys2));
-        assert_eq!(g[1].at(&["title"]).and_then(Value::as_str), Some("GNU with Linux-Libre 6.17.9"));
-        assert_eq!(v.at(&["grub"]).and_then(Value::as_str), Some("/gnu/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-grub-2.12"));
-        assert_eq!(v.at(&["grub_cfg", "searches", "0", "kind"]).and_then(Value::as_str), Some("fs-uuid"));
+        assert_eq!(
+            g[1].at(&["title"]).and_then(Value::as_str),
+            Some("GNU with Linux-Libre 6.17.9")
+        );
+        assert_eq!(
+            v.at(&["grub"]).and_then(Value::as_str),
+            Some("/gnu/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-grub-2.12")
+        );
+        assert_eq!(
+            v.at(&["grub_cfg", "searches", "0", "kind"])
+                .and_then(Value::as_str),
+            Some("fs-uuid")
+        );
         assert!(sys.warnings().is_empty(), "{:?}", sys.warnings());
         // Not Guix: no store, no packages from it.
         let t = Tree::new("guix-none");

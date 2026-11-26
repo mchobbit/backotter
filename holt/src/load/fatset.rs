@@ -35,7 +35,10 @@ pub struct Set {
 /// boot sector's 32-bit number.
 pub fn parse_id(s: &str) -> Option<u32> {
     let (hi, lo) = s.split_once('-')?;
-    if hi.len() != 4 || lo.len() != 4 || !hi.bytes().chain(lo.bytes()).all(|c| c.is_ascii_hexdigit()) {
+    if hi.len() != 4
+        || lo.len() != 4
+        || !hi.bytes().chain(lo.bytes()).all(|c| c.is_ascii_hexdigit())
+    {
         return None;
     }
     Some((u32::from_str_radix(hi, 16).ok()? << 16) | u32::from_str_radix(lo, 16).ok()?)
@@ -86,7 +89,14 @@ fn geometry(b: &[u8]) -> Result<Geometry, String> {
         return Err("the FAT has no extended boot record (signature 0x29), so no volume ID".into());
     }
     let bk = if fat32 { le16(b, 50) as u64 } else { 0 };
-    Ok(Geometry { bps, reserved, fats, fatsz, ebr, backup: (bk != 0 && bk != 0xffff && bk < reserved).then_some(bk) })
+    Ok(Geometry {
+        bps,
+        reserved,
+        fats,
+        fatsz,
+        ebr,
+        backup: (bk != 0 && bk != 0xffff && bk < reserved).then_some(bk),
+    })
 }
 
 /// S's fields written into boot sector B (the primary or its backup).
@@ -107,19 +117,25 @@ fn patch_boot(b: &mut [u8], g: &Geometry, s: &Set) {
 
 fn read(f: &File, off: u64, len: u64) -> Result<Vec<u8>, String> {
     let mut b = vec![0u8; len as usize];
-    f.read_exact_at(&mut b, off).map_err(|e| format!("reading {len} bytes at {off}: {e}"))?;
+    f.read_exact_at(&mut b, off)
+        .map_err(|e| format!("reading {len} bytes at {off}: {e}"))?;
     Ok(b)
 }
 
 fn write(f: &File, off: u64, b: &[u8]) -> Result<(), String> {
-    f.write_all_at(b, off).map_err(|e| format!("writing {} bytes at {off}: {e}", b.len()))
+    f.write_all_at(b, off)
+        .map_err(|e| format!("writing {} bytes at {off}: {e}", b.len()))
 }
 
 /// S set in the FAT on F: what changed, as words for the log.
 pub fn set(f: &File, s: &Set) -> Result<Vec<String>, String> {
     let first = read(f, 0, 512)?;
     let g = geometry(&first)?;
-    let mut boot = if g.bps == 512 { first } else { read(f, 0, g.bps)? };
+    let mut boot = if g.bps == 512 {
+        first
+    } else {
+        read(f, 0, g.bps)?
+    };
     let mut said = Vec::new();
     // Entry 0 of each FAT repeats the media byte: those first, the backup
     // boot sector next, the boot sector last, so a FAT whose boot sector
@@ -151,7 +167,10 @@ pub fn set(f: &File, s: &Set) -> Result<Vec<String>, String> {
         said.insert(0, format!("volume ID {:04X}-{:04X}", id >> 16, id & 0xffff));
     }
     if let Some(o) = &s.oem {
-        said.push(format!("OEM name {:?}", String::from_utf8_lossy(o).trim_end()));
+        said.push(format!(
+            "OEM name {:?}",
+            String::from_utf8_lossy(o).trim_end()
+        ));
     }
     if let Some(h) = s.hidden {
         said.push(format!("hidden sectors {h}"));
@@ -163,17 +182,22 @@ pub fn set(f: &File, s: &Set) -> Result<Vec<String>, String> {
     }
     let mut probe_bytes = back;
     probe_bytes.resize(512.max(g.bps as usize), 0);
-    let c = crate::probe::fat::probe(&crate::bytes::MemSource(probe_bytes)).ok_or("the FAT doesn't probe as one after writing")?;
+    let c = crate::probe::fat::probe(&crate::bytes::MemSource(probe_bytes))
+        .ok_or("the FAT doesn't probe as one after writing")?;
     if let Some(id) = s.id {
         let want = format!("{:04X}-{:04X}", id >> 16, id & 0xffff);
         if c.uuid.as_deref() != Some(want.as_str()) {
-            return Err(format!("its volume ID reads back as {:?}, not {want}", c.uuid));
+            return Err(format!(
+                "its volume ID reads back as {:?}, not {want}",
+                c.uuid
+            ));
         }
     }
     Ok(said)
 }
 
-const USAGE: &str = "usage: bko-holt fat-set DEV [--id XXXX-XXXX] [--media 0xNN] [--oem NAME] [--hidden N]";
+const USAGE: &str =
+    "usage: bko-holt fat-set DEV [--id XXXX-XXXX] [--media 0xNN] [--oem NAME] [--hidden N]";
 
 /// The arguments: DEV and what to set, or None when they aren't a usage.
 pub fn parse(args: &[String]) -> Option<(String, Set)> {
@@ -207,7 +231,12 @@ pub fn main(args: &[String]) -> u8 {
         eprintln!("{USAGE}");
         return 2;
     };
-    let r = OpenOptions::new().read(true).write(true).open(&dev).map_err(|e| format!("{dev}: {e}")).and_then(|f| set(&f, &s).map_err(|e| format!("{dev}: {e}")));
+    let r = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&dev)
+        .map_err(|e| format!("{dev}: {e}"))
+        .and_then(|f| set(&f, &s).map_err(|e| format!("{dev}: {e}")));
     match r {
         Ok(said) => {
             println!("fat-set: {dev}: {}", said.join(", "));
@@ -250,17 +279,38 @@ mod tests {
         }
         let (_t, p) = file_with("fatset-32", &img);
         let f = OpenOptions::new().read(true).write(true).open(&p).unwrap();
-        let s = Set { id: Some(0xbc00_0001), media: Some(0xf0), oem: parse_oem("BSD4.4"), hidden: Some(40) };
+        let s = Set {
+            id: Some(0xbc00_0001),
+            media: Some(0xf0),
+            oem: parse_oem("BSD4.4"),
+            hidden: Some(40),
+        };
         let said = set(&f, &s).unwrap();
-        assert_eq!(said, ["volume ID BC00-0001", "media 0xf0 (boot sector and 2 FATs)", "backup boot sector 6", "OEM name \"BSD4.4\"", "hidden sectors 40"]);
+        assert_eq!(
+            said,
+            [
+                "volume ID BC00-0001",
+                "media 0xf0 (boot sector and 2 FATs)",
+                "backup boot sector 6",
+                "OEM name \"BSD4.4\"",
+                "hidden sectors 40"
+            ]
+        );
         let out = std::fs::read(&p).unwrap();
         for sec in [0, 6] {
             let b = &out[sec * 512..(sec + 1) * 512];
-            assert_eq!((le32(b, 67), b[21], &b[3..11], le32(b, 28)), (0xbc00_0001, 0xf0, &b"BSD4.4  "[..], 40), "sector {sec}");
+            assert_eq!(
+                (le32(b, 67), b[21], &b[3..11], le32(b, 28)),
+                (0xbc00_0001, 0xf0, &b"BSD4.4  "[..], 40),
+                "sector {sec}"
+            );
         }
         for i in 0..2 {
             let o = (32 + i * fatsz) * 512;
-            assert_eq!(&out[o..o + 8], &[0xf0, 0xff, 0xff, 0x0f, 0xff, 0xff, 0xff, 0x0f]);
+            assert_eq!(
+                &out[o..o + 8],
+                &[0xf0, 0xff, 0xff, 0x0f, 0xff, 0xff, 0xff, 0x0f]
+            );
         }
         // Every other byte is as it was.
         let mut want = img.clone();
@@ -286,7 +336,17 @@ mod tests {
         let img = fat16(8192, 0x1234_5678, "ESP");
         let (_t, p) = file_with("fatset-16", &img);
         let f = OpenOptions::new().read(true).write(true).open(&p).unwrap();
-        assert_eq!(set(&f, &Set { id: parse_id("0A0B-0C0D"), ..Set::default() }).unwrap(), ["volume ID 0A0B-0C0D"]);
+        assert_eq!(
+            set(
+                &f,
+                &Set {
+                    id: parse_id("0A0B-0C0D"),
+                    ..Set::default()
+                }
+            )
+            .unwrap(),
+            ["volume ID 0A0B-0C0D"]
+        );
         let out = std::fs::read(&p).unwrap();
         assert_eq!(le32(&out, 39), 0x0a0b_0c0d);
         let mut want = img.clone();
@@ -300,20 +360,64 @@ mod tests {
     fn refuses_what_isnt_a_fat_with_a_volume_id() {
         let (_t, p) = file_with("fatset-none", &vec![0u8; 8192]);
         let f = OpenOptions::new().read(true).write(true).open(&p).unwrap();
-        assert_eq!(set(&f, &Set { id: Some(1), ..Set::default() }).unwrap_err(), "no FAT boot sector");
+        assert_eq!(
+            set(
+                &f,
+                &Set {
+                    id: Some(1),
+                    ..Set::default()
+                }
+            )
+            .unwrap_err(),
+            "no FAT boot sector"
+        );
         let mut img = fat16(8192, 1, "X");
         img[38] = 0;
         let (_t2, p2) = file_with("fatset-noebr", &img);
         let f = OpenOptions::new().read(true).write(true).open(&p2).unwrap();
-        assert!(set(&f, &Set { id: Some(1), ..Set::default() }).unwrap_err().contains("no extended boot record"));
+        assert!(
+            set(
+                &f,
+                &Set {
+                    id: Some(1),
+                    ..Set::default()
+                }
+            )
+            .unwrap_err()
+            .contains("no extended boot record")
+        );
         assert!(std::fs::read(&p2).unwrap() == img);
     }
 
     #[test]
     fn arguments() {
         let a = |s: &str| s.split_whitespace().map(str::to_string).collect::<Vec<_>>();
-        assert_eq!(parse(&a("/dev/rdsk/c1t0d0s0 --id BC00-0001 --media 0xf0 --oem BSD4.4 --hidden 40")), Some(("/dev/rdsk/c1t0d0s0".into(), Set { id: Some(0xbc00_0001), media: Some(0xf0), oem: parse_oem("BSD4.4"), hidden: Some(40) })));
-        for bad in ["", "/dev/x", "--id BC00-0001", "/dev/x --id BC000001", "/dev/x --media f8", "/dev/x --media 0x12", "/dev/x --id BC00-0001 --id BC00-0002", "/dev/x --oem 123456789", "/dev/x --hidden -1", "/dev/x --size 1"] {
+        assert_eq!(
+            parse(&a(
+                "/dev/rdsk/c1t0d0s0 --id BC00-0001 --media 0xf0 --oem BSD4.4 --hidden 40"
+            )),
+            Some((
+                "/dev/rdsk/c1t0d0s0".into(),
+                Set {
+                    id: Some(0xbc00_0001),
+                    media: Some(0xf0),
+                    oem: parse_oem("BSD4.4"),
+                    hidden: Some(40)
+                }
+            ))
+        );
+        for bad in [
+            "",
+            "/dev/x",
+            "--id BC00-0001",
+            "/dev/x --id BC000001",
+            "/dev/x --media f8",
+            "/dev/x --media 0x12",
+            "/dev/x --id BC00-0001 --id BC00-0002",
+            "/dev/x --oem 123456789",
+            "/dev/x --hidden -1",
+            "/dev/x --size 1",
+        ] {
             assert_eq!(parse(&a(bad)), None, "{bad:?}");
         }
         assert_eq!(parse_id("0000-0000"), Some(0));

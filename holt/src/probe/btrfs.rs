@@ -1,7 +1,7 @@
 //! btrfs superblocks (the primary copy at 64 KiB).
 
 use super::Content;
-use crate::bytes::{le16, le32, le64, sub, uuid, ByteSource};
+use crate::bytes::{ByteSource, le16, le32, le64, sub, uuid};
 use crate::json::Obj;
 
 const SB: u64 = 0x10000;
@@ -42,7 +42,12 @@ const COMPAT_RO: &[(u64, &str)] = &[
 fn names(mask: u64, table: &[(u64, &str)], prefix: &str) -> Vec<String> {
     (0..64)
         .filter(|b| mask & (1u64 << b) != 0)
-        .map(|b| table.iter().find(|(v, _)| *v == 1u64 << b).map_or_else(|| format!("{prefix}_bit{b}"), |(_, n)| n.to_string()))
+        .map(|b| {
+            table
+                .iter()
+                .find(|(v, _)| *v == 1u64 << b)
+                .map_or_else(|| format!("{prefix}_bit{b}"), |(_, n)| n.to_string())
+        })
         .collect()
 }
 
@@ -75,7 +80,10 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
         .set("checksum", csum)
         .set("generation", le64(&b, 0x48))
         .set("features", names(incompat, INCOMPAT, "incompat"))
-        .set("compat_ro_features", names(compat_ro, COMPAT_RO, "compat_ro"))
+        .set(
+            "compat_ro_features",
+            names(compat_ro, COMPAT_RO, "compat_ro"),
+        )
         .set(
             "device",
             Obj::new()
@@ -88,7 +96,10 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
         d.put("metadata_uuid", uuid(sub(&b, 0x23b, 16)));
     }
     // Its variables (none, often: GRUB writes next_entry there and clears it).
-    if let Some(e) = src.read_exact_at(GRUB_ENV_BLOCK, GRUB_ENV_SIZE).filter(|e| e.starts_with(GRUB_ENV_SIGNATURE)) {
+    if let Some(e) = src
+        .read_exact_at(GRUB_ENV_BLOCK, GRUB_ENV_SIZE)
+        .filter(|e| e.starts_with(GRUB_ENV_SIGNATURE))
+    {
         let mut vars = Obj::new();
         for (k, v) in crate::boot::parse_grubenv(&String::from_utf8_lossy(&e)) {
             vars.put(&k, v);
@@ -142,20 +153,45 @@ mod tests {
     fn trixie_defaults() {
         // mkfs.btrfs 6.14 defaults: mixed_backref, big_metadata,
         // extended_iref, skinny_metadata, no_holes; free-space-tree.
-        let c = probe(&MemSource(image("debian", 0x1 | 0x20 | 0x40 | 0x100 | 0x200))).unwrap();
+        let c = probe(&MemSource(image(
+            "debian",
+            0x1 | 0x20 | 0x40 | 0x100 | 0x200,
+        )))
+        .unwrap();
         assert_eq!(c.kind, "btrfs");
         assert_eq!(c.label.as_deref(), Some("debian"));
-        assert_eq!(c.uuid.as_deref(), Some("b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf"));
+        assert_eq!(
+            c.uuid.as_deref(),
+            Some("b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf")
+        );
         let d = c.details.build();
         assert_eq!(
             d.get("features"),
-            Some(&Value::from(vec!["mixed_backref", "big_metadata", "extended_iref", "skinny_metadata", "no_holes"]))
+            Some(&Value::from(vec![
+                "mixed_backref",
+                "big_metadata",
+                "extended_iref",
+                "skinny_metadata",
+                "no_holes"
+            ]))
         );
-        assert_eq!(d.get("compat_ro_features"), Some(&Value::from(vec!["free_space_tree", "free_space_tree_valid"])));
+        assert_eq!(
+            d.get("compat_ro_features"),
+            Some(&Value::from(vec![
+                "free_space_tree",
+                "free_space_tree_valid"
+            ]))
+        );
         assert_eq!(d.get("checksum").and_then(Value::as_str), Some("crc32c"));
         assert_eq!(d.get("node_size").and_then(Value::as_u64), Some(16384));
         assert_eq!(d.at(&["device", "devid"]).and_then(Value::as_u64), Some(1));
-        assert!(d.at(&["device", "uuid"]).unwrap().as_str().unwrap().starts_with("dd"));
+        assert!(
+            d.at(&["device", "uuid"])
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .starts_with("dd")
+        );
         assert!(d.get("metadata_uuid").is_none());
     }
 
@@ -167,8 +203,17 @@ mod tests {
         let c = probe(&MemSource(img)).unwrap();
         assert_eq!(c.label, None);
         let d = c.details.build();
-        assert!(d.get("metadata_uuid").unwrap().as_str().unwrap().starts_with("ee"));
-        assert_eq!(d.get("features"), Some(&Value::from(vec!["metadata_uuid", "incompat_bit40"])));
+        assert!(
+            d.get("metadata_uuid")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .starts_with("ee")
+        );
+        assert_eq!(
+            d.get("features"),
+            Some(&Value::from(vec!["metadata_uuid", "incompat_bit40"]))
+        );
         assert_eq!(d.get("checksum").and_then(Value::as_str), Some("xxhash64"));
     }
 
@@ -178,17 +223,39 @@ mod tests {
     fn grub_env_block() {
         let mut img = image("", 0);
         img.resize(0x41000, 0);
-        assert!(probe(&MemSource(img.clone())).unwrap().details.build().get("grub_env_block").is_none());
+        assert!(
+            probe(&MemSource(img.clone()))
+                .unwrap()
+                .details
+                .build()
+                .get("grub_env_block")
+                .is_none()
+        );
         let mut block = b"# GRUB Environment Block\nnext_entry=1\nhealth=a=b\n".to_vec();
         block.resize(GRUB_ENV_SIZE, b'#');
         img[0x40000..0x40200].copy_from_slice(&block);
         let d = probe(&MemSource(img.clone())).unwrap().details.build();
-        assert_eq!(d.at(&["grub_env_block", "next_entry"]).and_then(Value::as_str), Some("1"));
-        assert_eq!(d.at(&["grub_env_block", "health"]).and_then(Value::as_str), Some("a=b"));
+        assert_eq!(
+            d.at(&["grub_env_block", "next_entry"])
+                .and_then(Value::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            d.at(&["grub_env_block", "health"]).and_then(Value::as_str),
+            Some("a=b")
+        );
         let mut empty = GRUB_ENV_SIGNATURE.to_vec();
         empty.resize(GRUB_ENV_SIZE, b'#');
         img[0x40000..0x40200].copy_from_slice(&empty);
-        assert_eq!(probe(&MemSource(img)).unwrap().details.build().get("grub_env_block").map(|v| v.compact()), Some("{}".into()));
+        assert_eq!(
+            probe(&MemSource(img))
+                .unwrap()
+                .details
+                .build()
+                .get("grub_env_block")
+                .map(|v| v.compact()),
+            Some("{}".into())
+        );
     }
 
     #[test]

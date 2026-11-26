@@ -79,8 +79,13 @@ pub fn parse_shell_assignments(text: &str) -> Vec<(String, String)> {
     for line in text.lines() {
         let line = line.trim();
         let line = line.strip_prefix("export ").unwrap_or(line);
-        let Some((k, v)) = line.split_once('=') else { continue };
-        if k.is_empty() || !k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || k.starts_with('#') {
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        if k.is_empty()
+            || !k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            || k.starts_with('#')
+        {
             continue;
         }
         let value = if v.starts_with('`') || v.starts_with("$(") {
@@ -128,7 +133,9 @@ pub fn parse_grub_cfg(text: &str) -> GrubCfg {
     let mut first_entry_done = false;
     for raw in text.lines() {
         let w = shell_words(raw.trim());
-        let Some(cmd) = w.first().map(String::as_str) else { continue };
+        let Some(cmd) = w.first().map(String::as_str) else {
+            continue;
+        };
         let opens = raw.trim_end().ends_with('{');
         match cmd {
             "menuentry" | "submenu" => {
@@ -178,17 +185,24 @@ pub fn parse_grub_cfg(text: &str) -> GrubCfg {
                     }
                 }
             }
-            "linux" | "linuxefi" if in_entry > 0 && !first_entry_done && g.default_linux.is_none() => {
+            "linux" | "linuxefi"
+                if in_entry > 0 && !first_entry_done && g.default_linux.is_none() =>
+            {
                 g.default_linux = Some(w[1..].join(" "));
             }
-            "initrd" | "initrdefi" if in_entry > 0 && !first_entry_done && g.default_initrd.is_none() => {
+            "initrd" | "initrdefi"
+                if in_entry > 0 && !first_entry_done && g.default_initrd.is_none() =>
+            {
                 g.default_initrd = Some(w[1..].join(" "));
             }
             "set" => {
                 if let Some(p) = w.get(1).and_then(|x| x.strip_prefix("prefix=")) {
                     g.prefix = Some(p.to_string());
                 }
-                if let (Some(l), true) = (w.get(1).and_then(|x| x.strip_prefix("lang=")), stack.is_empty()) {
+                if let (Some(l), true) = (
+                    w.get(1).and_then(|x| x.strip_prefix("lang=")),
+                    stack.is_empty(),
+                ) {
                     g.lang = Some(l.to_string());
                 }
             }
@@ -207,14 +221,21 @@ pub fn parse_grub_cfg(text: &str) -> GrubCfg {
 pub fn parse_grubenv(text: &str) -> Vec<(String, String)> {
     text.lines()
         .filter(|l| !l.starts_with('#'))
-        .filter_map(|l| l.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+        .filter_map(|l| {
+            l.split_once('=')
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+        })
         .collect()
 }
 
 fn grub_json(sys: &Sys) -> Value {
     let mut o = Obj::new();
     // Fedora's GRUB lives in /boot/grub2.
-    let dir = if !sys.is_dir("/boot/grub") && sys.is_dir("/boot/grub2") { "/boot/grub2" } else { "/boot/grub" };
+    let dir = if !sys.is_dir("/boot/grub") && sys.is_dir("/boot/grub2") {
+        "/boot/grub2"
+    } else {
+        "/boot/grub"
+    };
     o.put("dir", dir);
     // Ubuntu's signed images' directory (x86_64-efi-signed), not a platform.
     let signed = format!("{}-signed", crate::arch::names_of(sys).grub_efi_target);
@@ -222,7 +243,11 @@ fn grub_json(sys: &Sys) -> Value {
         .list(dir)
         .into_iter()
         .filter(|d| sys.is_dir(&format!("{dir}/{d}")) && d.contains('-') && *d != signed)
-        .filter(|d| sys.is_file(&format!("{dir}/{d}/normal.mod")) || sys.is_file(&format!("{dir}/{d}/core.img")) || sys.is_file(&format!("{dir}/{d}/core.efi")))
+        .filter(|d| {
+            sys.is_file(&format!("{dir}/{d}/normal.mod"))
+                || sys.is_file(&format!("{dir}/{d}/core.img"))
+                || sys.is_file(&format!("{dir}/{d}/core.efi"))
+        })
         .collect();
     o.put("installed_platforms", platforms);
     match sys.read(&format!("{dir}/grub.cfg")) {
@@ -248,11 +273,22 @@ fn grub_json(sys: &Sys) -> Value {
             }
         }
     }
-    o.put("grubenv", sys.read(&format!("{dir}/grubenv")).map(|t| pairs_obj(&parse_grubenv(&t))));
-    let mut defaults = sys.read("/etc/default/grub").map(|t| parse_shell_assignments(&t)).unwrap_or_default();
+    o.put(
+        "grubenv",
+        sys.read(&format!("{dir}/grubenv"))
+            .map(|t| pairs_obj(&parse_grubenv(&t))),
+    );
+    let mut defaults = sys
+        .read("/etc/default/grub")
+        .map(|t| parse_shell_assignments(&t))
+        .unwrap_or_default();
     for f in sys.list("/etc/default/grub.d") {
         if f.ends_with(".cfg") {
-            for (k, v) in sys.read(&format!("/etc/default/grub.d/{f}")).map(|t| parse_shell_assignments(&t)).unwrap_or_default() {
+            for (k, v) in sys
+                .read(&format!("/etc/default/grub.d/{f}"))
+                .map(|t| parse_shell_assignments(&t))
+                .unwrap_or_default()
+            {
                 defaults.retain(|(key, _)| *key != k);
                 defaults.push((k, v));
             }
@@ -261,7 +297,8 @@ fn grub_json(sys: &Sys) -> Value {
     o.put("default_grub", pairs_obj(&defaults));
     o.put(
         "debconf",
-        sys.read("/var/cache/debconf/config.dat").map(|t| pairs_obj(&parse_debconf(&t, &["grub-pc/", "grub2/", "grub-efi/"]))),
+        sys.read("/var/cache/debconf/config.dat")
+            .map(|t| pairs_obj(&parse_debconf(&t, &["grub-pc/", "grub2/", "grub-efi/"]))),
     );
     o.build()
 }
@@ -282,9 +319,17 @@ pub fn esp_inventory(sys: &Sys, mount: &str) -> Value {
         if depth > 4 || out.len() >= 500 {
             return;
         }
-        let dir = if rel.is_empty() { base.to_string() } else { format!("{base}/{rel}") };
+        let dir = if rel.is_empty() {
+            base.to_string()
+        } else {
+            format!("{base}/{rel}")
+        };
         for e in sys.list(&dir) {
-            let r = if rel.is_empty() { e.clone() } else { format!("{rel}/{e}") };
+            let r = if rel.is_empty() {
+                e.clone()
+            } else {
+                format!("{rel}/{e}")
+            };
             let p = format!("{base}/{r}");
             if sys.is_dir(&p) {
                 walk(sys, base, &r, depth + 1, out);
@@ -299,12 +344,26 @@ pub fn esp_inventory(sys: &Sys, mount: &str) -> Value {
         }
     }
     let entries = format!("{mount}/loader/entries");
-    for f in sys.list(&entries).into_iter().filter(|f| f.ends_with(".conf")) {
-        for l in sys.read(&format!("{entries}/{f}")).unwrap_or_default().lines() {
+    for f in sys
+        .list(&entries)
+        .into_iter()
+        .filter(|f| f.ends_with(".conf"))
+    {
+        for l in sys
+            .read(&format!("{entries}/{f}"))
+            .unwrap_or_default()
+            .lines()
+        {
             let mut w = l.split_whitespace();
-            let (Some("linux" | "initrd"), Some(p)) = (w.next(), w.next()) else { continue };
+            let (Some("linux" | "initrd"), Some(p)) = (w.next(), w.next()) else {
+                continue;
+            };
             let r = p.trim_start_matches('/').to_string();
-            if !r.contains('/') || r.split('/').any(|c| c.is_empty() || c == "..") || files.iter().any(|(x, _)| x.eq_ignore_ascii_case(&r)) || files.len() >= 500 {
+            if !r.contains('/')
+                || r.split('/').any(|c| c.is_empty() || c == "..")
+                || files.iter().any(|(x, _)| x.eq_ignore_ascii_case(&r))
+                || files.len() >= 500
+            {
                 continue;
             }
             if let Some(sz) = sys.file_size(&format!("{mount}/{r}")) {
@@ -312,23 +371,44 @@ pub fn esp_inventory(sys: &Sys, mount: &str) -> Value {
             }
         }
     }
-    let efi: Vec<&(String, u64)> = files.iter().filter(|(p, _)| p.to_ascii_lowercase().ends_with(".efi")).collect();
+    let efi: Vec<&(String, u64)> = files
+        .iter()
+        .filter(|(p, _)| p.to_ascii_lowercase().ends_with(".efi"))
+        .collect();
     let mut list = Vec::new();
     for (path, size) in &files {
         let mut o = Obj::new().set("path", path.as_str()).set("size", *size);
         if path.to_ascii_lowercase().ends_with(".efi") && *size <= 64 << 20 {
-            let others = efi.iter().filter(|(p, _)| p != path).map(|(p, s)| (p.as_str(), *s));
-            o.put_some("same_as", byte_copy_of(sys, &format!("{mount}/{path}"), *size, others, mount));
+            let others = efi
+                .iter()
+                .filter(|(p, _)| p != path)
+                .map(|(p, s)| (p.as_str(), *s));
+            o.put_some(
+                "same_as",
+                byte_copy_of(sys, &format!("{mount}/{path}"), *size, others, mount),
+            );
         }
         list.push(o.build());
     }
-    let find = |want: &str| files.iter().find(|(p, _)| p.eq_ignore_ascii_case(want)).map(|(p, _)| p.clone());
-    let stub = find("EFI/debian/grub.cfg").and_then(|p| sys.read(&format!("{mount}/{p}"))).map(|t| parse_grub_cfg(&t));
+    let find = |want: &str| {
+        files
+            .iter()
+            .find(|(p, _)| p.eq_ignore_ascii_case(want))
+            .map(|(p, _)| p.clone())
+    };
+    let stub = find("EFI/debian/grub.cfg")
+        .and_then(|p| sys.read(&format!("{mount}/{p}")))
+        .map(|t| parse_grub_cfg(&t));
     Obj::new()
         .set("files", list)
         .set(
             "debian_grub_stub",
-            stub.map(|g| Obj::new().set("search_uuids", g.search_uuids).set("prefix", g.prefix).set("configfile", g.configfile)),
+            stub.map(|g| {
+                Obj::new()
+                    .set("search_uuids", g.search_uuids)
+                    .set("prefix", g.prefix)
+                    .set("configfile", g.configfile)
+            }),
         )
         .build()
 }
@@ -339,11 +419,25 @@ pub fn esp_inventory(sys: &Sys, mount: &str) -> Value {
 /// at a time (Sys::same_bytes) and stopping at the first MiB that differs,
 /// so neither file is ever held in memory whole and a different one is
 /// seldom read past its first MiB.
-fn byte_copy_of<'a>(sys: &Sys, path: &str, size: u64, candidates: impl IntoIterator<Item = (&'a str, u64)>, under: &str) -> Option<&'a str> {
-    candidates.into_iter().filter(|&(_, n)| n == size).map(|(p, _)| p).find(|p| {
-        let full = if under.is_empty() { (*p).to_string() } else { format!("{under}/{p}") };
-        sys.same_bytes(path, &full) == Some(true)
-    })
+fn byte_copy_of<'a>(
+    sys: &Sys,
+    path: &str,
+    size: u64,
+    candidates: impl IntoIterator<Item = (&'a str, u64)>,
+    under: &str,
+) -> Option<&'a str> {
+    candidates
+        .into_iter()
+        .filter(|&(_, n)| n == size)
+        .map(|(p, _)| p)
+        .find(|p| {
+            let full = if under.is_empty() {
+                (*p).to_string()
+            } else {
+                format!("{under}/{p}")
+            };
+            sys.same_bytes(path, &full) == Some(true)
+        })
 }
 
 /// systemd-boot's loader.conf and its Boot Loader Specification entries,
@@ -364,7 +458,11 @@ fn byte_copy_of<'a>(sys: &Sys, path: &str, size: u64, candidates: impl IntoItera
 pub fn systemd_boot_json(sys: &Sys, mount: &str) -> Option<Value> {
     let conf = sys.read(&format!("{mount}/loader/loader.conf"));
     let entries_dir = format!("{mount}/loader/entries");
-    let entry_files: Vec<String> = sys.list(&entries_dir).into_iter().filter(|f| f.ends_with(".conf")).collect();
+    let entry_files: Vec<String> = sys
+        .list(&entries_dir)
+        .into_iter()
+        .filter(|f| f.ends_with(".conf"))
+        .collect();
     if conf.is_none() && entry_files.is_empty() {
         return None;
     }
@@ -392,7 +490,10 @@ pub fn systemd_boot_json(sys: &Sys, mount: &str) -> Option<Value> {
             }
         }
         if initrds.len() > 1 {
-            let at = o.0.iter().position(|(k, _)| k == "initrd").map_or(o.0.len(), |i| i + 1);
+            let at =
+                o.0.iter()
+                    .position(|(k, _)| k == "initrd")
+                    .map_or(o.0.len(), |i| i + 1);
             o.0.insert(at, ("initrds".into(), Value::from(initrds)));
         }
         o.build()
@@ -408,7 +509,12 @@ pub fn systemd_boot_json(sys: &Sys, mount: &str) -> Option<Value> {
             v
         })
         .collect();
-    Some(Obj::new().set("loader_conf", conf.map(|t| kv(&t, false))).set("entries", entries).build())
+    Some(
+        Obj::new()
+            .set("loader_conf", conf.map(|t| kv(&t, false)))
+            .set("entries", entries)
+            .build(),
+    )
 }
 
 // --- Proxmox VE's proxmox-boot-tool ------------------------------------------------
@@ -440,14 +546,29 @@ pub struct ProxmoxBoot {
 /// "Proxmox VE 9.2" from pve-manager's version (9.2.3), when it is installed.
 pub fn proxmox_product(packages: &[Package]) -> Option<String> {
     let v = &find_package(packages, "pve-manager")?.version;
-    let nums: Vec<&str> = v.split(|c: char| !c.is_ascii_digit()).filter(|n| !n.is_empty()).take(2).collect();
+    let nums: Vec<&str> = v
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|n| !n.is_empty())
+        .take(2)
+        .collect();
     (!nums.is_empty()).then(|| format!("Proxmox VE {}", nums.join(".")))
 }
 
 /// The proxmox-boot-tool mode an ESP's files say: systemd-boot's loader,
 /// GRUB's EFI image as proxmox-boot-tool names it, or GRUB's BIOS modules.
 fn proxmox_mode(sys: &Sys, mount: &str, contents: &Value) -> Option<&'static str> {
-    let has = |want: &str| contents.get("files").and_then(Value::as_array).into_iter().flatten().any(|f| f.get("path").and_then(Value::as_str).is_some_and(|p| p.eq_ignore_ascii_case(want)));
+    let has = |want: &str| {
+        contents
+            .get("files")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|f| {
+                f.get("path")
+                    .and_then(Value::as_str)
+                    .is_some_and(|p| p.eq_ignore_ascii_case(want))
+            })
+    };
     // The machine's names (crate::arch): systemd-bootx64.efi, grubx64.efi.
     let n = crate::arch::names_of(sys);
     if has(&format!("EFI/systemd/{}", n.systemd_boot)) {
@@ -467,13 +588,31 @@ fn proxmox_mode(sys: &Sys, mount: &str, contents: &Value) -> Option<&'static str
 /// TrueNAS's), as their own tools mount them only while they work.  None
 /// when it can't be mounted, said with WHO (how the warnings name the ESP)
 /// and WHAT (what the dump then lacks).
-pub fn read_unmounted_esp<R>(sys: &Sys, who: &str, dev: &str, at: &str, what: &str, f: impl FnOnce(&str) -> R) -> Option<R> {
+pub fn read_unmounted_esp<R>(
+    sys: &Sys,
+    who: &str,
+    dev: &str,
+    at: &str,
+    what: &str,
+    f: impl FnOnce(&str) -> R,
+) -> Option<R> {
     let words = crate::sys::RoMountWords {
         cant_make: format!("ESP {who}: can't make {at} to read it"),
-        mount_failed: format!("ESP {who}: a read-only mount at {at} failed, so {what} aren't in this dump"),
-        still_mounted: format!("ESP {who}: still mounted read-only at {at}; `umount {at}` when this dump is done"),
+        mount_failed: format!(
+            "ESP {who}: a read-only mount at {at} failed, so {what} aren't in this dump"
+        ),
+        still_mounted: format!(
+            "ESP {who}: still mounted read-only at {at}; `umount {at}` when this dump is done"
+        ),
     };
-    sys.with_ro_mount("vfat", "ro,noexec,nodev,nosuid", &format!("/dev/{dev}"), at, &words, f)
+    sys.with_ro_mount(
+        "vfat",
+        "ro,noexec,nodev,nosuid",
+        &format!("/dev/{dev}"),
+        at,
+        &words,
+        f,
+    )
 }
 
 /// boot.proxmox_boot (docs/design/proxmox.md): on Proxmox VE with
@@ -484,16 +623,33 @@ pub fn read_unmounted_esp<R>(sys: &Sys, who: &str, dev: &str, at: &str, what: &s
 /// (as proxmox-boot-tool itself mounts them); one already mounted
 /// (`mounted`, device and mount point) is read where it is.  None when the
 /// list or proxmox-kernel-helper isn't there.
-pub fn proxmox_boot_json(sys: &Sys, packages: &[Package], resolve: &dyn Fn(&str) -> Option<String>, mounted: &[(String, String)]) -> Option<ProxmoxBoot> {
+pub fn proxmox_boot_json(
+    sys: &Sys,
+    packages: &[Package],
+    resolve: &dyn Fn(&str) -> Option<String>,
+    mounted: &[(String, String)],
+) -> Option<ProxmoxBoot> {
     if !has_package(packages, "proxmox-kernel-helper") {
         return None;
     }
     let text = sys.read(PROXMOX_BOOT_UUIDS)?;
-    let uuids: Vec<String> = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(str::to_string).collect();
+    let uuids: Vec<String> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(str::to_string)
+        .collect();
     let mut esps = Vec::new();
     for uuid in &uuids {
         let device = resolve(&format!("UUID={uuid}"));
-        let mut e = ProxmoxEsp { uuid: uuid.clone(), device: device.clone(), mode: None, contents: Value::Null, systemd_boot: None, mounted_at: None };
+        let mut e = ProxmoxEsp {
+            uuid: uuid.clone(),
+            device: device.clone(),
+            mode: None,
+            contents: Value::Null,
+            systemd_boot: None,
+            mounted_at: None,
+        };
         let Some(dev) = device else {
             sys.warn(format!("{PROXMOX_BOOT_UUIDS} lists ESP {uuid}, but no file system here has that volume ID (proxmox-boot-tool status says the same)"));
             esps.push(e);
@@ -508,16 +664,26 @@ pub fn proxmox_boot_json(sys: &Sys, packages: &[Package], resolve: &dyn Fn(&str)
             continue;
         }
         // The ID names the mount point: only a volume ID's characters.
-        if !sys.privileged || uuid.is_empty() || !uuid.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        if !sys.privileged
+            || uuid.is_empty()
+            || !uuid.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+        {
             esps.push(e);
             continue;
         }
         let at = format!("{UNMOUNTED_ESP_MOUNTS}/esp-{uuid}");
-        let read = read_unmounted_esp(sys, &format!("{uuid} ({dev})"), &dev, &at, "its files and proxmox-boot-tool mode", |at| {
-            let contents = esp_inventory(sys, at);
-            let mode = proxmox_mode(sys, at, &contents);
-            (contents, mode, systemd_boot_json(sys, at))
-        });
+        let read = read_unmounted_esp(
+            sys,
+            &format!("{uuid} ({dev})"),
+            &dev,
+            &at,
+            "its files and proxmox-boot-tool mode",
+            |at| {
+                let contents = esp_inventory(sys, at);
+                let mode = proxmox_mode(sys, at, &contents);
+                (contents, mode, systemd_boot_json(sys, at))
+            },
+        );
         if let Some((contents, mode, sd)) = read {
             e.contents = contents;
             e.mode = mode;
@@ -525,12 +691,29 @@ pub fn proxmox_boot_json(sys: &Sys, packages: &[Package], resolve: &dyn Fn(&str)
         }
         esps.push(e);
     }
-    let manual: Option<Vec<String>> = sys.read("/etc/kernel/proxmox-boot-manual-kernels").map(|t| t.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect());
+    let manual: Option<Vec<String>> =
+        sys.read("/etc/kernel/proxmox-boot-manual-kernels")
+            .map(|t| {
+                t.lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            });
     let json = Obj::new()
         .set("uuids", uuids.clone())
         .set(
             "esps",
-            esps.iter().map(|e| Obj::new().set("uuid", e.uuid.as_str()).set("device", e.device.clone()).set("mode", e.mode).set("contents", e.contents.clone()).build()).collect::<Vec<_>>(),
+            esps.iter()
+                .map(|e| {
+                    Obj::new()
+                        .set("uuid", e.uuid.as_str())
+                        .set("device", e.device.clone())
+                        .set("mode", e.mode)
+                        .set("contents", e.contents.clone())
+                        .build()
+                })
+                .collect::<Vec<_>>(),
         )
         .set("cmdline", sys.read_trim("/etc/kernel/cmdline"))
         .set("pin", sys.read_trim("/etc/kernel/proxmox-boot-pin"))
@@ -545,7 +728,15 @@ pub fn proxmox_boot_json(sys: &Sys, packages: &[Package], resolve: &dyn Fn(&str)
 /// it is in when that isn't /boot, its image's and initrd's sizes, whether
 /// it has a config, whether it is the running one and whether its modules
 /// are installed (/lib/modules/V or /usr/lib/modules/V), in that order.
-fn kernel_obj(sys: &Sys, v: &str, dir: Option<&str>, vmlinuz: Option<u64>, initrd: Option<u64>, config: bool, running: Option<&str>) -> Value {
+fn kernel_obj(
+    sys: &Sys,
+    v: &str,
+    dir: Option<&str>,
+    vmlinuz: Option<u64>,
+    initrd: Option<u64>,
+    config: bool,
+    running: Option<&str>,
+) -> Value {
     Obj::new()
         .set("version", v)
         .set_some("dir", dir)
@@ -553,7 +744,11 @@ fn kernel_obj(sys: &Sys, v: &str, dir: Option<&str>, vmlinuz: Option<u64>, initr
         .set("initrd_bytes", initrd)
         .set("config", config)
         .set("running", running == Some(v))
-        .set("modules_installed", sys.is_dir(&format!("/lib/modules/{v}")) || sys.is_dir(&format!("/usr/lib/modules/{v}")))
+        .set(
+            "modules_installed",
+            sys.is_dir(&format!("/lib/modules/{v}"))
+                || sys.is_dir(&format!("/usr/lib/modules/{v}")),
+        )
         .build()
 }
 
@@ -568,7 +763,17 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
     // replaced as booster.img-V.dpkg-bak or .bak: set aside the same way.
     let mut old_copies: Vec<&str> = Vec::new();
     for f in &files {
-        if (f.ends_with(".old") && ["vmlinuz-", "kernel-", "initrd.img-", "config-", "System.map-", "initramfs-"].iter().any(|p| f.starts_with(p)))
+        if (f.ends_with(".old")
+            && [
+                "vmlinuz-",
+                "kernel-",
+                "initrd.img-",
+                "config-",
+                "System.map-",
+                "initramfs-",
+            ]
+            .iter()
+            .any(|p| f.starts_with(p)))
             || (f.starts_with("booster.img-") && (f.ends_with(".dpkg-bak") || f.ends_with(".bak")))
         {
             old_copies.push(f);
@@ -577,9 +782,24 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
         // Debian's initrd.img-V, Arch's and Fedora's initramfs-V.img.
         // Alpine's are vmlinuz-FLAVOR and initramfs-FLAVOR, with no .img;
         // booster's (PikaOS) booster.img-V.
-        let initramfs = f.strip_prefix("initramfs-").map(|v| v.strip_suffix(".img").unwrap_or(v)).filter(|v| !v.ends_with("-fallback") && !v.ends_with("kdump"));
-        for p in ["vmlinuz-", "kernel-", "initrd.img-", "config-", "System.map-", "initramfs-", "booster.img-"] {
-            let v = if p == "initramfs-" { initramfs } else { f.strip_prefix(p) };
+        let initramfs = f
+            .strip_prefix("initramfs-")
+            .map(|v| v.strip_suffix(".img").unwrap_or(v))
+            .filter(|v| !v.ends_with("-fallback") && !v.ends_with("kdump"));
+        for p in [
+            "vmlinuz-",
+            "kernel-",
+            "initrd.img-",
+            "config-",
+            "System.map-",
+            "initramfs-",
+            "booster.img-",
+        ] {
+            let v = if p == "initramfs-" {
+                initramfs
+            } else {
+                f.strip_prefix(p)
+            };
             if let Some(v) = v {
                 if !versions.iter().any(|x| x == v) {
                     versions.push(v.to_string());
@@ -591,13 +811,23 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
     let mut list: Vec<Value> = versions
         .iter()
         .map(|v| {
-            let vmlinuz = sys.file_size(&format!("/boot/vmlinuz-{v}")).or_else(|| sys.file_size(&format!("/boot/kernel-{v}")));
+            let vmlinuz = sys
+                .file_size(&format!("/boot/vmlinuz-{v}"))
+                .or_else(|| sys.file_size(&format!("/boot/kernel-{v}")));
             let initrd = sys
                 .file_size(&format!("/boot/initrd.img-{v}"))
                 .or_else(|| sys.file_size(&format!("/boot/initramfs-{v}.img")))
                 .or_else(|| sys.file_size(&format!("/boot/initramfs-{v}")))
                 .or_else(|| sys.file_size(&format!("/boot/booster.img-{v}")));
-            kernel_obj(sys, v, None, vmlinuz, initrd, sys.is_file(&format!("/boot/config-{v}")), running)
+            kernel_obj(
+                sys,
+                v,
+                None,
+                vmlinuz,
+                initrd,
+                sys.is_file(&format!("/boot/config-{v}")),
+                running,
+            )
         })
         .collect();
     // ostree's: /boot/ostree/STATEROOT-BOOTCSUM/vmlinuz-V and
@@ -608,13 +838,33 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
             continue;
         }
         for f in sys.list(&dir) {
-            let Some(v) = f.strip_prefix("vmlinuz-") else { continue };
-            let (vmlinuz, initrd) = (sys.file_size(&format!("{dir}/{f}")), sys.file_size(&format!("{dir}/initramfs-{v}.img")));
-            list.push(kernel_obj(sys, v, Some(&dir), vmlinuz, initrd, sys.is_file(&format!("{dir}/config-{v}")), running));
+            let Some(v) = f.strip_prefix("vmlinuz-") else {
+                continue;
+            };
+            let (vmlinuz, initrd) = (
+                sys.file_size(&format!("{dir}/{f}")),
+                sys.file_size(&format!("{dir}/initramfs-{v}.img")),
+            );
+            list.push(kernel_obj(
+                sys,
+                v,
+                Some(&dir),
+                vmlinuz,
+                initrd,
+                sys.is_file(&format!("{dir}/config-{v}")),
+                running,
+            ));
         }
     }
     let mut links = Obj::new();
-    for l in ["/vmlinuz", "/vmlinuz.old", "/initrd.img", "/initrd.img.old", "/boot/vmlinuz", "/boot/initrd.img"] {
+    for l in [
+        "/vmlinuz",
+        "/vmlinuz.old",
+        "/initrd.img",
+        "/initrd.img.old",
+        "/boot/vmlinuz",
+        "/boot/initrd.img",
+    ] {
         if let Some(t) = sys.readlink(l) {
             links.put(l, t);
         }
@@ -634,14 +884,36 @@ pub fn cmdline_json(cmdline: &str) -> Value {
         let (k, v) = w.split_once('=').unwrap_or((w.as_str(), ""));
         if matches!(
             k,
-            "root" | "rootflags" | "rootfstype" | "ro" | "rw" | "resume" | "resume_offset" | "cryptdevice" | "rd.luks.uuid"
-                | "rd.luks.name" | "rd.lvm.vg" | "rd.lvm.lv" | "rd.md.uuid" | "rd.auto" | "zfs" | "zfsforce" | "boot"
-                | "BOOT_IMAGE" | "init" | "systemd.mount-extra" | "rootdelay"
+            "root"
+                | "rootflags"
+                | "rootfstype"
+                | "ro"
+                | "rw"
+                | "resume"
+                | "resume_offset"
+                | "cryptdevice"
+                | "rd.luks.uuid"
+                | "rd.luks.name"
+                | "rd.lvm.vg"
+                | "rd.lvm.lv"
+                | "rd.md.uuid"
+                | "rd.auto"
+                | "zfs"
+                | "zfsforce"
+                | "boot"
+                | "BOOT_IMAGE"
+                | "init"
+                | "systemd.mount-extra"
+                | "rootdelay"
         ) {
             picked.put(k, v);
         }
     }
-    Obj::new().set("raw", cmdline.trim()).set("words", words).set("storage", picked).build()
+    Obj::new()
+        .set("raw", cmdline.trim())
+        .set("words", words)
+        .set("storage", picked)
+        .build()
 }
 
 /// installkernel's configuration on Gentoo: the first of these that
@@ -656,15 +928,36 @@ pub const INSTALL_CONF: &[&str] = &["/etc/kernel/install.conf", "/usr/lib/kernel
 /// boot.initramfs fields only Gentoo's dumps have: installkernel (the file
 /// and its three keys, or null), evidence, and lib_modules_initrd (the
 /// kernels with an image at /lib/modules/K/initrd, which load refuses).
-fn gentoo_initramfs(sys: &Sys, packages: &[Package]) -> (Option<String>, Vec<(&'static str, Value)>) {
+fn gentoo_initramfs(
+    sys: &Sys,
+    packages: &[Package],
+) -> (Option<String>, Vec<(&'static str, Value)>) {
     let has = |p: &str| has_package(packages, p);
     let mut why: Vec<String> = Vec::new();
-    let conf = INSTALL_CONF.iter().find(|p| sys.is_file(p)).map(|p| (*p, sys.read(p).map(|t| parse_shell_assignments(&t)).unwrap_or_default()));
-    let key = |k: &str| conf.as_ref().and_then(|(_, a)| a.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone()));
-    let installkernel = conf.as_ref().map(|(p, _)| {
-        Obj::new().set("conf", *p).set("layout", key("layout")).set("initrd_generator", key("initrd_generator")).set("uki_generator", key("uki_generator")).build()
+    let conf = INSTALL_CONF.iter().find(|p| sys.is_file(p)).map(|p| {
+        (
+            *p,
+            sys.read(p)
+                .map(|t| parse_shell_assignments(&t))
+                .unwrap_or_default(),
+        )
     });
-    let in_boot = sys.list("/boot").iter().any(|f| f.starts_with("initramfs-") && !f.ends_with(".old"));
+    let key = |k: &str| {
+        conf.as_ref()
+            .and_then(|(_, a)| a.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone()))
+    };
+    let installkernel = conf.as_ref().map(|(p, _)| {
+        Obj::new()
+            .set("conf", *p)
+            .set("layout", key("layout"))
+            .set("initrd_generator", key("initrd_generator"))
+            .set("uki_generator", key("uki_generator"))
+            .build()
+    });
+    let in_boot = sys
+        .list("/boot")
+        .iter()
+        .any(|f| f.starts_with("initramfs-") && !f.ends_with(".old"));
     let generator = match (&conf, key("initrd_generator").filter(|g| !g.is_empty())) {
         (Some((p, _)), Some(g)) => {
             why.push(format!("{p} says initrd_generator={g}"));
@@ -673,7 +966,10 @@ fn gentoo_initramfs(sys: &Sys, packages: &[Package]) -> (Option<String>, Vec<(&'
         (c, _) => {
             match c {
                 Some((p, _)) => why.push(format!("{p} names no initrd_generator")),
-                None => why.push(format!("no installkernel configuration ({})", INSTALL_CONF.join(", "))),
+                None => why.push(format!(
+                    "no installkernel configuration ({})",
+                    INSTALL_CONF.join(", ")
+                )),
             }
             if !in_boot {
                 why.push("/boot has no initramfs-*".into());
@@ -690,16 +986,34 @@ fn gentoo_initramfs(sys: &Sys, packages: &[Package]) -> (Option<String>, Vec<(&'
     // The distribution kernels' USE=initramfs: a second clue, said beside
     // the first.
     for cat_pf in sys.list("/var/db/pkg/sys-kernel") {
-        let Some((n, _)) = split_pf(&cat_pf) else { continue };
+        let Some((n, _)) = split_pf(&cat_pf) else {
+            continue;
+        };
         if !matches!(n, "gentoo-kernel-bin" | "gentoo-kernel") {
             continue;
         }
-        let use_ = sys.read(&format!("/var/db/pkg/sys-kernel/{cat_pf}/USE")).unwrap_or_default();
+        let use_ = sys
+            .read(&format!("/var/db/pkg/sys-kernel/{cat_pf}/USE"))
+            .unwrap_or_default();
         let on = use_.split_whitespace().any(|w| w == "initramfs");
-        why.push(format!("{cat_pf} is built {} USE=initramfs", if on { "with" } else { "without" }));
+        why.push(format!(
+            "{cat_pf} is built {} USE=initramfs",
+            if on { "with" } else { "without" }
+        ));
     }
-    let lib_initrd: Vec<String> = sys.list("/lib/modules").into_iter().filter(|k| sys.is_file(&format!("/lib/modules/{k}/initrd"))).collect();
-    (Some(generator), vec![("installkernel", installkernel.into()), ("evidence", why.into()), ("lib_modules_initrd", lib_initrd.into())])
+    let lib_initrd: Vec<String> = sys
+        .list("/lib/modules")
+        .into_iter()
+        .filter(|k| sys.is_file(&format!("/lib/modules/{k}/initrd")))
+        .collect();
+    (
+        Some(generator),
+        vec![
+            ("installkernel", installkernel.into()),
+            ("evidence", why.into()),
+            ("lib_modules_initrd", lib_initrd.into()),
+        ],
+    )
 }
 
 /// initramfs_json with no ESPs mounted, for the tests.
@@ -710,7 +1024,12 @@ fn initramfs_json(sys: &Sys, packages: &[Package], ostree: bool) -> Value {
 
 /// boot.initramfs; `esps` (device, mount point) for Slackware's
 /// elilo.conf initrd= lines.
-fn initramfs_json_esps(sys: &Sys, packages: &[Package], ostree: bool, esps: &[(String, String)]) -> Value {
+fn initramfs_json_esps(
+    sys: &Sys,
+    packages: &[Package],
+    ostree: bool,
+    esps: &[(String, String)],
+) -> Value {
     let has = |p: &str| has_package(packages, p);
     // Gentoo's and Slackware's generator is read from their own files,
     // with fields of their own beside it.
@@ -730,8 +1049,13 @@ fn initramfs_json_esps(sys: &Sys, packages: &[Package], ostree: bool, esps: &[(S
     // with /usr/lib a link to lib64), which clr-boot-manager copies to the
     // ESP; dracut is installed, but nothing on the machine runs it.
     let prebuilt = ostree
-        || sys.list("/usr/lib/kernel").iter().any(|f| f.ends_with(".initrd"))
-        || ["/usr/lib64/kernel", "/usr/lib/kernel"].iter().any(|d| sys.list(d).iter().any(|f| f.starts_with(SOLUS_INITRD)));
+        || sys
+            .list("/usr/lib/kernel")
+            .iter()
+            .any(|f| f.ends_with(".initrd"))
+        || ["/usr/lib64/kernel", "/usr/lib/kernel"]
+            .iter()
+            .any(|d| sys.list(d).iter().any(|f| f.starts_with(SOLUS_INITRD)));
     let generator = if let Some(g) = gentoo_generator.as_deref() {
         Some(g)
     } else if prebuilt {
@@ -753,11 +1077,23 @@ fn initramfs_json_esps(sys: &Sys, packages: &[Package], ostree: bool, esps: &[(S
     } else {
         None
     };
-    let conf = sys.read("/etc/initramfs-tools/initramfs.conf").map(|t| parse_shell_assignments(&t)).unwrap_or_default();
+    let conf = sys
+        .read("/etc/initramfs-tools/initramfs.conf")
+        .map(|t| parse_shell_assignments(&t))
+        .unwrap_or_default();
     let resume = sys
         .read("/etc/initramfs-tools/conf.d/resume")
-        .and_then(|t| parse_shell_assignments(&t).into_iter().find(|(k, _)| k == "RESUME").map(|(_, v)| v));
-    let pick = |k: &str| conf.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
+        .and_then(|t| {
+            parse_shell_assignments(&t)
+                .into_iter()
+                .find(|(k, _)| k == "RESUME")
+                .map(|(_, v)| v)
+        });
+    let pick = |k: &str| {
+        conf.iter()
+            .find(|(key, _)| key == k)
+            .map(|(_, v)| v.clone())
+    };
     let mut o = Obj::new()
         .set("generator", generator)
         .set("modules", pick("MODULES"))
@@ -783,7 +1119,11 @@ pub const BOOSTER_YAML: &str = "/etc/booster.yaml";
 fn booster_json(sys: &Sys) -> Value {
     let text = sys.read(BOOSTER_YAML);
     let keys = text.as_deref().map(parse_flat_yaml).unwrap_or_default();
-    let key = |k: &str| keys.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
+    let key = |k: &str| {
+        keys.iter()
+            .find(|(key, _)| key == k)
+            .map(|(_, v)| v.clone())
+    };
     let flag = |k: &str| {
         key(k).map(|v| match v.to_ascii_lowercase().as_str() {
             "true" | "yes" | "on" => Value::from(true),
@@ -811,12 +1151,21 @@ pub fn parse_flat_yaml(text: &str) -> Vec<(String, String)> {
         if line.starts_with([' ', '\t', '#', '-']) {
             continue;
         }
-        let Some((k, v)) = line.split_once(':') else { continue };
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
         let v = v.split(" #").next().unwrap_or("").trim();
         if k.is_empty() || v.is_empty() {
             continue;
         }
-        let v = if v.len() >= 2 && ((v.starts_with('"') && v.ends_with('"')) || (v.starts_with('\'') && v.ends_with('\''))) { &v[1..v.len() - 1] } else { v };
+        let v = if v.len() >= 2
+            && ((v.starts_with('"') && v.ends_with('"'))
+                || (v.starts_with('\'') && v.ends_with('\'')))
+        {
+            &v[1..v.len() - 1]
+        } else {
+            v
+        };
         out.push((k.trim().to_string(), v.to_string()));
     }
     out
@@ -861,13 +1210,19 @@ pub fn detect_loader_on(e: &Evidence, n: &crate::arch::Names) -> Value {
         if let Some(f) = &e.current_file {
             let u = f.to_ascii_uppercase().replace('/', "\\");
             why.push(format!("firmware booted {f}"));
-            let zbm = e.zbm_images.iter().find(|p| u.trim_start_matches('\\') == p.to_ascii_uppercase().replace('/', "\\"));
+            let zbm = e
+                .zbm_images
+                .iter()
+                .find(|p| u.trim_start_matches('\\') == p.to_ascii_uppercase().replace('/', "\\"));
             if let Some(p) = zbm {
                 // ZFSBootMenu (crate::zfsbootmenu): a unified kernel image
                 // whose name says nothing a loader's would.
                 name = Some("zfsbootmenu");
                 why.push(format!("that is a ZFSBootMenu image ({p})"));
-            } else if has(CBM) && u.trim_start_matches('\\').eq_ignore_ascii_case(&CBM_SHIM.replace('/', "\\")) {
+            } else if has(CBM)
+                && u.trim_start_matches('\\')
+                    .eq_ignore_ascii_case(&CBM_SHIM.replace('/', "\\"))
+            {
                 // clr-boot-manager's names (Solus): shim as bootloaderx64.efi,
                 // and systemd-boot as the grubx64.efi it loads.
                 shim = true;
@@ -886,7 +1241,9 @@ pub fn detect_loader_on(e: &Evidence, n: &crate::arch::Names) -> Value {
                     "grub"
                 });
                 if let Some(l) = name.filter(|&l| l != "grub") {
-                    why.push(format!("that is shim in {l}'s own directory, which loads {l}"));
+                    why.push(format!(
+                        "that is shim in {l}'s own directory, which loads {l}"
+                    ));
                 }
             } else if u.contains("GRUB") {
                 name = Some("grub");
@@ -904,10 +1261,18 @@ pub fn detect_loader_on(e: &Evidence, n: &crate::arch::Names) -> Value {
                 // AnduinOS's installer copies shim there, with GRUB and
                 // MokManager beside it; with Secure Boot off, shim may set no
                 // MOK variables to tell by.
-                if let Some(of) = e.fallback_copy_of.as_deref().filter(|p| p.to_ascii_lowercase().ends_with(&format!("/{}", n.shim))) {
+                if let Some(of) = e
+                    .fallback_copy_of
+                    .as_deref()
+                    .filter(|p| p.to_ascii_lowercase().ends_with(&format!("/{}", n.shim)))
+                {
                     shim = true;
                     why.push(format!("{} is a copy of {of}", n.fallback));
-                } else if let Some(of) = e.fallback_copy_of.as_deref().filter(|p| has(CBM) && p.eq_ignore_ascii_case(CBM_SHIM)) {
+                } else if let Some(of) = e
+                    .fallback_copy_of
+                    .as_deref()
+                    .filter(|p| has(CBM) && p.eq_ignore_ascii_case(CBM_SHIM))
+                {
                     // clr-boot-manager copies its shim there too (Solus).
                     shim = true;
                     name = Some("systemd-boot");
@@ -940,7 +1305,9 @@ pub fn detect_loader_on(e: &Evidence, n: &crate::arch::Names) -> Value {
             } else if has(CBM) && lc.iter().any(|f| f.eq_ignore_ascii_case(CBM_SD_BOOT)) {
                 // Before grubx64.efi's rule: clr-boot-manager's is systemd-boot.
                 name = Some("systemd-boot");
-                why.push(format!("an ESP holds clr-boot-manager's {CBM_SD_BOOT}, which is systemd-boot"));
+                why.push(format!(
+                    "an ESP holds clr-boot-manager's {CBM_SD_BOOT}, which is systemd-boot"
+                ));
                 if lc.iter().any(|f| f.eq_ignore_ascii_case(CBM_SHIM)) {
                     shim = true;
                     why.push(format!("and its shim, {CBM_SHIM}"));
@@ -948,20 +1315,32 @@ pub fn detect_loader_on(e: &Evidence, n: &crate::arch::Names) -> Value {
             } else if lc.iter().any(|f| f.ends_with(&format!("/{}", n.grub))) {
                 name = Some("grub");
                 why.push(format!("an ESP holds {}", n.grub));
-            } else if lc.iter().any(|f| f.ends_with(&format!("/{}", n.systemd_boot))) {
+            } else if lc
+                .iter()
+                .any(|f| f.ends_with(&format!("/{}", n.systemd_boot)))
+            {
                 name = Some("systemd-boot");
                 why.push(format!("an ESP holds {}", n.systemd_boot));
-            } else if lc.iter().any(|f| f == "limine.conf" || f.ends_with("/limine.conf") || f.starts_with("efi/limine/")) {
+            } else if lc.iter().any(|f| {
+                f == "limine.conf" || f.ends_with("/limine.conf") || f.starts_with("efi/limine/")
+            }) {
                 // esp_inventory's paths are relative to the ESP: EFI/limine/.
                 name = Some("limine");
                 why.push("an ESP holds Limine's EFI/limine/ or limine.conf".into());
-            } else if lc.iter().any(|f| f.ends_with(&format!("/{}", n.refind)) || f.ends_with("/refind.conf")) {
+            } else if lc
+                .iter()
+                .any(|f| f.ends_with(&format!("/{}", n.refind)) || f.ends_with("/refind.conf"))
+            {
                 // PikaOS's installer copies rEFInd to EFI/BOOT too, and its
                 // "BOOTX64 mode" makes no boot entry: the firmware boots the
                 // fallback path, which names no loader.
                 name = Some("refind");
                 why.push(format!("an ESP holds rEFInd's {} or refind.conf", n.refind));
-            } else if lc.iter().any(|f| f.ends_with("/elilo.efi") || f.ends_with("/elilo.conf") || f.ends_with("/elilo-x86_64.conf")) {
+            } else if lc.iter().any(|f| {
+                f.ends_with("/elilo.efi")
+                    || f.ends_with("/elilo.conf")
+                    || f.ends_with("/elilo-x86_64.conf")
+            }) {
                 // Slackware's test guests boot ELILO's copy at the fallback
                 // path (EFI/BOOT, with its elilo.conf) under blank NVRAM.
                 name = Some("elilo");
@@ -1021,7 +1400,9 @@ pub fn detect_loader_on(e: &Evidence, n: &crate::arch::Names) -> Value {
         }
     }
     // Debian's signed shim, Fedora's, AnduinOS's.
-    let shim_package = (e.uefi && shim).then(|| n.shim_packages.iter().copied().find(|p| has(p))).flatten();
+    let shim_package = (e.uefi && shim)
+        .then(|| n.shim_packages.iter().copied().find(|p| has(p)))
+        .flatten();
     let mut o = Obj::new()
         .set("name", name.unwrap_or("unknown"))
         .set("firmware", if e.uefi { "uefi" } else { "bios" })
@@ -1053,7 +1434,11 @@ pub const SOLUS_KERNEL: &str = "com.solus-project.";
 pub fn solus_kernel_version(file: &str) -> Option<String> {
     let (flavour, vr) = file.strip_prefix(SOLUS_KERNEL)?.split_once('.')?;
     let (ver, rel) = vr.rsplit_once('-')?;
-    (!flavour.is_empty() && !ver.is_empty() && !rel.is_empty() && rel.bytes().all(|c| c.is_ascii_digit())).then(|| format!("{vr}.{flavour}"))
+    (!flavour.is_empty()
+        && !ver.is_empty()
+        && !rel.is_empty()
+        && rel.bytes().all(|c| c.is_ascii_digit()))
+    .then(|| format!("{vr}.{flavour}"))
 }
 
 /// Solus's kernels (clr-boot-manager's sources, which it copies to the
@@ -1063,25 +1448,56 @@ pub fn solus_kernel_version(file: &str) -> Option<String> {
 /// beside it, `dir` saying where; and the default-FLAVOUR links (the
 /// kernel each flavour boots by default), as (link, target).
 pub fn solus_kernels(sys: &Sys, running: Option<&str>) -> (Vec<Value>, Vec<(String, String)>) {
-    let Some(dir) = ["/usr/lib64/kernel", "/usr/lib/kernel"].into_iter().find(|d| sys.is_dir(d)) else { return (Vec::new(), Vec::new()) };
+    let Some(dir) = ["/usr/lib64/kernel", "/usr/lib/kernel"]
+        .into_iter()
+        .find(|d| sys.is_dir(d))
+    else {
+        return (Vec::new(), Vec::new());
+    };
     let files = sys.list(dir);
-    let mut kernels: Vec<(String, &String)> = files.iter().filter_map(|f| solus_kernel_version(f).map(|v| (v, f))).collect();
+    let mut kernels: Vec<(String, &String)> = files
+        .iter()
+        .filter_map(|f| solus_kernel_version(f).map(|v| (v, f)))
+        .collect();
     kernels.sort_by(|a, b| crate::sys::natural_cmp(&a.0, &b.0));
     let list = kernels
         .iter()
         .map(|(v, f)| {
-            let (vmlinuz, initrd) = (sys.file_size(&format!("{dir}/{f}")), sys.file_size(&format!("{dir}/initrd-{f}")));
-            kernel_obj(sys, v, Some(dir), vmlinuz, initrd, sys.is_file(&format!("{dir}/config-{v}")), running)
+            let (vmlinuz, initrd) = (
+                sys.file_size(&format!("{dir}/{f}")),
+                sys.file_size(&format!("{dir}/initrd-{f}")),
+            );
+            kernel_obj(
+                sys,
+                v,
+                Some(dir),
+                vmlinuz,
+                initrd,
+                sys.is_file(&format!("{dir}/config-{v}")),
+                running,
+            )
         })
         .collect();
-    let links = files.iter().filter(|f| f.starts_with("default-")).filter_map(|f| sys.readlink(&format!("{dir}/{f}")).map(|t| (format!("{dir}/{f}"), t))).collect();
+    let links = files
+        .iter()
+        .filter(|f| f.starts_with("default-"))
+        .filter_map(|f| {
+            sys.readlink(&format!("{dir}/{f}"))
+                .map(|t| (format!("{dir}/{f}"), t))
+        })
+        .collect();
     (list, links)
 }
 
 /// boot.kernels with Solus's kernels (solus_kernels) added, when
 /// clr-boot-manager is installed: /boot is the ESP there, with no
 /// vmlinuz-V of its own.
-fn with_solus_kernels(mut kernels: Value, sys: &Sys, packages: &[Package], running: Option<&str>) -> Value {
+fn with_solus_kernels(
+    mut kernels: Value,
+    sys: &Sys,
+    packages: &[Package],
+    running: Option<&str>,
+) -> Value {
     if !has_package(packages, CBM) {
         return kernels;
     }
@@ -1090,7 +1506,11 @@ fn with_solus_kernels(mut kernels: Value, sys: &Sys, packages: &[Package], runni
         for (k, v) in o.iter_mut() {
             match (k.as_str(), v) {
                 ("installed", Value::Arr(a)) => a.extend(list.iter().cloned()),
-                ("symlinks", Value::Obj(l)) => l.extend(links.iter().map(|(p, t)| (p.clone(), Value::from(t.as_str())))),
+                ("symlinks", Value::Obj(l)) => l.extend(
+                    links
+                        .iter()
+                        .map(|(p, t)| (p.clone(), Value::from(t.as_str()))),
+                ),
                 _ => {}
             }
         }
@@ -1127,27 +1547,77 @@ pub fn boot_json(
     let names = crate::arch::names_of(sys);
     let mut sd_boot = None;
     // (device, mount point, contents, systemd-boot's files)
-    let mut read: Vec<(String, Option<String>, Value, Option<Value>)> = esps.iter().map(|(dev, mnt)| (dev.clone(), Some(mnt.clone()), esp_inventory(sys, mnt), systemd_boot_json(sys, mnt))).collect();
-    for e in proxmox.iter().flat_map(|p| &p.esps).filter(|e| e.mounted_at.is_none()) {
+    let mut read: Vec<(String, Option<String>, Value, Option<Value>)> = esps
+        .iter()
+        .map(|(dev, mnt)| {
+            (
+                dev.clone(),
+                Some(mnt.clone()),
+                esp_inventory(sys, mnt),
+                systemd_boot_json(sys, mnt),
+            )
+        })
+        .collect();
+    for e in proxmox
+        .iter()
+        .flat_map(|p| &p.esps)
+        .filter(|e| e.mounted_at.is_none())
+    {
         if let Some(dev) = &e.device {
-            read.push((dev.clone(), None, e.contents.clone(), e.systemd_boot.clone()));
+            read.push((
+                dev.clone(),
+                None,
+                e.contents.clone(),
+                e.systemd_boot.clone(),
+            ));
         }
     }
-    read.extend(unmounted.iter().map(|(dev, inv)| (dev.clone(), None, inv.clone(), None)));
+    read.extend(
+        unmounted
+            .iter()
+            .map(|(dev, inv)| (dev.clone(), None, inv.clone(), None)),
+    );
     // ZFSBootMenu's images, on the mounted ESPs.
-    let mounted_esps: Vec<(String, String, Value)> = read.iter().filter_map(|(d, m, inv, _)| m.as_ref().map(|m| (d.clone(), m.clone(), inv.clone()))).collect();
-    let zbm_images = crate::zfsbootmenu::find_images(sys, &mounted_esps, crate::zfsbootmenu::root_is_be(&crate::zfs_be::list(zfs_tools)));
+    let mounted_esps: Vec<(String, String, Value)> = read
+        .iter()
+        .filter_map(|(d, m, inv, _)| m.as_ref().map(|m| (d.clone(), m.clone(), inv.clone())))
+        .collect();
+    let zbm_images = crate::zfsbootmenu::find_images(
+        sys,
+        &mounted_esps,
+        crate::zfsbootmenu::root_is_be(&crate::zfs_be::list(zfs_tools)),
+    );
     for (dev, mnt, inv, sd) in read {
         if let Some(files) = inv.get("files").and_then(Value::as_array) {
-            esp_files.extend(files.iter().filter_map(|f| f.get("path").and_then(Value::as_str)).map(str::to_string));
+            esp_files.extend(
+                files
+                    .iter()
+                    .filter_map(|f| f.get("path").and_then(Value::as_str))
+                    .map(str::to_string),
+            );
             fallback_copy_of = fallback_copy_of.or_else(|| {
-                files.iter().find(|f| f.get("path").and_then(Value::as_str).is_some_and(|p| p.eq_ignore_ascii_case(names.fallback))).and_then(|f| f.get("same_as")).and_then(Value::as_str).map(str::to_string)
+                files
+                    .iter()
+                    .find(|f| {
+                        f.get("path")
+                            .and_then(Value::as_str)
+                            .is_some_and(|p| p.eq_ignore_ascii_case(names.fallback))
+                    })
+                    .and_then(|f| f.get("same_as"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
             });
         }
         if sd_boot.is_none() {
             sd_boot = sd;
         }
-        esp_list.push(Obj::new().set("device", dev).set("mounted_at", mnt).set("contents", inv).build());
+        esp_list.push(
+            Obj::new()
+                .set("device", dev)
+                .set("mounted_at", mnt)
+                .set("contents", inv)
+                .build(),
+        );
     }
     if sd_boot.is_none() && ostree.is_none() {
         // systemd-boot can also keep its entries on an XBOOTLDR at /boot.
@@ -1155,19 +1625,31 @@ pub fn boot_json(
         // blscfg reads (boot.ostree.entries).
         sd_boot = systemd_boot_json(sys, "/boot");
     }
-    let current_file = efi_boot.get("boot_current").and_then(Value::as_str).and_then(|cur| {
-        efi_boot
-            .get("entries")
-            .and_then(Value::as_array)?
-            .iter()
-            .find(|e| e.get("number").and_then(Value::as_str) == Some(cur))
-            .and_then(|e| e.get("file").and_then(Value::as_str).map(str::to_string))
-    });
+    let current_file = efi_boot
+        .get("boot_current")
+        .and_then(Value::as_str)
+        .and_then(|cur| {
+            efi_boot
+                .get("entries")
+                .and_then(Value::as_array)?
+                .iter()
+                .find(|e| e.get("number").and_then(Value::as_str) == Some(cur))
+                .and_then(|e| e.get("file").and_then(Value::as_str).map(str::to_string))
+        });
     let ev = Evidence {
         uefi: crate::efi::is_uefi(sys),
         current_file,
-        loader_info: efi_boot.at(&["loader_interface", "loader_info"]).and_then(Value::as_str).map(str::to_string),
-        shim_variables: efi_boot.get("shim_variables").and_then(Value::as_array).is_some_and(|a| a.iter().any(|v| v.as_str().is_some_and(|s| s.starts_with("Mok")))),
+        loader_info: efi_boot
+            .at(&["loader_interface", "loader_info"])
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        shim_variables: efi_boot
+            .get("shim_variables")
+            .and_then(Value::as_array)
+            .is_some_and(|a| {
+                a.iter()
+                    .any(|v| v.as_str().is_some_and(|s| s.starts_with("Mok")))
+            }),
         mbr_codes,
         packages,
         esp_files,
@@ -1191,17 +1673,34 @@ pub fn boot_json(
         .set("esps", esp_list)
         .set("grub", grub_json(sys))
         .set("systemd_boot", sd_boot)
-        .set("kernels", with_solus_kernels(kernels_json(sys, running.as_deref()), sys, packages, running.as_deref()))
-        .set("cmdline", sys.read("/proc/cmdline").map(|c| cmdline_json(&c)))
+        .set(
+            "kernels",
+            with_solus_kernels(
+                kernels_json(sys, running.as_deref()),
+                sys,
+                packages,
+                running.as_deref(),
+            ),
+        )
+        .set(
+            "cmdline",
+            sys.read("/proc/cmdline").map(|c| cmdline_json(&c)),
+        )
         .set("kernel_cmdline_file", sys.read_trim("/etc/kernel/cmdline"))
-        .set("initramfs", initramfs_json_esps(sys, packages, is_ostree, esps))
+        .set(
+            "initramfs",
+            initramfs_json_esps(sys, packages, is_ostree, esps),
+        )
         .set("packages", pk);
     o.put_some("ostree", ostree);
     o.put_some("refind", refind_json(sys));
     o.put_some("store", crate::store::guix_json(sys));
     o.put_some("proxmox_boot", proxmox.map(|p| p.json));
     if !zbm_images.is_empty() {
-        o.put("zfsbootmenu", crate::zfsbootmenu::json(sys, &zbm_images, zfs_tools));
+        o.put(
+            "zfsbootmenu",
+            crate::zfsbootmenu::json(sys, &zbm_images, zfs_tools),
+        );
     }
     // Slackware's LILO, ELILO and rc.d: on Slackware only, so no other
     // system's dump changes.
@@ -1227,7 +1726,12 @@ pub fn mok_json(sys: &Sys, packages: &[Package]) -> Option<Value> {
         return None;
     }
     let der = sys.read_bytes(ANDUINOS_MOK)?;
-    Some(Obj::new().set("cert", ANDUINOS_MOK).set("sha256", crate::bytes::sha256_hex(&der)).build())
+    Some(
+        Obj::new()
+            .set("cert", ANDUINOS_MOK)
+            .set("sha256", crate::bytes::sha256_hex(&der))
+            .build(),
+    )
 }
 
 /// rEFInd's kernel options file, which it reads beside the kernels it
@@ -1246,10 +1750,22 @@ pub fn refind_json(sys: &Sys) -> Option<Value> {
             let mut w = shell_words(l).into_iter();
             let title = w.next().unwrap_or_default();
             let options = w.collect::<Vec<_>>().join(" ");
-            Obj::new().set("title", title).set("options", options).build()
+            Obj::new()
+                .set("title", title)
+                .set("options", options)
+                .build()
         })
         .collect();
-    Some(Obj::new().set("linux_conf", Obj::new().set("path", REFIND_LINUX_CONF).set("lines", lines)).build())
+    Some(
+        Obj::new()
+            .set(
+                "linux_conf",
+                Obj::new()
+                    .set("path", REFIND_LINUX_CONF)
+                    .set("lines", lines),
+            )
+            .build(),
+    )
 }
 
 // --- Slackware: LILO, ELILO, mkinitrd, rc.d (boot/slackware.rs) -------------------
@@ -1265,7 +1781,10 @@ mod tests {
 
     #[test]
     fn shell_word_splitting() {
-        assert_eq!(shell_words("a 'b c' \"d \\\" e\" f\\ g"), vec!["a", "b c", "d \" e", "f g"]);
+        assert_eq!(
+            shell_words("a 'b c' \"d \\\" e\" f\\ g"),
+            vec!["a", "b c", "d \" e", "f g"]
+        );
         assert_eq!(shell_words("'it'\\''s' x"), vec!["it's", "x"]);
         assert_eq!(shell_words("x # comment"), vec!["x"]);
         assert_eq!(shell_words("a#b"), vec!["a#b"]);
@@ -1283,7 +1802,10 @@ mod tests {
         let get = |k: &str| a.iter().find(|(key, _)| key == k).map(|(_, v)| v.as_str());
         assert_eq!(get("GRUB_DEFAULT"), Some("0"));
         assert_eq!(get("GRUB_TIMEOUT"), Some("1"));
-        assert_eq!(get("GRUB_DISTRIBUTOR"), Some("`lsb_release -i -s 2> /dev/null || echo Debian`"));
+        assert_eq!(
+            get("GRUB_DISTRIBUTOR"),
+            Some("`lsb_release -i -s 2> /dev/null || echo Debian`")
+        );
         assert_eq!(get("GRUB_CMDLINE_LINUX_DEFAULT"), Some("quiet"));
         assert_eq!(get("GRUB_CMDLINE_LINUX"), Some(""));
         assert_eq!(get("GRUB_ENABLE_CRYPTODISK"), Some("y"));
@@ -1347,42 +1869,85 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
                 "UEFI Firmware Settings"
             ]
         );
-        assert_eq!(g.search_uuids, vec!["f2438bf3-6107-49a3-a57c-ba1bee4aebcb", "1111-2222"]);
+        assert_eq!(
+            g.search_uuids,
+            vec!["f2438bf3-6107-49a3-a57c-ba1bee4aebcb", "1111-2222"]
+        );
         // Only commands at the start of a line count: "if ...; then insmod xzio" is skipped.
-        assert_eq!(g.modules, vec!["all_video", "efi_gop", "part_gpt", "ext2", "gzio"]);
+        assert_eq!(
+            g.modules,
+            vec!["all_video", "efi_gop", "part_gpt", "ext2", "gzio"]
+        );
         assert_eq!(
             g.default_linux.as_deref(),
-            Some("/boot/vmlinuz-6.12.115+deb13.1-amd64 root=UUID=f2438bf3-6107-49a3-a57c-ba1bee4aebcb ro quiet")
+            Some(
+                "/boot/vmlinuz-6.12.115+deb13.1-amd64 root=UUID=f2438bf3-6107-49a3-a57c-ba1bee4aebcb ro quiet"
+            )
         );
-        assert_eq!(g.default_initrd.as_deref(), Some("/boot/initrd.img-6.12.115+deb13.1-amd64"));
+        assert_eq!(
+            g.default_initrd.as_deref(),
+            Some("/boot/initrd.img-6.12.115+deb13.1-amd64")
+        );
         assert_eq!(g.lang, None);
-        assert_eq!(parse_grub_cfg("set locale_dir=$prefix/locale\nset lang=en_US\ninsmod gettext\n").lang.as_deref(), Some("en_US"));
+        assert_eq!(
+            parse_grub_cfg("set locale_dir=$prefix/locale\nset lang=en_US\ninsmod gettext\n")
+                .lang
+                .as_deref(),
+            Some("en_US")
+        );
     }
 
     #[test]
     fn grub_stub_and_env() {
-        let g = parse_grub_cfg("search.fs_uuid f2438bf3-6107-49a3-a57c-ba1bee4aebcb root \nset prefix=($root)'/boot/grub'\nconfigfile $prefix/grub.cfg\n");
+        let g = parse_grub_cfg(
+            "search.fs_uuid f2438bf3-6107-49a3-a57c-ba1bee4aebcb root \nset prefix=($root)'/boot/grub'\nconfigfile $prefix/grub.cfg\n",
+        );
         assert_eq!(g.search_uuids, vec!["f2438bf3-6107-49a3-a57c-ba1bee4aebcb"]);
         assert_eq!(g.prefix.as_deref(), Some("($root)/boot/grub"));
         assert_eq!(g.configfile.as_deref(), Some("$prefix/grub.cfg"));
-        let env = parse_grubenv("# GRUB Environment Block\n# WARNING: Do not edit\nsaved_entry=gnulinux-x\nrecordfail=1\n##########");
-        assert_eq!(env, vec![("saved_entry".into(), "gnulinux-x".into()), ("recordfail".into(), "1".into())]);
+        let env = parse_grubenv(
+            "# GRUB Environment Block\n# WARNING: Do not edit\nsaved_entry=gnulinux-x\nrecordfail=1\n##########",
+        );
+        assert_eq!(
+            env,
+            vec![
+                ("saved_entry".into(), "gnulinux-x".into()),
+                ("recordfail".into(), "1".into())
+            ]
+        );
     }
 
     #[test]
     fn cmdline() {
-        let c = cmdline_json("BOOT_IMAGE=/boot/vmlinuz-6.12 root=UUID=abc ro quiet rootflags=subvol=@rootfs resume=UUID=def\n");
-        assert_eq!(c.at(&["storage", "root"]).and_then(Value::as_str), Some("UUID=abc"));
-        assert_eq!(c.at(&["storage", "rootflags"]).and_then(Value::as_str), Some("subvol=@rootfs"));
+        let c = cmdline_json(
+            "BOOT_IMAGE=/boot/vmlinuz-6.12 root=UUID=abc ro quiet rootflags=subvol=@rootfs resume=UUID=def\n",
+        );
+        assert_eq!(
+            c.at(&["storage", "root"]).and_then(Value::as_str),
+            Some("UUID=abc")
+        );
+        assert_eq!(
+            c.at(&["storage", "rootflags"]).and_then(Value::as_str),
+            Some("subvol=@rootfs")
+        );
         assert_eq!(c.at(&["storage", "ro"]).and_then(Value::as_str), Some(""));
         assert!(c.at(&["storage", "quiet"]).is_none());
-        assert_eq!(c.get("words").and_then(Value::as_array).map(Vec::len), Some(6));
+        assert_eq!(
+            c.get("words").and_then(Value::as_array).map(Vec::len),
+            Some(6)
+        );
         let z = cmdline_json("root=ZFS=rpool/ROOT/debian boot=zfs");
-        assert_eq!(z.at(&["storage", "root"]).and_then(Value::as_str), Some("ZFS=rpool/ROOT/debian"));
+        assert_eq!(
+            z.at(&["storage", "root"]).and_then(Value::as_str),
+            Some("ZFS=rpool/ROOT/debian")
+        );
     }
 
     fn pk(names: &[&str]) -> Vec<Package> {
-        names.iter().map(|n| Package::new(*n, "1", "amd64")).collect()
+        names
+            .iter()
+            .map(|n| Package::new(*n, "1", "amd64"))
+            .collect()
     }
 
     #[test]
@@ -1401,21 +1966,43 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         });
         assert_eq!(v.get("name").and_then(Value::as_str), Some("grub"));
         assert_eq!(v.get("via_shim"), Some(&Value::Bool(true)));
-        assert_eq!(v.get("package").and_then(Value::as_str), Some("grub-efi-amd64-signed"));
-        assert_eq!(v.get("evidence").and_then(Value::as_array).map(Vec::len), Some(4));
+        assert_eq!(
+            v.get("package").and_then(Value::as_str),
+            Some("grub-efi-amd64-signed")
+        );
+        assert_eq!(
+            v.get("evidence").and_then(Value::as_array).map(Vec::len),
+            Some(4)
+        );
     }
 
     #[test]
     fn loader_other_cases() {
         let none: Vec<Package> = vec![];
-        let base = |uefi: bool| Evidence { uefi, current_file: None, loader_info: None, shim_variables: false, mbr_codes: vec![], packages: &none, esp_files: vec![], fallback_copy_of: None, zbm_images: vec![] };
+        let base = |uefi: bool| Evidence {
+            uefi,
+            current_file: None,
+            loader_info: None,
+            shim_variables: false,
+            mbr_codes: vec![],
+            packages: &none,
+            esp_files: vec![],
+            fallback_copy_of: None,
+            zbm_images: vec![],
+        };
         // systemd-boot by its path, then by LoaderInfo.
         let mut e = base(true);
         e.current_file = Some("\\EFI\\systemd\\systemd-bootx64.efi".into());
-        assert_eq!(detect_loader(&e).get("name").and_then(Value::as_str), Some("systemd-boot"));
+        assert_eq!(
+            detect_loader(&e).get("name").and_then(Value::as_str),
+            Some("systemd-boot")
+        );
         let mut e = base(true);
         e.loader_info = Some("systemd-boot 257.8-1~deb13u2".into());
-        assert_eq!(detect_loader(&e).get("name").and_then(Value::as_str), Some("systemd-boot"));
+        assert_eq!(
+            detect_loader(&e).get("name").and_then(Value::as_str),
+            Some("systemd-boot")
+        );
         // The removable path alone says nothing; the ESP's files decide.
         let mut e = base(true);
         e.current_file = Some("\\EFI\\BOOT\\BOOTX64.EFI".into());
@@ -1429,48 +2016,90 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         let mut e = base(true);
         e.current_file = Some("\\EFI\\BOOT\\BOOTX64.EFI".into());
         e.loader_info = Some("Limine 12.9.6".into());
-        e.esp_files = vec!["EFI/BOOT/BOOTX64.EFI".into(), "EFI/limine/limine_x64.efi".into()];
+        e.esp_files = vec![
+            "EFI/BOOT/BOOTX64.EFI".into(),
+            "EFI/limine/limine_x64.efi".into(),
+        ];
         let p = pk(&["limine"]);
         e.packages = &p;
         let v = detect_loader(&e);
         assert_eq!(v.get("name").and_then(Value::as_str), Some("limine"));
         assert_eq!(v.get("package").and_then(Value::as_str), Some("limine"));
-        assert!(v.get("evidence").unwrap().compact().contains("Limine 12.9.6"));
+        assert!(
+            v.get("evidence")
+                .unwrap()
+                .compact()
+                .contains("Limine 12.9.6")
+        );
         e.loader_info = None;
         let v = detect_loader(&e);
         assert_eq!(v.get("name").and_then(Value::as_str), Some("limine"));
-        assert!(v.get("evidence").unwrap().compact().contains("an ESP holds Limine's"));
+        assert!(
+            v.get("evidence")
+                .unwrap()
+                .compact()
+                .contains("an ESP holds Limine's")
+        );
         // Through its own NVRAM entry, the path decides.
         let mut e = base(true);
         e.current_file = Some("\\EFI\\limine\\limine_x64.efi".into());
-        assert_eq!(detect_loader(&e).get("name").and_then(Value::as_str), Some("limine"));
+        assert_eq!(
+            detect_loader(&e).get("name").and_then(Value::as_str),
+            Some("limine")
+        );
         let mut e = base(true);
         e.current_file = Some("\\EFI\\refind\\refind_x64.efi".into());
-        assert_eq!(detect_loader(&e).get("name").and_then(Value::as_str), Some("refind"));
+        assert_eq!(
+            detect_loader(&e).get("name").and_then(Value::as_str),
+            Some("refind")
+        );
         // rEFInd through shim (refind-install --shim: shim in EFI/refind,
         // rEFInd as grubx64.efi beside it), with GRUB's signed package
         // installed too: rEFInd, via shim, not GRUB (RustAudit1 H4-01).
         let mut e = base(true);
         e.current_file = Some("\\EFI\\refind\\shimx64.efi".into());
-        e.esp_files = vec!["EFI/refind/shimx64.efi".into(), "EFI/refind/grubx64.efi".into(), "EFI/refind/refind.conf".into()];
+        e.esp_files = vec![
+            "EFI/refind/shimx64.efi".into(),
+            "EFI/refind/grubx64.efi".into(),
+            "EFI/refind/refind.conf".into(),
+        ];
         let p = pk(&["refind", "shim-signed", "grub-efi-amd64-signed"]);
         e.packages = &p;
         let v = detect_loader(&e);
         assert_eq!(v.get("name").and_then(Value::as_str), Some("refind"));
         assert_eq!(v.get("via_shim"), Some(&Value::Bool(true)));
         assert_eq!(v.get("package").and_then(Value::as_str), Some("refind"));
-        assert_eq!(v.get("shim_package").and_then(Value::as_str), Some("shim-signed"));
-        assert!(v.get("evidence").unwrap().compact().contains("shim in refind's own directory"));
+        assert_eq!(
+            v.get("shim_package").and_then(Value::as_str),
+            Some("shim-signed")
+        );
+        assert!(
+            v.get("evidence")
+                .unwrap()
+                .compact()
+                .contains("shim in refind's own directory")
+        );
         // Limine's the same; shim anywhere else still loads GRUB.
         e.current_file = Some("\\EFI\\limine\\shimx64.efi".into());
-        assert_eq!(detect_loader(&e).get("name").and_then(Value::as_str), Some("limine"));
+        assert_eq!(
+            detect_loader(&e).get("name").and_then(Value::as_str),
+            Some("limine")
+        );
         e.current_file = Some("\\EFI\\ubuntu\\shimx64.efi".into());
         let v = detect_loader(&e);
         assert_eq!(v.get("name").and_then(Value::as_str), Some("grub"));
-        assert!(!v.get("evidence").unwrap().compact().contains("own directory"));
+        assert!(
+            !v.get("evidence")
+                .unwrap()
+                .compact()
+                .contains("own directory")
+        );
         // BIOS: the MBR decides.
         let mut e = base(false);
-        e.mbr_codes = vec![("vda".into(), "grub2".into()), ("vdb".into(), "none".into())];
+        e.mbr_codes = vec![
+            ("vda".into(), "grub2".into()),
+            ("vdb".into(), "none".into()),
+        ];
         let p = pk(&["grub-pc"]);
         e.packages = &p;
         let v = detect_loader(&e);
@@ -1479,18 +2108,34 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert_eq!(v.get("package").and_then(Value::as_str), Some("grub-pc"));
         let mut e = base(false);
         e.mbr_codes = vec![("sda".into(), "syslinux".into())];
-        assert_eq!(detect_loader(&e).get("name").and_then(Value::as_str), Some("syslinux"));
+        assert_eq!(
+            detect_loader(&e).get("name").and_then(Value::as_str),
+            Some("syslinux")
+        );
         let mut e = base(false);
         e.mbr_codes = vec![("sda".into(), "grub-legacy".into())];
-        assert_eq!(detect_loader(&e).get("name").and_then(Value::as_str), Some("grub-legacy"));
+        assert_eq!(
+            detect_loader(&e).get("name").and_then(Value::as_str),
+            Some("grub-legacy")
+        );
         // Nothing at all but a package.
         let mut e = base(false);
         let p = pk(&["grub-pc"]);
         e.packages = &p;
         let v = detect_loader(&e);
         assert_eq!(v.get("name").and_then(Value::as_str), Some("grub"));
-        assert!(v.get("evidence").unwrap().compact().contains("only evidence"));
-        assert_eq!(detect_loader(&base(false)).get("name").and_then(Value::as_str), Some("unknown"));
+        assert!(
+            v.get("evidence")
+                .unwrap()
+                .compact()
+                .contains("only evidence")
+        );
+        assert_eq!(
+            detect_loader(&base(false))
+                .get("name")
+                .and_then(Value::as_str),
+            Some("unknown")
+        );
     }
 
     /// PikaOS's rEFInd booted at the fallback path: the ESP's files name it,
@@ -1509,12 +2154,33 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             fallback_copy_of: None,
             zbm_images: vec![],
         };
-        let v = detect_loader(&e(&["EFI/BOOT/bootx64.efi", "EFI/refind/refind_x64.efi", "EFI/refind/drivers_x64/ext4_x64.efi"]));
+        let v = detect_loader(&e(&[
+            "EFI/BOOT/bootx64.efi",
+            "EFI/refind/refind_x64.efi",
+            "EFI/refind/drivers_x64/ext4_x64.efi",
+        ]));
         assert_eq!(v.get("name").and_then(Value::as_str), Some("refind"));
         assert_eq!(v.get("package").and_then(Value::as_str), Some("refind"));
-        assert!(v.get("evidence").unwrap().compact().contains("an ESP holds rEFInd's"), "{}", v.compact());
-        assert_eq!(detect_loader(&e(&["EFI/BOOT/bootx64.efi", "EFI/BOOT/refind.conf"])).get("name").and_then(Value::as_str), Some("refind"));
-        assert_eq!(detect_loader(&e(&["EFI/BOOT/bootx64.efi"])).get("name").and_then(Value::as_str), Some("unknown"));
+        assert!(
+            v.get("evidence")
+                .unwrap()
+                .compact()
+                .contains("an ESP holds rEFInd's"),
+            "{}",
+            v.compact()
+        );
+        assert_eq!(
+            detect_loader(&e(&["EFI/BOOT/bootx64.efi", "EFI/BOOT/refind.conf"]))
+                .get("name")
+                .and_then(Value::as_str),
+            Some("refind")
+        );
+        assert_eq!(
+            detect_loader(&e(&["EFI/BOOT/bootx64.efi"]))
+                .get("name")
+                .and_then(Value::as_str),
+            Some("unknown")
+        );
     }
 
     /// booster's images and configuration (PikaOS): booster.img-K is K's
@@ -1535,17 +2201,29 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         let inst = v.get("installed").and_then(Value::as_array).unwrap();
         assert_eq!(inst.len(), 1, "{}", v.compact());
         assert_eq!(inst[0].get("initrd_bytes").and_then(Value::as_u64), Some(3));
-        assert_eq!(v.get("old_copies").unwrap().compact(), format!(r#"["booster.img-{k}.bak","booster.img-{k}.dpkg-bak"]"#));
+        assert_eq!(
+            v.get("old_copies").unwrap().compact(),
+            format!(r#"["booster.img-{k}.bak","booster.img-{k}.dpkg-bak"]"#)
+        );
         let p = pk(&["booster", "initramfs-tools", "dracut"]);
         let i = initramfs_json(&s, &p, false);
         assert_eq!(i.get("generator").and_then(Value::as_str), Some("booster"));
-        assert_eq!(i.get("booster").unwrap().compact(), r#"{"conf":null,"universal":null,"enable_lvm":null,"modules":null,"modules_force_load":null,"compression":null}"#);
+        assert_eq!(
+            i.get("booster").unwrap().compact(),
+            r#"{"conf":null,"universal":null,"enable_lvm":null,"modules":null,"modules_force_load":null,"compression":null}"#
+        );
         t.file("/etc/booster.yaml", "universal: true  # all modules\nenable_lvm: false\nmodules: 'usbhid,hid_generic'\nnetwork:\n  dhcp: on\n- stray\ncompression: \"zstd\"\n");
         let i = initramfs_json(&s, &p, false);
-        assert_eq!(i.get("booster").unwrap().compact(), r#"{"conf":"/etc/booster.yaml","universal":true,"enable_lvm":false,"modules":"usbhid,hid_generic","modules_force_load":null,"compression":"zstd"}"#);
+        assert_eq!(
+            i.get("booster").unwrap().compact(),
+            r#"{"conf":"/etc/booster.yaml","universal":true,"enable_lvm":false,"modules":"usbhid,hid_generic","modules_force_load":null,"compression":"zstd"}"#
+        );
         // Without booster, no booster object.
         let i = initramfs_json(&s, &pk(&["initramfs-tools"]), false);
-        assert_eq!(i.get("generator").and_then(Value::as_str), Some("initramfs-tools"));
+        assert_eq!(
+            i.get("generator").and_then(Value::as_str),
+            Some("initramfs-tools")
+        );
         assert!(i.get("booster").is_none());
         assert!(refind_json(&s).is_none());
         t.file("/boot/refind_linux.conf", "# rEFInd\n\"Boot with standard options\"  \"rd.luks.name=1111aaaa-2222-4333-8444-555566667777=crypt_root rd.luks.options=discard nowatchdog root=UUID=a0a1 quiet splash ---\"\n\n\"Boot with logging\" \"root=UUID=a0a1 ---\"\n");
@@ -1565,12 +2243,41 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             _ => Vec::new(),
         };
         let boot = kernel_obj(&s, "6.12", None, Some(9), None, true, Some("6.12"));
-        assert_eq!(keys(&boot), ["version", "vmlinuz_bytes", "initrd_bytes", "config", "running", "modules_installed"]);
+        assert_eq!(
+            keys(&boot),
+            [
+                "version",
+                "vmlinuz_bytes",
+                "initrd_bytes",
+                "config",
+                "running",
+                "modules_installed"
+            ]
+        );
         assert_eq!(boot.get("initrd_bytes"), Some(&Value::Null));
         assert_eq!(boot.get("running"), Some(&Value::Bool(true)));
         assert_eq!(boot.get("modules_installed"), Some(&Value::Bool(true)));
-        let ostree = kernel_obj(&s, "6.13", Some("/boot/ostree/x"), None, Some(3), false, Some("6.12"));
-        assert_eq!(keys(&ostree), ["version", "dir", "vmlinuz_bytes", "initrd_bytes", "config", "running", "modules_installed"]);
+        let ostree = kernel_obj(
+            &s,
+            "6.13",
+            Some("/boot/ostree/x"),
+            None,
+            Some(3),
+            false,
+            Some("6.12"),
+        );
+        assert_eq!(
+            keys(&ostree),
+            [
+                "version",
+                "dir",
+                "vmlinuz_bytes",
+                "initrd_bytes",
+                "config",
+                "running",
+                "modules_installed"
+            ]
+        );
         assert_eq!(ostree.get("running"), Some(&Value::Bool(false)));
         assert_eq!(ostree.get("modules_installed"), Some(&Value::Bool(false)));
     }
@@ -1578,15 +2285,40 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
     #[test]
     fn byte_copies() {
         let t = Tree::new("bytecopy");
-        t.file("/esp/a.efi", "same").file("/esp/b.efi", "diff").file("/esp/c.efi", "same").file("/esp/d.efi", "same").file("/esp/big.efi", "same!");
+        t.file("/esp/a.efi", "same")
+            .file("/esp/b.efi", "diff")
+            .file("/esp/c.efi", "same")
+            .file("/esp/d.efi", "same")
+            .file("/esp/big.efi", "same!");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         // Same size first: d.efi's bytes match but its (claimed) size
         // doesn't, so it is never compared; then the first match wins.
-        let c = [("d.efi", 5), ("gone.efi", 4), ("b.efi", 4), ("c.efi", 4), ("a.efi", 4)];
+        let c = [
+            ("d.efi", 5),
+            ("gone.efi", 4),
+            ("b.efi", 4),
+            ("c.efi", 4),
+            ("a.efi", 4),
+        ];
         assert_eq!(byte_copy_of(&s, "/esp/a.efi", 4, c, "/esp"), Some("c.efi"));
-        assert_eq!(byte_copy_of(&s, "/esp/a.efi", 4, [("d.efi", 5), ("b.efi", 4)], "/esp"), None);
-        assert_eq!(byte_copy_of(&s, "/esp/big.efi", 5, [("/esp/a.efi", 5), ("/esp/big.efi", 5)], ""), Some("/esp/big.efi"));
-        assert_eq!(byte_copy_of(&s, "/esp/gone.efi", 4, [("a.efi", 4)], "/esp"), None);
+        assert_eq!(
+            byte_copy_of(&s, "/esp/a.efi", 4, [("d.efi", 5), ("b.efi", 4)], "/esp"),
+            None
+        );
+        assert_eq!(
+            byte_copy_of(
+                &s,
+                "/esp/big.efi",
+                5,
+                [("/esp/a.efi", 5), ("/esp/big.efi", 5)],
+                ""
+            ),
+            Some("/esp/big.efi")
+        );
+        assert_eq!(
+            byte_copy_of(&s, "/esp/gone.efi", 4, [("a.efi", 4)], "/esp"),
+            None
+        );
         assert!(s.warnings().is_empty());
     }
 
@@ -1605,22 +2337,49 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         let inv = esp_inventory(&s, "/boot/efi");
         let files = inv.get("files").unwrap().as_array().unwrap();
-        let paths: Vec<&str> = files.iter().filter_map(|f| f.get("path").and_then(Value::as_str)).collect();
+        let paths: Vec<&str> = files
+            .iter()
+            .filter_map(|f| f.get("path").and_then(Value::as_str))
+            .collect();
         assert_eq!(
             paths,
             vec![
-                "EFI/BOOT/BOOTX64.EFI", "EFI/debian/grub.cfg", "EFI/debian/grubx64.efi", "EFI/debian/shimx64.efi",
-                "loader/entries/debian-6.12.conf", "loader/entries/readme.txt", "loader/loader.conf"
+                "EFI/BOOT/BOOTX64.EFI",
+                "EFI/debian/grub.cfg",
+                "EFI/debian/grubx64.efi",
+                "EFI/debian/shimx64.efi",
+                "loader/entries/debian-6.12.conf",
+                "loader/entries/readme.txt",
+                "loader/loader.conf"
             ]
         );
-        assert_eq!(files[0].get("same_as").and_then(Value::as_str), Some("EFI/debian/shimx64.efi"));
+        assert_eq!(
+            files[0].get("same_as").and_then(Value::as_str),
+            Some("EFI/debian/shimx64.efi")
+        );
         assert!(files[2].get("same_as").is_none());
-        assert_eq!(inv.at(&["debian_grub_stub", "search_uuids", "0"]).and_then(Value::as_str), Some("f2438bf3"));
+        assert_eq!(
+            inv.at(&["debian_grub_stub", "search_uuids", "0"])
+                .and_then(Value::as_str),
+            Some("f2438bf3")
+        );
         let sd = systemd_boot_json(&s, "/boot/efi").unwrap();
-        assert_eq!(sd.at(&["loader_conf", "timeout"]).and_then(Value::as_str), Some("5"));
-        assert_eq!(sd.at(&["entries", "0", "file"]).and_then(Value::as_str), Some("debian-6.12.conf"));
-        assert_eq!(sd.at(&["entries", "0", "options"]).and_then(Value::as_str), Some("root=UUID=x ro"));
-        assert_eq!(sd.get("entries").and_then(Value::as_array).map(Vec::len), Some(1));
+        assert_eq!(
+            sd.at(&["loader_conf", "timeout"]).and_then(Value::as_str),
+            Some("5")
+        );
+        assert_eq!(
+            sd.at(&["entries", "0", "file"]).and_then(Value::as_str),
+            Some("debian-6.12.conf")
+        );
+        assert_eq!(
+            sd.at(&["entries", "0", "options"]).and_then(Value::as_str),
+            Some("root=UUID=x ro")
+        );
+        assert_eq!(
+            sd.get("entries").and_then(Value::as_array).map(Vec::len),
+            Some(1)
+        );
         assert!(systemd_boot_json(&s, "/nowhere").is_none());
         // RustAudit1 H4-03: an entry's repeated initrd lines are all in
         // initrds (initrd stays the last one's), its repeated options lines
@@ -1630,35 +2389,93 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         let sd = systemd_boot_json(&s, "/boot/efi").unwrap();
         let arch = sd.at(&["entries", "0"]).unwrap();
         assert_eq!(arch.get("file").and_then(Value::as_str), Some("arch.conf"));
-        assert_eq!(arch.get("title").and_then(Value::as_str), Some("Arch Linux"));
-        assert_eq!(arch.get("initrd").and_then(Value::as_str), Some("/initramfs-linux.img"));
-        assert_eq!(arch.get("initrds"), Some(&Value::from(vec!["/intel-ucode.img", "/initramfs-linux.img"])));
-        assert_eq!(arch.get("options").and_then(Value::as_str), Some("root=x rw quiet"));
-        let Value::Obj(keys) = arch else { panic!("entry not an object") };
-        assert_eq!(keys.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), vec!["file", "title", "linux", "initrd", "initrds", "options"]);
+        assert_eq!(
+            arch.get("title").and_then(Value::as_str),
+            Some("Arch Linux")
+        );
+        assert_eq!(
+            arch.get("initrd").and_then(Value::as_str),
+            Some("/initramfs-linux.img")
+        );
+        assert_eq!(
+            arch.get("initrds"),
+            Some(&Value::from(vec![
+                "/intel-ucode.img",
+                "/initramfs-linux.img"
+            ]))
+        );
+        assert_eq!(
+            arch.get("options").and_then(Value::as_str),
+            Some("root=x rw quiet")
+        );
+        let Value::Obj(keys) = arch else {
+            panic!("entry not an object")
+        };
+        assert_eq!(
+            keys.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            vec!["file", "title", "linux", "initrd", "initrds", "options"]
+        );
         // One initrd line: no initrds; debian's entry is as it was.
         let debian = sd.at(&["entries", "1"]).unwrap();
-        assert_eq!(debian.get("initrd").and_then(Value::as_str), Some("/initrd"));
+        assert_eq!(
+            debian.get("initrd").and_then(Value::as_str),
+            Some("/initrd")
+        );
         assert!(debian.get("initrds").is_none());
-        assert_eq!(debian.get("options").and_then(Value::as_str), Some("root=UUID=x ro"));
+        assert_eq!(
+            debian.get("options").and_then(Value::as_str),
+            Some("root=UUID=x ro")
+        );
         // loader.conf isn't an entry: its keys are only ever the last line's.
-        t.file("/boot/efi/loader/loader.conf", "options a\noptions b\ninitrd c\ninitrd d\n");
+        t.file(
+            "/boot/efi/loader/loader.conf",
+            "options a\noptions b\ninitrd c\ninitrd d\n",
+        );
         let sd = systemd_boot_json(&s, "/boot/efi").unwrap();
         let lc = sd.get("loader_conf").unwrap();
-        assert_eq!((lc.get_str("options"), lc.get_str("initrd"), lc.get("initrds")), (Some("b"), Some("d"), None));
-        t.file("/boot/efi/loader/loader.conf", "#timeout 3\ntimeout 5\ndefault debian-*\n");
+        assert_eq!(
+            (
+                lc.get_str("options"),
+                lc.get_str("initrd"),
+                lc.get("initrds")
+            ),
+            (Some("b"), Some("d"), None)
+        );
+        t.file(
+            "/boot/efi/loader/loader.conf",
+            "#timeout 3\ntimeout 5\ndefault debian-*\n",
+        );
         std::fs::remove_file(t.p("/boot/efi/loader/entries/arch.conf")).unwrap();
         // The kernel and initrd an entry names in another directory
         // (sdbootutil's, on Aeon), once each, after the rest; nothing for
         // a name that isn't there, one outside the ESP or at its top
         // (debian-6.12.conf's /vmlinuz).
-        t.file("/boot/efi/aeon/7.3.3-1-default/linux-1fe2", vec![1u8; 30]).file("/boot/efi/aeon/7.3.3-1-default/initrd-7d97", vec![2u8; 20]).file("/boot/efi/aeon/other", "x").file("/boot/efi/vmlinuz", "k");
+        t.file("/boot/efi/aeon/7.3.3-1-default/linux-1fe2", vec![1u8; 30])
+            .file("/boot/efi/aeon/7.3.3-1-default/initrd-7d97", vec![2u8; 20])
+            .file("/boot/efi/aeon/other", "x")
+            .file("/boot/efi/vmlinuz", "k");
         let e = "title Aeon\nlinux /aeon/7.3.3-1-default/linux-1fe2\ninitrd /aeon/7.3.3-1-default/initrd-7d97\ninitrd /aeon/gone\noptions x\n";
-        t.file("/boot/efi/loader/entries/aeon-7.3.3-1-default-1+3.conf", e).file("/boot/efi/loader/entries/aeon-7.3.3-1-default-2.conf", e.replace("linux /aeon", "linux /../aeon"));
+        t.file("/boot/efi/loader/entries/aeon-7.3.3-1-default-1+3.conf", e)
+            .file(
+                "/boot/efi/loader/entries/aeon-7.3.3-1-default-2.conf",
+                e.replace("linux /aeon", "linux /../aeon"),
+            );
         let inv = esp_inventory(&s, "/boot/efi");
         let files = inv.get("files").unwrap().as_array().unwrap();
-        let tail: Vec<(&str, u64)> = files.iter().skip(9).filter_map(|f| Some((f.get("path")?.as_str()?, f.get("size")?.as_u64()?))).collect();
-        assert_eq!(tail, vec![("aeon/7.3.3-1-default/linux-1fe2", 30), ("aeon/7.3.3-1-default/initrd-7d97", 20)], "{}", inv.pretty());
+        let tail: Vec<(&str, u64)> = files
+            .iter()
+            .skip(9)
+            .filter_map(|f| Some((f.get("path")?.as_str()?, f.get("size")?.as_u64()?)))
+            .collect();
+        assert_eq!(
+            tail,
+            vec![
+                ("aeon/7.3.3-1-default/linux-1fe2", 30),
+                ("aeon/7.3.3-1-default/initrd-7d97", 20)
+            ],
+            "{}",
+            inv.pretty()
+        );
         assert_eq!(files.len(), 11);
     }
 
@@ -1672,25 +2489,57 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             .file("/boot/System.map-6.1.0-44-amd64", "")
             .dir("/usr/lib/modules/6.12.115+deb13.1-amd64")
             .symlink("/vmlinuz", "boot/vmlinuz-6.12.115+deb13.1-amd64")
-            .file("/etc/initramfs-tools/initramfs.conf", "MODULES=most\nBUSYBOX=auto\nCOMPRESS=zstd\n")
+            .file(
+                "/etc/initramfs-tools/initramfs.conf",
+                "MODULES=most\nBUSYBOX=auto\nCOMPRESS=zstd\n",
+            )
             .file("/etc/initramfs-tools/conf.d/resume", "RESUME=UUID=abc\n");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         let k = kernels_json(&s, Some("6.12.115+deb13.1-amd64"));
         let list = k.get("installed").unwrap().as_array().unwrap();
-        let vers: Vec<&str> = list.iter().filter_map(|x| x.get("version").and_then(Value::as_str)).collect();
-        assert_eq!(vers, vec!["6.1.0-44-amd64", "6.12.74+deb13+1-amd64", "6.12.115+deb13.1-amd64"]);
+        let vers: Vec<&str> = list
+            .iter()
+            .filter_map(|x| x.get("version").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            vers,
+            vec![
+                "6.1.0-44-amd64",
+                "6.12.74+deb13+1-amd64",
+                "6.12.115+deb13.1-amd64"
+            ]
+        );
         assert_eq!(list[2].get("running"), Some(&Value::Bool(true)));
-        assert_eq!(list[2].get("initrd_bytes").and_then(Value::as_u64), Some(30));
+        assert_eq!(
+            list[2].get("initrd_bytes").and_then(Value::as_u64),
+            Some(30)
+        );
         assert_eq!(list[2].get("modules_installed"), Some(&Value::Bool(true)));
         assert!(list[1].get("initrd_bytes").unwrap().is_null());
         assert!(list[0].get("vmlinuz_bytes").unwrap().is_null());
-        assert_eq!(k.at(&["symlinks", "/vmlinuz"]).and_then(Value::as_str), Some("boot/vmlinuz-6.12.115+deb13.1-amd64"));
+        assert_eq!(
+            k.at(&["symlinks", "/vmlinuz"]).and_then(Value::as_str),
+            Some("boot/vmlinuz-6.12.115+deb13.1-amd64")
+        );
         let i = initramfs_json(&s, &pk(&["initramfs-tools"]), false);
-        assert_eq!(i.get("generator").and_then(Value::as_str), Some("initramfs-tools"));
+        assert_eq!(
+            i.get("generator").and_then(Value::as_str),
+            Some("initramfs-tools")
+        );
         assert_eq!(i.get("compress").and_then(Value::as_str), Some("zstd"));
         assert_eq!(i.get("resume").and_then(Value::as_str), Some("UUID=abc"));
-        assert_eq!(initramfs_json(&s, &pk(&["dracut", "initramfs-tools"]), false).get("generator").and_then(Value::as_str), Some("dracut"));
-        assert_eq!(initramfs_json(&s, &pk(&["mkinitfs"]), false).get("generator").and_then(Value::as_str), Some("mkinitfs"));
+        assert_eq!(
+            initramfs_json(&s, &pk(&["dracut", "initramfs-tools"]), false)
+                .get("generator")
+                .and_then(Value::as_str),
+            Some("dracut")
+        );
+        assert_eq!(
+            initramfs_json(&s, &pk(&["mkinitfs"]), false)
+                .get("generator")
+                .and_then(Value::as_str),
+            Some("mkinitfs")
+        );
     }
 
     #[test]
@@ -1698,10 +2547,15 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         let apk = "C:Q1abc=\nP:mkinitfs\nV:3.12.0-r0\nA:x86_64\nS:1\n\nC:Q2\nP:grub-bios\nV:2.12-r9\nA:x86_64\n\n";
         assert_eq!(
             parse_apk_installed(apk),
-            vec![Package::new("grub-bios", "2.12-r9", "x86_64"), Package::new("mkinitfs", "3.12.0-r0", "x86_64")]
+            vec![
+                Package::new("grub-bios", "2.12-r9", "x86_64"),
+                Package::new("mkinitfs", "3.12.0-r0", "x86_64")
+            ]
         );
         let t = Tree::new("alpine-kernels");
-        t.file("/boot/vmlinuz-lts", vec![0u8; 10]).file("/boot/initramfs-lts", vec![0u8; 7]).file("/lib/apk/db/installed", apk);
+        t.file("/boot/vmlinuz-lts", vec![0u8; 10])
+            .file("/boot/initramfs-lts", vec![0u8; 7])
+            .file("/lib/apk/db/installed", apk);
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         assert_eq!(installed_packages(&s).len(), 2);
         let k = kernels_json(&s, None);
@@ -1710,9 +2564,15 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert_eq!(list[0].get("version").and_then(Value::as_str), Some("lts"));
         assert_eq!(list[0].get("initrd_bytes").and_then(Value::as_u64), Some(7));
         let a = Tree::new("aerynos-kernels");
-        a.file("/usr/lib/kernel/current.stable.initrd", "").file("/usr/lib/kernel/current.stable.kernel", "");
+        a.file("/usr/lib/kernel/current.stable.initrd", "")
+            .file("/usr/lib/kernel/current.stable.kernel", "");
         let s = Sys::new(a.root(), Box::new(FakeRunner::default()), false);
-        assert_eq!(initramfs_json(&s, &pk(&["dracut"]), false).get("generator").and_then(Value::as_str), Some("prebuilt"));
+        assert_eq!(
+            initramfs_json(&s, &pk(&["dracut"]), false)
+                .get("generator")
+                .and_then(Value::as_str),
+            Some("prebuilt")
+        );
     }
 
     /// Fedora through shim (fedora44-uefi, kinoite44): GRUB's package is
@@ -1735,20 +2595,40 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         });
         assert_eq!(l.get("name").and_then(Value::as_str), Some("grub"));
         assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
-        assert_eq!(l.get("package").and_then(Value::as_str), Some("grub2-efi-x64"));
-        assert_eq!(l.get("shim_package").and_then(Value::as_str), Some("shim-x64"));
+        assert_eq!(
+            l.get("package").and_then(Value::as_str),
+            Some("grub2-efi-x64")
+        );
+        assert_eq!(
+            l.get("shim_package").and_then(Value::as_str),
+            Some("shim-x64")
+        );
         // No shim, no shim_package.
-        let l = detect_loader(&Evidence { uefi: true, current_file: Some("\\EFI\\fedora\\grubx64.efi".into()), loader_info: None, shim_variables: false, mbr_codes: vec![], packages: &p, esp_files: vec![], fallback_copy_of: None, zbm_images: vec![] });
+        let l = detect_loader(&Evidence {
+            uefi: true,
+            current_file: Some("\\EFI\\fedora\\grubx64.efi".into()),
+            loader_info: None,
+            shim_variables: false,
+            mbr_codes: vec![],
+            packages: &p,
+            esp_files: vec![],
+            fallback_copy_of: None,
+            zbm_images: vec![],
+        });
         assert!(l.get("shim_package").is_none());
         let v = "7.3.3-200.fc44.x86_64";
-        let d = "/boot/ostree/default-1cc099369334fad8952283b3221e6d78fd79263e6dedc35ce40302458681d413";
+        let d =
+            "/boot/ostree/default-1cc099369334fad8952283b3221e6d78fd79263e6dedc35ce40302458681d413";
         let t = Tree::new("ostree-kernels");
         t.file(&format!("{d}/vmlinuz-{v}"), vec![0u8; 10])
             .file(&format!("{d}/initramfs-{v}.img"), vec![0u8; 7])
             .file(&format!("{d}/.vmlinuz-{v}.hmac"), "x")
             .file("/boot/ostree/stray", "x")
             .dir(&format!("/usr/lib/modules/{v}/kernel"))
-            .file("/boot/loader.1/entries/ostree-1.conf", "title Fedora\nversion 1\noptions ostree=/ostree/boot.1/default/x/1 rw\n")
+            .file(
+                "/boot/loader.1/entries/ostree-1.conf",
+                "title Fedora\nversion 1\noptions ostree=/ostree/boot.1/default/x/1 rw\n",
+            )
             .symlink("/boot/loader", "loader.1")
             .file("/proc/sys/kernel/osrelease", format!("{v}\n"));
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
@@ -1757,18 +2637,55 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert_eq!(list.len(), 1, "{}", k.compact());
         assert_eq!(list[0].get("version").and_then(Value::as_str), Some(v));
         assert_eq!(list[0].get("dir").and_then(Value::as_str), Some(d));
-        assert_eq!(list[0].get("vmlinuz_bytes").and_then(Value::as_u64), Some(10));
+        assert_eq!(
+            list[0].get("vmlinuz_bytes").and_then(Value::as_u64),
+            Some(10)
+        );
         assert_eq!(list[0].get("initrd_bytes").and_then(Value::as_u64), Some(7));
         assert_eq!(list[0].get("running"), Some(&Value::Bool(true)));
         assert_eq!(list[0].get("modules_installed"), Some(&Value::Bool(true)));
-        assert_eq!(initramfs_json(&s, &p, true).get("generator").and_then(Value::as_str), Some("prebuilt"));
-        assert_eq!(initramfs_json(&s, &p, false).get("generator").and_then(Value::as_str), Some("dracut"));
-        let b = boot_json(&s, &p, &[], Value::Null, vec![], Some(Obj::new().set("booted", true).build()), None, &[], &Value::Null);
+        assert_eq!(
+            initramfs_json(&s, &p, true)
+                .get("generator")
+                .and_then(Value::as_str),
+            Some("prebuilt")
+        );
+        assert_eq!(
+            initramfs_json(&s, &p, false)
+                .get("generator")
+                .and_then(Value::as_str),
+            Some("dracut")
+        );
+        let b = boot_json(
+            &s,
+            &p,
+            &[],
+            Value::Null,
+            vec![],
+            Some(Obj::new().set("booted", true).build()),
+            None,
+            &[],
+            &Value::Null,
+        );
         assert!(b.get("systemd_boot").unwrap().is_null(), "{}", b.compact());
         assert_eq!(b.at(&["ostree", "booted"]), Some(&Value::Bool(true)));
         // Without ostree, the same entries read as systemd-boot's on an XBOOTLDR.
-        let b = boot_json(&s, &p, &[], Value::Null, vec![], None, None, &[], &Value::Null);
-        assert_eq!(b.at(&["systemd_boot", "entries", "0", "file"]).and_then(Value::as_str), Some("ostree-1.conf"));
+        let b = boot_json(
+            &s,
+            &p,
+            &[],
+            Value::Null,
+            vec![],
+            None,
+            None,
+            &[],
+            &Value::Null,
+        );
+        assert_eq!(
+            b.at(&["systemd_boot", "entries", "0", "file"])
+                .and_then(Value::as_str),
+            Some("ostree-1.conf")
+        );
         assert!(b.get("ostree").is_none());
     }
 
@@ -1791,23 +2708,67 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             .file("/boot/grub/i386-pc/normal.mod", "x")
             .file("/boot/grub/i386-pc/core.img", "x")
             .file("/etc/default/grub", "GRUB_DEFAULT=0\nGRUB_TIMEOUT=5\n")
-            .file("/etc/initramfs-tools/initramfs.conf", "MODULES=most\nBUSYBOX=auto\nCOMPRESS=zstd\n")
+            .file(
+                "/etc/initramfs-tools/initramfs.conf",
+                "MODULES=most\nBUSYBOX=auto\nCOMPRESS=zstd\n",
+            )
             .file("/proc/sys/kernel/osrelease", format!("{v}\n"));
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         let p = installed_packages(&s);
         let names: Vec<&str> = p.iter().map(|p| p.name.as_str()).collect();
-        assert_eq!(names, vec!["grub", "grub-i386-pc", "initramfs-tools", "linux-lts"]);
-        let b = boot_json(&s, &p, &[], Value::Null, vec![("vda".into(), "grub2".into())], None, None, &[], &Value::Null);
-        assert_eq!(b.at(&["loader", "name"]).and_then(Value::as_str), Some("grub"));
-        assert_eq!(b.at(&["loader", "firmware"]).and_then(Value::as_str), Some("bios"));
-        assert_eq!(b.at(&["loader", "package"]).and_then(Value::as_str), Some("grub-i386-pc"));
-        assert_eq!(b.at(&["grub", "dir"]).and_then(Value::as_str), Some("/boot/grub"));
-        assert_eq!(b.at(&["grub", "installed_platforms", "0"]).and_then(Value::as_str), Some("i386-pc"));
+        assert_eq!(
+            names,
+            vec!["grub", "grub-i386-pc", "initramfs-tools", "linux-lts"]
+        );
+        let b = boot_json(
+            &s,
+            &p,
+            &[],
+            Value::Null,
+            vec![("vda".into(), "grub2".into())],
+            None,
+            None,
+            &[],
+            &Value::Null,
+        );
+        assert_eq!(
+            b.at(&["loader", "name"]).and_then(Value::as_str),
+            Some("grub")
+        );
+        assert_eq!(
+            b.at(&["loader", "firmware"]).and_then(Value::as_str),
+            Some("bios")
+        );
+        assert_eq!(
+            b.at(&["loader", "package"]).and_then(Value::as_str),
+            Some("grub-i386-pc")
+        );
+        assert_eq!(
+            b.at(&["grub", "dir"]).and_then(Value::as_str),
+            Some("/boot/grub")
+        );
+        assert_eq!(
+            b.at(&["grub", "installed_platforms", "0"])
+                .and_then(Value::as_str),
+            Some("i386-pc")
+        );
         assert!(b.at(&["grub", "debconf"]).unwrap().is_null());
-        assert_eq!(b.at(&["initramfs", "generator"]).and_then(Value::as_str), Some("initramfs-tools"));
-        assert_eq!(b.at(&["initramfs", "modules"]).and_then(Value::as_str), Some("most"));
-        assert_eq!(b.at(&["initramfs", "compress"]).and_then(Value::as_str), Some("zstd"));
-        let k = b.at(&["kernels", "installed"]).and_then(Value::as_array).unwrap();
+        assert_eq!(
+            b.at(&["initramfs", "generator"]).and_then(Value::as_str),
+            Some("initramfs-tools")
+        );
+        assert_eq!(
+            b.at(&["initramfs", "modules"]).and_then(Value::as_str),
+            Some("most")
+        );
+        assert_eq!(
+            b.at(&["initramfs", "compress"]).and_then(Value::as_str),
+            Some("zstd")
+        );
+        let k = b
+            .at(&["kernels", "installed"])
+            .and_then(Value::as_array)
+            .unwrap();
         assert_eq!(k.len(), 1, "{}", b.get("kernels").unwrap().compact());
         assert_eq!(k[0].get("version").and_then(Value::as_str), Some(v));
         assert_eq!(k[0].get("vmlinuz_bytes").and_then(Value::as_u64), Some(10));
@@ -1815,10 +2776,22 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert_eq!(k[0].get("config"), Some(&Value::Bool(true)));
         assert_eq!(k[0].get("running"), Some(&Value::Bool(true)));
         assert_eq!(k[0].get("modules_installed"), Some(&Value::Bool(true)));
-        assert_eq!(b.at(&["packages", "grub-i386-pc"]).and_then(Value::as_str), Some("2.14-r1"));
-        assert_eq!(b.at(&["packages", "linux-lts"]).and_then(Value::as_str), Some("6.18.62-r0"));
+        assert_eq!(
+            b.at(&["packages", "grub-i386-pc"]).and_then(Value::as_str),
+            Some("2.14-r1")
+        );
+        assert_eq!(
+            b.at(&["packages", "linux-lts"]).and_then(Value::as_str),
+            Some("6.18.62-r0")
+        );
         // chimera-zfs: UEFI GRUB from grub-x86_64-efi, found on the ESP.
-        let p = pk(&["grub", "grub-x86_64-efi", "initramfs-tools", "linux-lts-zfs-bin", "zfs"]);
+        let p = pk(&[
+            "grub",
+            "grub-x86_64-efi",
+            "initramfs-tools",
+            "linux-lts-zfs-bin",
+            "zfs",
+        ]);
         let l = detect_loader(&Evidence {
             uefi: true,
             current_file: Some("\\EFI\\chimera\\grubx64.efi".into()),
@@ -1831,7 +2804,10 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             zbm_images: vec![],
         });
         assert_eq!(l.get("name").and_then(Value::as_str), Some("grub"));
-        assert_eq!(l.get("package").and_then(Value::as_str), Some("grub-x86_64-efi"));
+        assert_eq!(
+            l.get("package").and_then(Value::as_str),
+            Some("grub-x86_64-efi")
+        );
         assert_eq!(l.get("via_shim"), Some(&Value::Bool(false)));
     }
 
@@ -1842,7 +2818,15 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
     #[test]
     fn anduinos_loader_and_mok() {
         let p = pk(&["anduinos-grub", "anduinos-shim-signed", "mokutil", "dracut"]);
-        let files = || vec!["EFI/AnduinOS/grubx64.efi".to_string(), "EFI/AnduinOS/mmx64.efi".into(), "EFI/AnduinOS/shimx64.efi".into(), "EFI/BOOT/BOOTX64.EFI".into(), "EFI/BOOT/grubx64.efi".into()];
+        let files = || {
+            vec![
+                "EFI/AnduinOS/grubx64.efi".to_string(),
+                "EFI/AnduinOS/mmx64.efi".into(),
+                "EFI/AnduinOS/shimx64.efi".into(),
+                "EFI/BOOT/BOOTX64.EFI".into(),
+                "EFI/BOOT/grubx64.efi".into(),
+            ]
+        };
         let ev = |current: &str, copy: Option<&str>| Evidence {
             uefi: true,
             current_file: Some(current.into()),
@@ -1857,13 +2841,29 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         let l = detect_loader(&ev("\\EFI\\AnduinOS\\shimx64.efi", None));
         assert_eq!(l.get("name").and_then(Value::as_str), Some("grub"));
         assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
-        assert_eq!(l.get("package").and_then(Value::as_str), Some("anduinos-grub"));
-        assert_eq!(l.get("shim_package").and_then(Value::as_str), Some("anduinos-shim-signed"));
+        assert_eq!(
+            l.get("package").and_then(Value::as_str),
+            Some("anduinos-grub")
+        );
+        assert_eq!(
+            l.get("shim_package").and_then(Value::as_str),
+            Some("anduinos-shim-signed")
+        );
         // The fallback path, a copy of shim: through shim, said why.
-        let l = detect_loader(&ev("\\EFI\\BOOT\\BOOTX64.EFI", Some("EFI/AnduinOS/shimx64.efi")));
+        let l = detect_loader(&ev(
+            "\\EFI\\BOOT\\BOOTX64.EFI",
+            Some("EFI/AnduinOS/shimx64.efi"),
+        ));
         assert_eq!(l.get("name").and_then(Value::as_str), Some("grub"));
         assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
-        assert!(l.get("evidence").unwrap().compact().contains("EFI/BOOT/BOOTX64.EFI is a copy of EFI/AnduinOS/shimx64.efi"), "{}", l.compact());
+        assert!(
+            l.get("evidence")
+                .unwrap()
+                .compact()
+                .contains("EFI/BOOT/BOOTX64.EFI is a copy of EFI/AnduinOS/shimx64.efi"),
+            "{}",
+            l.compact()
+        );
         // A fallback that's a copy of GRUB itself, or of nothing: not shim.
         for copy in [Some("EFI/AnduinOS/grubx64.efi"), None] {
             let l = detect_loader(&ev("\\EFI\\BOOT\\BOOTX64.EFI", copy));
@@ -1874,31 +2874,73 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         // The MOK: its certificate's SHA-256, read through Sys.
         let t = Tree::new("mok");
         let der = b"0\x82\x03\x1fnot really DER";
-        t.file(ANDUINOS_MOK, &der[..]).file("/var/lib/shim-signed/mok/MOK.priv", "secret");
+        t.file(ANDUINOS_MOK, &der[..])
+            .file("/var/lib/shim-signed/mok/MOK.priv", "secret");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         let m = mok_json(&s, &p).unwrap();
-        assert_eq!(m.compact(), format!(r#"{{"cert":"/var/lib/shim-signed/mok/MOK.der","sha256":"{}"}}"#, crate::bytes::sha256_hex(der)));
-        assert_eq!(m.get("sha256").and_then(Value::as_str).map(str::len), Some(64));
+        assert_eq!(
+            m.compact(),
+            format!(
+                r#"{{"cert":"/var/lib/shim-signed/mok/MOK.der","sha256":"{}"}}"#,
+                crate::bytes::sha256_hex(der)
+            )
+        );
+        assert_eq!(
+            m.get("sha256").and_then(Value::as_str).map(str::len),
+            Some(64)
+        );
         // Not without anduinos-grub (a MOK of DKMS's, Ubuntu's signed GRUB),
         // nor without the certificate.
-        assert!(mok_json(&s, &pk(&["grub-efi-amd64-signed", "shim-signed", "mokutil"])).is_none());
+        assert!(
+            mok_json(
+                &s,
+                &pk(&["grub-efi-amd64-signed", "shim-signed", "mokutil"])
+            )
+            .is_none()
+        );
         let none = Tree::new("mok-none");
-        assert!(mok_json(&Sys::new(none.root(), Box::new(FakeRunner::default()), false), &p).is_none());
+        assert!(
+            mok_json(
+                &Sys::new(none.root(), Box::new(FakeRunner::default()), false),
+                &p
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn loader_lilo_and_elilo() {
         let p = pk(&["lilo", "elilo"]);
-        let base = |uefi: bool| Evidence { uefi, current_file: None, loader_info: None, shim_variables: false, mbr_codes: vec![], packages: &p, esp_files: vec![], fallback_copy_of: None, zbm_images: vec![] };
+        let base = |uefi: bool| Evidence {
+            uefi,
+            current_file: None,
+            loader_info: None,
+            shim_variables: false,
+            mbr_codes: vec![],
+            packages: &p,
+            esp_files: vec![],
+            fallback_copy_of: None,
+            zbm_images: vec![],
+        };
         let mut e = base(false);
         e.mbr_codes = vec![("vda".into(), "lilo".into())];
         let v = detect_loader(&e);
         assert_eq!(v.get("name").and_then(Value::as_str), Some("lilo"));
         assert_eq!(v.get("package").and_then(Value::as_str), Some("lilo"));
-        assert!(v.get("evidence").unwrap().compact().contains("vda's MBR holds LILO's first stage"), "{}", v.compact());
+        assert!(
+            v.get("evidence")
+                .unwrap()
+                .compact()
+                .contains("vda's MBR holds LILO's first stage"),
+            "{}",
+            v.compact()
+        );
         // GRUB in the MBR wins over LILO installed.
         e.mbr_codes = vec![("vda".into(), "grub2".into())];
-        assert_eq!(detect_loader(&e).get("name").and_then(Value::as_str), Some("grub"));
+        assert_eq!(
+            detect_loader(&e).get("name").and_then(Value::as_str),
+            Some("grub")
+        );
         // ELILO from NVRAM's entry, or from the ESP's files at the fallback path.
         let mut e = base(true);
         e.current_file = Some("\\EFI\\Slackware\\elilo.efi".into());
@@ -1908,9 +2950,17 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         let mut e = base(true);
         e.current_file = Some("\\EFI\\BOOT\\BOOTX64.EFI".into());
         e.esp_files = vec!["EFI/BOOT/BOOTX64.EFI".into(), "EFI/BOOT/elilo.conf".into()];
-        assert_eq!(detect_loader(&e).get("name").and_then(Value::as_str), Some("elilo"));
+        assert_eq!(
+            detect_loader(&e).get("name").and_then(Value::as_str),
+            Some("elilo")
+        );
         // LILO's package alone (every Slackware has it) says nothing on UEFI.
-        assert_eq!(detect_loader(&base(true)).get("name").and_then(Value::as_str), Some("unknown"));
+        assert_eq!(
+            detect_loader(&base(true))
+                .get("name")
+                .and_then(Value::as_str),
+            Some("unknown")
+        );
     }
 
     /// Solus's initrds ship in the kernel package (/usr/lib64/kernel, which
@@ -1919,15 +2969,40 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
     #[test]
     fn solus_initrd_prebuilt() {
         let t = Tree::new("solus-kernels");
-        t.file("/usr/lib64/kernel/com.solus-project.current.6.18.21-333", "k").file("/usr/lib64/kernel/cmdline-6.18.21-333.current", "");
+        t.file(
+            "/usr/lib64/kernel/com.solus-project.current.6.18.21-333",
+            "k",
+        )
+        .file("/usr/lib64/kernel/cmdline-6.18.21-333.current", "");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
-        assert_eq!(initramfs_json(&s, &pk(&["dracut"]), false).get("generator").and_then(Value::as_str), Some("dracut"));
-        t.file("/usr/lib64/kernel/initrd-com.solus-project.current.6.18.21-333", "i");
-        assert_eq!(initramfs_json(&s, &pk(&["dracut"]), false).get("generator").and_then(Value::as_str), Some("prebuilt"));
+        assert_eq!(
+            initramfs_json(&s, &pk(&["dracut"]), false)
+                .get("generator")
+                .and_then(Value::as_str),
+            Some("dracut")
+        );
+        t.file(
+            "/usr/lib64/kernel/initrd-com.solus-project.current.6.18.21-333",
+            "i",
+        );
+        assert_eq!(
+            initramfs_json(&s, &pk(&["dracut"]), false)
+                .get("generator")
+                .and_then(Value::as_str),
+            Some("prebuilt")
+        );
         let u = Tree::new("solus-kernels-usr-lib");
-        u.file("/usr/lib/kernel/initrd-com.solus-project.lts.6.12.80-300", "i");
+        u.file(
+            "/usr/lib/kernel/initrd-com.solus-project.lts.6.12.80-300",
+            "i",
+        );
         let s = Sys::new(u.root(), Box::new(FakeRunner::default()), false);
-        assert_eq!(initramfs_json(&s, &pk(&["dracut"]), false).get("generator").and_then(Value::as_str), Some("prebuilt"));
+        assert_eq!(
+            initramfs_json(&s, &pk(&["dracut"]), false)
+                .get("generator")
+                .and_then(Value::as_str),
+            Some("prebuilt")
+        );
     }
 
     /// Solus's kernels from /usr/lib64/kernel, named as uname -r names
@@ -1935,33 +3010,100 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
     /// them; only with clr-boot-manager installed.
     #[test]
     fn solus_kernel_list() {
-        assert_eq!(solus_kernel_version("com.solus-project.current.7.3.4-373").as_deref(), Some("7.3.4-373.current"));
-        assert_eq!(solus_kernel_version("com.solus-project.lts.6.18.63-322").as_deref(), Some("6.18.63-322.lts"));
-        for f in ["initrd-com.solus-project.current.7.3.4-373", "com.solus-project.current", "com.solus-project.current.7.3.4", "com.solus-project.current.7.3.4-r1", "cmdline-7.3.4-373.current"] {
+        assert_eq!(
+            solus_kernel_version("com.solus-project.current.7.3.4-373").as_deref(),
+            Some("7.3.4-373.current")
+        );
+        assert_eq!(
+            solus_kernel_version("com.solus-project.lts.6.18.63-322").as_deref(),
+            Some("6.18.63-322.lts")
+        );
+        for f in [
+            "initrd-com.solus-project.current.7.3.4-373",
+            "com.solus-project.current",
+            "com.solus-project.current.7.3.4",
+            "com.solus-project.current.7.3.4-r1",
+            "cmdline-7.3.4-373.current",
+        ] {
             assert_eq!(solus_kernel_version(f), None, "{f}");
         }
         let t = Tree::new("solus-kernel-list");
         for v in ["6.18.21-333", "7.3.4-373"] {
-            t.file(&format!("/usr/lib64/kernel/com.solus-project.current.{v}"), vec![0u8; 10])
-                .file(&format!("/usr/lib64/kernel/initrd-com.solus-project.current.{v}"), vec![0u8; 20])
-                .file(&format!("/usr/lib64/kernel/config-{v}.current"), "")
-                .file(&format!("/usr/lib64/kernel/System.map-{v}.current"), "");
+            t.file(
+                &format!("/usr/lib64/kernel/com.solus-project.current.{v}"),
+                vec![0u8; 10],
+            )
+            .file(
+                &format!("/usr/lib64/kernel/initrd-com.solus-project.current.{v}"),
+                vec![0u8; 20],
+            )
+            .file(&format!("/usr/lib64/kernel/config-{v}.current"), "")
+            .file(&format!("/usr/lib64/kernel/System.map-{v}.current"), "");
         }
-        t.symlink("/usr/lib64/kernel/default-current", "com.solus-project.current.7.3.4-373")
-            .symlink("/usr/lib64/kernel/current-initrd", "initrd-com.solus-project.current.7.3.4-373")
-            .dir("/usr/lib64/kernel/cmdline.d")
-            .dir("/usr/lib/modules/7.3.4-373.current/kernel");
+        t.symlink(
+            "/usr/lib64/kernel/default-current",
+            "com.solus-project.current.7.3.4-373",
+        )
+        .symlink(
+            "/usr/lib64/kernel/current-initrd",
+            "initrd-com.solus-project.current.7.3.4-373",
+        )
+        .dir("/usr/lib64/kernel/cmdline.d")
+        .dir("/usr/lib/modules/7.3.4-373.current/kernel");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         let (list, links) = solus_kernels(&s, Some("7.3.4-373.current"));
-        let got: Vec<(&str, bool, bool, Option<u64>)> = list.iter().map(|k| (k.get("version").and_then(Value::as_str).unwrap(), k.get("running") == Some(&Value::Bool(true)), k.get("modules_installed") == Some(&Value::Bool(true)), k.get("initrd_bytes").and_then(Value::as_u64))).collect();
-        assert_eq!(got, vec![("6.18.21-333.current", false, false, Some(20)), ("7.3.4-373.current", true, true, Some(20))]);
-        assert!(list.iter().all(|k| k.get("config") == Some(&Value::Bool(true)) && k.get("dir").and_then(Value::as_str) == Some("/usr/lib64/kernel")));
-        assert_eq!(links, vec![("/usr/lib64/kernel/default-current".to_string(), "com.solus-project.current.7.3.4-373".to_string())]);
+        let got: Vec<(&str, bool, bool, Option<u64>)> = list
+            .iter()
+            .map(|k| {
+                (
+                    k.get("version").and_then(Value::as_str).unwrap(),
+                    k.get("running") == Some(&Value::Bool(true)),
+                    k.get("modules_installed") == Some(&Value::Bool(true)),
+                    k.get("initrd_bytes").and_then(Value::as_u64),
+                )
+            })
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("6.18.21-333.current", false, false, Some(20)),
+                ("7.3.4-373.current", true, true, Some(20))
+            ]
+        );
+        assert!(
+            list.iter()
+                .all(|k| k.get("config") == Some(&Value::Bool(true))
+                    && k.get("dir").and_then(Value::as_str) == Some("/usr/lib64/kernel"))
+        );
+        assert_eq!(
+            links,
+            vec![(
+                "/usr/lib64/kernel/default-current".to_string(),
+                "com.solus-project.current.7.3.4-373".to_string()
+            )]
+        );
         let empty = kernels_json(&s, Some("7.3.4-373.current"));
-        let with = with_solus_kernels(empty.clone(), &s, &pk(&["clr-boot-manager"]), Some("7.3.4-373.current"));
-        assert_eq!(with.get("installed").and_then(Value::as_array).map(Vec::len), Some(2));
-        assert_eq!(with.at(&["symlinks", "/usr/lib64/kernel/default-current"]).and_then(Value::as_str), Some("com.solus-project.current.7.3.4-373"));
-        assert_eq!(with_solus_kernels(empty.clone(), &s, &pk(&["dracut"]), None).compact(), empty.compact());
+        let with = with_solus_kernels(
+            empty.clone(),
+            &s,
+            &pk(&["clr-boot-manager"]),
+            Some("7.3.4-373.current"),
+        );
+        assert_eq!(
+            with.get("installed")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+        assert_eq!(
+            with.at(&["symlinks", "/usr/lib64/kernel/default-current"])
+                .and_then(Value::as_str),
+            Some("com.solus-project.current.7.3.4-373")
+        );
+        assert_eq!(
+            with_solus_kernels(empty.clone(), &s, &pk(&["dracut"]), None).compact(),
+            empty.compact()
+        );
     }
 
     /// clr-boot-manager's shim and systemd-boot by their fixed names
@@ -1971,30 +3113,76 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
     #[test]
     fn loader_clr_boot_manager() {
         fn base(p: &[Package]) -> Evidence<'_> {
-            let esp = ["EFI/BOOT/BOOTX64.EFI", "EFI/BOOT/fbx64.efi", "EFI/com.solus-project/bootloaderx64.efi", "EFI/com.solus-project/grubx64.efi", "EFI/com.solus-project/mmx64.efi", "loader/loader.conf"];
-            Evidence { uefi: true, current_file: None, loader_info: None, shim_variables: false, mbr_codes: vec![], packages: p, esp_files: esp.iter().map(|f| f.to_string()).collect(), fallback_copy_of: None, zbm_images: vec![] }
+            let esp = [
+                "EFI/BOOT/BOOTX64.EFI",
+                "EFI/BOOT/fbx64.efi",
+                "EFI/com.solus-project/bootloaderx64.efi",
+                "EFI/com.solus-project/grubx64.efi",
+                "EFI/com.solus-project/mmx64.efi",
+                "loader/loader.conf",
+            ];
+            Evidence {
+                uefi: true,
+                current_file: None,
+                loader_info: None,
+                shim_variables: false,
+                mbr_codes: vec![],
+                packages: p,
+                esp_files: esp.iter().map(|f| f.to_string()).collect(),
+                fallback_copy_of: None,
+                zbm_images: vec![],
+            }
         }
         let p = &pk(&["clr-boot-manager", "shim-signed", "dracut"]);
         let check = |e: &Evidence, why: &str| {
             let v = detect_loader(e);
-            assert_eq!(v.get("name").and_then(Value::as_str), Some("systemd-boot"), "{}", v.compact());
-            assert_eq!(v.get("via_shim"), Some(&Value::Bool(true)), "{}", v.compact());
-            assert_eq!(v.get("manager").and_then(Value::as_str), Some("clr-boot-manager"));
-            assert_eq!(v.get("shim_package").and_then(Value::as_str), Some("shim-signed"));
-            assert!(v.get("evidence").unwrap().compact().contains(why), "{}", v.compact());
+            assert_eq!(
+                v.get("name").and_then(Value::as_str),
+                Some("systemd-boot"),
+                "{}",
+                v.compact()
+            );
+            assert_eq!(
+                v.get("via_shim"),
+                Some(&Value::Bool(true)),
+                "{}",
+                v.compact()
+            );
+            assert_eq!(
+                v.get("manager").and_then(Value::as_str),
+                Some("clr-boot-manager")
+            );
+            assert_eq!(
+                v.get("shim_package").and_then(Value::as_str),
+                Some("shim-signed")
+            );
+            assert!(
+                v.get("evidence").unwrap().compact().contains(why),
+                "{}",
+                v.compact()
+            );
         };
         let mut e = base(p);
         e.current_file = Some("\\EFI\\com.solus-project\\bootloaderx64.efi".into());
-        check(&e, "that is clr-boot-manager's shim (EFI/com.solus-project/bootloaderx64.efi), which loads systemd-boot as EFI/com.solus-project/grubx64.efi");
+        check(
+            &e,
+            "that is clr-boot-manager's shim (EFI/com.solus-project/bootloaderx64.efi), which loads systemd-boot as EFI/com.solus-project/grubx64.efi",
+        );
         // A fresh OVMF store: the removable path, a copy of the shim.
         let mut e = base(p);
         e.current_file = Some("\\EFI\\BOOT\\BOOTX64.EFI".into());
         e.fallback_copy_of = Some("EFI/com.solus-project/bootloaderx64.efi".into());
-        check(&e, "EFI/BOOT/BOOTX64.EFI is a copy of EFI/com.solus-project/bootloaderx64.efi, clr-boot-manager's shim");
+        check(
+            &e,
+            "EFI/BOOT/BOOTX64.EFI is a copy of EFI/com.solus-project/bootloaderx64.efi, clr-boot-manager's shim",
+        );
         e.loader_info = Some("systemd-boot 257.10".into());
         check(&e, "LoaderInfo says \\\"systemd-boot 257.10\\\"");
         // No BootCurrent: the ESP's files.
-        check(&base(p), "an ESP holds clr-boot-manager's EFI/com.solus-project/grubx64.efi, which is systemd-boot");
+        check(
+            &base(p),
+            "an ESP holds clr-boot-manager's EFI/com.solus-project/grubx64.efi, which is systemd-boot",
+        );
         // Without clr-boot-manager, grubx64.efi is GRUB's, and no manager.
         let v = detect_loader(&base(&pk(&["shim-signed"])));
         assert_eq!(v.get("name").and_then(Value::as_str), Some("grub"));

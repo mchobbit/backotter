@@ -69,7 +69,10 @@ impl Runner for RealRunner {
         if prog.contains('/') {
             return None;
         }
-        let exe = SYSTEM_PATH.split(':').map(|d| Path::new(d).join(prog)).find(|p| p.is_file())?;
+        let exe = SYSTEM_PATH
+            .split(':')
+            .map(|d| Path::new(d).join(prog))
+            .find(|p| p.is_file())?;
         self.exec(&exe, args)
     }
 
@@ -85,12 +88,18 @@ impl Runner for RealRunner {
         if prog.contains('/') {
             return None;
         }
-        let exe = SYSTEM_PATH.split(':').map(|d| Path::new(d).join(prog)).find(|p| p.is_file())?;
+        let exe = SYSTEM_PATH
+            .split(':')
+            .map(|d| Path::new(d).join(prog))
+            .find(|p| p.is_file())?;
         self.exec_status(&exe, args).map(|(out, _)| out)
     }
 
     fn installed(&self, prog: &str) -> bool {
-        !prog.contains('/') && SYSTEM_PATH.split(':').any(|d| Path::new(d).join(prog).is_file())
+        !prog.contains('/')
+            && SYSTEM_PATH
+                .split(':')
+                .any(|d| Path::new(d).join(prog).is_file())
     }
 
     fn time_limit(&self) -> Duration {
@@ -132,7 +141,9 @@ impl RealRunner {
         let status = loop {
             match child.try_wait() {
                 Ok(Some(s)) => break Some(s),
-                Ok(None) if start.elapsed() < self.timeout => std::thread::sleep(Duration::from_millis(20)),
+                Ok(None) if start.elapsed() < self.timeout => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
                 _ => {
                     // A process asleep in the kernel outlives SIGKILL until
                     // it wakes, maybe never (illumos' diskinfo -Hp in the
@@ -152,7 +163,9 @@ impl RealRunner {
         // Its output ends when the pipe closes: a process it left in the
         // background with the pipe open (or one stuck as above) gets what's
         // left of the time limit, then the command counts as timed out.
-        let out = rx.recv_timeout(self.timeout.saturating_sub(start.elapsed()).max(KILL_GRACE)).ok()?;
+        let out = rx
+            .recv_timeout(self.timeout.saturating_sub(start.elapsed()).max(KILL_GRACE))
+            .ok()?;
         // More than the cap: the command fails, rather than give a listing
         // cut short as if it were whole.
         if out.len() as u64 > MAX_STDOUT {
@@ -204,7 +217,10 @@ impl Drop for RoMounted<'_> {
 /// Whether NAME is safe as one path component under RUN_DIR: not empty,
 /// and only ASCII letters, digits and the bytes in EXTRA.
 pub fn safe_name(name: &str, extra: &[u8]) -> bool {
-    !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || extra.contains(&b))
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || extra.contains(&b))
 }
 
 /// BUF filled from R as far as it goes; how much was read (less only at
@@ -250,7 +266,10 @@ impl FakeRunner {
 
 impl Runner for FakeRunner {
     fn run(&self, prog: &str, args: &[&str]) -> Option<String> {
-        let key = std::iter::once(prog).chain(args.iter().copied()).collect::<Vec<_>>().join(" ");
+        let key = std::iter::once(prog)
+            .chain(args.iter().copied())
+            .collect::<Vec<_>>()
+            .join(" ");
         self.calls.borrow_mut().push(key.clone());
         if !self.installed(prog) {
             return None;
@@ -278,12 +297,24 @@ pub struct Sys {
 
 impl Sys {
     pub fn new(root: impl Into<PathBuf>, runner: Box<dyn Runner>, privileged: bool) -> Sys {
-        Sys { root: root.into(), runner, privileged, warnings: RefCell::new(Vec::new()), sys_tz: None }
+        Sys {
+            root: root.into(),
+            runner,
+            privileged,
+            warnings: RefCell::new(Vec::new()),
+            sys_tz: None,
+        }
     }
 
     /// The running system, as whoever we are.
     pub fn host() -> Sys {
-        let mut s = Sys::new("/", Box::new(RealRunner { timeout: TIME_LIMIT }), euid() == 0);
+        let mut s = Sys::new(
+            "/",
+            Box::new(RealRunner {
+                timeout: TIME_LIMIT,
+            }),
+            euid() == 0,
+        );
         s.sys_tz = kernel_sys_tz();
         s
     }
@@ -326,7 +357,10 @@ impl Sys {
     /// Whether the files at A and B hold the same bytes, read a piece at a
     /// time whatever their size; None if either can't be read.
     pub fn same_bytes(&self, a: &str, b: &str) -> Option<bool> {
-        let (mut fa, mut fb) = (std::fs::File::open(self.p(a)).ok()?, std::fs::File::open(self.p(b)).ok()?);
+        let (mut fa, mut fb) = (
+            std::fs::File::open(self.p(a)).ok()?,
+            std::fs::File::open(self.p(b)).ok()?,
+        );
         if fa.metadata().ok()?.len() != fb.metadata().ok()?.len() {
             return Some(false);
         }
@@ -344,7 +378,8 @@ impl Sys {
     }
 
     pub fn read(&self, abs: &str) -> Option<String> {
-        self.read_bytes(abs).map(|b| String::from_utf8_lossy(&b).into_owned())
+        self.read_bytes(abs)
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
     }
 
     /// The file's text with surrounding white space removed; None if missing
@@ -362,14 +397,20 @@ impl Sys {
     /// Entry names in a directory, sorted ("naturally": sda2 before sda10).
     pub fn list(&self, abs: &str) -> Vec<String> {
         let mut v: Vec<String> = std::fs::read_dir(self.p(abs))
-            .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+            .map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
             .unwrap_or_default();
         v.sort_by(|a, b| natural_cmp(a, b));
         v
     }
 
     pub fn readlink(&self, abs: &str) -> Option<String> {
-        std::fs::read_link(self.p(abs)).ok().map(|p| p.to_string_lossy().into_owned())
+        std::fs::read_link(self.p(abs))
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned())
     }
 
     pub fn exists(&self, abs: &str) -> bool {
@@ -385,7 +426,10 @@ impl Sys {
     }
 
     pub fn file_size(&self, abs: &str) -> Option<u64> {
-        std::fs::metadata(self.p(abs)).ok().filter(|m| m.is_file()).map(|m| m.len())
+        std::fs::metadata(self.p(abs))
+            .ok()
+            .filter(|m| m.is_file())
+            .map(|m| m.len())
     }
 
     /// A block device (or image) to read on-disk structures from.  Only when
@@ -454,17 +498,32 @@ impl Sys {
     /// are `mount`'s -t and -o.  None when AT can't be made or the mount
     /// fails, each said in the caller's WORDS; an umount that fails is
     /// said too, and AT is then left in place.
-    pub fn with_ro_mount<R>(&self, ty: &str, opts: &str, dev: &str, at: &str, words: &RoMountWords, f: impl FnOnce(&str) -> R) -> Option<R> {
+    pub fn with_ro_mount<R>(
+        &self,
+        ty: &str,
+        opts: &str,
+        dev: &str,
+        at: &str,
+        words: &RoMountWords,
+        f: impl FnOnce(&str) -> R,
+    ) -> Option<R> {
         if let Err(e) = std::fs::create_dir_all(self.p(at)) {
             self.warn(format!("{}: {e}", words.cant_make));
             return None;
         }
-        if self.run("mount", &["-t", ty, "-o", opts, dev, at]).is_none() {
+        if self
+            .run("mount", &["-t", ty, "-o", opts, dev, at])
+            .is_none()
+        {
             self.warn(words.mount_failed.as_str());
             let _ = std::fs::remove_dir(self.p(at));
             return None;
         }
-        let _mounted = RoMounted { sys: self, at, still_mounted: &words.still_mounted };
+        let _mounted = RoMounted {
+            sys: self,
+            at,
+            still_mounted: &words.still_mounted,
+        };
         Some(f(at))
     }
 
@@ -481,14 +540,24 @@ impl Sys {
     /// own and waited for at most `limit`.  Past it: None, a warning naming
     /// the mount, and the thread left behind, asleep in the kernel, as
     /// `RealRunner` leaves a stuck child; it dies with the process.
-    #[cfg_attr(not(all(target_os = "linux", target_pointer_width = "64")), allow(dead_code))]
-    fn usage_within(&self, abs: &str, limit: Duration, probe: fn(&Path) -> Option<(u64, u64, u64)>) -> Option<(u64, u64, u64)> {
+    #[cfg_attr(
+        not(all(target_os = "linux", target_pointer_width = "64")),
+        allow(dead_code)
+    )]
+    fn usage_within(
+        &self,
+        abs: &str,
+        limit: Duration,
+        probe: fn(&Path) -> Option<(u64, u64, u64)>,
+    ) -> Option<(u64, u64, u64)> {
         let path = std::sync::Arc::new(self.p(abs));
         let (tx, rx) = std::sync::mpsc::channel();
         let theirs = std::sync::Arc::clone(&path);
-        let spawned = std::thread::Builder::new().name("bko-holt-statvfs".into()).spawn(move || {
-            let _ = tx.send(probe(&theirs));
-        });
+        let spawned = std::thread::Builder::new()
+            .name("bko-holt-statvfs".into())
+            .spawn(move || {
+                let _ = tx.send(probe(&theirs));
+            });
         let Ok(handle) = spawned else {
             // No thread to be had: asked here, with no time limit, as
             // before there was one.
@@ -522,7 +591,10 @@ impl Sys {
     /// time limit, so a hung NFS or FUSE mount can't hang the dump.  No
     /// test of `path.exists()` first: that stat would hang on such a mount
     /// with no time limit, and df fails on a missing path anyway.
-    #[cfg_attr(all(target_os = "linux", target_pointer_width = "64"), allow(dead_code))]
+    #[cfg_attr(
+        all(target_os = "linux", target_pointer_width = "64"),
+        allow(dead_code)
+    )]
     fn df_usage(&self, abs: &str) -> Option<(u64, u64, u64)> {
         let path = self.p(abs);
         let out = self.run("df", &["-Pk", path.to_str()?])?;
@@ -605,7 +677,10 @@ fn kernel_sys_tz() -> Option<i32> {
         fn syscall(n: c_long, ...) -> c_long;
     }
     let nr = SYS_GETTIMEOFDAY?;
-    let mut tz = Timezone { tz_minuteswest: 0, tz_dsttime: 0 };
+    let mut tz = Timezone {
+        tz_minuteswest: 0,
+        tz_dsttime: 0,
+    };
     // SAFETY: gettimeofday(NULL, &tz): the kernel skips a NULL timeval and
     // writes only a struct timezone (two ints) through the second pointer,
     // which points at one that lives for the call.
@@ -669,12 +744,19 @@ fn statvfs(path: &Path) -> Option<(u64, u64, u64)> {
 /// to hard or torn down can say so (bcachefs's free is capacity - used,
 /// which underflows); a dump then records no usage for that mount rather
 /// than a wrong one (load's fit reads it), and doesn't die on the overflow.
-#[cfg_attr(not(all(target_os = "linux", target_pointer_width = "64")), allow(dead_code))]
+#[cfg_attr(
+    not(all(target_os = "linux", target_pointer_width = "64")),
+    allow(dead_code)
+)]
 fn usage_bytes(blocks: u64, bfree: u64, bavail: u64, frsize: u64) -> Option<(u64, u64, u64)> {
     if bfree > blocks || bavail > blocks {
         return None;
     }
-    Some((blocks.checked_mul(frsize)?, bfree.checked_mul(frsize)?, bavail.checked_mul(frsize)?))
+    Some((
+        blocks.checked_mul(frsize)?,
+        bfree.checked_mul(frsize)?,
+        bavail.checked_mul(frsize)?,
+    ))
 }
 
 /// Size, free and available bytes from POSIX `df -Pk` output ("Filesystem
@@ -682,11 +764,23 @@ fn usage_bytes(blocks: u64, bfree: u64, bavail: u64, frsize: u64) -> Option<(u64
 /// when it doesn't say or can't be a filesystem's.  The numbers are the
 /// three before the first "NN%" column that follows three numbers, so a
 /// filesystem name or mount point with spaces in it doesn't shift them.
-#[cfg_attr(all(target_os = "linux", target_pointer_width = "64"), allow(dead_code))]
+#[cfg_attr(
+    all(target_os = "linux", target_pointer_width = "64"),
+    allow(dead_code)
+)]
 fn parse_df_pk(text: &str) -> Option<(u64, u64, u64)> {
-    let body: Vec<&str> = text.lines().skip(1).flat_map(str::split_whitespace).collect();
+    let body: Vec<&str> = text
+        .lines()
+        .skip(1)
+        .flat_map(str::split_whitespace)
+        .collect();
     let i = (3..body.len()).find(|&i| {
-        body[i].len() > 1 && body[i].ends_with('%') && body[i][..body[i].len() - 1].bytes().all(|b| b.is_ascii_digit()) && body[i - 3..i].iter().all(|c| c.parse::<u64>().is_ok())
+        body[i].len() > 1
+            && body[i].ends_with('%')
+            && body[i][..body[i].len() - 1]
+                .bytes()
+                .all(|b| b.is_ascii_digit())
+            && body[i - 3..i].iter().all(|c| c.parse::<u64>().is_ok())
     })?;
     let total_k: u64 = body[i - 3].parse().ok()?;
     let used_k: u64 = body[i - 2].parse().ok()?;
@@ -731,7 +825,10 @@ extern "C" fn on_sigterm(_sig: std::os::raw::c_int) {
     // SAFETY: signal(2) is async-signal-safe, and on_sigterm is a valid
     // handler for as long as the program runs.
     unsafe {
-        signal(SIGTERM, on_sigterm as extern "C" fn(std::os::raw::c_int) as usize);
+        signal(
+            SIGTERM,
+            on_sigterm as extern "C" fn(std::os::raw::c_int) as usize,
+        );
     }
 }
 
@@ -741,7 +838,12 @@ extern "C" fn on_sigterm(_sig: std::os::raw::c_int) {
 pub fn catch_sigterm() -> bool {
     // SAFETY: on_sigterm only stores to an atomic and calls signal(2), both
     // async-signal-safe; it lives for the whole program.
-    let old = unsafe { signal(SIGTERM, on_sigterm as extern "C" fn(std::os::raw::c_int) as usize) };
+    let old = unsafe {
+        signal(
+            SIGTERM,
+            on_sigterm as extern "C" fn(std::os::raw::c_int) as usize,
+        )
+    };
     old != usize::MAX
 }
 
@@ -773,7 +875,9 @@ pub fn send_signal(pid: i32, sig: i32) -> bool {
 /// Whether process PID is alive: kill(PID, 0) succeeds, or fails only for
 /// want of permission.
 pub fn process_alive(pid: u32) -> bool {
-    let Ok(p) = i32::try_from(pid) else { return false };
+    let Ok(p) = i32::try_from(pid) else {
+        return false;
+    };
     if p <= 0 {
         return false;
     }
@@ -795,7 +899,12 @@ pub fn process_start(pid: u32) -> Option<String> {
         let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
         // After the command's name, which is in parentheses and may hold
         // spaces: state is the first field, starttime the 20th.
-        return stat.rsplit_once(')')?.1.split_whitespace().nth(19).map(str::to_string);
+        return stat
+            .rsplit_once(')')?
+            .1
+            .split_whitespace()
+            .nth(19)
+            .map(str::to_string);
     }
     if cfg!(any(target_os = "illumos", target_os = "solaris")) {
         return psinfo_start(&std::fs::read(format!("/proc/{pid}/psinfo")).ok()?, pid);
@@ -804,11 +913,18 @@ pub fn process_start(pid: u32) -> Option<String> {
         return None;
     }
     let mut ps = Command::new("ps");
-    ps.args(["-o", "lstart=", "-p", &pid.to_string()]).env_clear().env("LC_ALL", "C").env("TZ", "UTC");
+    ps.args(["-o", "lstart=", "-p", &pid.to_string()])
+        .env_clear()
+        .env("LC_ALL", "C")
+        .env("TZ", "UTC");
     if let Some(path) = std::env::var_os("PATH") {
         ps.env("PATH", path);
     }
-    let out = ps.stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    let out = ps
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (out.status.success() && !s.is_empty()).then_some(s)
 }
@@ -818,10 +934,17 @@ pub fn process_start(pid: u32) -> Option<String> {
 /// 96), as "SECS.NANOS"; None unless pr_pid is PID and the time is one.
 fn psinfo_start(buf: &[u8], pid: u32) -> Option<String> {
     let at = |o: usize, n: usize| buf.get(o..o + n);
-    let i64_at = |o: usize| at(o, 8).and_then(|b| b.try_into().ok()).map(i64::from_ne_bytes);
-    let pr_pid = at(8, 4).and_then(|b| b.try_into().ok()).map(i32::from_ne_bytes)?;
+    let i64_at = |o: usize| {
+        at(o, 8)
+            .and_then(|b| b.try_into().ok())
+            .map(i64::from_ne_bytes)
+    };
+    let pr_pid = at(8, 4)
+        .and_then(|b| b.try_into().ok())
+        .map(i32::from_ne_bytes)?;
     let (secs, nanos) = (i64_at(88)?, i64_at(96)?);
-    (i64::from(pid) == i64::from(pr_pid) && secs > 0 && (0..1_000_000_000).contains(&nanos)).then(|| format!("{secs}.{nanos:09}"))
+    (i64::from(pid) == i64::from(pr_pid) && secs > 0 && (0..1_000_000_000).contains(&nanos))
+        .then(|| format!("{secs}.{nanos:09}"))
 }
 
 /// When this system booted, where process_start can't tell (Haiku: its
@@ -834,7 +957,8 @@ pub fn boot_time() -> Option<std::time::SystemTime> {
     unsafe extern "C" {
         safe fn system_time() -> i64;
     }
-    std::time::SystemTime::now().checked_sub(Duration::from_micros(u64::try_from(system_time()).ok()?))
+    std::time::SystemTime::now()
+        .checked_sub(Duration::from_micros(u64::try_from(system_time()).ok()?))
 }
 
 /// When this system booted, where process_start can't tell: only Haiku's.
@@ -862,56 +986,150 @@ mod tests {
 
     #[test]
     fn natural_order() {
-        let mut v = vec!["sda10", "sda2", "sda", "nvme0n1p10", "nvme0n1p9", "dm-11", "dm-2", "a01", "a1"];
+        let mut v = vec![
+            "sda10",
+            "sda2",
+            "sda",
+            "nvme0n1p10",
+            "nvme0n1p9",
+            "dm-11",
+            "dm-2",
+            "a01",
+            "a1",
+        ];
         v.sort_by(|a, b| natural_cmp(a, b));
-        assert_eq!(v, vec!["a01", "a1", "dm-2", "dm-11", "nvme0n1p9", "nvme0n1p10", "sda", "sda2", "sda10"]);
+        assert_eq!(
+            v,
+            vec![
+                "a01",
+                "a1",
+                "dm-2",
+                "dm-11",
+                "nvme0n1p9",
+                "nvme0n1p10",
+                "sda",
+                "sda2",
+                "sda10"
+            ]
+        );
         assert_eq!(natural_cmp("x", "x"), Ordering::Equal);
         assert_eq!(natural_cmp("", "a"), Ordering::Less);
         assert_eq!(natural_cmp("b", ""), Ordering::Greater);
-        assert_eq!(natural_cmp("a99999999999999999999999", "a100000000000000000000000"), Ordering::Less);
+        assert_eq!(
+            natural_cmp("a99999999999999999999999", "a100000000000000000000000"),
+            Ordering::Less
+        );
     }
 
     #[test]
     fn ro_mount_sequence() {
-        let words = |at: &str| RoMountWords { cant_make: format!("X: can't make {at}"), mount_failed: format!("X: mount at {at} failed"), still_mounted: format!("X: still at {at}") };
+        let words = |at: &str| RoMountWords {
+            cant_make: format!("X: can't make {at}"),
+            mount_failed: format!("X: mount at {at} failed"),
+            still_mounted: format!("X: still at {at}"),
+        };
         // Mounted, read, unmounted: AT is removed after.
         let t = Tree::new("romount");
-        let r = FakeRunner::default().with("mount -t vfat -o ro,nodev /dev/sda1 /run/bko-holt/a", "").with("umount /run/bko-holt/a", "");
+        let r = FakeRunner::default()
+            .with("mount -t vfat -o ro,nodev /dev/sda1 /run/bko-holt/a", "")
+            .with("umount /run/bko-holt/a", "");
         let s = Sys::new(t.root(), Box::new(r), true);
-        assert_eq!(s.with_ro_mount("vfat", "ro,nodev", "/dev/sda1", "/run/bko-holt/a", &words("/run/bko-holt/a"), |at| at.to_string()).as_deref(), Some("/run/bko-holt/a"));
+        assert_eq!(
+            s.with_ro_mount(
+                "vfat",
+                "ro,nodev",
+                "/dev/sda1",
+                "/run/bko-holt/a",
+                &words("/run/bko-holt/a"),
+                |at| at.to_string()
+            )
+            .as_deref(),
+            Some("/run/bko-holt/a")
+        );
         assert!(!s.exists("/run/bko-holt/a"));
         assert!(s.warnings().is_empty());
         // The mount fails: said, AT removed, F not called.
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
-        assert_eq!(s.with_ro_mount("zfs", "ro", "p/b", "/run/bko-holt/b", &words("/run/bko-holt/b"), |_| unreachable!()), None::<()>);
+        assert_eq!(
+            s.with_ro_mount(
+                "zfs",
+                "ro",
+                "p/b",
+                "/run/bko-holt/b",
+                &words("/run/bko-holt/b"),
+                |_| unreachable!()
+            ),
+            None::<()>
+        );
         assert!(!s.exists("/run/bko-holt/b"));
         assert_eq!(s.warnings(), vec!["X: mount at /run/bko-holt/b failed"]);
         // The umount fails: said, AT kept.
-        let s = Sys::new(t.root(), Box::new(FakeRunner::default().with("mount -t zfs -o ro p/c /run/bko-holt/c", "")), true);
-        assert_eq!(s.with_ro_mount("zfs", "ro", "p/c", "/run/bko-holt/c", &words("/run/bko-holt/c"), |_| 7), Some(7));
+        let s = Sys::new(
+            t.root(),
+            Box::new(FakeRunner::default().with("mount -t zfs -o ro p/c /run/bko-holt/c", "")),
+            true,
+        );
+        assert_eq!(
+            s.with_ro_mount(
+                "zfs",
+                "ro",
+                "p/c",
+                "/run/bko-holt/c",
+                &words("/run/bko-holt/c"),
+                |_| 7
+            ),
+            Some(7)
+        );
         assert!(s.is_dir("/run/bko-holt/c"));
         assert_eq!(s.warnings(), vec!["X: still at /run/bko-holt/c"]);
         // AT can't be made (a file is in the way): said with the error.
         t.file("/run/f", "");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
-        assert_eq!(s.with_ro_mount("zfs", "ro", "p/d", "/run/f/d", &words("/run/f/d"), |_| ()), None);
-        assert!(s.warnings()[0].starts_with("X: can't make /run/f/d: "), "{:?}", s.warnings());
+        assert_eq!(
+            s.with_ro_mount("zfs", "ro", "p/d", "/run/f/d", &words("/run/f/d"), |_| ()),
+            None
+        );
+        assert!(
+            s.warnings()[0].starts_with("X: can't make /run/f/d: "),
+            "{:?}",
+            s.warnings()
+        );
     }
 
     #[test]
     fn ro_mount_unmounts_on_panic() {
-        let words = RoMountWords { cant_make: "X: can't make".into(), mount_failed: "X: mount failed".into(), still_mounted: "X: still mounted".into() };
+        let words = RoMountWords {
+            cant_make: "X: can't make".into(),
+            mount_failed: "X: mount failed".into(),
+            still_mounted: "X: still mounted".into(),
+        };
         let t = Tree::new("romount-panic");
         // F panics: the mount is still let go, and AT removed.
-        let r = FakeRunner::default().with("mount -t vfat -o ro /dev/sda1 /run/bko-holt/p", "").with("umount /run/bko-holt/p", "");
+        let r = FakeRunner::default()
+            .with("mount -t vfat -o ro /dev/sda1 /run/bko-holt/p", "")
+            .with("umount /run/bko-holt/p", "");
         let s = Sys::new(t.root(), Box::new(r), true);
-        let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| s.with_ro_mount::<()>("vfat", "ro", "/dev/sda1", "/run/bko-holt/p", &words, |_| panic!("in F"))));
+        let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            s.with_ro_mount::<()>("vfat", "ro", "/dev/sda1", "/run/bko-holt/p", &words, |_| {
+                panic!("in F")
+            })
+        }));
         assert!(got.is_err());
         assert!(!s.exists("/run/bko-holt/p"));
         assert!(s.warnings().is_empty(), "{:?}", s.warnings());
         // The umount after the panic fails: said, AT kept.
-        let s = Sys::new(t.root(), Box::new(FakeRunner::default().with("mount -t vfat -o ro /dev/sda1 /run/bko-holt/q", "")), true);
-        let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| s.with_ro_mount::<()>("vfat", "ro", "/dev/sda1", "/run/bko-holt/q", &words, |_| panic!("in F"))));
+        let s = Sys::new(
+            t.root(),
+            Box::new(
+                FakeRunner::default().with("mount -t vfat -o ro /dev/sda1 /run/bko-holt/q", ""),
+            ),
+            true,
+        );
+        let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            s.with_ro_mount::<()>("vfat", "ro", "/dev/sda1", "/run/bko-holt/q", &words, |_| {
+                panic!("in F")
+            })
+        }));
         assert!(got.is_err());
         assert!(s.is_dir("/run/bko-holt/q"));
         assert_eq!(s.warnings(), vec!["X: still mounted"]);
@@ -930,7 +1148,10 @@ mod tests {
     #[test]
     fn reads_under_root() {
         let t = Tree::new("sys");
-        t.file("/a/b", "  hello \n").file("/n", "42\n").file("/empty", "\n").symlink("/l", "../x/target");
+        t.file("/a/b", "  hello \n")
+            .file("/n", "42\n")
+            .file("/empty", "\n")
+            .symlink("/l", "../x/target");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         assert_eq!(s.read("/a/b").as_deref(), Some("  hello \n"));
         assert_eq!(s.read_trim("/a/b").as_deref(), Some("hello"));
@@ -979,23 +1200,33 @@ mod tests {
         assert_eq!(r.run("zpool", &["status"]), None);
         assert_eq!(*r.calls.borrow(), vec!["zpool list -H", "zpool status"]);
         assert!(r.installed("zpool"));
-        let r = FakeRunner::default().with("zpool list -H", "rpool\n").without("zpool");
+        let r = FakeRunner::default()
+            .with("zpool list -H", "rpool\n")
+            .without("zpool");
         assert_eq!(r.run("zpool", &["list", "-H"]), None);
         assert!(!r.installed("zpool") && r.installed("zfs"));
     }
 
     #[test]
     fn real_runner_runs_and_times_out() {
-        let r = RealRunner { timeout: Duration::from_secs(5) };
+        let r = RealRunner {
+            timeout: Duration::from_secs(5),
+        };
         assert_eq!(r.run("echo", &["a", "b"]).as_deref(), Some("a b\n"));
         assert_eq!(r.run("false", &[]), None);
         assert_eq!(r.run("bko-no-such-program", &[]), None);
         // A tool that ran and failed is installed; one that isn't there isn't.
-        assert!(r.installed("false") && !r.installed("bko-no-such-program") && !r.installed("/bin/echo"));
+        assert!(
+            r.installed("false")
+                && !r.installed("bko-no-such-program")
+                && !r.installed("/bin/echo")
+        );
         // Only the system directories are searched.
         assert_eq!(r.run("../bin/echo", &["x"]), None);
         assert_eq!(r.run("/bin/echo", &["x"]), None);
-        let quick = RealRunner { timeout: Duration::from_millis(200) };
+        let quick = RealRunner {
+            timeout: Duration::from_millis(200),
+        };
         let t = Instant::now();
         assert_eq!(quick.run("sleep", &["10"]), None);
         assert!(t.elapsed() < Duration::from_secs(5));
@@ -1007,14 +1238,22 @@ mod tests {
         assert_eq!(quick.run("sh", &["-c", "sleep 9 & echo hi"]), None);
         assert!(t.elapsed() < Duration::from_secs(7), "{:?}", t.elapsed());
         // One that ends within the limit is waited for.
-        assert_eq!(r.run("sh", &["-c", "(sleep 1; echo late) & echo early"]).as_deref(), Some("early\nlate\n"));
+        assert_eq!(
+            r.run("sh", &["-c", "(sleep 1; echo late) & echo early"])
+                .as_deref(),
+            Some("early\nlate\n")
+        );
         // A big output doesn't deadlock on the pipe.
         let big = r.run("head", &["-c", "1000000", "/dev/zero"]).unwrap();
         assert_eq!(big.len(), 1_000_000);
         // Output past the cap fails, even when the command exits 0 (here
         // the part past the cap fits the pipe): never a listing cut short.
         let cap = MAX_STDOUT.to_string();
-        assert_eq!(r.run("head", &["-c", &cap, "/dev/zero"]).map(|o| o.len() as u64), Some(MAX_STDOUT));
+        assert_eq!(
+            r.run("head", &["-c", &cap, "/dev/zero"])
+                .map(|o| o.len() as u64),
+            Some(MAX_STDOUT)
+        );
         let over = (MAX_STDOUT + 100).to_string();
         assert_eq!(r.run("head", &["-c", &over, "/dev/zero"]), None);
         assert_eq!(r.run_any("head", &["-c", &over, "/dev/zero"]), None);
@@ -1027,15 +1266,32 @@ mod tests {
         let t = crate::testutil::Tree::new("sys-read-cap");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         let big = t.root().join("big");
-        std::fs::File::create(&big).unwrap().set_len(READ_MAX + 1).unwrap();
+        std::fs::File::create(&big)
+            .unwrap()
+            .set_len(READ_MAX + 1)
+            .unwrap();
         assert_eq!(s.read_bytes("/big"), None);
         assert_eq!(s.read_bytes("/missing"), None);
-        assert_eq!(s.warnings(), vec![format!("/big: larger than {READ_MAX} bytes, so not read")]);
+        assert_eq!(
+            s.warnings(),
+            vec![format!("/big: larger than {READ_MAX} bytes, so not read")]
+        );
         let twin = t.root().join("twin");
-        std::fs::File::create(&twin).unwrap().set_len(READ_MAX + 1).unwrap();
+        std::fs::File::create(&twin)
+            .unwrap()
+            .set_len(READ_MAX + 1)
+            .unwrap();
         assert_eq!(s.same_bytes("/big", "/twin"), Some(true));
         t.file("/a", "abc").file("/b", "abd").file("/c", "abc");
-        assert_eq!((s.same_bytes("/a", "/b"), s.same_bytes("/a", "/c"), s.same_bytes("/a", "/big"), s.same_bytes("/a", "/missing")), (Some(false), Some(true), Some(false), None));
+        assert_eq!(
+            (
+                s.same_bytes("/a", "/b"),
+                s.same_bytes("/a", "/c"),
+                s.same_bytes("/a", "/big"),
+                s.same_bytes("/a", "/missing")
+            ),
+            (Some(false), Some(true), Some(false), None)
+        );
     }
 
     #[test]
@@ -1048,22 +1304,47 @@ mod tests {
             Some((1, 1, 1))
         }
         fn quick(p: &Path) -> Option<(u64, u64, u64)> {
-            p.to_str().filter(|p| p.ends_with("/mnt/ok")).map(|_| (3, 2, 1))
+            p.to_str()
+                .filter(|p| p.ends_with("/mnt/ok"))
+                .map(|_| (3, 2, 1))
         }
         let s = Sys::new("/fake-root", Box::new(FakeRunner::default()), false);
         let start = Instant::now();
-        assert_eq!(s.usage_within("/mnt/nfs", Duration::from_millis(100), hung), None);
-        assert!(start.elapsed() < Duration::from_secs(2), "waited {:?}", start.elapsed());
+        assert_eq!(
+            s.usage_within("/mnt/nfs", Duration::from_millis(100), hung),
+            None
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "waited {:?}",
+            start.elapsed()
+        );
         assert_eq!(s.warnings().len(), 1);
-        assert!(s.warnings()[0].starts_with("/mnt/nfs: no answer from statvfs"), "{:?}", s.warnings());
+        assert!(
+            s.warnings()[0].starts_with("/mnt/nfs: no answer from statvfs"),
+            "{:?}",
+            s.warnings()
+        );
         // A probe that answers in time: its answer, under the root, and no
         // warning.
         let s = Sys::new("/fake-root", Box::new(FakeRunner::default()), false);
-        assert_eq!(s.usage_within("/mnt/ok", Duration::from_secs(5), quick), Some((3, 2, 1)));
-        assert_eq!(s.usage_within("/mnt/other", Duration::from_secs(5), quick), None);
+        assert_eq!(
+            s.usage_within("/mnt/ok", Duration::from_secs(5), quick),
+            Some((3, 2, 1))
+        );
+        assert_eq!(
+            s.usage_within("/mnt/other", Duration::from_secs(5), quick),
+            None
+        );
         assert!(s.warnings().is_empty());
         assert_eq!(FakeRunner::default().time_limit(), TIME_LIMIT);
-        assert_eq!(RealRunner { timeout: Duration::from_millis(7) }.time_limit(), Duration::from_millis(7));
+        assert_eq!(
+            RealRunner {
+                timeout: Duration::from_millis(7)
+            }
+            .time_limit(),
+            Duration::from_millis(7)
+        );
     }
 
     #[test]
@@ -1076,10 +1357,16 @@ mod tests {
         }
         let s = Sys::new("/fake-root", Box::new(FakeRunner::default()), false);
         let start = Instant::now();
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| s.usage_within("/mnt/x", Duration::from_secs(5), broken)));
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            s.usage_within("/mnt/x", Duration::from_secs(5), broken)
+        }));
         let panic = r.expect_err("the probe's panic");
         assert_eq!(panic.downcast_ref::<&str>(), Some(&"probe bug"));
-        assert!(start.elapsed() < Duration::from_secs(4), "waited {:?}", start.elapsed());
+        assert!(
+            start.elapsed() < Duration::from_secs(4),
+            "waited {:?}",
+            start.elapsed()
+        );
         assert!(s.warnings().is_empty(), "{:?}", s.warnings());
     }
 
@@ -1096,9 +1383,20 @@ mod tests {
     /// --sysroot (Sys::new) unless a test says so.
     #[test]
     fn sys_tz_is_the_hosts_only() {
-        assert_eq!(Sys::new("/", Box::new(FakeRunner::default()), false).sys_tz_minuteswest(), None);
-        assert_eq!(Sys::new("/", Box::new(FakeRunner::default()), false).with_sys_tz(Some(-60)).sys_tz_minuteswest(), Some(-60));
-        if cfg!(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))) {
+        assert_eq!(
+            Sys::new("/", Box::new(FakeRunner::default()), false).sys_tz_minuteswest(),
+            None
+        );
+        assert_eq!(
+            Sys::new("/", Box::new(FakeRunner::default()), false)
+                .with_sys_tz(Some(-60))
+                .sys_tz_minuteswest(),
+            Some(-60)
+        );
+        if cfg!(all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )) {
             let tz = kernel_sys_tz().expect("gettimeofday's timezone");
             assert!(tz.abs() <= 15 * 60, "{tz}");
             assert_eq!(Sys::host().sys_tz_minuteswest(), Some(tz));
@@ -1108,11 +1406,23 @@ mod tests {
     #[test]
     fn df_usage_runs_df_through_the_runner() {
         let out = "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/ada0p2 1000 400 500 45% /mnt/data\n";
-        let s = Sys::new("/", Box::new(FakeRunner::default().with("df -Pk /mnt/data", out)), false);
+        let s = Sys::new(
+            "/",
+            Box::new(FakeRunner::default().with("df -Pk /mnt/data", out)),
+            false,
+        );
         assert_eq!(s.df_usage("/mnt/data"), Some((1_024_000, 614_400, 512_000)));
         // No answer (df failed, timed out, or isn't installed): no usage.
         assert_eq!(s.df_usage("/mnt/other"), None);
-        let none = Sys::new("/", Box::new(FakeRunner::default().with("df -Pk /mnt/data", out).without("df")), false);
+        let none = Sys::new(
+            "/",
+            Box::new(
+                FakeRunner::default()
+                    .with("df -Pk /mnt/data", out)
+                    .without("df"),
+            ),
+            false,
+        );
         assert_eq!(none.df_usage("/mnt/data"), None);
         // Under a test root, df is asked about the tree's own directory.
         let t = Tree::new("sys-df");
@@ -1120,19 +1430,36 @@ mod tests {
         let path = t.root().join("mnt/data");
         let r = FakeRunner::default().with(&format!("df -Pk {}", path.display()), out);
         let rooted = Sys::new(t.root(), Box::new(r), false);
-        assert_eq!(rooted.df_usage("/mnt/data"), Some((1_024_000, 614_400, 512_000)));
+        assert_eq!(
+            rooted.df_usage("/mnt/data"),
+            Some((1_024_000, 614_400, 512_000))
+        );
     }
 
     #[test]
     fn parse_df_pk_reads_posix_output() {
         let head = "Filesystem 1024-blocks Used Available Capacity Mounted on\n";
-        assert_eq!(parse_df_pk(&format!("{head}/dev/ada0p2 1000 400 500 45% /")), Some((1_024_000, 614_400, 512_000)));
+        assert_eq!(
+            parse_df_pk(&format!("{head}/dev/ada0p2 1000 400 500 45% /")),
+            Some((1_024_000, 614_400, 512_000))
+        );
         // Spaces in the mount point and the filesystem's name.
-        assert_eq!(parse_df_pk(&format!("{head}my pool/ds 1000 400 500 45% /mnt/my disk")), Some((1_024_000, 614_400, 512_000)));
+        assert_eq!(
+            parse_df_pk(&format!("{head}my pool/ds 1000 400 500 45% /mnt/my disk")),
+            Some((1_024_000, 614_400, 512_000))
+        );
         // A reserve: free (size - used) is more than available.
-        assert_eq!(parse_df_pk(&format!("{head}/dev/sda1 1000 100 850 11% /")), Some((1_024_000, 921_600, 870_400)));
+        assert_eq!(
+            parse_df_pk(&format!("{head}/dev/sda1 1000 100 850 11% /")),
+            Some((1_024_000, 921_600, 870_400))
+        );
         // A long name on its own line (a df without -P's no-wrap).
-        assert_eq!(parse_df_pk(&format!("{head}/dev/mapper/a-very-long-name\n 1000 400 500 45% /")), Some((1_024_000, 614_400, 512_000)));
+        assert_eq!(
+            parse_df_pk(&format!(
+                "{head}/dev/mapper/a-very-long-name\n 1000 400 500 45% /"
+            )),
+            Some((1_024_000, 614_400, 512_000))
+        );
         // No numbers, no data line, or numbers that can't be a filesystem's.
         assert_eq!(parse_df_pk(&format!("{head}proc - - - - /proc")), None);
         assert_eq!(parse_df_pk(head), None);
@@ -1143,14 +1470,20 @@ mod tests {
 
     #[test]
     fn usage_bytes_refuses_impossible_counts() {
-        assert_eq!(usage_bytes(100, 40, 30, 4096), Some((409_600, 163_840, 122_880)));
+        assert_eq!(
+            usage_bytes(100, 40, 30, 4096),
+            Some((409_600, 163_840, 122_880))
+        );
         assert_eq!(usage_bytes(0, 0, 0, 2 << 20), Some((0, 0, 0)));
         // Free past the size: an underflowed capacity - used.
         assert_eq!(usage_bytes(100, u64::MAX - 5, 30, 4096), None);
         assert_eq!(usage_bytes(100, 40, 101, 4096), None);
         // A size past u64 in bytes.
         assert_eq!(usage_bytes(1 << 60, 1, 1, 4096), None);
-        assert_eq!(usage_bytes(u64::MAX / 4096, 0, 0, 4096), Some(((u64::MAX / 4096) * 4096, 0, 0)));
+        assert_eq!(
+            usage_bytes(u64::MAX / 4096, 0, 0, 4096),
+            Some(((u64::MAX / 4096) * 4096, 0, 0))
+        );
     }
 
     /// The environment variable sigterm_child runs under: only then does it
@@ -1186,13 +1519,27 @@ mod tests {
     fn catch_sigterm_in_a_child() {
         let exe = std::env::current_exe().unwrap();
         let out = Command::new(exe)
-            .args(["--exact", "sys::tests::sigterm_child", "--nocapture", "--test-threads", "1"])
+            .args([
+                "--exact",
+                "sys::tests::sigterm_child",
+                "--nocapture",
+                "--test-threads",
+                "1",
+            ])
             .env(SIGTERM_CHILD, "1")
             .stdin(Stdio::null())
             .output()
             .unwrap();
-        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        assert!(out.status.success() && text.contains("SIGTERM-CHILD-OK"), "{:?}: {text}", out.status);
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            out.status.success() && text.contains("SIGTERM-CHILD-OK"),
+            "{:?}: {text}",
+            out.status
+        );
     }
 
     #[test]
@@ -1212,7 +1559,12 @@ mod tests {
         }
         // Elsewhere ps's (the BSDs, and macOS where the tests run): the
         // same whatever load's own locale and zone.
-        if !cfg!(any(target_os = "linux", target_os = "illumos", target_os = "solaris", target_os = "haiku")) {
+        if !cfg!(any(
+            target_os = "linux",
+            target_os = "illumos",
+            target_os = "solaris",
+            target_os = "haiku"
+        )) {
             let s = process_start(me).unwrap();
             assert_eq!(process_start(me), Some(s));
         }
@@ -1225,7 +1577,10 @@ mod tests {
         b[8..12].copy_from_slice(&4711i32.to_ne_bytes());
         b[88..96].copy_from_slice(&1_795_000_000i64.to_ne_bytes());
         b[96..104].copy_from_slice(&12_345i64.to_ne_bytes());
-        assert_eq!(psinfo_start(&b, 4711).as_deref(), Some("1795000000.000012345"));
+        assert_eq!(
+            psinfo_start(&b, 4711).as_deref(),
+            Some("1795000000.000012345")
+        );
         // Another process's, a short read, no time.
         assert_eq!(psinfo_start(&b, 4712), None);
         assert_eq!(psinfo_start(&b[..100], 4711), None);

@@ -7,13 +7,19 @@
 use std::path::{Path, PathBuf};
 
 fn jsons(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut entries: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
     entries.sort();
     for p in entries {
         if p.is_dir() {
             jsons(&p, out);
-        } else if p.extension().is_some_and(|e| e == "json") && p.file_name().is_some_and(|n| n == "src.json" || std::env::var_os("BKO_HOLT_DUMPS_ALL").is_some()) {
+        } else if p.extension().is_some_and(|e| e == "json")
+            && p.file_name().is_some_and(|n| {
+                n == "src.json" || std::env::var_os("BKO_HOLT_DUMPS_ALL").is_some()
+            })
+        {
             out.push(p);
         }
     }
@@ -27,19 +33,31 @@ fn redacted_dumps_plan_the_same() {
     };
     let mut files = Vec::new();
     jsons(Path::new(&dir), &mut files);
-    assert!(!files.is_empty(), "no src.json under {dir:?} (BKO_HOLT_DUMPS_ALL=1 takes every *.json)");
+    assert!(
+        !files.is_empty(),
+        "no src.json under {dir:?} (BKO_HOLT_DUMPS_ALL=1 takes every *.json)"
+    );
     let mut bad = Vec::new();
     for f in &files {
         let text = std::fs::read_to_string(f).unwrap();
         match bko_holt::bugreport::check_plan(&text) {
-            Ok((ids, lines)) => println!("ok    {}: {ids} identifiers, plan of {lines} lines", f.display()),
+            Ok((ids, lines)) => println!(
+                "ok    {}: {ids} identifiers, plan of {lines} lines",
+                f.display()
+            ),
             Err(e) => {
                 println!("FAIL  {}: {e}", f.display());
                 bad.push(format!("{}: {e}", f.display()));
             }
         }
     }
-    assert!(bad.is_empty(), "{} of {} failed:\n{}", bad.len(), files.len(), bad.join("\n"));
+    assert!(
+        bad.is_empty(),
+        "{} of {} failed:\n{}",
+        bad.len(),
+        files.len(),
+        bad.join("\n")
+    );
 }
 
 /// What a plan document names that must not reach a report, taken here on
@@ -52,8 +70,12 @@ fn named(v: &bko_holt::json::Value, out: &mut Vec<String>) {
         Value::Arr(a) => {
             for (i, x) in a.iter().enumerate() {
                 match (x.as_str(), a.get(i + 1).and_then(Value::as_str)) {
-                    (Some("--repo" | "--repository" | "--password-file"), Some(val)) => out.push(val.to_string()),
-                    (Some("--key-file"), Some(val)) => out.push(val.split_once('=').map_or(val, |(_, f)| f).to_string()),
+                    (Some("--repo" | "--repository" | "--password-file"), Some(val)) => {
+                        out.push(val.to_string())
+                    }
+                    (Some("--key-file"), Some(val)) => {
+                        out.push(val.split_once('=').map_or(val, |(_, f)| f).to_string())
+                    }
                     (None, _) => named(x, out),
                     _ => {}
                 }
@@ -88,11 +110,17 @@ fn redacted_plan_documents_leave_nothing() {
     jsons(Path::new(&dir), &mut files);
     let mut bad = Vec::new();
     let mut n = 0;
-    for f in files.iter().filter(|f| f.file_name().is_some_and(|x| x == "src.json")) {
+    for f in files
+        .iter()
+        .filter(|f| f.file_name().is_some_and(|x| x == "src.json"))
+    {
         let plan = f.with_file_name("plan.json");
-        let Ok(doc) = std::fs::read_to_string(&plan) else { continue };
+        let Ok(doc) = std::fs::read_to_string(&plan) else {
+            continue;
+        };
         let src = bko_holt::json::parse(&std::fs::read_to_string(f).unwrap()).unwrap();
-        let v = bko_holt::json::parse(&doc).unwrap_or_else(|e| panic!("{}: not JSON ({})", plan.display(), e.message));
+        let v = bko_holt::json::parse(&doc)
+            .unwrap_or_else(|e| panic!("{}: not JSON ({})", plan.display(), e.message));
         let mut c = bko_holt::redact::Collector::new();
         c.learn(&src);
         bko_holt::bugreport::learn_attachment(&mut c, &doc);
@@ -111,5 +139,10 @@ fn redacted_plan_documents_leave_nothing() {
         }
     }
     println!("{n} plan documents checked");
-    assert!(bad.is_empty(), "{} of {n} left identifiers:\n{}", bad.len(), bad.join("\n"));
+    assert!(
+        bad.is_empty(),
+        "{} of {n} left identifiers:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
 }

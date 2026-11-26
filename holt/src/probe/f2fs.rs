@@ -1,7 +1,7 @@
 //! F2FS: its superblock, at 1 KiB (and a backup copy one block later).
 
 use super::Content;
-use crate::bytes::{le16, le32, le64, sub, uuid, ByteSource};
+use crate::bytes::{ByteSource, le16, le32, le64, sub, uuid};
 use crate::json::Obj;
 
 const MAGIC: u32 = 0xF2F5_2010;
@@ -27,7 +27,11 @@ pub const FEATURES: &[(u32, &str)] = &[
 
 /// The volume name: up to 512 UTF-16LE units, zero-padded.
 fn volume_name(b: &[u8]) -> Option<String> {
-    let units: Vec<u16> = b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|&u| u != 0).collect();
+    let units: Vec<u16> = b
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .take_while(|&u| u != 0)
+        .collect();
     let s = String::from_utf16_lossy(&units);
     (!s.is_empty()).then_some(s)
 }
@@ -65,7 +69,14 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
         .set("features", names);
     if feature & 0x1000 != 0 {
         // s_encoding: 1 is UTF-8 (12.1).
-        d.put("encoding", if le16(&b, 2758) == 1 { "utf8" } else { "unknown" });
+        d.put(
+            "encoding",
+            if le16(&b, 2758) == 1 {
+                "utf8"
+            } else {
+                "unknown"
+            },
+        );
     }
     let version = format!("{}.{}", le16(&b, 4), le16(&b, 6));
     Some(Content {
@@ -115,17 +126,42 @@ mod tests {
 
     #[test]
     fn reads_a_superblock() {
-        let c = probe(&MemSource(sample::image("mintroot", 0x0008 | 0x0020 | 0x0800))).unwrap();
+        let c = probe(&MemSource(sample::image(
+            "mintroot",
+            0x0008 | 0x0020 | 0x0800,
+        )))
+        .unwrap();
         assert_eq!(c.kind, "f2fs");
-        assert_eq!(c.uuid.as_deref(), Some("80818283-8485-8687-8889-8a8b8c8d8e8f"));
+        assert_eq!(
+            c.uuid.as_deref(),
+            Some("80818283-8485-8687-8889-8a8b8c8d8e8f")
+        );
         assert_eq!(c.label.as_deref(), Some("mintroot"));
         assert_eq!(c.version.as_deref(), Some("1.16"));
         let d = c.details.build();
         assert_eq!(d.get("block_size").and_then(Value::as_u64), Some(4096));
-        assert_eq!(d.get("size_bytes").and_then(Value::as_u64), Some(3407872 * 4096));
-        assert_eq!(d.get("blocks_per_segment").and_then(Value::as_u64), Some(512));
-        assert_eq!(d.get("features"), Some(&Value::from(vec!["extra_attr", "inode_checksum", "sb_checksum"])));
-        assert!(probe(&MemSource(sample::image("", 0))).unwrap().label.is_none());
+        assert_eq!(
+            d.get("size_bytes").and_then(Value::as_u64),
+            Some(3407872 * 4096)
+        );
+        assert_eq!(
+            d.get("blocks_per_segment").and_then(Value::as_u64),
+            Some(512)
+        );
+        assert_eq!(
+            d.get("features"),
+            Some(&Value::from(vec![
+                "extra_attr",
+                "inode_checksum",
+                "sb_checksum"
+            ]))
+        );
+        assert!(
+            probe(&MemSource(sample::image("", 0)))
+                .unwrap()
+                .label
+                .is_none()
+        );
         assert!(probe(&MemSource(vec![0u8; 65536])).is_none());
     }
 }

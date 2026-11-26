@@ -11,9 +11,9 @@
 //! checks the restored loader entries against the deployments, makes the
 //! UEFI entries, writes its log, and ends as every Linux boot stage does.
 
-use super::commands::{atimes_cmd, Builder, Cmd};
-use super::layout::{all_devices, Layout};
 use super::RUN_DIR;
+use super::commands::{Builder, Cmd, atimes_cmd};
+use super::layout::{Layout, all_devices};
 use crate::json::Value;
 
 /// What a restored ostree tree has once the restore is done: the
@@ -23,7 +23,9 @@ pub const MARKER: &str = "ostree/repo/config";
 
 /// The layout's boot.ostree, when the source is an ostree system.
 pub fn of(layout: &Value) -> Option<&Value> {
-    layout.at(&["boot", "ostree"]).filter(|v| v.as_object().is_some())
+    layout
+        .at(&["boot", "ostree"])
+        .filter(|v| v.as_object().is_some())
 }
 
 /// The consistency check of a restored tree at T, as a shell script.  For
@@ -127,14 +129,31 @@ impl Builder<'_> {
         if !self.layout.uefi() {
             self.problems.push("ostree with BIOS boot isn't restored yet: bootupd's core.img is in the BIOS boot partition, which isn't copied".into());
         }
-        let crypttab = self.layout.arr(&["storage", "crypttab"]).iter().any(|e| e.get("name").is_some());
+        let crypttab = self
+            .layout
+            .arr(&["storage", "crypttab"])
+            .iter()
+            .any(|e| e.get("name").is_some());
         if any_content(self.layout, "crypto_LUKS") || crypttab {
             self.problems.push("ostree with LUKS isn't restored yet: its crypttab and keys are in a deployment's etc, and the unlocking (rd.luks.uuid=, TPM2 or FIDO2 tokens) is untested".into());
         }
-        if any_content(self.layout, "LVM2_member") || !self.layout.arr(&["storage", "lvm", "volume_groups"]).is_empty() {
-            self.problems.push("ostree with LVM isn't restored yet: its devices file is in a deployment's etc".into());
+        if any_content(self.layout, "LVM2_member")
+            || !self
+                .layout
+                .arr(&["storage", "lvm", "volume_groups"])
+                .is_empty()
+        {
+            self.problems.push(
+                "ostree with LVM isn't restored yet: its devices file is in a deployment's etc"
+                    .into(),
+            );
         }
-        let fstab = |f: &str| self.layout.arr(&["storage", "fstab"]).iter().any(|e| e.get("file").and_then(Value::as_str) == Some(f));
+        let fstab = |f: &str| {
+            self.layout
+                .arr(&["storage", "fstab"])
+                .iter()
+                .any(|e| e.get("file").and_then(Value::as_str) == Some(f))
+        };
         if !fstab("/") {
             self.problems.push("ostree without `/` in fstab (bootc install to-disk, Fedora CoreOS) isn't restored: the physical root can't be told".into());
         }
@@ -150,18 +169,42 @@ impl Builder<'_> {
     /// stateroot's own var, which ostree binds there at boot.
     fn ostree_var(&mut self, o: &Value) -> Option<String> {
         let t = &self.opts.target;
-        if self.layout.arr(&["storage", "fstab"]).iter().any(|e| e.get("file").and_then(Value::as_str) == Some("/var")) {
+        if self
+            .layout
+            .arr(&["storage", "fstab"])
+            .iter()
+            .any(|e| e.get("file").and_then(Value::as_str) == Some("/var"))
+        {
             return Some(format!("{t}/var"));
         }
-        let Some(stateroot) = o.get("stateroot").and_then(Value::as_str).map(str::to_string).or_else(|| {
-            let deps = o.get("deployments").and_then(Value::as_array).cloned().unwrap_or_default();
-            deps.iter().find(|d| d.get("booted") == Some(&Value::Bool(true))).or(deps.first()).and_then(|d| d.get("stateroot")).and_then(Value::as_str).map(str::to_string)
-        }) else {
+        let Some(stateroot) = o
+            .get("stateroot")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| {
+                let deps = o
+                    .get("deployments")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                deps.iter()
+                    .find(|d| d.get("booted") == Some(&Value::Bool(true)))
+                    .or(deps.first())
+                    .and_then(|d| d.get("stateroot"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+        else {
             self.problems.push("ostree: neither fstab's /var nor a stateroot in boot.ostree: nowhere to write the restore's log".into());
             return None;
         };
-        if stateroot.is_empty() || matches!(stateroot.as_str(), "." | "..") || stateroot.contains(['/', '\0']) {
-            self.problems.push(format!("ostree: invalid stateroot {stateroot:?} in boot.ostree"));
+        if stateroot.is_empty()
+            || matches!(stateroot.as_str(), "." | "..")
+            || stateroot.contains(['/', '\0'])
+        {
+            self.problems.push(format!(
+                "ostree: invalid stateroot {stateroot:?} in boot.ostree"
+            ));
             return None;
         }
         Some(format!("{t}/ostree/deploy/{stateroot}/var"))
@@ -171,7 +214,9 @@ impl Builder<'_> {
     pub(crate) fn ostree_boot(&mut self, o: &Value) -> Vec<Cmd> {
         self.ostree_problems(o);
         let t = self.opts.target.clone();
-        let mut out = vec![Cmd::note(format!("refuses to start unless {t}/{MARKER} is there: the restored physical root, with the repository and the deployments"))];
+        let mut out = vec![Cmd::note(format!(
+            "refuses to start unless {t}/{MARKER} is there: the restored physical root, with the repository and the deployments"
+        ))];
         out.push(Cmd::new(&["sh", "-c", &atimes_cmd(&t, "if-missing", &self.ro_shared())]).why("the restored atimes (the restore stage lists them), to put back after this stage's reads"));
         let what = "ostree: /boot, the ESP and /ostree are restored verbatim; no initramfs, no grub2-mkconfig, no grub2-install, no chroot";
         self.notes.push(what.into());
@@ -187,7 +232,10 @@ impl Builder<'_> {
         if let Some(var) = self.ostree_var(o) {
             let log = format!("{var}/log/bko-holt");
             out.push(Cmd::new(&["mkdir", "-p", &log]));
-            out.push(Cmd::new(&["cp", "-a", &format!("{RUN_DIR}/log/."), &format!("{log}/")]).why("this restore's log, on the restored system"));
+            out.push(
+                Cmd::new(&["cp", "-a", &format!("{RUN_DIR}/log/."), &format!("{log}/")])
+                    .why("this restore's log, on the restored system"),
+            );
             out.push(Cmd::new(&["python3", "-c", LABEL_PY, "security.selinux", &format!("{var}/log"), &log]).why("the log's SELinux label: /var/log's (every other file kept its own from the backup; no relabel)"));
         }
         out.extend(self.boot_tail(&t));
@@ -198,10 +246,10 @@ impl Builder<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::load::Stage;
     use crate::load::commands::build;
     use crate::load::layout::Layout;
     use crate::load::target::Mapping;
-    use crate::load::Stage;
 
     pub(crate) fn kinoite() -> Value {
         crate::scenarios::dump("kinoite_ostree")
@@ -215,7 +263,10 @@ mod tests {
             crate::load::Parsed::Run(o) => o,
             _ => unreachable!(),
         };
-        let m = Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() };
+        let m = Mapping {
+            pairs: vec![("vda".into(), "vdb".into())],
+            ..Mapping::default()
+        };
         build(&l, &o, &m)
     }
 
@@ -252,39 +303,86 @@ mod tests {
     #[test]
     fn kinoite_plan() {
         // The scenario's Boot0001 names Chopin's ESP: here, the guest's.
-        let v = with(&kinoite(), &["boot", "efi", "entries", "0", "partition"], crate::json::parse(r#"{"device": "vda1"}"#).unwrap());
+        let v = with(
+            &kinoite(),
+            &["boot", "efi", "entries", "0", "partition"],
+            crate::json::parse(r#"{"device": "vda1"}"#).unwrap(),
+        );
         assert!(of(&v).is_some());
         assert_eq!(crate::other::restored_marker(&v), MARKER);
         let b = plan(&v, &["--repo", "/srv/repo"]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
-        assert!(b.notes.iter().any(|n| n.contains("restored verbatim")), "{:?}", b.notes);
-        assert!(!b.notes.iter().any(|n| n.contains("bootupd")), "{:?}", b.notes);
+        assert!(
+            b.notes.iter().any(|n| n.contains("restored verbatim")),
+            "{:?}",
+            b.notes
+        );
+        assert!(
+            !b.notes.iter().any(|n| n.contains("bootupd")),
+            "{:?}",
+            b.notes
+        );
         // fstab's tree, / writable though fstab's has ro.
         let m = text(b.stage(Stage::Mount));
-        let root = m.find("mount -t btrfs -o subvol=root,compress=zstd:1 /dev/vdb3 /mnt/bko-target\n").expect(&m);
-        let boot = m.find("mount -t ext4 -o defaults /dev/vdb2 /mnt/bko-target/boot\n").expect(&m);
-        let home = m.find("mount -t btrfs -o subvol=home,compress=zstd:1 /dev/vdb3 /mnt/bko-target/home\n").expect(&m);
-        let var = m.find("mount -t btrfs -o subvol=var,compress=zstd:1 /dev/vdb3 /mnt/bko-target/var\n").expect(&m);
+        let root = m
+            .find("mount -t btrfs -o subvol=root,compress=zstd:1 /dev/vdb3 /mnt/bko-target\n")
+            .expect(&m);
+        let boot = m
+            .find("mount -t ext4 -o defaults /dev/vdb2 /mnt/bko-target/boot\n")
+            .expect(&m);
+        let home = m
+            .find("mount -t btrfs -o subvol=home,compress=zstd:1 /dev/vdb3 /mnt/bko-target/home\n")
+            .expect(&m);
+        let var = m
+            .find("mount -t btrfs -o subvol=var,compress=zstd:1 /dev/vdb3 /mnt/bko-target/var\n")
+            .expect(&m);
         assert!(m.contains("/dev/vdb1 /mnt/bko-target/boot/efi\n"), "{m}");
         assert!(root < boot && boot < home && home < var, "{m}");
         assert!(!m.contains(",ro"), "{m}");
         // Boot: nothing regenerated, nothing chrooted.
         let bt = text(b.stage(Stage::Boot));
-        let run: String = bt.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("\n");
-        for no in ["chroot", "dracut", "grub2-mkconfig", "grub2-install", "update-grub", "setfiles", "--rbind", "lvm-devices", "os-prober"] {
+        let run: String = bt
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for no in [
+            "chroot",
+            "dracut",
+            "grub2-mkconfig",
+            "grub2-install",
+            "update-grub",
+            "setfiles",
+            "--rbind",
+            "lvm-devices",
+            "os-prober",
+        ] {
             assert!(!run.contains(no), "{no}: {bt}");
         }
         let pos = |s: &str| bt.find(s).unwrap_or_else(|| panic!("{s}: {bt}"));
         let listed = pos("atimes.before");
         let check = pos("/boot/loader/entries/ostree-*.conf");
-        assert!(bt.contains("t=$(readlink -f /mnt/bko-target) || exit 1; want=loader.1;"), "{bt}");
+        assert!(
+            bt.contains("t=$(readlink -f /mnt/bko-target) || exit 1; want=loader.1;"),
+            "{bt}"
+        );
         let nvram = pos("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label");
-        assert!(bt.contains("--label Fedora --loader '\\EFI\\fedora\\SHIMX64.EFI'\n"), "{bt}");
+        assert!(
+            bt.contains("--label Fedora --loader '\\EFI\\fedora\\SHIMX64.EFI'\n"),
+            "{bt}"
+        );
         let log = pos("mkdir -p /mnt/bko-target/var/log/bko-holt\n");
-        let label = pos("security.selinux /mnt/bko-target/var/log /mnt/bko-target/var/log/bko-holt\n");
+        let label =
+            pos("security.selinux /mnt/bko-target/var/log /mnt/bko-target/var/log/bko-holt\n");
         let back = pos("atimes.after");
-        assert!(listed < check && check < nvram && nvram < log && log < label && label < back, "{bt}");
-        assert!(bt.contains("# ostree: /boot, the ESP and /ostree are restored verbatim"), "{bt}");
+        assert!(
+            listed < check && check < nvram && nvram < log && log < label && label < back,
+            "{bt}"
+        );
+        assert!(
+            bt.contains("# ostree: /boot, the ESP and /ostree are restored verbatim"),
+            "{bt}"
+        );
         // --no-nvram: no UEFI entries.
         assert!(!text(plan(&v, &["--no-nvram"]).stage(Stage::Boot)).contains("efibootmgr"));
     }
@@ -293,20 +391,43 @@ mod tests {
     #[test]
     fn log_in_the_stateroots_var() {
         let v = kinoite();
-        let fstab: Vec<Value> = v.at(&["storage", "fstab"]).and_then(Value::as_array).unwrap().iter().filter(|e| e.get("file").and_then(Value::as_str) != Some("/var")).cloned().collect();
+        let fstab: Vec<Value> = v
+            .at(&["storage", "fstab"])
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter(|e| e.get("file").and_then(Value::as_str) != Some("/var"))
+            .cloned()
+            .collect();
         let v = with(&v, &["storage", "fstab"], Value::Arr(fstab));
         let b = plan(&v, &[]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let bt = text(b.stage(Stage::Boot));
-        assert!(bt.contains("mkdir -p /mnt/bko-target/ostree/deploy/default/var/log/bko-holt\n"), "{bt}");
+        assert!(
+            bt.contains("mkdir -p /mnt/bko-target/ostree/deploy/default/var/log/bko-holt\n"),
+            "{bt}"
+        );
         assert!(bt.contains("security.selinux /mnt/bko-target/ostree/deploy/default/var/log /mnt/bko-target/ostree/deploy/default/var/log/bko-holt\n"), "{bt}");
         let v = with(&v, &["boot", "ostree", "stateroot"], Value::Null);
         let v = with(&v, &["boot", "ostree", "deployments"], Value::Arr(vec![]));
         let b = plan(&v, &[]);
-        assert!(b.problems.iter().any(|p| p.contains("nowhere to write the restore's log")), "{:?}", b.problems);
+        assert!(
+            b.problems
+                .iter()
+                .any(|p| p.contains("nowhere to write the restore's log")),
+            "{:?}",
+            b.problems
+        );
         for bad in ["../etc", "a/b", "..", ".", ""] {
-            let b = plan(&with(&v, &["boot", "ostree", "stateroot"], Value::Str(bad.into())), &[]);
-            assert!(b.problems.iter().any(|p| p.contains("invalid stateroot")), "{bad}: {:?}", b.problems);
+            let b = plan(
+                &with(&v, &["boot", "ostree", "stateroot"], Value::Str(bad.into())),
+                &[],
+            );
+            assert!(
+                b.problems.iter().any(|p| p.contains("invalid stateroot")),
+                "{bad}: {:?}",
+                b.problems
+            );
         }
     }
 
@@ -320,59 +441,150 @@ mod tests {
         };
         let s = |x: &str| Value::Str(x.into());
         for m in ["verity", "signed"] {
-            has(&with(&v, &["boot", "ostree", "prepare_root", "composefs"], s(m)), &format!("composefs enabled = {m}"));
+            has(
+                &with(&v, &["boot", "ostree", "prepare_root", "composefs"], s(m)),
+                &format!("composefs enabled = {m}"),
+            );
         }
         for m in [Value::Str("maybe".into()), Value::Null] {
-            let b = plan(&with(&v, &["boot", "ostree", "prepare_root", "composefs"], m), &[]);
-            assert!(b.problems.is_empty() && b.notes.iter().any(|n| n.contains("enabled = maybe")), "{:?} {:?}", b.problems, b.notes);
+            let b = plan(
+                &with(&v, &["boot", "ostree", "prepare_root", "composefs"], m),
+                &[],
+            );
+            assert!(
+                b.problems.is_empty() && b.notes.iter().any(|n| n.contains("enabled = maybe")),
+                "{:?} {:?}",
+                b.problems,
+                b.notes
+            );
         }
         let fsv = crate::json::parse(r#"{"required": "true"}"#).unwrap();
-        has(&with(&v, &["boot", "ostree", "repo", "ex_fsverity"], fsv), "[ex-fsverity] required=true");
+        has(
+            &with(&v, &["boot", "ostree", "repo", "ex_fsverity"], fsv),
+            "[ex-fsverity] required=true",
+        );
         let fsv = crate::json::parse(r#"{"required": "false"}"#).unwrap();
-        let b = plan(&with(&v, &["boot", "ostree", "repo", "ex_fsverity"], fsv), &[]);
-        assert!(b.problems.is_empty() && b.notes.iter().any(|n| n.contains("[ex-fsverity] section")), "{:?}", b.notes);
-        let bios = with(&with(&v, &["firmware", "mode"], s("bios")), &["boot", "loader", "firmware"], s("bios"));
+        let b = plan(
+            &with(&v, &["boot", "ostree", "repo", "ex_fsverity"], fsv),
+            &[],
+        );
+        assert!(
+            b.problems.is_empty() && b.notes.iter().any(|n| n.contains("[ex-fsverity] section")),
+            "{:?}",
+            b.notes
+        );
+        let bios = with(
+            &with(&v, &["firmware", "mode"], s("bios")),
+            &["boot", "loader", "firmware"],
+            s("bios"),
+        );
         has(&bios, "BIOS boot");
-        has(&with(&v, &["storage", "crypttab"], crate::json::parse(r#"[{"name": "luks-x", "device": "UUID=x"}]"#).unwrap()), "LUKS");
-        has(&with(&v, &["storage", "disks", "0", "partitions", "2", "content", "type"], s("crypto_LUKS")), "LUKS");
-        has(&with(&v, &["storage", "disks", "0", "partitions", "2", "content", "type"], s("LVM2_member")), "LVM");
+        has(
+            &with(
+                &v,
+                &["storage", "crypttab"],
+                crate::json::parse(r#"[{"name": "luks-x", "device": "UUID=x"}]"#).unwrap(),
+            ),
+            "LUKS",
+        );
+        has(
+            &with(
+                &v,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partitions",
+                    "2",
+                    "content",
+                    "type",
+                ],
+                s("crypto_LUKS"),
+            ),
+            "LUKS",
+        );
+        has(
+            &with(
+                &v,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partitions",
+                    "2",
+                    "content",
+                    "type",
+                ],
+                s("LVM2_member"),
+            ),
+            "LVM",
+        );
         let only = |keep: &dyn Fn(&str) -> bool| {
-            let f: Vec<Value> = v.at(&["storage", "fstab"]).and_then(Value::as_array).unwrap().iter().filter(|e| keep(e.get("file").and_then(Value::as_str).unwrap())).cloned().collect();
+            let f: Vec<Value> = v
+                .at(&["storage", "fstab"])
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .filter(|e| keep(e.get("file").and_then(Value::as_str).unwrap()))
+                .cloned()
+                .collect();
             with(&v, &["storage", "fstab"], Value::Arr(f))
         };
         has(&only(&|f| f != "/boot"), "without a separate /boot");
         has(&only(&|f| f != "/"), "without `/` in fstab");
-        let b = plan(&with(&v, &["boot", "ostree", "bootupd_state"], Value::Bool(false)), &[]);
-        assert!(b.problems.is_empty() && b.notes.iter().any(|n| n.contains("bootupd-state.json")), "{:?}", b.notes);
+        let b = plan(
+            &with(&v, &["boot", "ostree", "bootupd_state"], Value::Bool(false)),
+            &[],
+        );
+        assert!(
+            b.problems.is_empty() && b.notes.iter().any(|n| n.contains("bootupd-state.json")),
+            "{:?}",
+            b.notes
+        );
         // --new-uuids stays the global problem it is.
-        assert!(plan(&v, &["--new-uuids"]).problems.iter().any(|p| p.contains("--new-uuids")));
+        assert!(
+            plan(&v, &["--new-uuids"])
+                .problems
+                .iter()
+                .any(|p| p.contains("--new-uuids"))
+        );
     }
 
     /// status: a restored ostree tree shows by its repository's config, as
     /// the physical root has no etc/fstab; the boot stage's gate is the same.
     #[test]
     fn restored_shows_by_the_repository() {
-        use crate::load::status::{rows, State};
+        use crate::load::status::{State, rows};
         use crate::sys::{FakeRunner, Sys};
         let v = kinoite();
         let l = Layout::from_json(v.clone()).unwrap();
         let t = crate::testutil::Tree::new("ostree-status");
-        t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", "201326592\n");
+        t.disk("vdb", "253:16", &[], 512)
+            .file("/sys/block/vdb/size", "201326592\n");
         t.file(
             "/proc/self/mountinfo",
             "36 35 253:19 /root /mnt/bko-target rw,relatime - btrfs /dev/vdb3 rw,subvol=/root\n37 36 253:18 / /mnt/bko-target/boot rw,relatime - ext4 /dev/vdb2 rw\n38 37 253:17 / /mnt/bko-target/boot/efi rw,relatime - vfat /dev/vdb1 rw\n39 36 253:19 /home /mnt/bko-target/home rw,relatime - btrfs /dev/vdb3 rw,subvol=/home\n40 36 253:19 /var /mnt/bko-target/var rw,relatime - btrfs /dev/vdb3 rw,subvol=/var\n",
         )
         .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
-        let o = match crate::load::parse_args(&["l.json".into(), "--map".into(), "vda=vdb".into()]).unwrap() {
+        let o = match crate::load::parse_args(&["l.json".into(), "--map".into(), "vda=vdb".into()])
+            .unwrap()
+        {
             crate::load::Parsed::Run(o) => o,
             _ => unreachable!(),
         };
-        let restore = || rows(&l, &o, &s).0.into_iter().find(|r| r.0 == Stage::Restore).unwrap();
+        let restore = || {
+            rows(&l, &o, &s)
+                .0
+                .into_iter()
+                .find(|r| r.0 == Stage::Restore)
+                .unwrap()
+        };
         let r = restore();
         assert_eq!(r.1, State::NotDone, "{r:?}");
         // An etc/fstab alone (the physical root has none) says nothing.
-        t.file("/mnt/bko-target/etc/fstab", "").file("/mnt/bko-target/etc/os-release", "ID=fedora\n");
+        t.file("/mnt/bko-target/etc/fstab", "")
+            .file("/mnt/bko-target/etc/os-release", "ID=fedora\n");
         assert_eq!(restore().1, State::NotDone);
         t.file(&format!("/mnt/bko-target/{MARKER}"), "[core]\nmode=bare\n");
         assert_eq!(restore().1, State::Done);
@@ -399,15 +611,29 @@ mod tests {
         };
         for n in [0, 1] {
             mk(&format!("ostree/deploy/default/deploy/{c}.{n}/etc"));
-            file(&format!("ostree/deploy/default/deploy/{c}.{n}.origin"), "[origin]\n");
+            file(
+                &format!("ostree/deploy/default/deploy/{c}.{n}.origin"),
+                "[origin]\n",
+            );
         }
         file(MARKER, "[core]\nmode=bare\n");
         link("ostree/boot.1", "boot.1.1");
-        link(&format!("ostree/boot.1.1/default/{b}/0"), &format!("../../../deploy/default/deploy/{c}.1"));
-        link(&format!("ostree/boot.1.1/default/{b}/1"), &format!("../../../deploy/default/deploy/{c}.0"));
+        link(
+            &format!("ostree/boot.1.1/default/{b}/0"),
+            &format!("../../../deploy/default/deploy/{c}.1"),
+        );
+        link(
+            &format!("ostree/boot.1.1/default/{b}/1"),
+            &format!("../../../deploy/default/deploy/{c}.0"),
+        );
         link("boot/loader", "loader.1");
         let v = "7.3.3-200.fc44.x86_64";
-        let bls = |ser: u32| format!("title Fedora\nversion {}\noptions ostree=/ostree/boot.1/default/{b}/{ser} root=UUID=x rw\nlinux /ostree/default-{b}/vmlinuz-{v}\ninitrd /ostree/default-{b}/initramfs-{v}.img\n", 2 - ser);
+        let bls = |ser: u32| {
+            format!(
+                "title Fedora\nversion {}\noptions ostree=/ostree/boot.1/default/{b}/{ser} root=UUID=x rw\nlinux /ostree/default-{b}/vmlinuz-{v}\ninitrd /ostree/default-{b}/initramfs-{v}.img\n",
+                2 - ser
+            )
+        };
         file("boot/loader.1/entries/ostree-1.conf", &bls(1));
         file("boot/loader.1/entries/ostree-2.conf", &bls(0));
         file(&format!("boot/ostree/default-{b}/vmlinuz-{v}"), "k");
@@ -417,8 +643,16 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     fn sh(script: &str) -> (bool, String, String) {
-        let out = std::process::Command::new("sh").args(["-c", script]).env("LC_ALL", "C").output().unwrap();
-        (out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+        let out = std::process::Command::new("sh")
+            .args(["-c", script])
+            .env("LC_ALL", "C")
+            .output()
+            .unwrap();
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
     }
 
     /// The consistency check, run by sh on restored trees: whole, and with
@@ -436,11 +670,17 @@ mod tests {
         let (_d, r) = fresh("ostree-check-ok");
         let (ok, out, err) = sh(&check_script(&r, Some("loader.1")));
         assert!(ok, "{out}{err}");
-        assert_eq!(out, "ostree: 2 loader entries, each with its kernel, initramfs and deployment\n");
+        assert_eq!(
+            out,
+            "ostree: 2 loader entries, each with its kernel, initramfs and deployment\n"
+        );
         assert!(err.is_empty(), "{err}");
         // The dump saw loader.0: a warning, not a failure.
         let (ok, _, err) = sh(&check_script(&r, Some("loader.0")));
-        assert!(ok && err.contains("warning: /boot/loader is loader.1 here, loader.0 in the dump"), "{err}");
+        assert!(
+            ok && err.contains("warning: /boot/loader is loader.1 here, loader.0 in the dump"),
+            "{err}"
+        );
         // An orphan checkout: a warning.
         std::fs::create_dir_all(format!("{r}/ostree/deploy/default/deploy/{c}.2/etc")).unwrap();
         let (ok, _, err) = sh(&check_script(&r, None));
@@ -448,7 +688,10 @@ mod tests {
 
         // A missing initramfs; a dangling ostree=; boot.N against loader.N.
         let (_d, r) = fresh("ostree-check-initrd");
-        std::fs::remove_file(format!("{r}/boot/ostree/default-{b}/initramfs-7.3.3-200.fc44.x86_64.img")).unwrap();
+        std::fs::remove_file(format!(
+            "{r}/boot/ostree/default-{b}/initramfs-7.3.3-200.fc44.x86_64.img"
+        ))
+        .unwrap();
         let (ok, _, err) = sh(&check_script(&r, None));
         assert!(!ok && err.contains(&format!("ostree-1.conf: /ostree/default-{b}/initramfs-7.3.3-200.fc44.x86_64.img isn't on the restored /boot")), "{err}");
         assert!(err.contains("ostree-2.conf: /ostree/default-"), "{err}");
@@ -467,9 +710,23 @@ mod tests {
         let (ok, _, err) = sh(&check_script(&r, Some("loader.0")));
         let lines: Vec<&str> = err.lines().collect();
         assert!(!ok && lines.len() == 6, "{err}");
-        assert!(lines[0].contains("warning: /boot/loader is loader.1 here") && lines[1..3].iter().all(|l| l.contains("warning: no loader entry leads to")), "{err}");
-        assert!(lines[3..5].iter().all(|l| l.contains("leads nowhere in the restored tree")), "{err}");
-        assert_eq!(lines[5], "ostree: 2 of 2 loader entries inconsistent with the restored tree (a backup taken across a deploy?)");
+        assert!(
+            lines[0].contains("warning: /boot/loader is loader.1 here")
+                && lines[1..3]
+                    .iter()
+                    .all(|l| l.contains("warning: no loader entry leads to")),
+            "{err}"
+        );
+        assert!(
+            lines[3..5]
+                .iter()
+                .all(|l| l.contains("leads nowhere in the restored tree")),
+            "{err}"
+        );
+        assert_eq!(
+            lines[5],
+            "ostree: 2 of 2 loader entries inconsistent with the restored tree (a backup taken across a deploy?)"
+        );
         let (_d, r) = fresh("ostree-check-version");
         std::fs::remove_file(format!("{r}/boot/loader")).unwrap();
         std::os::unix::fs::symlink("loader.0", format!("{r}/boot/loader")).unwrap();
@@ -480,16 +737,31 @@ mod tests {
         let (_d, r) = fresh("ostree-check-inside");
         let e = format!("{r}/boot/loader.1/entries/ostree-2.conf");
         let text = std::fs::read_to_string(&e).unwrap();
-        std::fs::write(&e, text.replace(&format!("/{b}/0 "), &format!("/{b}/0/etc "))).unwrap();
+        std::fs::write(
+            &e,
+            text.replace(&format!("/{b}/0 "), &format!("/{b}/0/etc ")),
+        )
+        .unwrap();
         let (ok, _, err) = sh(&check_script(&r, None));
-        assert!(!ok && err.contains(&format!("leads to /ostree/deploy/default/deploy/{c}.1/etc, inside a deployment")), "{err}");
+        assert!(
+            !ok && err.contains(&format!(
+                "leads to /ostree/deploy/default/deploy/{c}.1/etc, inside a deployment"
+            )),
+            "{err}"
+        );
         std::fs::write(&e, text.replace("options ostree=", "options x=")).unwrap();
         let (ok, _, err) = sh(&check_script(&r, None));
-        assert!(!ok && err.contains("ostree-2.conf: no ostree= in its options"), "{err}");
+        assert!(
+            !ok && err.contains("ostree-2.conf: no ostree= in its options"),
+            "{err}"
+        );
         let (_d, r) = fresh("ostree-check-none");
         std::fs::remove_dir_all(format!("{r}/boot/loader.1/entries")).unwrap();
         let (ok, _, err) = sh(&check_script(&r, None));
-        assert!(!ok && err.lines().last().unwrap().contains("no loader entries"), "{err}");
+        assert!(
+            !ok && err.lines().last().unwrap().contains("no loader entries"),
+            "{err}"
+        );
         assert!(err.contains("warning: no loader entry leads to"), "{err}");
         std::fs::remove_file(format!("{r}/boot/loader")).unwrap();
         let (ok, _, err) = sh(&check_script(&r, None));
@@ -508,24 +780,48 @@ mod tests {
         std::fs::write(format!("{r}/var/log/bko-holt/sub/f"), "x").unwrap();
         let top = format!("{r}/var/log/bko-holt");
         let log = format!("{r}/var/log");
-        let py = |src: &str| std::process::Command::new("python3").args(["-c", LABEL_PY, "user.bko_test", src, top.as_str()]).output().unwrap();
+        let py = |src: &str| {
+            std::process::Command::new("python3")
+                .args(["-c", LABEL_PY, "user.bko_test", src, top.as_str()])
+                .output()
+                .unwrap()
+        };
         // No attribute on the source: nothing done, and no failure.
         let out = py(&log);
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         let set = std::process::Command::new("python3").args(["-c", "import os, sys; os.setxattr(sys.argv[1], 'user.bko_test', b'system_u:object_r:var_log_t:s0')", log.as_str()]).output().unwrap();
         if !set.status.success() {
-            eprintln!("SKIP: no user xattrs here: {}", String::from_utf8_lossy(&set.stderr));
+            eprintln!(
+                "SKIP: no user xattrs here: {}",
+                String::from_utf8_lossy(&set.stderr)
+            );
             return;
         }
         let out = py(&log);
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        let paths: Vec<String> = ["", "/load.log", "/sub", "/sub/f"].iter().map(|x| format!("{top}{x}")).collect();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let paths: Vec<String> = ["", "/load.log", "/sub", "/sub/f"]
+            .iter()
+            .map(|x| format!("{top}{x}"))
+            .collect();
         let get = std::process::Command::new("python3")
             .arg("-c")
             .arg("import os, sys\nfor p in sys.argv[1:]: print(os.getxattr(p, 'user.bko_test').decode())")
             .args(&paths)
             .output()
             .unwrap();
-        assert_eq!(String::from_utf8_lossy(&get.stdout), "system_u:object_r:var_log_t:s0\n".repeat(4), "{}", String::from_utf8_lossy(&get.stderr));
+        assert_eq!(
+            String::from_utf8_lossy(&get.stdout),
+            "system_u:object_r:var_log_t:s0\n".repeat(4),
+            "{}",
+            String::from_utf8_lossy(&get.stderr)
+        );
     }
 }

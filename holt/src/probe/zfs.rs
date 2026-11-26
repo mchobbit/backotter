@@ -3,7 +3,7 @@
 //! into JSON so a pool's layout shows even when it isn't imported.
 
 use super::Content;
-use crate::bytes::{be32, be64, ByteSource};
+use crate::bytes::{ByteSource, be32, be64};
 use crate::json::{Obj, Value};
 
 const LABEL_SIZE: u64 = 256 << 10;
@@ -60,7 +60,10 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
         .set("pool_state", state)
         .set("txg", u("txg"))
         .set("spa_version", u("version"))
-        .set("hostname", cfg.get("hostname").cloned().unwrap_or(Value::Null))
+        .set(
+            "hostname",
+            cfg.get("hostname").cloned().unwrap_or(Value::Null),
+        )
         .set("hostid", u("hostid"));
     Some(Content {
         kind: "zfs_member".into(),
@@ -127,7 +130,11 @@ pub fn unpack(b: &[u8]) -> Result<Value, String> {
     }
     match b[0] {
         0 => {
-            let mut n = Native { b, i: 12, little: b[1] == 1 };
+            let mut n = Native {
+                b,
+                i: 12,
+                little: b[1] == 1,
+            };
             n.list(0)
         }
         1 => {
@@ -151,7 +158,10 @@ struct Native<'a> {
 
 impl Native<'_> {
     fn n<const N: usize>(&self, o: usize) -> Result<[u8; N], String> {
-        let s = self.b.get(o..o.checked_add(N).ok_or("bad offset")?).ok_or("nvlist truncated")?;
+        let s = self
+            .b
+            .get(o..o.checked_add(N).ok_or("bad offset")?)
+            .ok_or("nvlist truncated")?;
         let mut a: [u8; N] = s.try_into().map_err(|_| "nvlist truncated".to_string())?;
         if !self.little {
             a.reverse();
@@ -169,7 +179,10 @@ impl Native<'_> {
     }
     fn cstr_until(&self, o: usize, limit: usize) -> Result<String, String> {
         let rest = self.b.get(o..limit).ok_or("nvlist truncated")?;
-        let end = rest.iter().position(|&c| c == 0).ok_or("unterminated string")?;
+        let end = rest
+            .iter()
+            .position(|&c| c == 0)
+            .ok_or("unterminated string")?;
         Ok(String::from_utf8_lossy(&rest[..end]).into_owned())
     }
 
@@ -193,7 +206,10 @@ impl Native<'_> {
             // (u8_at returns 0 out of bounds) to the nvpair, reading past pair
             // boundaries or fabricating up to MAX_ELEMENTS zero bytes on corrupt
             // zpool.cache inputs. Bound every field, string, and array to end.
-            let end = start.checked_add(size).filter(|&e| e <= self.b.len()).ok_or("bad nvpair size")?;
+            let end = start
+                .checked_add(size)
+                .filter(|&e| e <= self.b.len())
+                .ok_or("bad nvpair size")?;
             let voff = (16usize.saturating_add(name_len) + 7) & !7;
             if name_len == 0 || size < voff || nelem > MAX_ELEMENTS {
                 return Err("bad nvpair size".into());
@@ -203,7 +219,10 @@ impl Native<'_> {
             // start at 12 in the file, so not from the file's).
             let v = start + voff;
             let check_end = |p: usize, len: usize| -> Result<(), String> {
-                p.checked_add(len).filter(|&e| e <= end).map(|_| ()).ok_or_else(|| "nvlist truncated".into())
+                p.checked_add(len)
+                    .filter(|&e| e <= end)
+                    .map(|_| ())
+                    .ok_or_else(|| "nvlist truncated".into())
             };
             let scalar = |w: usize, signed: bool| -> Result<Value, String> {
                 check_end(v, w)?;
@@ -221,7 +240,9 @@ impl Native<'_> {
                 })
             };
             let elem = |k: usize, w: usize, signed: bool| -> Result<Value, String> {
-                let p = v.checked_add(k.checked_mul(w).ok_or("bad offset")?).ok_or("bad offset")?;
+                let p = v
+                    .checked_add(k.checked_mul(w).ok_or("bad offset")?)
+                    .ok_or("bad offset")?;
                 check_end(p, w)?;
                 let raw = match w {
                     1 => self.n::<1>(p)?[0] as u64,
@@ -267,9 +288,15 @@ impl Native<'_> {
                         25 => (1, true),
                         _ => (1, false),
                     };
-                    let a = (0..nelem as usize).map(|k| elem(k, w, signed)).collect::<Result<Vec<_>, _>>()?;
+                    let a = (0..nelem as usize)
+                        .map(|k| elem(k, w, signed))
+                        .collect::<Result<Vec<_>, _>>()?;
                     if typ == 24 {
-                        Value::Arr(a.into_iter().map(|x| Value::Bool(x != Value::UInt(0))).collect())
+                        Value::Arr(
+                            a.into_iter()
+                                .map(|x| Value::Bool(x != Value::UInt(0)))
+                                .collect(),
+                        )
                     } else {
                         Value::Arr(a)
                     }
@@ -349,7 +376,11 @@ fn nvlist(x: &mut Xdr, depth: usize) -> Result<Value, String> {
                 let mut a = Vec::with_capacity(nelem.min(4096) as usize);
                 for _ in 0..nelem {
                     a.push(if wide {
-                        if typ == 15 { Value::Int(x.u64()? as i64) } else { Value::UInt(x.u64()?) }
+                        if typ == 15 {
+                            Value::Int(x.u64()? as i64)
+                        } else {
+                            Value::UInt(x.u64()?)
+                        }
                     } else if typ == 24 {
                         Value::Bool(x.u32()? != 0)
                     } else if typ == 14 {
@@ -486,7 +517,10 @@ mod tests {
     #[test]
     fn label_offsets_math() {
         let size = 64u64 << 20;
-        assert_eq!(label_offsets(size), vec![0, 256 << 10, size - (512 << 10), size - (256 << 10)]);
+        assert_eq!(
+            label_offsets(size),
+            vec![0, 256 << 10, size - (512 << 10), size - (256 << 10)]
+        );
         // An unaligned size is rounded down to a label boundary first.
         assert_eq!(label_offsets(size + 1000)[3], size - (256 << 10));
         assert_eq!(label_offsets(512 << 10), vec![0]);
@@ -504,8 +538,15 @@ mod tests {
         assert_eq!(d.get("pool_state").and_then(Value::as_str), Some("active"));
         assert_eq!(d.get("vdev_guid").and_then(Value::as_str), Some("43"));
         let e = c.extra.unwrap();
-        assert_eq!(e.at(&["vdev_tree", "children", "1", "path"]).and_then(Value::as_str), Some("/dev/vdb3"));
-        assert_eq!(e.at(&["features_for_read", "com.delphix:hole_birth"]), Some(&Value::Bool(true)));
+        assert_eq!(
+            e.at(&["vdev_tree", "children", "1", "path"])
+                .and_then(Value::as_str),
+            Some("/dev/vdb3")
+        );
+        assert_eq!(
+            e.at(&["features_for_read", "com.delphix:hole_birth"]),
+            Some(&Value::Bool(true))
+        );
     }
 
     #[test]
@@ -517,7 +558,15 @@ mod tests {
         assert!(probe(&MemSource(disk)).is_none());
         let mut img = pack::vdev(4 << 20, &cfg());
         img[(256 << 10) + (NVLIST_OFFSET as usize)] = 0xff; // L1 gone, L0 still there
-        assert_eq!(probe(&MemSource(img)).unwrap().details.build().get("labels_valid").and_then(Value::as_u64), Some(3));
+        assert_eq!(
+            probe(&MemSource(img))
+                .unwrap()
+                .details
+                .build()
+                .get("labels_valid")
+                .and_then(Value::as_u64),
+            Some(3)
+        );
     }
 
     #[test]
@@ -525,7 +574,13 @@ mod tests {
         let mut img = pack::vdev(4 << 20, &cfg());
         img[(NVLIST_OFFSET as usize)..(NVLIST_OFFSET as usize) + 16].fill(0xff);
         let c = probe(&MemSource(img)).unwrap();
-        assert_eq!(c.details.build().get("labels_valid").and_then(Value::as_u64), Some(3));
+        assert_eq!(
+            c.details
+                .build()
+                .get("labels_valid")
+                .and_then(Value::as_u64),
+            Some(3)
+        );
         assert!(probe(&MemSource(vec![0u8; 4 << 20])).is_none());
     }
 
@@ -584,7 +639,10 @@ mod tests {
         assert_eq!(v.get("bv"), Some(&Value::Bool(true)));
         assert_eq!(v.get("ba").and_then(Value::as_str), Some("010203"));
         assert_eq!(v.get("u64a"), Some(&Value::from(vec![1u64, 2])));
-        assert_eq!(v.get("i32a"), Some(&Value::Arr(vec![Value::Int(-1), Value::Int(3)])));
+        assert_eq!(
+            v.get("i32a"),
+            Some(&Value::Arr(vec![Value::Int(-1), Value::Int(3)]))
+        );
         assert_eq!(v.get("sa"), Some(&Value::from(vec!["x", "yz"])));
         assert_eq!(v.get("dbl"), Some(&Value::Null));
         assert_eq!(v.get("flag"), Some(&Value::Bool(true)));
@@ -599,15 +657,50 @@ mod tests {
         let v = unpack(REAL_CACHE).unwrap();
         let p = v.get("rpool").unwrap();
         assert_eq!(p.get("version").and_then(Value::as_u64), Some(5000));
-        assert_eq!(p.get("pool_guid").and_then(Value::as_u64), Some(15105800815207446011));
+        assert_eq!(
+            p.get("pool_guid").and_then(Value::as_u64),
+            Some(15105800815207446011)
+        );
         assert_eq!(p.get("hostname").and_then(Value::as_str), Some("(none)"));
-        assert_eq!(p.get("com.delphix:has_per_vdev_zaps"), Some(&Value::Bool(true)));
-        assert_eq!(p.at(&["vdev_tree", "type"]).and_then(Value::as_str), Some("root"));
-        assert_eq!(p.at(&["vdev_tree", "children", "0", "path"]).and_then(Value::as_str), Some("/dev/vda3"));
-        assert_eq!(p.at(&["vdev_tree", "children", "0", "ashift"]).and_then(Value::as_u64), Some(12));
-        assert_eq!(p.at(&["vdev_tree", "children", "0", "asize"]).and_then(Value::as_u64), Some(13952876544));
-        let f: Vec<&str> = p.get("features_for_read").unwrap().as_object().unwrap().iter().map(|(k, _)| k.as_str()).collect();
-        assert_eq!(f, vec!["com.delphix:hole_birth", "com.delphix:embedded_data", "com.klarasystems:vdev_zaps_v2"]);
+        assert_eq!(
+            p.get("com.delphix:has_per_vdev_zaps"),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(
+            p.at(&["vdev_tree", "type"]).and_then(Value::as_str),
+            Some("root")
+        );
+        assert_eq!(
+            p.at(&["vdev_tree", "children", "0", "path"])
+                .and_then(Value::as_str),
+            Some("/dev/vda3")
+        );
+        assert_eq!(
+            p.at(&["vdev_tree", "children", "0", "ashift"])
+                .and_then(Value::as_u64),
+            Some(12)
+        );
+        assert_eq!(
+            p.at(&["vdev_tree", "children", "0", "asize"])
+                .and_then(Value::as_u64),
+            Some(13952876544)
+        );
+        let f: Vec<&str> = p
+            .get("features_for_read")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(k, _)| k.as_str())
+            .collect();
+        assert_eq!(
+            f,
+            vec![
+                "com.delphix:hole_birth",
+                "com.delphix:embedded_data",
+                "com.klarasystems:vdev_zaps_v2"
+            ]
+        );
         // Every truncation fails cleanly.
         for cut in (12..REAL_CACHE.len()).step_by(7) {
             let _ = unpack(&REAL_CACHE[..cut]);
@@ -618,11 +711,26 @@ mod tests {
     fn real_label_xdr_encoding() {
         let v = unpack(REAL_LABEL).unwrap();
         assert_eq!(v.get("name").and_then(Value::as_str), Some("rpool"));
-        assert_eq!(v.get("pool_guid").and_then(Value::as_u64), Some(15105800815207446011));
-        assert_eq!(v.get("guid").and_then(Value::as_u64), Some(12321095712930874282));
-        assert_eq!(v.at(&["vdev_tree", "type"]).and_then(Value::as_str), Some("disk"));
-        assert_eq!(v.at(&["vdev_tree", "path"]).and_then(Value::as_str), Some("/dev/vda3"));
-        assert_eq!(v.at(&["features_for_read", "com.delphix:hole_birth"]), Some(&Value::Bool(true)));
+        assert_eq!(
+            v.get("pool_guid").and_then(Value::as_u64),
+            Some(15105800815207446011)
+        );
+        assert_eq!(
+            v.get("guid").and_then(Value::as_u64),
+            Some(12321095712930874282)
+        );
+        assert_eq!(
+            v.at(&["vdev_tree", "type"]).and_then(Value::as_str),
+            Some("disk")
+        );
+        assert_eq!(
+            v.at(&["vdev_tree", "path"]).and_then(Value::as_str),
+            Some("/dev/vda3")
+        );
+        assert_eq!(
+            v.at(&["features_for_read", "com.delphix:hole_birth"]),
+            Some(&Value::Bool(true))
+        );
         for cut in (12..REAL_LABEL.len()).step_by(5) {
             let _ = unpack(&REAL_LABEL[..cut]);
         }
@@ -632,8 +740,20 @@ mod tests {
     fn native_big_endian_and_scalar_types() {
         // Build a native list by hand, both byte orders.
         for little in [true, false] {
-            let w32 = |v: u32| if little { v.to_le_bytes() } else { v.to_be_bytes() };
-            let w16 = |v: u16| if little { v.to_le_bytes() } else { v.to_be_bytes() };
+            let w32 = |v: u32| {
+                if little {
+                    v.to_le_bytes()
+                } else {
+                    v.to_be_bytes()
+                }
+            };
+            let w16 = |v: u16| {
+                if little {
+                    v.to_le_bytes()
+                } else {
+                    v.to_be_bytes()
+                }
+            };
             let mut b = vec![0u8, little as u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
             let mut pair = |name: &str, typ: u32, nelem: u32, val: &[u8]| {
                 let name_len = name.len() + 1;
@@ -662,7 +782,10 @@ mod tests {
             assert_eq!(v.get("i8"), Some(&Value::Int(-2)), "little={little}");
             assert_eq!(v.get("i16"), Some(&Value::Int(-3)));
             assert_eq!(v.get("u32"), Some(&Value::UInt(7)));
-            assert_eq!(v.get("i32a"), Some(&Value::Arr(vec![Value::Int(-1), Value::Int(2)])));
+            assert_eq!(
+                v.get("i32a"),
+                Some(&Value::Arr(vec![Value::Int(-1), Value::Int(2)]))
+            );
             assert_eq!(v.get("sa"), Some(&Value::from(vec!["ab", "c"])));
             assert_eq!(v.get("bv"), Some(&Value::Bool(true)));
             assert_eq!(v.get("ba").and_then(Value::as_str), Some("090a"));
@@ -672,7 +795,11 @@ mod tests {
     #[test]
     fn unpack_rejects_garbage() {
         assert!(unpack(&[]).is_err());
-        assert!(unpack(&[7u8; 64]).unwrap_err().contains("unknown nvlist encoding"));
+        assert!(
+            unpack(&[7u8; 64])
+                .unwrap_err()
+                .contains("unknown nvlist encoding")
+        );
         assert!(unpack(&[0u8; 64]).is_ok()); // native, empty list
         let mut bad = vec![0u8, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         bad.extend(1000u32.to_le_bytes());

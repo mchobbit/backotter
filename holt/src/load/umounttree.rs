@@ -7,7 +7,7 @@
 //! first umount that does (busy and the like).  Nothing mounted there is
 //! success: close can run again.
 
-use crate::mounts::{parse_mountinfo, Mount};
+use crate::mounts::{Mount, parse_mountinfo};
 use std::collections::HashMap;
 
 /// The mounts at or under T, in the order they come off: each before the
@@ -27,7 +27,12 @@ pub fn order<'a>(mounts: &'a [Mount], t: &str) -> Vec<&'a Mount> {
         d
     };
     let under = |p: &str| p == t || p.strip_prefix(t).is_some_and(|r| r.starts_with('/'));
-    let mut out: Vec<(usize, usize, &Mount)> = mounts.iter().enumerate().filter(|(_, m)| under(&m.target)).map(|(i, m)| (depth(m), i, m)).collect();
+    let mut out: Vec<(usize, usize, &Mount)> = mounts
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| under(&m.target))
+        .map(|(i, m)| (depth(m), i, m))
+        .collect();
     out.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
     out.into_iter().map(|(_, _, m)| m).collect()
 }
@@ -35,7 +40,11 @@ pub fn order<'a>(mounts: &'a [Mount], t: &str) -> Vec<&'a Mount> {
 /// Unmounts what's at or under T, reading the mounts (READ, mountinfo's
 /// text) again before each umount (UMOUNT, of a path): one may take others
 /// with it (propagation).  Gives back the paths unmounted, in order.
-pub fn run(t: &str, mut read: impl FnMut() -> Result<String, String>, mut umount: impl FnMut(&str) -> Result<(), String>) -> Result<Vec<String>, String> {
+pub fn run(
+    t: &str,
+    mut read: impl FnMut() -> Result<String, String>,
+    mut umount: impl FnMut(&str) -> Result<(), String>,
+) -> Result<Vec<String>, String> {
     let t = t.trim_end_matches('/');
     if t.is_empty() || !t.starts_with('/') {
         return Err("umount-tree: the target is an absolute path other than /".into());
@@ -44,9 +53,14 @@ pub fn run(t: &str, mut read: impl FnMut() -> Result<String, String>, mut umount
     let mut last: Option<u32> = None;
     loop {
         let mounts = parse_mountinfo(&read()?);
-        let Some(m) = order(&mounts, t).first().map(|m| (*m).clone()) else { return Ok(done) };
+        let Some(m) = order(&mounts, t).first().map(|m| (*m).clone()) else {
+            return Ok(done);
+        };
         if last == Some(m.id) {
-            return Err(format!("{} is still mounted (mount {}) after umount said it wasn't", m.target, m.id));
+            return Err(format!(
+                "{} is still mounted (mount {}) after umount said it wasn't",
+                m.target, m.id
+            ));
         }
         umount(&m.target)?;
         done.push(m.target.clone());
@@ -60,15 +74,30 @@ pub fn main(args: &[String]) -> u8 {
         eprintln!("usage: bko-holt umount-tree TARGET");
         return 2;
     };
-    let read = || crate::bytes::read_to_string_bounded(std::path::Path::new("/proc/self/mountinfo"), 16 << 20).map_err(|e| format!("/proc/self/mountinfo: {e}"));
+    let read = || {
+        crate::bytes::read_to_string_bounded(std::path::Path::new("/proc/self/mountinfo"), 16 << 20)
+            .map_err(|e| format!("/proc/self/mountinfo: {e}"))
+    };
     let umount = |p: &str| {
         println!("umount {}", super::shell_quote(p));
-        let o = std::process::Command::new("umount").arg(p).env("LC_ALL", "C").output().map_err(|e| format!("umount: {e}"))?;
+        let o = std::process::Command::new("umount")
+            .arg(p)
+            .env("LC_ALL", "C")
+            .output()
+            .map_err(|e| format!("umount: {e}"))?;
         if o.status.success() {
             return Ok(());
         }
         let err = String::from_utf8_lossy(&o.stderr);
-        Err(format!("umount {p} failed ({}){}", o.status, if err.trim().is_empty() { String::new() } else { format!(": {}", err.trim()) }))
+        Err(format!(
+            "umount {p} failed ({}){}",
+            o.status,
+            if err.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", err.trim())
+            }
+        ))
     };
     match run(t, read, umount) {
         Ok(d) if d.is_empty() => {
@@ -111,7 +140,11 @@ mod tests {
 
     impl Fake {
         fn new(text: &str) -> Fake {
-            Fake { lines: RefCell::new(text.lines().map(str::to_string).collect()), busy: None, calls: RefCell::new(vec![]) }
+            Fake {
+                lines: RefCell::new(text.lines().map(str::to_string).collect()),
+                busy: None,
+                calls: RefCell::new(vec![]),
+            }
         }
         fn go(&self, t: &str) -> Result<Vec<String>, String> {
             run(
@@ -120,11 +153,15 @@ mod tests {
                 |p| {
                     self.calls.borrow_mut().push(p.to_string());
                     if self.busy == Some(p) {
-                        return Err(format!("umount {p} failed (exit status: 32): umount: {p}: target is busy."));
+                        return Err(format!(
+                            "umount {p} failed (exit status: 32): umount: {p}: target is busy."
+                        ));
                     }
                     let mut l = self.lines.borrow_mut();
                     let ms = parse_mountinfo(&l.join("\n"));
-                    let Some(top) = ms.iter().rposition(|m| m.target == p) else { return Err(format!("umount: {p}: not mounted")) };
+                    let Some(top) = ms.iter().rposition(|m| m.target == p) else {
+                        return Err(format!("umount: {p}: not mounted"));
+                    };
                     if ms.iter().any(|m| m.parent == ms[top].id) {
                         return Err(format!("umount: {p}: target is busy."));
                     }
@@ -141,10 +178,23 @@ mod tests {
         let d = f.go("/mnt/bko-target").unwrap();
         assert_eq!(d[0], "/mnt/bko-target/run/mnt/data/system-data/dev");
         assert_eq!(d.len(), 5, "{d:?}");
-        assert_eq!(d[1..], ["/mnt/bko-target/run/mnt/ubuntu-seed", "/mnt/bko-target/run/mnt/ubuntu-save", "/mnt/bko-target/run/mnt/ubuntu-boot", "/mnt/bko-target/run/mnt/data"]);
+        assert_eq!(
+            d[1..],
+            [
+                "/mnt/bko-target/run/mnt/ubuntu-seed",
+                "/mnt/bko-target/run/mnt/ubuntu-save",
+                "/mnt/bko-target/run/mnt/ubuntu-boot",
+                "/mnt/bko-target/run/mnt/data"
+            ]
+        );
         // Only T's: not /mnt/bko-target2, not the rest.
         let left = f.lines.borrow().join("\n");
-        assert!(left.contains("/mnt/bko-target2") && left.contains("/mnt/other") && !left.contains("/mnt/bko-target/"), "{left}");
+        assert!(
+            left.contains("/mnt/bko-target2")
+                && left.contains("/mnt/other")
+                && !left.contains("/mnt/bko-target/"),
+            "{left}"
+        );
         // Run again (close again): nothing to do, and no umount.
         f.calls.borrow_mut().clear();
         assert!(f.go("/mnt/bko-target/").unwrap().is_empty());
@@ -180,8 +230,16 @@ mod tests {
         let e = f.go("/mnt/bko-target").unwrap_err();
         assert!(e.contains("target is busy"), "{e}");
         // It stops there: ubuntu-boot and data stay mounted.
-        assert_eq!(f.calls.borrow().last().unwrap(), "/mnt/bko-target/run/mnt/ubuntu-save");
-        assert!(f.lines.borrow().join("\n").contains("/mnt/bko-target/run/mnt/data rw"));
+        assert_eq!(
+            f.calls.borrow().last().unwrap(),
+            "/mnt/bko-target/run/mnt/ubuntu-save"
+        );
+        assert!(
+            f.lines
+                .borrow()
+                .join("\n")
+                .contains("/mnt/bko-target/run/mnt/data rw")
+        );
     }
 
     #[test]
@@ -190,14 +248,28 @@ mod tests {
         assert!(e.contains("is still mounted"), "{e}");
         assert!(run("/", || Ok(UC24.into()), |_| Ok(())).is_err());
         assert!(run("mnt", || Ok(UC24.into()), |_| Ok(())).is_err());
-        assert!(run("/mnt/bko-target", || Err("/proc/self/mountinfo: gone".into()), |_| Ok(())).unwrap_err().contains("gone"));
+        assert!(
+            run(
+                "/mnt/bko-target",
+                || Err("/proc/self/mountinfo: gone".into()),
+                |_| Ok(())
+            )
+            .unwrap_err()
+            .contains("gone")
+        );
     }
 
     #[test]
     fn order_is_children_first() {
         let ms = parse_mountinfo(UC24);
-        let o: Vec<&str> = order(&ms, "/mnt/bko-target").iter().map(|m| m.target.as_str()).collect();
-        assert_eq!(o.first(), Some(&"/mnt/bko-target/run/mnt/data/system-data/dev"));
+        let o: Vec<&str> = order(&ms, "/mnt/bko-target")
+            .iter()
+            .map(|m| m.target.as_str())
+            .collect();
+        assert_eq!(
+            o.first(),
+            Some(&"/mnt/bko-target/run/mnt/data/system-data/dev")
+        );
         assert_eq!(o.last(), Some(&"/mnt/bko-target/run/mnt/data"));
         assert!(!o.contains(&"/mnt/bko-target2"));
     }

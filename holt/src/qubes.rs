@@ -46,7 +46,11 @@ struct Tag {
 }
 
 fn unescape(s: &str) -> String {
-    s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
 }
 
 /// The document's tags in order (comments, declarations and CDATA left out).
@@ -77,18 +81,31 @@ fn tags(text: &str) -> Vec<Tag> {
         while let Some(eq) = a.find('=') {
             let key = a[..eq].trim().to_string();
             let after = a[eq + 1..].trim_start();
-            let Some(q) = after.chars().next().filter(|c| *c == '"' || *c == '\'') else { break };
-            let Some(close_q) = after[1..].find(q) else { break };
+            let Some(q) = after.chars().next().filter(|c| *c == '"' || *c == '\'') else {
+                break;
+            };
+            let Some(close_q) = after[1..].find(q) else {
+                break;
+            };
             attrs.push((key, unescape(&after[1..1 + close_q])));
             a = &after[close_q + 2..];
         }
-        out.push(Tag { name, close, empty, attrs, text: txt });
+        out.push(Tag {
+            name,
+            close,
+            empty,
+            attrs,
+            text: txt,
+        });
     }
     out
 }
 
 fn attr<'a>(t: &'a Tag, k: &str) -> Option<&'a str> {
-    t.attrs.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str())
+    t.attrs
+        .iter()
+        .find(|(n, _)| n == k)
+        .map(|(_, v)| v.as_str())
 }
 
 /// qubes.xml as storage.qubes records it: its pools (name, driver, and for
@@ -107,7 +124,9 @@ pub fn parse_xml(text: &str) -> Value {
         let t = &all[i];
         match (t.name.as_str(), t.close) {
             ("pool", false) => {
-                let mut o = Obj::new().set("name", attr(t, "name")).set("driver", attr(t, "driver"));
+                let mut o = Obj::new()
+                    .set("name", attr(t, "name"))
+                    .set("driver", attr(t, "driver"));
                 for k in ["volume_group", "thin_pool", "dir_path", "revisions_to_keep"] {
                     o.put_some(k, attr(t, k));
                 }
@@ -120,7 +139,9 @@ pub fn parse_xml(text: &str) -> Value {
             ("domain", true) => {
                 if let Some((class, name, vols)) = dom.take() {
                     for v in vols {
-                        let mut o = Obj::new().set("qube", name.clone()).set("class", class.clone());
+                        let mut o = Obj::new()
+                            .set("qube", name.clone())
+                            .set("class", class.clone());
                         o.0.extend(v.0);
                         volumes.push(o.build());
                     }
@@ -143,8 +164,14 @@ pub fn parse_xml(text: &str) -> Value {
                             .set("volume", attr(t, "name"))
                             .set("pool", attr(t, "pool"))
                             .set("vid", attr(t, "vid"))
-                            .set("revisions_to_keep", attr(t, "revisions_to_keep").and_then(|v| v.parse::<u64>().ok()))
-                            .set("size_bytes", attr(t, "size").and_then(|v| v.parse::<u64>().ok()))
+                            .set(
+                                "revisions_to_keep",
+                                attr(t, "revisions_to_keep").and_then(|v| v.parse::<u64>().ok()),
+                            )
+                            .set(
+                                "size_bytes",
+                                attr(t, "size").and_then(|v| v.parse::<u64>().ok()),
+                            )
                             .set("snap_on_start", flag("snap_on_start"))
                             .set("save_on_stop", flag("save_on_stop"))
                             .set("rw", flag("rw")),
@@ -155,7 +182,11 @@ pub fn parse_xml(text: &str) -> Value {
         }
         i += 1;
     }
-    Obj::new().set("xml", XML).set("pools", pools).set("volumes", volumes).build()
+    Obj::new()
+        .set("xml", XML)
+        .set("pools", pools)
+        .set("volumes", volumes)
+        .build()
 }
 
 /// storage.qubes: qubes.xml read from the system's root, when it is Qubes's
@@ -177,16 +208,27 @@ pub fn read(sys: &Sys, os_id: Option<&str>) -> Option<Value> {
 /// itself, its -snap (while the qube runs) or one of its revisions
 /// (`-TIMESTAMP-back`).
 pub fn volume_of<'a>(qubes: &'a Value, vg: &str, lv: &str) -> Option<&'a Value> {
-    qubes.get("volumes").and_then(Value::as_array)?.iter().find(|v| {
-        let Some((vvg, base)) = s(v, "vid").and_then(|id| id.split_once('/').map(|(a, b)| (a.to_string(), b.to_string()))) else { return false };
-        if vvg != vg {
-            return false;
-        }
-        if lv == base || lv == format!("{base}-snap") {
-            return true;
-        }
-        lv.strip_prefix(&format!("{base}-")).and_then(|r| r.strip_suffix("-back")).is_some_and(|ts| !ts.is_empty() && ts.bytes().all(|b| b.is_ascii_digit()))
-    })
+    qubes
+        .get("volumes")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|v| {
+            let Some((vvg, base)) = s(v, "vid").and_then(|id| {
+                id.split_once('/')
+                    .map(|(a, b)| (a.to_string(), b.to_string()))
+            }) else {
+                return false;
+            };
+            if vvg != vg {
+                return false;
+            }
+            if lv == base || lv == format!("{base}-snap") {
+                return true;
+            }
+            lv.strip_prefix(&format!("{base}-"))
+                .and_then(|r| r.strip_suffix("-back"))
+                .is_some_and(|ts| !ts.is_empty() && ts.bytes().all(|b| b.is_ascii_digit()))
+        })
 }
 
 // ---- raw volumes ----------------------------------------------------------
@@ -194,7 +236,23 @@ pub fn volume_of<'a>(qubes: &'a Value, vg: &str, lv: &str) -> Option<&'a Value> 
 /// Content types bko-holt load makes (format's, or assemble's): an LV that
 /// holds anything else, unmounted, is taken raw.
 const MADE: [&str; 17] = [
-    "ext2", "ext3", "ext4", "xfs", "btrfs", "f2fs", "vfat", "msdos", "swap", "bcachefs", "nilfs2", "jfs", "crypto_LUKS", "LVM2_member", "linux_raid_member", "zfs_member", "xfs_external_log",
+    "ext2",
+    "ext3",
+    "ext4",
+    "xfs",
+    "btrfs",
+    "f2fs",
+    "vfat",
+    "msdos",
+    "swap",
+    "bcachefs",
+    "nilfs2",
+    "jfs",
+    "crypto_LUKS",
+    "LVM2_member",
+    "linux_raid_member",
+    "zfs_member",
+    "xfs_external_log",
 ];
 
 /// The image path of VG/LV in the backup's tree.
@@ -211,34 +269,75 @@ pub fn image_path(vg: &str, lv: &str) -> String {
 /// bko-holt recognises, or a type load can't make.  An unmounted
 /// filesystem load can make stays a filesystem (made empty, as before).
 pub fn raw_volumes(dm: &mut [Value], lvm: &Value, qubes: Option<&Value>) -> Vec<Value> {
-    let vgs = lvm.get("volume_groups").and_then(Value::as_array).cloned().unwrap_or_default();
+    let vgs = lvm
+        .get("volume_groups")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     let lv_of = |vg: &str, lv: &str| -> Option<(Value, Value)> {
         let g = vgs.iter().find(|g| s(g, "name").as_deref() == Some(vg))?;
-        let l = g.get("logical_volumes").and_then(Value::as_array)?.iter().find(|l| s(l, "name").as_deref() == Some(lv))?;
+        let l = g
+            .get("logical_volumes")
+            .and_then(Value::as_array)?
+            .iter()
+            .find(|l| s(l, "name").as_deref() == Some(lv))?;
         Some((g.clone(), l.clone()))
     };
     let mut sources = Vec::new();
     for d in dm.iter_mut() {
-        if d.at(&["dm", "target"]).and_then(Value::as_str) != Some("lvm") || d.at(&["dm", "lv_layer"]).is_some_and(|x| !x.is_null()) {
+        if d.at(&["dm", "target"]).and_then(Value::as_str) != Some("lvm")
+            || d.at(&["dm", "lv_layer"]).is_some_and(|x| !x.is_null())
+        {
             continue;
         }
-        let (Some(vg), Some(lv)) = (d.at(&["dm", "vg"]).and_then(Value::as_str).map(str::to_string), d.at(&["dm", "lv"]).and_then(Value::as_str).map(str::to_string)) else { continue };
-        let Some((g, l)) = lv_of(&vg, &lv) else { continue };
-        let visible = l.get("status").and_then(Value::as_array).is_some_and(|a| a.iter().any(|x| x.as_str() == Some("VISIBLE")));
-        if !visible || d.get("mounted_at").and_then(Value::as_array).is_some_and(|a| !a.is_empty()) {
+        let (Some(vg), Some(lv)) = (
+            d.at(&["dm", "vg"])
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            d.at(&["dm", "lv"])
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        ) else {
+            continue;
+        };
+        let Some((g, l)) = lv_of(&vg, &lv) else {
+            continue;
+        };
+        let visible = l
+            .get("status")
+            .and_then(Value::as_array)
+            .is_some_and(|a| a.iter().any(|x| x.as_str() == Some("VISIBLE")));
+        if !visible
+            || d.get("mounted_at")
+                .and_then(Value::as_array)
+                .is_some_and(|a| !a.is_empty())
+        {
             continue;
         }
         let seg = l.at(&["segments", "0"]).cloned().unwrap_or(Value::Null);
         let thin = s(&seg, "type").as_deref() == Some("thin");
         let origin = thin.then(|| s(&seg, "origin")).flatten();
         let is_origin = thin
-            && g.get("logical_volumes").and_then(Value::as_array).into_iter().flatten().any(|o| o.at(&["segments", "0", "origin"]).and_then(Value::as_str) == Some(lv.as_str()));
+            && g.get("logical_volumes")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|o| {
+                    o.at(&["segments", "0", "origin"]).and_then(Value::as_str) == Some(lv.as_str())
+                });
         let q = qubes.and_then(|q| volume_of(q, &vg, &lv));
-        let content_type = d.at(&["content", "type"]).and_then(Value::as_str).map(str::to_string);
+        let content_type = d
+            .at(&["content", "type"])
+            .and_then(Value::as_str)
+            .map(str::to_string);
         let why = if q.is_some_and(|v| s(v, "volume").as_deref() == Some("volatile")) {
             None
         } else if let Some(v) = q {
-            Some(format!("qube {}'s {} volume, as qubes.xml names it", s(v, "qube").unwrap_or_default(), s(v, "volume").unwrap_or_default()))
+            Some(format!(
+                "qube {}'s {} volume, as qubes.xml names it",
+                s(v, "qube").unwrap_or_default(),
+                s(v, "volume").unwrap_or_default()
+            ))
         } else if let Some(o) = &origin {
             Some(format!("a thin snapshot of {vg}/{o}"))
         } else if is_origin {
@@ -248,14 +347,29 @@ pub fn raw_volumes(dm: &mut [Value], lvm: &Value, qubes: Option<&Value>) -> Vec<
         } else {
             match &content_type {
                 None => Some("nothing bko-holt recognises is on it".to_string()),
-                Some(t) if !MADE.contains(&t.as_str()) => Some(format!("it holds {t}, which bko-holt load can't make")),
+                Some(t) if !MADE.contains(&t.as_str()) => {
+                    Some(format!("it holds {t}, which bko-holt load can't make"))
+                }
                 Some(_) => None,
             }
         };
         let Some(why) = why else { continue };
         let image = image_path(&vg, &lv);
-        let skip = l.get("flags").and_then(Value::as_array).into_iter().flatten().chain(l.get("status").and_then(Value::as_array).into_iter().flatten()).any(|x| x.as_str() == Some("ACTIVATION_SKIP"));
-        let mut r = Obj::new().set("image", image.as_str()).set("why", why.as_str());
+        let skip = l
+            .get("flags")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .chain(
+                l.get("status")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten(),
+            )
+            .any(|x| x.as_str() == Some("ACTIVATION_SKIP"));
+        let mut r = Obj::new()
+            .set("image", image.as_str())
+            .set("why", why.as_str());
         if let Some(v) = q {
             r.put("qube", s(v, "qube"));
             r.put("volume", s(v, "volume"));
@@ -265,7 +379,11 @@ pub fn raw_volumes(dm: &mut [Value], lvm: &Value, qubes: Option<&Value>) -> Vec<
         let source = format!("/dev/{vg}/{lv}");
         let note = format!(
             "a raw volume ({why}): the LV's bytes as a sparse image file at this path of the backup's tree, not a mount (e.g. `cp --sparse=always {source} TREE{image}`){}; load writes it back to {vg}/{lv}",
-            if skip { "; it has activation skip: `lvchange -ay -K` it first" } else { "" }
+            if skip {
+                "; it has activation skip: `lvchange -ay -K` it first"
+            } else {
+                ""
+            }
         );
         sources.push(
             Obj::new()
@@ -310,24 +428,61 @@ pub fn thin_usage(sys: &Sys, lvm: &mut Value, dm: &[Value]) {
     // By the LV's UUID (a pool's -tpool layer is named VG-POOL-tpool).
     let dm_name = |id: &str, layer: Option<&str>| -> Option<String> {
         dm.iter()
-            .find(|d| d.at(&["dm", "lv_uuid"]).and_then(Value::as_str) == Some(id) && d.at(&["dm", "lv_layer"]).and_then(Value::as_str) == layer)
-            .and_then(|d| d.at(&["dm", "dm_name"]).and_then(Value::as_str).map(str::to_string))
+            .find(|d| {
+                d.at(&["dm", "lv_uuid"]).and_then(Value::as_str) == Some(id)
+                    && d.at(&["dm", "lv_layer"]).and_then(Value::as_str) == layer
+            })
+            .and_then(|d| {
+                d.at(&["dm", "dm_name"])
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
     };
     // lvm_json's LVs have none of these keys, so each goes at the end.
-    for g in lvm.get_mut("volume_groups").and_then(Value::as_array_mut).into_iter().flatten() {
-        for l in g.get_mut("logical_volumes").and_then(Value::as_array_mut).into_iter().flatten() {
+    for g in lvm
+        .get_mut("volume_groups")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        for l in g
+            .get_mut("logical_volumes")
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
             let id = s(l, "id").unwrap_or_default();
-            let ty = l.at(&["segments", "0", "type"]).and_then(Value::as_str).unwrap_or("").to_string();
-            let chunk = l.at(&["segments", "0", "chunk_size"]).and_then(Value::as_u64).unwrap_or(0) * 512;
+            let ty = l
+                .at(&["segments", "0", "type"])
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let chunk = l
+                .at(&["segments", "0", "chunk_size"])
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                * 512;
             if ty == "thin-pool" {
-                let Some(n) = dm_name(&id, Some("tpool")) else { continue };
-                if let Some(((mu, _), (du, _))) = sys.run("dmsetup", &["status", &n]).as_deref().and_then(parse_pool_status) {
+                let Some(n) = dm_name(&id, Some("tpool")) else {
+                    continue;
+                };
+                if let Some(((mu, _), (du, _))) = sys
+                    .run("dmsetup", &["status", &n])
+                    .as_deref()
+                    .and_then(parse_pool_status)
+                {
                     l.put("data_used_bytes", Value::UInt(du * chunk));
                     l.put("metadata_used_bytes", Value::UInt(mu * 4096));
                 }
             } else if ty == "thin" {
-                let Some(n) = dm_name(&id, None) else { continue };
-                if let Some(m) = sys.run("dmsetup", &["status", &n]).as_deref().and_then(parse_thin_status) {
+                let Some(n) = dm_name(&id, None) else {
+                    continue;
+                };
+                if let Some(m) = sys
+                    .run("dmsetup", &["status", &n])
+                    .as_deref()
+                    .and_then(parse_thin_status)
+                {
                     l.put("mapped_bytes", Value::UInt(m * 512));
                 }
             }
@@ -341,20 +496,52 @@ pub fn thin_usage(sys: &Sys, lvm: &mut Value, dm: &[Value]) {
 /// Activated lets them go again.  Only as root, and only where lvs runs.
 pub fn activate_skipped(sys: &Sys) -> Activated<'_> {
     if !sys.privileged {
-        return Activated { sys, lvs: Vec::new() };
+        return Activated {
+            sys,
+            lvs: Vec::new(),
+        };
     }
-    let Some(out) = sys.run("lvs", &["--noheadings", "--separator", "|", "-o", "vg_name,lv_name,lv_attr"]) else { return Activated { sys, lvs: Vec::new() } };
+    let Some(out) = sys.run(
+        "lvs",
+        &[
+            "--noheadings",
+            "--separator",
+            "|",
+            "-o",
+            "vg_name,lv_name,lv_attr",
+        ],
+    ) else {
+        return Activated {
+            sys,
+            lvs: Vec::new(),
+        };
+    };
     let mut done = Vec::new();
     for l in out.lines() {
         let f: Vec<&str> = l.trim().split('|').collect();
-        let [vg, lv, attr] = f.as_slice() else { continue };
+        let [vg, lv, attr] = f.as_slice() else {
+            continue;
+        };
         let a: Vec<char> = attr.chars().collect();
         if a.get(9) != Some(&'k') || a.get(4) == Some(&'a') {
             continue;
         }
         let full = format!("{vg}/{lv}");
         let cfg = format!("activation {{ read_only_volume_list = [ \"{full}\" ] }}");
-        if sys.run("lvchange", &["--activate", "y", "--ignoreactivationskip", "--config", &cfg, &full]).is_some() {
+        if sys
+            .run(
+                "lvchange",
+                &[
+                    "--activate",
+                    "y",
+                    "--ignoreactivationskip",
+                    "--config",
+                    &cfg,
+                    &full,
+                ],
+            )
+            .is_some()
+        {
             done.push(full);
         } else {
             sys.warn(format!("{full} has activation skip and couldn't be activated read-only for the dump (lvchange -ay -K failed): its content wasn't read"));
@@ -381,7 +568,9 @@ impl Drop for Activated<'_> {
 fn deactivate(sys: &Sys, lvs: &[String]) {
     for full in lvs {
         if sys.run("lvchange", &["--activate", "n", full]).is_none() {
-            sys.warn(format!("{full}: activated read-only for the dump, and `lvchange -an` failed after it"));
+            sys.warn(format!(
+                "{full}: activated read-only for the dump, and `lvchange -an` failed after it"
+            ));
         }
     }
 }
@@ -396,7 +585,11 @@ pub fn default_grub_var(text: &str, var: &str) -> Option<String> {
         let l = l.trim();
         if let Some(v) = l.strip_prefix(&format!("{var}=")) {
             let v = v.trim();
-            let v = v.strip_prefix('"').and_then(|x| x.strip_suffix('"')).or_else(|| v.strip_prefix('\'').and_then(|x| x.strip_suffix('\''))).unwrap_or(v);
+            let v = v
+                .strip_prefix('"')
+                .and_then(|x| x.strip_suffix('"'))
+                .or_else(|| v.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')))
+                .unwrap_or(v);
             found = Some(v.to_string());
         }
     }
@@ -411,9 +604,18 @@ pub fn xen_entries(cfg: &str) -> Vec<Value> {
     let mut title: Option<String> = None;
     let mut mb: Option<String> = None;
     let mut mods: Vec<String> = Vec::new();
-    let flush = |title: &mut Option<String>, mb: &mut Option<String>, mods: &mut Vec<String>, out: &mut Vec<Value>| {
+    let flush = |title: &mut Option<String>,
+                 mb: &mut Option<String>,
+                 mods: &mut Vec<String>,
+                 out: &mut Vec<Value>| {
         if let Some(m) = mb.take() {
-            out.push(Obj::new().set("title", title.clone()).set("multiboot2", m).set("modules", std::mem::take(mods)).build());
+            out.push(
+                Obj::new()
+                    .set("title", title.clone())
+                    .set("multiboot2", m)
+                    .set("modules", std::mem::take(mods))
+                    .build(),
+            );
         }
         mods.clear();
         *title = None;
@@ -427,9 +629,15 @@ pub fn xen_entries(cfg: &str) -> Vec<Value> {
                 Some(q) => rest[1..].split(q).next().unwrap_or("").to_string(),
                 None => rest.split_whitespace().next().unwrap_or("").to_string(),
             });
-        } else if let Some(rest) = t.strip_prefix("multiboot2").filter(|r| r.starts_with(char::is_whitespace)) {
+        } else if let Some(rest) = t
+            .strip_prefix("multiboot2")
+            .filter(|r| r.starts_with(char::is_whitespace))
+        {
             mb = Some(rest.trim().to_string());
-        } else if let Some(rest) = t.strip_prefix("module2").filter(|r| r.starts_with(char::is_whitespace)) {
+        } else if let Some(rest) = t
+            .strip_prefix("module2")
+            .filter(|r| r.starts_with(char::is_whitespace))
+        {
             mods.push(rest.trim().to_string());
         }
     }
@@ -442,24 +650,53 @@ pub fn xen_entries(cfg: &str) -> Vec<Value> {
 /// GRUB_CMDLINE_LINUX from /etc/default/grub, whether GRUB's 20_linux_xen
 /// is installed, and grub.cfg's Xen entries.
 pub fn xen_json(sys: &Sys) -> Option<Value> {
-    let mut gz: Vec<String> = sys.list("/boot").into_iter().filter(|n| n.starts_with("xen-") && n.ends_with(".gz")).collect();
+    let mut gz: Vec<String> = sys
+        .list("/boot")
+        .into_iter()
+        .filter(|n| n.starts_with("xen-") && n.ends_with(".gz"))
+        .collect();
     if gz.is_empty() {
         return None;
     }
     gz.sort_by(|a, b| crate::sys::natural_cmp(a, b));
-    let versions: Vec<String> = gz.iter().map(|n| n.trim_start_matches("xen-").trim_end_matches(".gz").to_string()).collect();
+    let versions: Vec<String> = gz
+        .iter()
+        .map(|n| {
+            n.trim_start_matches("xen-")
+                .trim_end_matches(".gz")
+                .to_string()
+        })
+        .collect();
     let dg = sys.read("/etc/default/grub").unwrap_or_default();
-    let cfg = ["/boot/grub2/grub.cfg", "/boot/efi/EFI/qubes/grub.cfg", "/boot/grub/grub.cfg"].iter().find_map(|p| sys.read(p).map(|t| (*p, t)));
+    let cfg = [
+        "/boot/grub2/grub.cfg",
+        "/boot/efi/EFI/qubes/grub.cfg",
+        "/boot/grub/grub.cfg",
+    ]
+    .iter()
+    .find_map(|p| sys.read(p).map(|t| (*p, t)));
     Some(
         Obj::new()
             .set("version", versions.last().cloned())
             .set("versions", versions)
-            .set("hypervisors", gz.iter().map(|n| format!("/boot/{n}")).collect::<Vec<_>>())
-            .set("grub_d_20_linux_xen", sys.is_file("/etc/grub.d/20_linux_xen"))
-            .set("cmdline_xen_default", default_grub_var(&dg, "GRUB_CMDLINE_XEN_DEFAULT"))
+            .set(
+                "hypervisors",
+                gz.iter().map(|n| format!("/boot/{n}")).collect::<Vec<_>>(),
+            )
+            .set(
+                "grub_d_20_linux_xen",
+                sys.is_file("/etc/grub.d/20_linux_xen"),
+            )
+            .set(
+                "cmdline_xen_default",
+                default_grub_var(&dg, "GRUB_CMDLINE_XEN_DEFAULT"),
+            )
             .set("cmdline_linux", default_grub_var(&dg, "GRUB_CMDLINE_LINUX"))
             .set("grub_cfg", cfg.as_ref().map(|(p, _)| *p))
-            .set("entries", cfg.map(|(_, t)| xen_entries(&t)).unwrap_or_default())
+            .set(
+                "entries",
+                cfg.map(|(_, t)| xen_entries(&t)).unwrap_or_default(),
+            )
             .build(),
     )
 }
@@ -567,39 +804,86 @@ mod tests {
         assert_eq!(vols.len(), 7);
         assert_eq!(s(&vols[0], "qube").as_deref(), Some("fedora-44-xfce"));
         assert_eq!(s(&vols[0], "class").as_deref(), Some("TemplateVM"));
-        assert_eq!(vols[0].get("size_bytes").and_then(Value::as_u64), Some(20 << 30));
-        assert_eq!(vols[0].get("save_on_stop").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            vols[0].get("size_bytes").and_then(Value::as_u64),
+            Some(20 << 30)
+        );
+        assert_eq!(
+            vols[0].get("save_on_stop").and_then(Value::as_bool),
+            Some(true)
+        );
         assert_eq!(s(&vols[4], "qube").as_deref(), Some("work"));
-        assert_eq!(vols[4].get("snap_on_start").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            vols[4].get("snap_on_start").and_then(Value::as_bool),
+            Some(true)
+        );
         // The label property and the global default_template aren't names.
-        assert!(vols.iter().all(|v| s(v, "qube").as_deref() != Some("black")));
+        assert!(
+            vols.iter()
+                .all(|v| s(v, "qube").as_deref() != Some("black"))
+        );
         // By LV name: the volume, its revisions, its -snap.
-        assert_eq!(volume_of(&q, "qubes_dom0", "vm-work-private").and_then(|v| s(v, "volume")).as_deref(), Some("private"));
+        assert_eq!(
+            volume_of(&q, "qubes_dom0", "vm-work-private")
+                .and_then(|v| s(v, "volume"))
+                .as_deref(),
+            Some("private")
+        );
         assert!(volume_of(&q, "qubes_dom0", "vm-work-private-1794670270-back").is_some());
         assert!(volume_of(&q, "qubes_dom0", "vm-work-private-snap").is_some());
         assert!(volume_of(&q, "qubes_dom0", "vm-work-private-x-back").is_none());
         assert!(volume_of(&q, "other", "vm-work-private").is_none());
         assert!(volume_of(&q, "qubes_dom0", "root").is_none());
         // Escapes and comments.
-        let q = parse_xml("<!-- <domain> --><domains><domain class=\"AppVM\"><properties><property name=\"name\">a&amp;b</property></properties><volume-config><volume name='private' vid='vg/vm-a-private'/></volume-config></domain></domains>");
-        assert_eq!(q.at(&["volumes", "0", "qube"]).and_then(Value::as_str), Some("a&b"));
+        let q = parse_xml(
+            "<!-- <domain> --><domains><domain class=\"AppVM\"><properties><property name=\"name\">a&amp;b</property></properties><volume-config><volume name='private' vid='vg/vm-a-private'/></volume-config></domain></domains>",
+        );
+        assert_eq!(
+            q.at(&["volumes", "0", "qube"]).and_then(Value::as_str),
+            Some("a&b")
+        );
     }
 
     #[test]
     fn xen_boot() {
         let e = xen_entries(sample::GRUB_CFG);
         assert_eq!(e.len(), 1);
-        assert_eq!(s(&e[0], "title").as_deref(), Some("Qubes, with Xen hypervisor"));
-        assert!(s(&e[0], "multiboot2").unwrap().starts_with("/xen-4.19.5.gz placeholder console=com1"));
+        assert_eq!(
+            s(&e[0], "title").as_deref(),
+            Some("Qubes, with Xen hypervisor")
+        );
+        assert!(
+            s(&e[0], "multiboot2")
+                .unwrap()
+                .starts_with("/xen-4.19.5.gz placeholder console=com1")
+        );
         let m = e[0].get("modules").and_then(Value::as_array).unwrap();
         assert_eq!(m.len(), 2);
-        assert!(m[0].as_str().unwrap().contains("rd.luks.uuid=luks-bc000000-0000-4000-8000-000000000003"));
-        assert_eq!(m[1].as_str(), Some("--nounzip   /initramfs-6.18.51-1.qubes.fc41.x86_64.img"));
+        assert!(
+            m[0].as_str()
+                .unwrap()
+                .contains("rd.luks.uuid=luks-bc000000-0000-4000-8000-000000000003")
+        );
+        assert_eq!(
+            m[1].as_str(),
+            Some("--nounzip   /initramfs-6.18.51-1.qubes.fc41.x86_64.img")
+        );
         // The last assignment wins (the guest's %post replaces console=none).
-        assert!(default_grub_var(sample::DEFAULT_GRUB, "GRUB_CMDLINE_XEN_DEFAULT").unwrap().starts_with("console=com1 "));
-        assert!(default_grub_var(sample::DEFAULT_GRUB, "GRUB_CMDLINE_LINUX").unwrap().contains("rd.lvm.lv=qubes_dom0/root"));
+        assert!(
+            default_grub_var(sample::DEFAULT_GRUB, "GRUB_CMDLINE_XEN_DEFAULT")
+                .unwrap()
+                .starts_with("console=com1 ")
+        );
+        assert!(
+            default_grub_var(sample::DEFAULT_GRUB, "GRUB_CMDLINE_LINUX")
+                .unwrap()
+                .contains("rd.lvm.lv=qubes_dom0/root")
+        );
         assert_eq!(default_grub_var("", "X"), None);
-        assert_eq!(product(Some("qubes"), Some("4.3")).as_deref(), Some("Qubes OS 4.3"));
+        assert_eq!(
+            product(Some("qubes"), Some("4.3")).as_deref(),
+            Some("Qubes OS 4.3")
+        );
         assert_eq!(product(Some("fedora"), Some("44")), None);
     }
 
@@ -608,12 +892,24 @@ mod tests {
         use crate::sys::FakeRunner;
         let lvs = "lvs --noheadings --separator | -o vg_name,lv_name,lv_attr";
         let on = "lvchange --activate y --ignoreactivationskip --config activation { read_only_volume_list = [ \"vg/lv\" ] } vg/lv";
-        let failed = vec!["vg/lv: activated read-only for the dump, and `lvchange -an` failed after it"];
+        let failed =
+            vec!["vg/lv: activated read-only for the dump, and `lvchange -an` failed after it"];
         let t = crate::testutil::Tree::new("qubes-activated");
         // Skipped and inactive (k at 9, no a at 4): activated, and
         // deactivated when the Activated goes.
-        let r = || FakeRunner::default().with(lvs, "  vg|lv|Vwi---tz-k\n  vg|on|Vwi-a-tz-k\n  vg|plain|Vwi---tz--\n").with(on, "");
-        let s = Sys::new(t.root(), Box::new(r().with("lvchange --activate n vg/lv", "")), true);
+        let r = || {
+            FakeRunner::default()
+                .with(
+                    lvs,
+                    "  vg|lv|Vwi---tz-k\n  vg|on|Vwi-a-tz-k\n  vg|plain|Vwi---tz--\n",
+                )
+                .with(on, "")
+        };
+        let s = Sys::new(
+            t.root(),
+            Box::new(r().with("lvchange --activate n vg/lv", "")),
+            true,
+        );
         drop(activate_skipped(&s));
         assert!(s.warnings().is_empty(), "{:?}", s.warnings());
         // The -an fails: said at the drop, not before.
@@ -639,8 +935,16 @@ mod tests {
 
     #[test]
     fn dmsetup_status() {
-        assert_eq!(parse_pool_status("0 72302592 thin-pool 3 228/9216 3800/564800 - rw discard_passdown queue_if_no_space - 1024"), Some(((228, 9216), (3800, 564800))));
-        assert_eq!(parse_thin_status("0 41943040 thin 2097152 41943039"), Some(2097152));
+        assert_eq!(
+            parse_pool_status(
+                "0 72302592 thin-pool 3 228/9216 3800/564800 - rw discard_passdown queue_if_no_space - 1024"
+            ),
+            Some(((228, 9216), (3800, 564800)))
+        );
+        assert_eq!(
+            parse_thin_status("0 41943040 thin 2097152 41943039"),
+            Some(2097152)
+        );
         assert_eq!(parse_thin_status("0 41943040 thin Fail"), None);
         assert_eq!(parse_pool_status("0 8 linear"), None);
     }

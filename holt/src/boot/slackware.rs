@@ -1,7 +1,7 @@
 //! Slackware's boot setup: LILO, ELILO, mkinitrd and geninitrd, rc.d;
 //! part of crate::boot, which re-exports it.
 
-use super::{byte_copy_of, has_package, is_slackware, parse_shell_assignments, Package};
+use super::{Package, byte_copy_of, has_package, is_slackware, parse_shell_assignments};
 use crate::json::{Obj, Value};
 use crate::sys::Sys;
 
@@ -132,12 +132,19 @@ impl LiloConf {
 
 /// The last value `key` has among `items`.
 pub fn lilo_get<'a>(items: &'a [LiloItem], key: &str) -> Option<&'a str> {
-    items.iter().rev().find(|(k, _)| k == key).and_then(|(_, v)| v.as_deref())
+    items
+        .iter()
+        .rev()
+        .find(|(k, _)| k == key)
+        .and_then(|(_, v)| v.as_deref())
 }
 
 /// The items as written, `key` or `key=value`.
 fn lilo_list(items: &[LiloItem]) -> Vec<String> {
-    items.iter().map(|(k, v)| v.as_ref().map_or_else(|| k.clone(), |v| format!("{k}={v}"))).collect()
+    items
+        .iter()
+        .map(|(k, v)| v.as_ref().map_or_else(|| k.clone(), |v| format!("{k}={v}")))
+        .collect()
 }
 
 /// A parsed lilo.conf or elilo.conf as the dump keeps it: the global
@@ -145,7 +152,10 @@ fn lilo_list(items: &[LiloItem]) -> Vec<String> {
 /// written (options), and each section (images) with its label, root=,
 /// initrd=, append=, addappend=, read-only (true, read-write false, else
 /// null) and items, and what `extra` adds for it (its path, its items).
-fn lilo_conf_json(c: &LiloConf, extra: &dyn Fn(&str, &[LiloItem]) -> Vec<(&'static str, Value)>) -> Obj {
+fn lilo_conf_json(
+    c: &LiloConf,
+    extra: &dyn Fn(&str, &[LiloItem]) -> Vec<(&'static str, Value)>,
+) -> Obj {
     let g = |k: &str| lilo_get(&c.global, k);
     let images: Vec<Value> = c
         .sections
@@ -192,9 +202,15 @@ fn lilo_conf_json(c: &LiloConf, extra: &dyn Fn(&str, &[LiloItem]) -> Vec<(&'stat
 /// (/boot/map unless map= says) is there.  None without a lilo.conf.
 pub fn lilo_json(sys: &Sys) -> Option<Value> {
     let c = LiloConf::parse(&sys.read(LILO_CONF)?);
-    let map = lilo_get(&c.global, "map").unwrap_or("/boot/map").to_string();
+    let map = lilo_get(&c.global, "map")
+        .unwrap_or("/boot/map")
+        .to_string();
     let mut o = Obj::new().set("conf", LILO_CONF);
-    for (k, v) in lilo_conf_json(&c, &|path, _| vec![("exists", Value::from(sys.exists(path)))]).0 {
+    for (k, v) in lilo_conf_json(&c, &|path, _| {
+        vec![("exists", Value::from(sys.exists(path)))]
+    })
+    .0
+    {
         o.put(&k, v);
     }
     Some(o.set("map_exists", sys.exists(&map)).build())
@@ -217,7 +233,14 @@ fn boot_files(sys: &Sys, pick: &dyn Fn(&str) -> bool) -> Vec<(String, u64)> {
 /// The first of `candidates` that `path` is a byte copy of.
 fn same_file(sys: &Sys, path: &str, candidates: &[(String, u64)]) -> Option<String> {
     let size = sys.file_size(path)?;
-    byte_copy_of(sys, path, size, candidates.iter().map(|(p, n)| (p.as_str(), *n)), "").map(str::to_string)
+    byte_copy_of(
+        sys,
+        path,
+        size,
+        candidates.iter().map(|(p, n)| (p.as_str(), *n)),
+        "",
+    )
+    .map(str::to_string)
 }
 
 /// An elilo.conf on a mounted ESP.
@@ -250,15 +273,35 @@ impl EliloConf {
 pub fn elilo_confs(sys: &Sys, esps: &[(String, String)]) -> Vec<EliloConf> {
     let mut out = Vec::new();
     for (dev, mnt) in esps {
-        let Some(efi) = sys.list(mnt).into_iter().find(|e| e.eq_ignore_ascii_case("EFI")) else { continue };
+        let Some(efi) = sys
+            .list(mnt)
+            .into_iter()
+            .find(|e| e.eq_ignore_ascii_case("EFI"))
+        else {
+            continue;
+        };
         let mut dirs = sys.list(&format!("{mnt}/{efi}"));
         dirs.sort();
         for d in dirs {
             let dir = format!("{efi}/{d}");
             let files = sys.list(&format!("{mnt}/{dir}"));
-            let Some(name) = ["elilo-x86_64.conf", "elilo.conf"].iter().find_map(|n| files.iter().find(|f| f.eq_ignore_ascii_case(n))).cloned() else { continue };
-            let Some(text) = sys.read(&format!("{mnt}/{dir}/{name}")) else { continue };
-            out.push(EliloConf { device: dev.clone(), mount: mnt.clone(), dir, name, conf: LiloConf::parse(&text) });
+            let Some(name) = ["elilo-x86_64.conf", "elilo.conf"]
+                .iter()
+                .find_map(|n| files.iter().find(|f| f.eq_ignore_ascii_case(n)))
+                .cloned()
+            else {
+                continue;
+            };
+            let Some(text) = sys.read(&format!("{mnt}/{dir}/{name}")) else {
+                continue;
+            };
+            out.push(EliloConf {
+                device: dev.clone(),
+                mount: mnt.clone(),
+                dir,
+                name,
+                conf: LiloConf::parse(&text),
+            });
         }
     }
     out
@@ -278,19 +321,34 @@ pub fn elilo_json(sys: &Sys, esps: &[(String, String)]) -> Option<Value> {
     }
     let kernels = boot_files(sys, &|f| f.starts_with("vmlinuz"));
     // mkinitrd's initrd.gz, and geninitrd's initrd-VERSION.img (-current).
-    let initrds = boot_files(sys, &|f| f.starts_with("initrd") && (f.ends_with(".gz") || f.ends_with(".img")));
+    let initrds = boot_files(sys, &|f| {
+        f.starts_with("initrd") && (f.ends_with(".gz") || f.ends_with(".img"))
+    });
     let elilo = sys.file_size(ELILO_EFI);
     let mut list = Vec::new();
     for e in &confs {
         let full = format!("{}/{}", e.mount, e.dir);
-        let efis: Vec<String> = sys.list(&full).into_iter().filter(|f| f.to_ascii_lowercase().ends_with(".efi")).collect();
+        let efis: Vec<String> = sys
+            .list(&full)
+            .into_iter()
+            .filter(|f| f.to_ascii_lowercase().ends_with(".efi"))
+            .collect();
         // The first .efi here (in name order) that is a byte copy of /boot's
         // ELILO_EFI: only one of its size is read, and a piece at a time, so
         // a file over READ_MAX is compared too, with no warning in the dump
         // (RustAudit1 H4-06).
-        let sized = efis.iter().filter_map(|f| sys.file_size(&format!("{full}/{f}")).map(|n| (f.as_str(), n)));
+        let sized = efis.iter().filter_map(|f| {
+            sys.file_size(&format!("{full}/{f}"))
+                .map(|n| (f.as_str(), n))
+        });
         let copy = elilo.and_then(|n| byte_copy_of(sys, ELILO_EFI, n, sized, &full));
-        let loader = copy.or_else(|| efis.iter().map(String::as_str).find(|f| f.eq_ignore_ascii_case("elilo.efi"))).map(|f| format!("{}/{f}", e.dir));
+        let loader = copy
+            .or_else(|| {
+                efis.iter()
+                    .map(String::as_str)
+                    .find(|f| f.eq_ignore_ascii_case("elilo.efi"))
+            })
+            .map(|f| format!("{}/{f}", e.dir));
         let extra = |path: &str, items: &[LiloItem]| {
             let file = e.on_esp(path);
             let same = same_file(sys, &format!("{}/{file}", e.mount), &kernels);
@@ -298,7 +356,10 @@ pub fn elilo_json(sys: &Sys, esps: &[(String, String)]) -> Option<Value> {
             if let Some(i) = lilo_get(items, "initrd") {
                 let f = e.on_esp(i);
                 let same = same_file(sys, &format!("{}/{f}", e.mount), &initrds);
-                x.extend([("initrd_file", Value::from(f)), ("initrd_same_as", Value::from(same))]);
+                x.extend([
+                    ("initrd_file", Value::from(f)),
+                    ("initrd_same_as", Value::from(same)),
+                ]);
             }
             x
         };
@@ -333,8 +394,12 @@ pub fn slackware_kernels(sys: &Sys) -> Vec<(String, String, String)> {
         .list("/boot")
         .into_iter()
         .filter_map(|f| {
-            let flavor = f.strip_prefix("vmlinuz-").filter(|fl| !fl.is_empty() && !digit(fl))?.to_string();
-            sys.readlink(&format!("/boot/{f}")).map(|t| (flavor, t.trim_start_matches("/boot/").to_string()))
+            let flavor = f
+                .strip_prefix("vmlinuz-")
+                .filter(|fl| !fl.is_empty() && !digit(fl))?
+                .to_string();
+            sys.readlink(&format!("/boot/{f}"))
+                .map(|t| (flavor, t.trim_start_matches("/boot/").to_string()))
         })
         .collect();
     let mut out: Vec<(String, String, String)> = boot_files(sys, &|f| f.starts_with("vmlinuz-"))
@@ -343,7 +408,11 @@ pub fn slackware_kernels(sys: &Sys) -> Vec<(String, String, String)> {
             let f = p.trim_start_matches("/boot/").to_string();
             let rest = f.strip_prefix("vmlinuz-")?;
             if digit(rest) {
-                let flavor = links.iter().find(|(_, t)| *t == f).map(|(fl, _)| fl.clone()).unwrap_or_default();
+                let flavor = links
+                    .iter()
+                    .find(|(_, t)| *t == f)
+                    .map(|(fl, _)| fl.clone())
+                    .unwrap_or_default();
                 return Some((f.clone(), flavor, rest.to_string()));
             }
             let (flavor, ver) = rest.split_once('-')?;
@@ -364,21 +433,52 @@ pub fn slackware_json(sys: &Sys, packages: &[Package]) -> Option<Value> {
     if !is_slackware(sys) {
         return None;
     }
-    let sysvinit = has_package(packages, "sysvinit") && sys.is_file("/sbin/init") && sys.readlink("/sbin/init").is_none();
-    let init = (sys.is_file("/etc/rc.d/rc.M") && sys.is_file("/etc/inittab") && sysvinit).then_some("slackware-rc");
-    let mut rc: Vec<String> = sys.list("/etc/rc.d").into_iter().filter(|f| f.starts_with("rc.") && executable(sys, &format!("/etc/rc.d/{f}"))).collect();
+    let sysvinit = has_package(packages, "sysvinit")
+        && sys.is_file("/sbin/init")
+        && sys.readlink("/sbin/init").is_none();
+    let init = (sys.is_file("/etc/rc.d/rc.M") && sys.is_file("/etc/inittab") && sysvinit)
+        .then_some("slackware-rc");
+    let mut rc: Vec<String> = sys
+        .list("/etc/rc.d")
+        .into_iter()
+        .filter(|f| f.starts_with("rc.") && executable(sys, &format!("/etc/rc.d/{f}")))
+        .collect();
     rc.sort();
     let kernels: Vec<Value> = slackware_kernels(sys)
         .into_iter()
-        .map(|(f, fl, v)| Obj::new().set("file", f).set("flavor", fl).set("modules_installed", sys.is_dir(&format!("/lib/modules/{v}"))).set("version", v).build())
+        .map(|(f, fl, v)| {
+            Obj::new()
+                .set("file", f)
+                .set("flavor", fl)
+                .set(
+                    "modules_installed",
+                    sys.is_dir(&format!("/lib/modules/{v}")),
+                )
+                .set("version", v)
+                .build()
+        })
         .collect();
     let mut links = Obj::new();
-    for l in ["/boot/vmlinuz", "/boot/vmlinuz-huge", "/boot/vmlinuz-generic", "/boot/System.map", "/boot/config"] {
+    for l in [
+        "/boot/vmlinuz",
+        "/boot/vmlinuz-huge",
+        "/boot/vmlinuz-generic",
+        "/boot/System.map",
+        "/boot/config",
+    ] {
         if let Some(t) = sys.readlink(l) {
             links.put(l, t);
         }
     }
-    Some(Obj::new().set("version", sys.read_trim("/etc/slackware-version")).set("init", init).set("rc_enabled", rc).set("kernels", kernels).set("links", links).build())
+    Some(
+        Obj::new()
+            .set("version", sys.read_trim("/etc/slackware-version"))
+            .set("init", init)
+            .set("rc_enabled", rc)
+            .set("kernels", kernels)
+            .set("links", links)
+            .build(),
+    )
 }
 
 /// mkinitrd's word for an option in a command line: the word after the
@@ -401,7 +501,10 @@ fn word_after<'a>(words: &[&'a str], flag: &str) -> Option<&'a str> {
 /// mounts, by the name given, or null), luksdev (-C, else LUKSDEV) and
 /// resumedev (-h, else RESUMEDEV).  mkinitrd.conf counts only when the
 /// command line has -F, or there is none.
-pub(super) fn slackware_initramfs(sys: &Sys, esps: &[(String, String)]) -> (Option<String>, Vec<(&'static str, Value)>) {
+pub(super) fn slackware_initramfs(
+    sys: &Sys,
+    esps: &[(String, String)],
+) -> (Option<String>, Vec<(&'static str, Value)>) {
     let mut why: Vec<String> = Vec::new();
     let mut named = 0;
     let mut note = |file: &str, items: &[LiloItem], why: &mut Vec<String>| {
@@ -427,58 +530,125 @@ pub(super) fn slackware_initramfs(sys: &Sys, esps: &[(String, String)]) -> (Opti
     // -current: geninitrd's images, before initrd.gz (which it makes a link
     // to them, or not, as GENINITRD_INITRD_GZ_SYMLINK says).
     if let Some(g) = geninitrd_json(sys, &mut why) {
-        return (Some("geninitrd".into()), vec![("evidence", why.into()), ("geninitrd", g)]);
+        return (
+            Some("geninitrd".into()),
+            vec![("evidence", why.into()), ("geninitrd", g)],
+        );
     }
     let gz = sys.is_file(MKINITRD_OUTPUT);
-    why.push(if gz { format!("{MKINITRD_OUTPUT} exists") } else { format!("no {MKINITRD_OUTPUT}") });
+    why.push(if gz {
+        format!("{MKINITRD_OUTPUT} exists")
+    } else {
+        format!("no {MKINITRD_OUTPUT}")
+    });
     if named == 0 && !gz {
         why.push("no loader configuration names an initrd".into());
         return (Some("none".into()), vec![("evidence", why.into())]);
     }
     let conf = sys.read(MKINITRD_CONF).map(|t| parse_shell_assignments(&t));
-    let cmd = sys.read(MKINITRD_COMMAND_LINE).map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
-    why.push(if conf.is_some() { format!("{MKINITRD_CONF} exists") } else { format!("no {MKINITRD_CONF}") });
+    let cmd = sys
+        .read(MKINITRD_COMMAND_LINE)
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+    why.push(if conf.is_some() {
+        format!("{MKINITRD_CONF} exists")
+    } else {
+        format!("no {MKINITRD_CONF}")
+    });
     why.push(match &cmd {
         Some(c) => format!("{MKINITRD_COMMAND_LINE} says {c:?}"),
         None => format!("no {MKINITRD_COMMAND_LINE}"),
     });
-    let words: Vec<&str> = cmd.as_deref().map(|c| c.split_whitespace().collect()).unwrap_or_default();
+    let words: Vec<&str> = cmd
+        .as_deref()
+        .map(|c| c.split_whitespace().collect())
+        .unwrap_or_default();
     // mkinitrd sources its configuration for -F only (sbin/mkinitrd's
     // first loop over "$@"), and load runs `mkinitrd -F` when there's no
     // command line: read it then, and not otherwise.
     let use_conf = cmd.is_none() || words.contains(&"-F");
     if conf.is_some() && !use_conf {
-        why.push(format!("the command line has no -F, so mkinitrd didn't read {MKINITRD_CONF}"));
+        why.push(format!(
+            "the command line has no -F, so mkinitrd didn't read {MKINITRD_CONF}"
+        ));
     }
-    let key = |k: &str| conf.as_ref().filter(|_| use_conf).and_then(|c| c.iter().rev().find(|(key, _)| key == k).map(|(_, v)| v.clone())).filter(|v| !v.is_empty() && !v.contains(['$', '`']));
+    let key = |k: &str| {
+        conf.as_ref()
+            .filter(|_| use_conf)
+            .and_then(|c| {
+                c.iter()
+                    .rev()
+                    .find(|(key, _)| key == k)
+                    .map(|(_, v)| v.clone())
+            })
+            .filter(|v| !v.is_empty() && !v.contains(['$', '`']))
+    };
     let modules = |k: &str| sys.is_dir(&format!("/lib/modules/{k}"));
     let mut kernels: Vec<String> = match (word_after(&words, "-k"), key("KERNEL_VERSION")) {
-        (Some(k), _) => k.split(':').filter(|k| !k.is_empty()).map(str::to_string).collect(),
-        (None, Some(k)) => k.split(':').filter(|k| !k.is_empty()).map(str::to_string).collect(),
-        (None, None) => match sys.read_trim("/proc/sys/kernel/osrelease").filter(|k| modules(k)) {
+        (Some(k), _) => k
+            .split(':')
+            .filter(|k| !k.is_empty())
+            .map(str::to_string)
+            .collect(),
+        (None, Some(k)) => k
+            .split(':')
+            .filter(|k| !k.is_empty())
+            .map(str::to_string)
+            .collect(),
+        (None, None) => match sys
+            .read_trim("/proc/sys/kernel/osrelease")
+            .filter(|k| modules(k))
+        {
             Some(k) => vec![k],
-            None => sys.list("/lib/modules").into_iter().filter(|k| sys.is_dir(&format!("/lib/modules/{k}/kernel"))).collect(),
+            None => sys
+                .list("/lib/modules")
+                .into_iter()
+                .filter(|k| sys.is_dir(&format!("/lib/modules/{k}/kernel")))
+                .collect(),
         },
     };
     kernels.sort_by(|a, b| crate::sys::natural_cmp(a, b));
     kernels.dedup();
     for k in kernels.iter().filter(|k| !modules(k)) {
-        why.push(format!("kernel {k} has no /lib/modules/{k}, so mkinitrd can't make its image"));
+        why.push(format!(
+            "kernel {k} has no /lib/modules/{k}, so mkinitrd can't make its image"
+        ));
     }
     kernels.retain(|k| modules(k));
     // mkinitrd writes the image's path, canonical (-o through readlink -m,
     // against its cwd then), to initrd-name; a bare name there is in /boot.
-    let in_boot = |n: String| if n.starts_with('/') { n } else { format!("/boot/{n}") };
-    let tree_name = sys.read_trim("/boot/initrd-tree/initrd-name").filter(|n| !n.is_empty()).map(in_boot);
+    let in_boot = |n: String| {
+        if n.starts_with('/') {
+            n
+        } else {
+            format!("/boot/{n}")
+        }
+    };
+    let tree_name = sys
+        .read_trim("/boot/initrd-tree/initrd-name")
+        .filter(|n| !n.is_empty())
+        .map(in_boot);
     let output = match word_after(&words, "-o") {
         Some(o) if o.starts_with('/') => o.to_string(),
         // Relative: where it went, as initrd-name recorded it, else /boot's.
-        Some(o) => tree_name.clone().filter(|n| n.starts_with('/')).unwrap_or_else(|| in_boot(o.to_string())),
-        None => key("OUTPUT_IMAGE").map(in_boot).or(tree_name).unwrap_or_else(|| MKINITRD_OUTPUT.into()),
+        Some(o) => tree_name
+            .clone()
+            .filter(|n| n.starts_with('/'))
+            .unwrap_or_else(|| in_boot(o.to_string())),
+        None => key("OUTPUT_IMAGE")
+            .map(in_boot)
+            .or(tree_name)
+            .unwrap_or_else(|| MKINITRD_OUTPUT.into()),
     };
-    let rootdev = word_after(&words, "-r").map(str::to_string).or_else(|| key("ROOTDEV"));
-    let luksdev = word_after(&words, "-C").map(str::to_string).or_else(|| key("LUKSDEV"));
-    let resumedev = word_after(&words, "-h").map(str::to_string).or_else(|| key("RESUMEDEV"));
+    let rootdev = word_after(&words, "-r")
+        .map(str::to_string)
+        .or_else(|| key("ROOTDEV"));
+    let luksdev = word_after(&words, "-C")
+        .map(str::to_string)
+        .or_else(|| key("LUKSDEV"));
+    let resumedev = word_after(&words, "-h")
+        .map(str::to_string)
+        .or_else(|| key("RESUMEDEV"));
     let m = Obj::new()
         .set("conf", conf.is_some().then_some(MKINITRD_CONF))
         .set("command_line", cmd)
@@ -488,14 +658,19 @@ pub(super) fn slackware_initramfs(sys: &Sys, esps: &[(String, String)]) -> (Opti
         .set("luksdev", luksdev)
         .set("resumedev", resumedev)
         .build();
-    (Some("mkinitrd".into()), vec![("evidence", why.into()), ("mkinitrd", m)])
+    (
+        Some("mkinitrd".into()),
+        vec![("evidence", why.into()), ("mkinitrd", m)],
+    )
 }
 
 /// Whether a kernel version is one geninitrd would name an image after
 /// and a restore can give a shell: digits first, then letters, digits and
 /// `.`, `_`, `+`, `-`.
 pub fn kernel_version_word(v: &str) -> bool {
-    v.starts_with(|c: char| c.is_ascii_digit()) && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'))
+    v.starts_with(|c: char| c.is_ascii_digit())
+        && v.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-'))
 }
 
 /// Slackware -current's geninitrd (docs/design/slackware.md, "Slackware
@@ -519,25 +694,48 @@ fn geninitrd_json(sys: &Sys, why: &mut Vec<String>) -> Option<Value> {
     if !sys.is_file(GENINITRD) {
         return None;
     }
-    let images: Vec<(String, String)> = boot_files(sys, &|f| f.starts_with("initrd-") && f.ends_with(".img"))
-        .into_iter()
-        .filter_map(|(p, _)| {
-            let v = p.strip_prefix("/boot/initrd-")?.strip_suffix(".img")?.to_string();
-            kernel_version_word(&v).then_some((p, v))
-        })
-        .collect();
+    let images: Vec<(String, String)> =
+        boot_files(sys, &|f| f.starts_with("initrd-") && f.ends_with(".img"))
+            .into_iter()
+            .filter_map(|(p, _)| {
+                let v = p
+                    .strip_prefix("/boot/initrd-")?
+                    .strip_suffix(".img")?
+                    .to_string();
+                kernel_version_word(&v).then_some((p, v))
+            })
+            .collect();
     if images.is_empty() {
-        why.push(format!("{GENINITRD} exists, but /boot has no initrd-VERSION.img it made"));
+        why.push(format!(
+            "{GENINITRD} exists, but /boot has no initrd-VERSION.img it made"
+        ));
         return None;
     }
     why.push(format!("{GENINITRD} exists"));
-    let default = sys.read(GENINITRD_DEFAULT).map(|t| parse_shell_assignments(&t));
-    let key = |k: &str| default.as_ref().and_then(|c| c.iter().rev().find(|(key, _)| key == k).map(|(_, v)| v.clone()));
-    let flag = |k: &str| key(k).map(|v| Value::from(v == "true")).unwrap_or(Value::from(true));
-    let generator = key("GENERATOR").filter(|g| !g.is_empty()).unwrap_or_else(|| "mkinitrd".into());
+    let default = sys
+        .read(GENINITRD_DEFAULT)
+        .map(|t| parse_shell_assignments(&t));
+    let key = |k: &str| {
+        default.as_ref().and_then(|c| {
+            c.iter()
+                .rev()
+                .find(|(key, _)| key == k)
+                .map(|(_, v)| v.clone())
+        })
+    };
+    let flag = |k: &str| {
+        key(k)
+            .map(|v| Value::from(v == "true"))
+            .unwrap_or(Value::from(true))
+    };
+    let generator = key("GENERATOR")
+        .filter(|g| !g.is_empty())
+        .unwrap_or_else(|| "mkinitrd".into());
     let conf = sys.read(MKINITRD_CONF).map(|t| parse_shell_assignments(&t));
     let override_script = key("GENINITRD_OVERRIDE_SCRIPT").filter(|o| !o.is_empty());
-    let override_runs = override_script.as_deref().is_some_and(|o| o.starts_with('/') && executable(sys, o));
+    let override_runs = override_script
+        .as_deref()
+        .is_some_and(|o| o.starts_with('/') && executable(sys, o));
     let runs = if override_runs {
         "override".to_string()
     } else {
@@ -548,28 +746,62 @@ fn geninitrd_json(sys: &Sys, why: &mut Vec<String>) -> Option<Value> {
         }
     };
     why.push(match &default {
-        Some(_) => format!("{GENINITRD_DEFAULT} says GENERATOR={}", key("GENERATOR").unwrap_or_default()),
+        Some(_) => format!(
+            "{GENINITRD_DEFAULT} says GENERATOR={}",
+            key("GENERATOR").unwrap_or_default()
+        ),
         None => format!("no {GENINITRD_DEFAULT} (setup.01.mkinitrd's GENERATOR=mkinitrd)"),
     });
     why.push(match runs.as_str() {
-        "override" => format!("GENINITRD_OVERRIDE_SCRIPT={} runs instead of {GENINITRD_SETUP}", override_script.as_deref().unwrap_or("")),
+        "override" => format!(
+            "GENINITRD_OVERRIDE_SCRIPT={} runs instead of {GENINITRD_SETUP}",
+            override_script.as_deref().unwrap_or("")
+        ),
         "mkinitrd" => format!("{MKINITRD_CONF} exists, so {GENINITRD_SETUP} runs mkinitrd -F"),
-        "mkinitrd_command_generator.sh" if conf.is_none() && generator == "mkinitrd" => format!("no {MKINITRD_CONF}, so {GENINITRD_SETUP} runs {MKINITRD_GENERATOR}'s command"),
+        "mkinitrd_command_generator.sh" if conf.is_none() && generator == "mkinitrd" => {
+            format!("no {MKINITRD_CONF}, so {GENINITRD_SETUP} runs {MKINITRD_GENERATOR}'s command")
+        }
         r => format!("{GENINITRD_SETUP} runs {r}"),
     });
-    let ckey = |k: &str| conf.as_ref().filter(|_| runs == "mkinitrd").and_then(|c| c.iter().rev().find(|(key, _)| key == k).map(|(_, v)| v.clone())).filter(|v| !v.is_empty());
+    let ckey = |k: &str| {
+        conf.as_ref()
+            .filter(|_| runs == "mkinitrd")
+            .and_then(|c| {
+                c.iter()
+                    .rev()
+                    .find(|(key, _)| key == k)
+                    .map(|(_, v)| v.clone())
+            })
+            .filter(|v| !v.is_empty())
+    };
     let list: Vec<Value> = images
         .iter()
         .map(|(p, v)| {
             let kernel = format!("/boot/vmlinuz-{v}");
             let has_kernel = sys.is_file(&kernel);
             let modules = sys.is_dir(&format!("/lib/modules/{v}"));
-            why.push(format!("{p} is geninitrd's image for kernel {v}{}", if has_kernel { "" } else { ", which has no /boot/vmlinuz-VERSION" }));
-            Obj::new().set("file", p.as_str()).set("version", v.as_str()).set("kernel", has_kernel.then_some(kernel)).set("modules_installed", modules).build()
+            why.push(format!(
+                "{p} is geninitrd's image for kernel {v}{}",
+                if has_kernel {
+                    ""
+                } else {
+                    ", which has no /boot/vmlinuz-VERSION"
+                }
+            ));
+            Obj::new()
+                .set("file", p.as_str())
+                .set("version", v.as_str())
+                .set("kernel", has_kernel.then_some(kernel))
+                .set("modules_installed", modules)
+                .build()
         })
         .collect();
     let mut links = Obj::new();
-    for f in sys.list("/boot").into_iter().filter(|f| f == "initrd.gz" || (f.starts_with("initrd-") && f.ends_with(".img"))) {
+    for f in sys
+        .list("/boot")
+        .into_iter()
+        .filter(|f| f == "initrd.gz" || (f.starts_with("initrd-") && f.ends_with(".img")))
+    {
         let l = format!("/boot/{f}");
         if let Some(t) = sys.readlink(&l) {
             why.push(format!("{l} -> {t}"));
@@ -583,7 +815,10 @@ fn geninitrd_json(sys: &Sys, why: &mut Vec<String>) -> Option<Value> {
             .set("generator", generator.as_str())
             .set("dracut_opts", key("DRACUT_OPTS"))
             .set("override_script", override_script)
-            .set("post_install_script", key("POST_INSTALL_SCRIPT").filter(|o| !o.is_empty()))
+            .set(
+                "post_install_script",
+                key("POST_INSTALL_SCRIPT").filter(|o| !o.is_empty()),
+            )
             .set("named_symlink", flag("GENINITRD_NAMED_SYMLINK"))
             .set("initrd_gz_symlink", flag("GENINITRD_INITRD_GZ_SYMLINK"))
             .set("auto_remove_initrd_tree", flag("AUTO_REMOVE_INITRD_TREE"))
@@ -624,7 +859,12 @@ fn geninitrd_json(sys: &Sys, why: &mut Vec<String>) -> Option<Value> {
 /// (ext4, xfs and btrfs are modules there) and changes nothing on the huge
 /// one.  The source's other modules (jbd2, mbcache, libcrc32c the old type
 /// needed) stay, as the source listed them.
-pub fn mkinitrd_replay(command_line: &str, kernels: &[String], output: &str, root: Option<(&str, &str)>) -> Option<Vec<String>> {
+pub fn mkinitrd_replay(
+    command_line: &str,
+    kernels: &[String],
+    output: &str,
+    root: Option<(&str, &str)>,
+) -> Option<Vec<String>> {
     let mut w = command_line.split_whitespace();
     let prog = w.next()?;
     if prog.rsplit('/').next() != Some("mkinitrd") || kernels.is_empty() {
@@ -718,10 +958,22 @@ mod tests {
     #[test]
     fn same_file_first_copy() {
         let t = Tree::new("samefile");
-        t.file("/esp/a.efi", "same").file("/esp/b.efi", "diff").file("/esp/d.efi", "same");
+        t.file("/esp/a.efi", "same")
+            .file("/esp/b.efi", "diff")
+            .file("/esp/d.efi", "same");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
-        assert_eq!(same_file(&s, "/esp/a.efi", &[("/esp/b.efi".into(), 4), ("/esp/d.efi".into(), 4)]), Some("/esp/d.efi".to_string()));
-        assert_eq!(same_file(&s, "/esp/gone.efi", &[("/esp/d.efi".into(), 4)]), None);
+        assert_eq!(
+            same_file(
+                &s,
+                "/esp/a.efi",
+                &[("/esp/b.efi".into(), 4), ("/esp/d.efi".into(), 4)]
+            ),
+            Some("/esp/d.efi".to_string())
+        );
+        assert_eq!(
+            same_file(&s, "/esp/gone.efi", &[("/esp/d.efi".into(), 4)]),
+            None
+        );
     }
 
     /// RustAudit1 H4-06: elilo_json's loader is the first .efi beside
@@ -742,19 +994,56 @@ mod tests {
             .file("/boot/efi/EFI/BOOT/elilo.conf", conf)
             .file("/boot/efi/EFI/BOOT/elilo.efi", "not-the-copy");
         let big = t.p("/boot/efi/EFI/BOOT/BOOTX64.EFI");
-        std::fs::File::create(&big).unwrap().set_len(crate::sys::READ_MAX + 1).unwrap();
+        std::fs::File::create(&big)
+            .unwrap()
+            .set_len(crate::sys::READ_MAX + 1)
+            .unwrap();
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         let esps = [("vda1".to_string(), "/boot/efi".to_string())];
         let j = elilo_json(&s, &esps).unwrap();
         let at = |i: &str, k: &str| j.at(&["configs", i, k]).cloned().unwrap();
-        assert_eq!((at("0", "dir"), at("0", "loader"), at("0", "loader_is_boot_elilo")), (Value::from("EFI/BOOT"), Value::from("EFI/BOOT/elilo.efi"), Value::Bool(false)));
-        assert_eq!((at("1", "dir"), at("1", "loader"), at("1", "loader_is_boot_elilo")), (Value::from("EFI/Slackware"), Value::from("EFI/Slackware/c.efi"), Value::Bool(true)));
+        assert_eq!(
+            (
+                at("0", "dir"),
+                at("0", "loader"),
+                at("0", "loader_is_boot_elilo")
+            ),
+            (
+                Value::from("EFI/BOOT"),
+                Value::from("EFI/BOOT/elilo.efi"),
+                Value::Bool(false)
+            )
+        );
+        assert_eq!(
+            (
+                at("1", "dir"),
+                at("1", "loader"),
+                at("1", "loader_is_boot_elilo")
+            ),
+            (
+                Value::from("EFI/Slackware"),
+                Value::from("EFI/Slackware/c.efi"),
+                Value::Bool(true)
+            )
+        );
         // /boot's ELILO_EFI as large as the fallback: compared, and found.
-        std::fs::File::create(t.p(ELILO_EFI)).unwrap().set_len(crate::sys::READ_MAX + 1).unwrap();
+        std::fs::File::create(t.p(ELILO_EFI))
+            .unwrap()
+            .set_len(crate::sys::READ_MAX + 1)
+            .unwrap();
         let j = elilo_json(&s, &esps).unwrap();
-        assert_eq!(j.at(&["configs", "0", "loader"]).cloned(), Some(Value::from("EFI/BOOT/BOOTX64.EFI")));
-        assert_eq!(j.at(&["configs", "0", "loader_is_boot_elilo"]).cloned(), Some(Value::Bool(true)));
-        assert_eq!(j.at(&["configs", "1", "loader"]).cloned(), Some(Value::from("EFI/Slackware/elilo.efi")));
+        assert_eq!(
+            j.at(&["configs", "0", "loader"]).cloned(),
+            Some(Value::from("EFI/BOOT/BOOTX64.EFI"))
+        );
+        assert_eq!(
+            j.at(&["configs", "0", "loader_is_boot_elilo"]).cloned(),
+            Some(Value::Bool(true))
+        );
+        assert_eq!(
+            j.at(&["configs", "1", "loader"]).cloned(),
+            Some(Value::from("EFI/Slackware/elilo.efi"))
+        );
         assert!(s.warnings().is_empty(), "{:?}", s.warnings());
     }
 
@@ -766,47 +1055,126 @@ mod tests {
         assert_eq!(lilo_get(&c.global, "append"), Some(" vt.default_utf8=0"));
         assert_eq!(lilo_get(&c.global, "bios"), Some("0x80"));
         assert_eq!(lilo_get(&c.global, "max-partitions"), Some("7"));
-        assert!(c.global.contains(&("compact".into(), None)) && c.global.contains(&("reset".into(), None)));
+        assert!(
+            c.global.contains(&("compact".into(), None))
+                && c.global.contains(&("reset".into(), None))
+        );
         assert_eq!(c.sections.len(), 3);
-        assert_eq!((c.sections[0].0.as_str(), c.sections[0].1.as_str()), ("image", "/boot/vmlinuz"));
+        assert_eq!(
+            (c.sections[0].0.as_str(), c.sections[0].1.as_str()),
+            ("image", "/boot/vmlinuz")
+        );
         assert_eq!(lilo_get(&c.sections[0].2, "root"), Some("/dev/vda2"));
         assert!(c.sections[0].2.contains(&("read-only".into(), None)));
-        assert_eq!(lilo_get(&c.sections[1].2, "initrd"), Some("/boot/initrd.gz"));
+        assert_eq!(
+            lilo_get(&c.sections[1].2, "initrd"),
+            Some("/boot/initrd.gz")
+        );
         assert_eq!(lilo_get(&c.sections[1].2, "root"), Some("/dev/vda2"));
         assert_eq!(lilo_get(&c.sections[1].2, "append"), Some(""));
         assert_eq!(c.sections[2].0, "other");
         let j = lilo_conf_json(&c, &|_, _| vec![]).build();
         assert_eq!(j.get("boot").and_then(Value::as_str), Some("/dev/vda"));
         assert!(j.get("map").unwrap().is_null());
-        assert_eq!(j.at(&["images", "0", "read_only"]), Some(&Value::Bool(true)));
+        assert_eq!(
+            j.at(&["images", "0", "read_only"]),
+            Some(&Value::Bool(true))
+        );
         assert!(j.at(&["images", "1", "read_only"]).unwrap().is_null());
-        assert_eq!(j.at(&["images", "1", "label"]).and_then(Value::as_str), Some("generic"));
-        assert_eq!(j.at(&["options", "2"]).and_then(Value::as_str), Some("disk=/dev/vda"));
+        assert_eq!(
+            j.at(&["images", "1", "label"]).and_then(Value::as_str),
+            Some("generic")
+        );
+        assert_eq!(
+            j.at(&["options", "2"]).and_then(Value::as_str),
+            Some("disk=/dev/vda")
+        );
         // elilo.conf as eliloconfig writes it.
-        let e = LiloConf::parse("chooser=simple\ndelay=1\ntimeout=1\n#\nimage=vmlinuz\n        label=vmlinuz\n        initrd=initrd.gz\n        read-only\n        append=\"root=/dev/vda3 vga=normal ro\"\n");
+        let e = LiloConf::parse(
+            "chooser=simple\ndelay=1\ntimeout=1\n#\nimage=vmlinuz\n        label=vmlinuz\n        initrd=initrd.gz\n        read-only\n        append=\"root=/dev/vda3 vga=normal ro\"\n",
+        );
         assert_eq!(lilo_get(&e.global, "chooser"), Some("simple"));
-        assert_eq!(lilo_get(&e.sections[0].2, "append"), Some("root=/dev/vda3 vga=normal ro"));
+        assert_eq!(
+            lilo_get(&e.sections[0].2, "append"),
+            Some("root=/dev/vda3 vga=normal ro")
+        );
     }
 
     #[test]
     fn mkinitrd_replays() {
         let k = vec!["5.15.161".to_string()];
         assert_eq!(
-            mkinitrd_replay("/sbin/mkinitrd -c -k 5.15.19 -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz", &k, "/boot/initrd.gz", None).unwrap(),
-            ["mkinitrd", "-c", "-k", "5.15.161", "-f", "xfs", "-r", "/dev/vda3", "-m", "xfs", "-u", "-o", "/boot/initrd.gz"]
+            mkinitrd_replay(
+                "/sbin/mkinitrd -c -k 5.15.19 -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz",
+                &k,
+                "/boot/initrd.gz",
+                None
+            )
+            .unwrap(),
+            [
+                "mkinitrd",
+                "-c",
+                "-k",
+                "5.15.161",
+                "-f",
+                "xfs",
+                "-r",
+                "/dev/vda3",
+                "-m",
+                "xfs",
+                "-u",
+                "-o",
+                "/boot/initrd.gz"
+            ]
         );
         // The source's order, word for word, when the kernel is the same
         // (slackware15-uefi's command_line); a second -k dropped.
         let line = "/sbin/mkinitrd -c -k 5.15.19 -f xfs -r /dev/vda3 -m virtio_blk:xfs -u -o /boot/initrd.gz";
-        assert_eq!(mkinitrd_replay(line, &["5.15.19".into()], "/boot/initrd.gz", None).unwrap().join(" "), line.replacen("/sbin/", "", 1));
-        assert_eq!(mkinitrd_replay("mkinitrd -k 1 -c -k 2", &k, "/boot/initrd.gz", None).unwrap(), ["mkinitrd", "-k", "5.15.161", "-c"]);
-        assert_eq!(mkinitrd_replay("mkinitrd -F", &k, "/boot/initrd.gz", None).unwrap(), ["mkinitrd", "-F", "-k", "5.15.161"]);
-        assert_eq!(mkinitrd_replay("mkinitrd -c", &["6.1".into(), "6.2".into()], "/boot/initrd.gz", None).unwrap(), ["mkinitrd", "-c", "-k", "6.1:6.2"]);
+        assert_eq!(
+            mkinitrd_replay(line, &["5.15.19".into()], "/boot/initrd.gz", None)
+                .unwrap()
+                .join(" "),
+            line.replacen("/sbin/", "", 1)
+        );
+        assert_eq!(
+            mkinitrd_replay("mkinitrd -k 1 -c -k 2", &k, "/boot/initrd.gz", None).unwrap(),
+            ["mkinitrd", "-k", "5.15.161", "-c"]
+        );
+        assert_eq!(
+            mkinitrd_replay("mkinitrd -F", &k, "/boot/initrd.gz", None).unwrap(),
+            ["mkinitrd", "-F", "-k", "5.15.161"]
+        );
+        assert_eq!(
+            mkinitrd_replay(
+                "mkinitrd -c",
+                &["6.1".into(), "6.2".into()],
+                "/boot/initrd.gz",
+                None
+            )
+            .unwrap(),
+            ["mkinitrd", "-c", "-k", "6.1:6.2"]
+        );
         assert!(mkinitrd_replay("dracut -f", &k, "/boot/initrd.gz", None).is_none());
         assert!(mkinitrd_replay("mkinitrd -c", &[], "/boot/initrd.gz", None).is_none());
         assert!(mkinitrd_replay("", &k, "/boot/initrd.gz", None).is_none());
         // A relative -o is given absolute: in the chroot it would be from /.
-        assert_eq!(mkinitrd_replay("./mkinitrd -c -o initrd-custom.gz", &k, "/boot/initrd-custom.gz", None).unwrap(), ["mkinitrd", "-c", "-o", "/boot/initrd-custom.gz", "-k", "5.15.161"]);
+        assert_eq!(
+            mkinitrd_replay(
+                "./mkinitrd -c -o initrd-custom.gz",
+                &k,
+                "/boot/initrd-custom.gz",
+                None
+            )
+            .unwrap(),
+            [
+                "mkinitrd",
+                "-c",
+                "-o",
+                "/boot/initrd-custom.gz",
+                "-k",
+                "5.15.161"
+            ]
+        );
     }
 
     /// Under --reformat of /, the replay changes only -f and the old
@@ -815,39 +1183,90 @@ mod tests {
     #[test]
     fn mkinitrd_replays_a_reformatted_root() {
         let k = vec!["5.15.19".to_string()];
-        let r = |line: &str, from: &str, to: &str| mkinitrd_replay(line, &k, "/boot/initrd.gz", Some((from, to))).unwrap().join(" ");
+        let r = |line: &str, from: &str, to: &str| {
+            mkinitrd_replay(line, &k, "/boot/initrd.gz", Some((from, to)))
+                .unwrap()
+                .join(" ")
+        };
         // slackware15-uefi's command line, onto ext4 and btrfs: xfs's
         // place in -m is the new type's, the virtio modules as they were.
         let uefi = "/sbin/mkinitrd -c -k 5.15.19 -f xfs -r /dev/vda3 -m virtio_blk:virtio_pci_modern_dev:virtio_pci:virtio:virtio_balloon:virtio_ring:virtio_net:xfs -u -o /boot/initrd.gz";
-        assert_eq!(r(uefi, "xfs", "ext4"), "mkinitrd -c -k 5.15.19 -f ext4 -r /dev/vda3 -m virtio_blk:virtio_pci_modern_dev:virtio_pci:virtio:virtio_balloon:virtio_ring:virtio_net:ext4 -u -o /boot/initrd.gz");
-        assert_eq!(r(uefi, "xfs", "btrfs"), "mkinitrd -c -k 5.15.19 -f btrfs -r /dev/vda3 -m virtio_blk:virtio_pci_modern_dev:virtio_pci:virtio:virtio_balloon:virtio_ring:virtio_net:btrfs -u -o /boot/initrd.gz");
+        assert_eq!(
+            r(uefi, "xfs", "ext4"),
+            "mkinitrd -c -k 5.15.19 -f ext4 -r /dev/vda3 -m virtio_blk:virtio_pci_modern_dev:virtio_pci:virtio:virtio_balloon:virtio_ring:virtio_net:ext4 -u -o /boot/initrd.gz"
+        );
+        assert_eq!(
+            r(uefi, "xfs", "btrfs"),
+            "mkinitrd -c -k 5.15.19 -f btrfs -r /dev/vda3 -m virtio_blk:virtio_pci_modern_dev:virtio_pci:virtio:virtio_balloon:virtio_ring:virtio_net:btrfs -u -o /boot/initrd.gz"
+        );
         // Not reformatted: as before.
-        assert_eq!(mkinitrd_replay(uefi, &k, "/boot/initrd.gz", None).unwrap().join(" "), uefi.replacen("/sbin/", "", 1));
+        assert_eq!(
+            mkinitrd_replay(uefi, &k, "/boot/initrd.gz", None)
+                .unwrap()
+                .join(" "),
+            uefi.replacen("/sbin/", "", 1)
+        );
         // An ext4 root as mkinitrd_command_generator.sh writes it (the
         // module's dependencies listed before it), onto xfs and btrfs: the
         // dependencies stay, ext4's place is the new type's.
         let generated = "mkinitrd -c -k 5.15.19 -f ext4 -r /dev/sda2 -m mbcache:jbd2:ext4 -u -o /boot/initrd.gz";
-        assert_eq!(r(generated, "ext4", "xfs"), "mkinitrd -c -k 5.15.19 -f xfs -r /dev/sda2 -m mbcache:jbd2:xfs -u -o /boot/initrd.gz");
-        assert_eq!(r(generated, "ext4", "btrfs"), "mkinitrd -c -k 5.15.19 -f btrfs -r /dev/sda2 -m mbcache:jbd2:btrfs -u -o /boot/initrd.gz");
+        assert_eq!(
+            r(generated, "ext4", "xfs"),
+            "mkinitrd -c -k 5.15.19 -f xfs -r /dev/sda2 -m mbcache:jbd2:xfs -u -o /boot/initrd.gz"
+        );
+        assert_eq!(
+            r(generated, "ext4", "btrfs"),
+            "mkinitrd -c -k 5.15.19 -f btrfs -r /dev/sda2 -m mbcache:jbd2:btrfs -u -o /boot/initrd.gz"
+        );
         // The old type first in -m: replaced where it is.
-        assert_eq!(r("mkinitrd -c -k 5.15.19 -f ext4 -m ext4:ahci -r /dev/sda2", "ext4", "xfs"), "mkinitrd -c -k 5.15.19 -f xfs -m xfs:ahci -r /dev/sda2");
+        assert_eq!(
+            r(
+                "mkinitrd -c -k 5.15.19 -f ext4 -m ext4:ahci -r /dev/sda2",
+                "ext4",
+                "xfs"
+            ),
+            "mkinitrd -c -k 5.15.19 -f xfs -m xfs:ahci -r /dev/sda2"
+        );
         // The old type not in -m (a kernel with it built in): the new
         // one's added at the end of -m (a built-in one puts nothing in the
         // image; a module, on the generic kernel, is needed).
-        assert_eq!(r("mkinitrd -c -k 5.15.19 -f ext4 -m ahci -r /dev/sda2", "ext4", "xfs"), "mkinitrd -c -k 5.15.19 -f xfs -m ahci:xfs -r /dev/sda2");
+        assert_eq!(
+            r(
+                "mkinitrd -c -k 5.15.19 -f ext4 -m ahci -r /dev/sda2",
+                "ext4",
+                "xfs"
+            ),
+            "mkinitrd -c -k 5.15.19 -f xfs -m ahci:xfs -r /dev/sda2"
+        );
         // No -m and no -f: both added at the end (mkinitrd would take the
         // type from the restored tree's /rootfs, the old one).
-        assert_eq!(r("mkinitrd -k 5.15.19 -r /dev/sda2 -o /boot/initrd.gz", "ext4", "xfs"), "mkinitrd -k 5.15.19 -r /dev/sda2 -o /boot/initrd.gz -f xfs -m xfs");
+        assert_eq!(
+            r(
+                "mkinitrd -k 5.15.19 -r /dev/sda2 -o /boot/initrd.gz",
+                "ext4",
+                "xfs"
+            ),
+            "mkinitrd -k 5.15.19 -r /dev/sda2 -o /boot/initrd.gz -f xfs -m xfs"
+        );
         // The new type listed already: kept once.
-        assert_eq!(r("mkinitrd -k 5.15.19 -f xfs -m xfs:ext4:ahci", "xfs", "ext4"), "mkinitrd -k 5.15.19 -f ext4 -m ext4:ahci");
-        assert_eq!(r("mkinitrd -k 5.15.19 -f xfs -m ext4:ahci", "xfs", "ext4"), "mkinitrd -k 5.15.19 -f ext4 -m ext4:ahci");
+        assert_eq!(
+            r("mkinitrd -k 5.15.19 -f xfs -m xfs:ext4:ahci", "xfs", "ext4"),
+            "mkinitrd -k 5.15.19 -f ext4 -m ext4:ahci"
+        );
+        assert_eq!(
+            r("mkinitrd -k 5.15.19 -f xfs -m ext4:ahci", "xfs", "ext4"),
+            "mkinitrd -k 5.15.19 -f ext4 -m ext4:ahci"
+        );
         // An empty -m, and one with a trailing ':'.
         assert_eq!(mkinitrd_modules("", "xfs", "ext4"), "ext4");
         assert_eq!(mkinitrd_modules("ahci:", "xfs", "ext4"), "ahci:ext4");
         assert_eq!(mkinitrd_modules("ahci::xfs", "xfs", "ext4"), "ahci::ext4");
         // A word for word -f naming another type than the dump's still
         // becomes the new one: the initrd mounts / as -f says.
-        assert_eq!(r("mkinitrd -k 5.15.19 -f auto -m xfs", "xfs", "ext4"), "mkinitrd -k 5.15.19 -f ext4 -m ext4");
+        assert_eq!(
+            r("mkinitrd -k 5.15.19 -f auto -m xfs", "xfs", "ext4"),
+            "mkinitrd -k 5.15.19 -f ext4 -m ext4"
+        );
     }
 
     /// -current's kernels are /boot/vmlinuz-VERSION, their flavor the
@@ -865,39 +1284,91 @@ mod tests {
         assert_eq!(
             slackware_kernels(&s),
             vec![
-                ("vmlinuz-7.2.9-rc1".into(), String::new(), "7.2.9-rc1".into()),
+                (
+                    "vmlinuz-7.2.9-rc1".into(),
+                    String::new(),
+                    "7.2.9-rc1".into()
+                ),
                 ("vmlinuz-7.3.5".into(), "generic".into(), "7.3.5".into()),
-                ("vmlinuz-generic-5.15.161".into(), "generic".into(), "5.15.161".into()),
+                (
+                    "vmlinuz-generic-5.15.161".into(),
+                    "generic".into(),
+                    "5.15.161".into()
+                ),
             ]
         );
-        assert!(kernel_version_word("7.3.5") && kernel_version_word("6.12.1-rc2+") && kernel_version_word("5.15.161_x"));
-        assert!(!kernel_version_word("generic") && !kernel_version_word("") && !kernel_version_word("7.3.5 x") && !kernel_version_word("7.3'5") && !kernel_version_word("7.3.5$x"));
+        assert!(
+            kernel_version_word("7.3.5")
+                && kernel_version_word("6.12.1-rc2+")
+                && kernel_version_word("5.15.161_x")
+        );
+        assert!(
+            !kernel_version_word("generic")
+                && !kernel_version_word("")
+                && !kernel_version_word("7.3.5 x")
+                && !kernel_version_word("7.3'5")
+                && !kernel_version_word("7.3.5$x")
+        );
         // No geninitrd, or no image it made: not geninitrd's.
         let mut why = Vec::new();
         assert!(geninitrd_json(&s, &mut why).is_none() && why.is_empty());
-        t.file(GENINITRD, "#!/bin/bash\n").file("/boot/initrd.gz", "15.0's");
+        t.file(GENINITRD, "#!/bin/bash\n")
+            .file("/boot/initrd.gz", "15.0's");
         assert!(geninitrd_json(&s, &mut why).is_none());
-        assert_eq!(why, ["/usr/sbin/geninitrd exists, but /boot has no initrd-VERSION.img it made"]);
+        assert_eq!(
+            why,
+            ["/usr/sbin/geninitrd exists, but /boot has no initrd-VERSION.img it made"]
+        );
         // An image with no /etc/default/geninitrd: setup.01.mkinitrd's defaults.
-        t.file("/boot/initrd-7.3.5.img", "i").file("/boot/initrd-x y.img", "not a version");
+        t.file("/boot/initrd-7.3.5.img", "i")
+            .file("/boot/initrd-x y.img", "not a version");
         let mut why = Vec::new();
         let g = geninitrd_json(&s, &mut why).unwrap();
         assert_eq!(g.get("generator").and_then(Value::as_str), Some("mkinitrd"));
-        assert_eq!(g.get("runs").and_then(Value::as_str), Some("mkinitrd_command_generator.sh"));
+        assert_eq!(
+            g.get("runs").and_then(Value::as_str),
+            Some("mkinitrd_command_generator.sh")
+        );
         assert!(g.get("default").unwrap().is_null() && g.get("kernel").unwrap().is_null());
         assert_eq!(g.get("named_symlink"), Some(&Value::Bool(true)));
-        assert_eq!((g.get("auto_remove_initrd_tree"), g.get("initrd_tree")), (Some(&Value::Bool(true)), Some(&Value::Bool(false))));
-        assert_eq!(g.at(&["images"]).and_then(Value::as_array).map(Vec::len), Some(1));
-        assert_eq!(g.at(&["images", "0", "kernel"]).and_then(Value::as_str), Some("/boot/vmlinuz-7.3.5"));
-        assert_eq!(g.at(&["images", "0", "modules_installed"]), Some(&Value::Bool(false)));
-        assert!(why.contains(&"no /etc/default/geninitrd (setup.01.mkinitrd's GENERATOR=mkinitrd)".to_string()), "{why:?}");
+        assert_eq!(
+            (g.get("auto_remove_initrd_tree"), g.get("initrd_tree")),
+            (Some(&Value::Bool(true)), Some(&Value::Bool(false)))
+        );
+        assert_eq!(
+            g.at(&["images"]).and_then(Value::as_array).map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            g.at(&["images", "0", "kernel"]).and_then(Value::as_str),
+            Some("/boot/vmlinuz-7.3.5")
+        );
+        assert_eq!(
+            g.at(&["images", "0", "modules_installed"]),
+            Some(&Value::Bool(false))
+        );
+        assert!(
+            why.contains(
+                &"no /etc/default/geninitrd (setup.01.mkinitrd's GENERATOR=mkinitrd)".to_string()
+            ),
+            "{why:?}"
+        );
         // A set but not executable override script isn't run.
         t.file(GENINITRD_DEFAULT, "GENERATOR=mkinitrd_command_generator.sh\nGENINITRD_OVERRIDE_SCRIPT=/usr/local/sbin/x\nGENINITRD_INITRD_GZ_SYMLINK=false\nAUTO_REMOVE_INITRD_TREE=false\n").file("/usr/local/sbin/x", "").dir("/boot/initrd-tree");
         let g = geninitrd_json(&s, &mut Vec::new()).unwrap();
-        assert_eq!(g.get("runs").and_then(Value::as_str), Some("mkinitrd_command_generator.sh"));
-        assert_eq!(g.get("override_script").and_then(Value::as_str), Some("/usr/local/sbin/x"));
+        assert_eq!(
+            g.get("runs").and_then(Value::as_str),
+            Some("mkinitrd_command_generator.sh")
+        );
+        assert_eq!(
+            g.get("override_script").and_then(Value::as_str),
+            Some("/usr/local/sbin/x")
+        );
         assert_eq!(g.get("initrd_gz_symlink"), Some(&Value::Bool(false)));
-        assert_eq!((g.get("auto_remove_initrd_tree"), g.get("initrd_tree")), (Some(&Value::Bool(false)), Some(&Value::Bool(true))));
+        assert_eq!(
+            (g.get("auto_remove_initrd_tree"), g.get("initrd_tree")),
+            (Some(&Value::Bool(false)), Some(&Value::Bool(true)))
+        );
         // mkinitrd.conf's names are read only when it is what runs: no
         // RESUMEDEV here, as no ROOTDEV.
         assert!(g.get("resumedev").unwrap().is_null() && g.get("rootdev").unwrap().is_null());
@@ -919,25 +1390,51 @@ mod tests {
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         let generate = || {
             let (g, f) = slackware_initramfs(&s, &[]);
-            (g.unwrap(), f.into_iter().find(|(k, _)| *k == "mkinitrd").map(|(_, v)| v).unwrap())
+            (
+                g.unwrap(),
+                f.into_iter()
+                    .find(|(k, _)| *k == "mkinitrd")
+                    .map(|(_, v)| v)
+                    .unwrap(),
+            )
         };
         let (g, m) = generate();
         assert_eq!(g, "mkinitrd");
-        assert_eq!(m.at(&["kernels", "0"]).and_then(Value::as_str), Some("5.15.161"));
+        assert_eq!(
+            m.at(&["kernels", "0"]).and_then(Value::as_str),
+            Some("5.15.161")
+        );
         assert_eq!(m.get("rootdev").and_then(Value::as_str), Some("/dev/vda3"));
-        assert_eq!(m.get("resumedev").and_then(Value::as_str), Some("/dev/vda2"));
+        assert_eq!(
+            m.get("resumedev").and_then(Value::as_str),
+            Some("/dev/vda2")
+        );
         assert!(m.get("luksdev").unwrap().is_null(), "{}", m.compact());
-        assert_eq!(m.get("output").and_then(Value::as_str), Some("/root/initrd.gz"));
+        assert_eq!(
+            m.get("output").and_then(Value::as_str),
+            Some("/root/initrd.gz")
+        );
         // Without initrd-name, a relative -o is /boot's.
         std::fs::remove_file(t.p("/boot/initrd-tree/initrd-name")).unwrap();
-        assert_eq!(generate().1.get("output").and_then(Value::as_str), Some("/boot/initrd.gz"));
+        assert_eq!(
+            generate().1.get("output").and_then(Value::as_str),
+            Some("/boot/initrd.gz")
+        );
         // With -F (and -C), the conf counts where the command line is silent.
         t.file(MKINITRD_COMMAND_LINE, "mkinitrd -F -C /dev/vda3\n");
         let (_, m) = generate();
         assert_eq!(m.get("rootdev").and_then(Value::as_str), Some("/dev/sdz9"));
-        assert_eq!(m.get("output").and_then(Value::as_str), Some("/boot/stale.gz"));
+        assert_eq!(
+            m.get("output").and_then(Value::as_str),
+            Some("/boot/stale.gz")
+        );
         assert_eq!(m.get("luksdev").and_then(Value::as_str), Some("/dev/vda3"));
         // KERNEL_VERSION 9.9.9 has no modules: no kernel.
-        assert!(m.get("kernels").and_then(Value::as_array).unwrap().is_empty());
+        assert!(
+            m.get("kernels")
+                .and_then(Value::as_array)
+                .unwrap()
+                .is_empty()
+        );
     }
 }

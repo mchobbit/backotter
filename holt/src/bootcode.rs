@@ -1,7 +1,7 @@
 //! What boot code sits in a disk's first sector (the MBR's 440 bytes of
 //! code), and, for GRUB, where its core image is and whether it's there.
 
-use crate::bytes::{contains, hex, is_zero, le64, sub, u8_at, ByteSource};
+use crate::bytes::{ByteSource, contains, hex, is_zero, le64, sub, u8_at};
 use crate::json::{Obj, Value};
 
 /// Which boot code a sector holds; the report writes it by [`BootKind::as_str`].
@@ -62,7 +62,12 @@ pub struct BootCode {
 pub fn identify(sector: &[u8]) -> BootCode {
     let code = sub(sector, 0, 440);
     let first_bytes = hex(sub(code, 0, 16));
-    let none = |kind| BootCode { kind, grub_core_lba: None, grub_boot_drive: None, first_bytes: first_bytes.clone() };
+    let none = |kind| BootCode {
+        kind,
+        grub_core_lba: None,
+        grub_boot_drive: None,
+        first_bytes: first_bytes.clone(),
+    };
     if code.is_empty() || is_zero(code) {
         return none(BootKind::None);
     }
@@ -76,7 +81,11 @@ pub fn identify(sector: &[u8]) -> BootCode {
     if contains(code, b"GRUB ") && contains(code, b"Geom") {
         // GRUB Legacy's stage1 keeps its version (3.2) right after the BPB;
         // GRUB 2's boot.img jumps further, past its own data at 0x5a.
-        if u8_at(code, 0) == 0xeb && u8_at(code, 1) == 0x48 && u8_at(code, 0x3e) == 3 && u8_at(code, 0x3f) == 2 {
+        if u8_at(code, 0) == 0xeb
+            && u8_at(code, 1) == 0x48
+            && u8_at(code, 0x3e) == 3
+            && u8_at(code, 0x3f) == 2
+        {
             return none(BootKind::GrubLegacy);
         }
         return BootCode {
@@ -89,7 +98,9 @@ pub fn identify(sector: &[u8]) -> BootCode {
     if contains(code, b"isolinux.bin missing or corrupt") {
         return none(BootKind::Isohybrid);
     }
-    if contains(code, b"Missing operating system.") || contains(code, b"Operating system load error") {
+    if contains(code, b"Missing operating system.")
+        || contains(code, b"Operating system load error")
+    {
         return none(BootKind::Syslinux);
     }
     if contains(code, b"Invalid partition table") && contains(code, b"Missing operating system") {
@@ -101,18 +112,33 @@ pub fn identify(sector: &[u8]) -> BootCode {
 /// Whether the sector at `lba` looks like GRUB 2's diskboot.img, the first
 /// sector of core.img.
 pub fn grub_core_present(src: &dyn ByteSource, lba: u64, ss: u64) -> bool {
-    lba.checked_mul(ss).map(|o| src.read_at(o, 512)).is_some_and(|s| contains(&s, b"loading") && contains(&s, b"Geom"))
+    lba.checked_mul(ss)
+        .map(|o| src.read_at(o, 512))
+        .is_some_and(|s| contains(&s, b"loading") && contains(&s, b"Geom"))
 }
 
 impl BootCode {
     /// JSON for a disk's boot code; `gap` is the room before the first
     /// partition, in sectors, where GRUB embeds core.img on MBR disks.
-    pub fn to_json(&self, src: Option<&dyn ByteSource>, ss: u64, first_partition_lba: Option<u64>) -> Value {
-        let mut o = Obj::new().set("kind", self.kind).set("first_bytes", &self.first_bytes);
+    pub fn to_json(
+        &self,
+        src: Option<&dyn ByteSource>,
+        ss: u64,
+        first_partition_lba: Option<u64>,
+    ) -> Value {
+        let mut o = Obj::new()
+            .set("kind", self.kind)
+            .set("first_bytes", &self.first_bytes);
         if let Some(lba) = self.grub_core_lba {
             o.put("grub_core_lba", lba);
-            o.put("grub_boot_drive", self.grub_boot_drive.map(|d| format!("0x{d:02x}")));
-            o.put("grub_core_present", src.map(|s| grub_core_present(s, lba, ss)));
+            o.put(
+                "grub_boot_drive",
+                self.grub_boot_drive.map(|d| format!("0x{d:02x}")),
+            );
+            o.put(
+                "grub_core_present",
+                src.map(|s| grub_core_present(s, lba, ss)),
+            );
             o.put(
                 "grub_core_in",
                 match first_partition_lba {
@@ -128,7 +154,12 @@ impl BootCode {
             if gap > 0 {
                 let b = src.read_at(ss, (gap * ss) as usize);
                 let used = b.chunks(ss as usize).filter(|c| !is_zero(c)).count();
-                o.put("post_mbr_gap", Obj::new().set("sectors", first - 1).set("nonzero_sectors_in_first_mib", used));
+                o.put(
+                    "post_mbr_gap",
+                    Obj::new()
+                        .set("sectors", first - 1)
+                        .set("nonzero_sectors_in_first_mib", used),
+                );
             }
         }
         o.build()
@@ -158,7 +189,9 @@ pub mod samples {
         s[2] = 0x90;
         s[0x5c..0x64].copy_from_slice(&core_lba.to_le_bytes());
         s[0x64] = 0xff;
-        s[0x65..0x70].copy_from_slice(&[0xfa, 0x90, 0x90, 0xf6, 0xc2, 0x80, 0x74, 0x05, 0xf6, 0xc2, 0x70]);
+        s[0x65..0x70].copy_from_slice(&[
+            0xfa, 0x90, 0x90, 0xf6, 0xc2, 0x80, 0x74, 0x05, 0xf6, 0xc2, 0x70,
+        ]);
         let msg = b"GRUB \0Geom\0Hard Disk\0Read\0 Error\r\n\0";
         s[0x180..0x180 + msg.len()].copy_from_slice(msg);
         s[510] = 0x55;
@@ -170,7 +203,9 @@ pub mod samples {
     /// writes it to the MBR: cli, jmp, size, "LILO", version 24.2.
     pub fn lilo_first_stage() -> Vec<u8> {
         let mut s = vec![0u8; 512];
-        s[..16].copy_from_slice(&[0xfa, 0xeb, 0x31, 0x13, 0, 0, b'L', b'I', b'L', b'O', 0x18, 0x02, 0x10, 0, 0x01, 0]);
+        s[..16].copy_from_slice(&[
+            0xfa, 0xeb, 0x31, 0x13, 0, 0, b'L', b'I', b'L', b'O', 0x18, 0x02, 0x10, 0, 0x01, 0,
+        ]);
         s[0x1c..0x20].copy_from_slice(&[0x5e, 0xac, 0x08, 0xc0]);
         s[510] = 0x55;
         s[511] = 0xaa;
@@ -195,12 +230,39 @@ mod tests {
     #[test]
     fn kind_names() {
         // RustAudit1 H2-07: the names the report writes, unchanged.
-        let all = [BootKind::None, BootKind::Grub2, BootKind::GrubLegacy, BootKind::Syslinux, BootKind::Lilo, BootKind::Isohybrid, BootKind::Windows, BootKind::Unknown];
+        let all = [
+            BootKind::None,
+            BootKind::Grub2,
+            BootKind::GrubLegacy,
+            BootKind::Syslinux,
+            BootKind::Lilo,
+            BootKind::Isohybrid,
+            BootKind::Windows,
+            BootKind::Unknown,
+        ];
         let names: Vec<&str> = all.iter().map(|k| k.as_str()).collect();
-        assert_eq!(names, ["none", "grub2", "grub-legacy", "syslinux", "lilo", "isohybrid", "windows", "unknown"]);
-        assert_eq!(Value::from(BootKind::GrubLegacy), Value::from("grub-legacy"));
+        assert_eq!(
+            names,
+            [
+                "none",
+                "grub2",
+                "grub-legacy",
+                "syslinux",
+                "lilo",
+                "isohybrid",
+                "windows",
+                "unknown"
+            ]
+        );
+        assert_eq!(
+            Value::from(BootKind::GrubLegacy),
+            Value::from("grub-legacy")
+        );
         assert_eq!(BootKind::Lilo.to_string(), "lilo");
-        assert_eq!(partition_boot_code(&MemSource(grub2_boot_img(1))), Some("grub2"));
+        assert_eq!(
+            partition_boot_code(&MemSource(grub2_boot_img(1))),
+            Some("grub2")
+        );
         assert_eq!(partition_boot_code(&MemSource(vec![0u8; 512])), None);
     }
 
@@ -250,8 +312,14 @@ mod tests {
             s[0x100..0x100 + m.len()].copy_from_slice(m);
             identify(&s).kind
         };
-        assert_eq!(with(b"Missing operating system.\r\n\0Operating system load error.\r\n"), BootKind::Syslinux);
-        assert_eq!(with(b"isolinux.bin missing or corrupt.\r\n"), BootKind::Isohybrid);
+        assert_eq!(
+            with(b"Missing operating system.\r\n\0Operating system load error.\r\n"),
+            BootKind::Syslinux
+        );
+        assert_eq!(
+            with(b"isolinux.bin missing or corrupt.\r\n"),
+            BootKind::Isohybrid
+        );
         assert_eq!(with(b"Invalid partition table\0Error loading operating system\0Missing operating system"), BootKind::Windows);
         // Strings past the 440 bytes of code are not code.
         let mut s = vec![0u8; 512];
@@ -286,22 +354,41 @@ mod tests {
         let j = b.to_json(Some(&src), 512, Some(2048));
         assert_eq!(j.get("kind").and_then(Value::as_str), Some("grub2"));
         assert_eq!(j.get("grub_core_lba").and_then(Value::as_u64), Some(1));
-        assert_eq!(j.get("grub_boot_drive").and_then(Value::as_str), Some("0xff"));
+        assert_eq!(
+            j.get("grub_boot_drive").and_then(Value::as_str),
+            Some("0xff")
+        );
         assert_eq!(j.get("grub_core_present"), Some(&Value::Bool(true)));
-        assert_eq!(j.get("grub_core_in").and_then(Value::as_str), Some("post-mbr-gap"));
-        assert_eq!(j.at(&["post_mbr_gap", "sectors"]).and_then(Value::as_u64), Some(2047));
-        assert_eq!(j.at(&["post_mbr_gap", "nonzero_sectors_in_first_mib"]).and_then(Value::as_u64), Some(2));
+        assert_eq!(
+            j.get("grub_core_in").and_then(Value::as_str),
+            Some("post-mbr-gap")
+        );
+        assert_eq!(
+            j.at(&["post_mbr_gap", "sectors"]).and_then(Value::as_u64),
+            Some(2047)
+        );
+        assert_eq!(
+            j.at(&["post_mbr_gap", "nonzero_sectors_in_first_mib"])
+                .and_then(Value::as_u64),
+            Some(2)
+        );
         // GPT with a BIOS boot partition: core lives in a partition.
         let b = identify(&grub2_boot_img(34));
         let j = b.to_json(None, 512, Some(34));
-        assert_eq!(j.get("grub_core_in").and_then(Value::as_str), Some("partition"));
+        assert_eq!(
+            j.get("grub_core_in").and_then(Value::as_str),
+            Some("partition")
+        );
         assert!(j.get("grub_core_present").unwrap().is_null());
         assert!(j.get("post_mbr_gap").is_none());
     }
 
     #[test]
     fn partition_sectors() {
-        assert_eq!(partition_boot_code(&MemSource(grub2_boot_img(100))), Some("grub2"));
+        assert_eq!(
+            partition_boot_code(&MemSource(grub2_boot_img(100))),
+            Some("grub2")
+        );
         assert_eq!(partition_boot_code(&MemSource(vec![0u8; 512])), None);
         let mut fat = vec![0u8; 512];
         fat[0] = 0xeb;

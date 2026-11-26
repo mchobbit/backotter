@@ -7,9 +7,6 @@ pub mod bfs;
 pub mod btrfs;
 pub mod ext;
 pub mod f2fs;
-pub mod nilfs2;
-pub mod redoxfs;
-pub mod ufs;
 pub mod fat;
 pub mod geli;
 pub mod hammer2;
@@ -17,6 +14,9 @@ pub mod luks;
 pub mod lvm;
 pub mod md;
 pub mod misc;
+pub mod nilfs2;
+pub mod redoxfs;
+pub mod ufs;
 pub mod xfs;
 pub mod zfs;
 
@@ -98,7 +98,10 @@ pub fn content_json(found: &[Content]) -> Value {
             let mut v = first.to_json();
             if !rest.is_empty() {
                 if let Value::Obj(o) = &mut v {
-                    o.push(("other_signatures".into(), Value::from(rest.iter().map(|c| c.kind.clone()).collect::<Vec<_>>())));
+                    o.push((
+                        "other_signatures".into(),
+                        Value::from(rest.iter().map(|c| c.kind.clone()).collect::<Vec<_>>()),
+                    ));
                 }
             }
             v
@@ -136,7 +139,10 @@ mod tests {
             ("crypto_LUKS", luks::sample::luks2("u", "")),
             ("geli", geli::sample::guest(1 << 20)),
             ("LVM2_member", lvm::sample::pv(512, 1 << 20)),
-            ("linux_raid_member", md::sample::v1(1 << 20, 4096, "h:0", 1, 0, 0)),
+            (
+                "linux_raid_member",
+                md::sample::v1(1 << 20, 4096, "h:0", 1, 0, 0),
+            ),
         ];
         for (want, img) in cases {
             let found = probe_all(&MemSource(img));
@@ -157,7 +163,10 @@ mod tests {
         let sb = md::sample::v1(size, off, "h:esp", 1, 0, 0);
         img[off..off + 4096].copy_from_slice(&sb[off..off + 4096]);
         let found = probe_all(&MemSource(img));
-        assert_eq!(found.iter().map(|c| c.kind.as_str()).collect::<Vec<_>>(), vec!["linux_raid_member", "vfat"]);
+        assert_eq!(
+            found.iter().map(|c| c.kind.as_str()).collect::<Vec<_>>(),
+            vec!["linux_raid_member", "vfat"]
+        );
         let j = content_json(&found);
         assert_eq!(j.get("version").and_then(Value::as_str), Some("1.0"));
         assert_eq!(j.get("other_signatures"), Some(&Value::from(vec!["vfat"])));
@@ -170,7 +179,13 @@ mod tests {
         assert_eq!(j.get("usage").and_then(Value::as_str), Some("filesystem"));
         assert_eq!(j.get("label").and_then(Value::as_str), Some("root"));
         assert!(j.get("features").is_some());
-        let keys: Vec<&str> = j.as_object().unwrap().iter().map(|(k, _)| k.as_str()).take(5).collect();
+        let keys: Vec<&str> = j
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(k, _)| k.as_str())
+            .take(5)
+            .collect();
         assert_eq!(keys, vec!["type", "usage", "uuid", "label", "version"]);
     }
 }

@@ -1,7 +1,7 @@
 //! ext2/3/4 superblocks, with feature names exactly as dumpe2fs prints them.
 
 use super::Content;
-use crate::bytes::{le16, le32, sub, u8_at, uuid, ByteSource};
+use crate::bytes::{ByteSource, le16, le32, sub, u8_at, uuid};
 use crate::json::Obj;
 
 const SB: u64 = 1024;
@@ -91,11 +91,7 @@ fn version(compat: u32, incompat: u32, ro_compat: u32) -> &'static str {
     if incompat & !EXT3_INCOMPAT_SUPP != 0 || ro_compat & !EXT3_RO_SUPP != 0 {
         return "ext4";
     }
-    if compat & 0x0004 != 0 {
-        "ext3"
-    } else {
-        "ext2"
-    }
+    if compat & 0x0004 != 0 { "ext3" } else { "ext2" }
 }
 
 pub fn probe(src: &dyn ByteSource) -> Option<Content> {
@@ -187,7 +183,14 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
         d.put("want_extra_isize", le16(&b, 350));
     }
     if incompat & 0x20000 != 0 {
-        d.put("encoding", if le16(&b, 0x27c) == 1 { "utf8" } else { "unknown" });
+        d.put(
+            "encoding",
+            if le16(&b, 0x27c) == 1 {
+                "utf8"
+            } else {
+                "unknown"
+            },
+        );
     }
     if journal_uuid.iter().any(|&x| x != 0) {
         d.put("journal_uuid", uuid(journal_uuid));
@@ -197,7 +200,10 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
     }
     let journal_dev = le32(&b, 228);
     if journal_dev != 0 {
-        d.put("journal_device", format!("{}:{}", (journal_dev >> 8) & 0xfff, journal_dev & 0xff));
+        d.put(
+            "journal_device",
+            format!("{}:{}", (journal_dev >> 8) & 0xfff, journal_dev & 0xff),
+        );
     }
     Some(Content {
         kind: kind.to_string(),
@@ -256,22 +262,44 @@ mod tests {
         assert_eq!(c.kind, "ext4");
         assert_eq!(c.usage, "filesystem");
         assert_eq!(c.label.as_deref(), Some("root"));
-        assert_eq!(c.uuid.as_deref(), Some("10111213-1415-1617-1819-1a1b1c1d1e1f"));
+        assert_eq!(
+            c.uuid.as_deref(),
+            Some("10111213-1415-1617-1819-1a1b1c1d1e1f")
+        );
         assert_eq!(c.version.as_deref(), Some("1.0"));
         let d = c.details.build();
         assert_eq!(
             d.get("features"),
             Some(&Value::from(vec![
-                "has_journal", "ext_attr", "resize_inode", "dir_index", "orphan_file", "filetype", "extent", "64bit",
-                "flex_bg", "metadata_csum_seed", "sparse_super", "large_file", "huge_file", "dir_nlink", "extra_isize",
+                "has_journal",
+                "ext_attr",
+                "resize_inode",
+                "dir_index",
+                "orphan_file",
+                "filetype",
+                "extent",
+                "64bit",
+                "flex_bg",
+                "metadata_csum_seed",
+                "sparse_super",
+                "large_file",
+                "huge_file",
+                "dir_nlink",
+                "extra_isize",
                 "metadata_csum"
             ]))
         );
         assert_eq!(d.get("block_size").and_then(Value::as_u64), Some(4096));
-        assert_eq!(d.get("size_bytes").and_then(Value::as_u64), Some(16384 * 4096));
+        assert_eq!(
+            d.get("size_bytes").and_then(Value::as_u64),
+            Some(16384 * 4096)
+        );
         assert_eq!(d.get("inode_size").and_then(Value::as_u64), Some(256));
         assert_eq!(d.get("state").and_then(Value::as_str), Some("clean"));
-        assert_eq!(d.get("errors_behavior").and_then(Value::as_str), Some("continue"));
+        assert_eq!(
+            d.get("errors_behavior").and_then(Value::as_str),
+            Some("continue")
+        );
         assert_eq!(d.get("last_mounted_on").and_then(Value::as_str), Some("/"));
         assert!(d.get("descriptor_size").is_some());
         assert!(d.get("flex_bg_size").is_some());
@@ -293,11 +321,31 @@ mod tests {
 
     #[test]
     fn versions() {
-        assert_eq!(probe(&MemSource(image(0x0004, 0x0002, 0x0001, ""))).unwrap().kind, "ext3");
-        assert_eq!(probe(&MemSource(image(0, 0x0002, 0x0003, ""))).unwrap().kind, "ext2");
+        assert_eq!(
+            probe(&MemSource(image(0x0004, 0x0002, 0x0001, "")))
+                .unwrap()
+                .kind,
+            "ext3"
+        );
+        assert_eq!(
+            probe(&MemSource(image(0, 0x0002, 0x0003, "")))
+                .unwrap()
+                .kind,
+            "ext2"
+        );
         // ext3 features plus one ext4-only one makes ext4.
-        assert_eq!(probe(&MemSource(image(0x0004, 0x0002 | 0x0040, 0, ""))).unwrap().kind, "ext4");
-        assert_eq!(probe(&MemSource(image(0x0004, 0x0002, 0x0008, ""))).unwrap().kind, "ext4");
+        assert_eq!(
+            probe(&MemSource(image(0x0004, 0x0002 | 0x0040, 0, "")))
+                .unwrap()
+                .kind,
+            "ext4"
+        );
+        assert_eq!(
+            probe(&MemSource(image(0x0004, 0x0002, 0x0008, "")))
+                .unwrap()
+                .kind,
+            "ext4"
+        );
         let j = probe(&MemSource(image(0, 0x0008, 0, ""))).unwrap();
         assert_eq!(j.kind, "jbd");
         assert_eq!(j.usage, "other");
@@ -328,10 +376,22 @@ mod tests {
         let d = probe(&MemSource(img)).unwrap().details.build();
         assert_eq!(d.get("encoding").and_then(Value::as_str), Some("utf8"));
         assert_eq!(d.get("cluster_size").and_then(Value::as_u64), Some(16384));
-        assert!(d.get("journal_uuid").unwrap().as_str().unwrap().starts_with("aa00"));
-        assert_eq!(d.get("journal_device").and_then(Value::as_str), Some("8:17"));
+        assert!(
+            d.get("journal_uuid")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .starts_with("aa00")
+        );
+        assert_eq!(
+            d.get("journal_device").and_then(Value::as_str),
+            Some("8:17")
+        );
         assert_eq!(d.get("state").and_then(Value::as_str), Some("not clean"));
-        assert_eq!(d.get("errors_behavior").and_then(Value::as_str), Some("remount-ro"));
+        assert_eq!(
+            d.get("errors_behavior").and_then(Value::as_str),
+            Some("remount-ro")
+        );
         assert!(d.get("min_extra_isize").is_some());
         assert!(d.get("descriptor_size").is_none());
     }
@@ -341,7 +401,10 @@ mod tests {
         let mut img = image(0, 0x0080, 0, "");
         img[1024 + 336..1024 + 340].copy_from_slice(&1u32.to_le_bytes());
         let d = probe(&MemSource(img)).unwrap().details.build();
-        assert_eq!(d.get("blocks").and_then(Value::as_u64), Some((1u64 << 32) + 16384));
+        assert_eq!(
+            d.get("blocks").and_then(Value::as_u64),
+            Some((1u64 << 32) + 16384)
+        );
         // Without 64bit the high word is ignored.
         let mut img = image(0, 0, 0, "");
         img[1024 + 336..1024 + 340].copy_from_slice(&1u32.to_le_bytes());

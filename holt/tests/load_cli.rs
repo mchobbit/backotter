@@ -5,7 +5,8 @@ use bko_holt::testutil::Tree;
 use std::process::{Command, Output};
 
 fn bin(args: &[&str]) -> Output {
-    let exe = std::env::var("BKO_HOLT_BIN").unwrap_or_else(|_| env!("CARGO_BIN_EXE_bko-holt").to_string());
+    let exe = std::env::var("BKO_HOLT_BIN")
+        .unwrap_or_else(|_| env!("CARGO_BIN_EXE_bko-holt").to_string());
     Command::new(exe).arg("load").args(args).output().unwrap()
 }
 
@@ -36,8 +37,10 @@ fn setup() -> (Tree, String) {
     let t = Tree::new("load-cli");
     t.file("/layout.json", LAYOUT);
     // A rescue system with a blank 1 GiB vdb.
-    t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", "2097152\n");
-    t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+    t.disk("vdb", "253:16", &[], 512)
+        .file("/sys/block/vdb/size", "2097152\n");
+    t.file("/proc/self/mountinfo", "")
+        .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
     let layout = t.p("/layout.json").to_string_lossy().into_owned();
     (t, layout)
 }
@@ -71,10 +74,22 @@ fn plan_and_status() {
     // tools installed in the fake tree has problems: exit 4.
     let o = bin(&[&layout, "--sysroot", root, "--map", "vda=vdb"]);
     assert_eq!(o.status.code(), Some(4), "{}{}", out(&o), err(&o));
-    assert!(out(&o).contains("#   vda (1 GiB) -> /dev/vdb"), "{}", out(&o));
+    assert!(
+        out(&o).contains("#   vda (1 GiB) -> /dev/vdb"),
+        "{}",
+        out(&o)
+    );
     assert!(out(&o).contains("isn't installed here"));
     assert!(out(&o).contains("# ---- partition ----"));
-    let o = bin(&[&layout, "--sysroot", root, "--map", "vda=vdb", "--only", "status"]);
+    let o = bin(&[
+        &layout,
+        "--sysroot",
+        root,
+        "--map",
+        "vda=vdb",
+        "--only",
+        "status",
+    ]);
     assert_eq!(o.status.code(), Some(0), "{}{}", out(&o), err(&o));
     assert!(out(&o).contains("next: partition"), "{}", out(&o));
 }
@@ -83,7 +98,16 @@ fn plan_and_status() {
 fn writing_stages_check_first() {
     // With plan's problems (no tools in the fake tree), nothing runs.
     let (t, layout) = setup();
-    let o = bin(&[&layout, "--sysroot", t.root().to_str().unwrap(), "--map", "vda=vdb", "--through", "mount", "--commit"]);
+    let o = bin(&[
+        &layout,
+        "--sysroot",
+        t.root().to_str().unwrap(),
+        "--map",
+        "vda=vdb",
+        "--through",
+        "mount",
+        "--commit",
+    ]);
     assert_eq!(o.status.code(), Some(4));
     assert!(err(&o).contains("nothing was written"), "{}", err(&o));
 }

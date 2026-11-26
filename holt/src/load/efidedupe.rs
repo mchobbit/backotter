@@ -50,7 +50,10 @@ pub struct Entry {
 /// A loader path for comparing: `\`-separated, no leading separator, lower
 /// case (FAT ignores case).
 pub fn norm_path(p: &str) -> String {
-    p.trim().replace('/', "\\").trim_start_matches('\\').to_ascii_lowercase()
+    p.trim()
+        .replace('/', "\\")
+        .trim_start_matches('\\')
+        .to_ascii_lowercase()
 }
 
 /// HD(...)'s arguments (`1,GPT,0b1c...,0x800,0x100000`) as a Disk.
@@ -60,7 +63,9 @@ fn hd_disk(args: &str) -> Option<Disk> {
     let sig = a.get(2)?;
     match a.get(1)?.to_ascii_uppercase().as_str() {
         "GPT" => Some(Disk::Gpt(sig.to_ascii_lowercase())),
-        "MBR" => u32::from_str_radix(sig.trim_start_matches("0x").trim_start_matches("0X"), 16).ok().map(|s| Disk::Mbr(s, part)),
+        "MBR" => u32::from_str_radix(sig.trim_start_matches("0x").trim_start_matches("0X"), 16)
+            .ok()
+            .map(|s| Disk::Mbr(s, part)),
         _ => None,
     }
 }
@@ -72,7 +77,10 @@ fn hd_disk(args: &str) -> Option<Disk> {
 fn path_after(rest: &str) -> Option<String> {
     let rest = rest.strip_prefix('/')?;
     if let Some(r) = rest.strip_prefix("File(") {
-        return r.find(')').map(|i| r[..i].to_string()).filter(|p| !p.is_empty());
+        return r
+            .find(')')
+            .map(|i| r[..i].to_string())
+            .filter(|p| !p.is_empty());
     }
     if !rest.starts_with(['\\', '/']) {
         return None;
@@ -98,8 +106,15 @@ fn path_after(rest: &str) -> Option<String> {
 pub fn parse_verbose(out: &str) -> Vec<Entry> {
     let mut v = Vec::new();
     for line in out.lines() {
-        let Some(r) = line.strip_prefix("Boot") else { continue };
-        let Some(num) = r.get(..4).filter(|n| n.chars().all(|c| c.is_ascii_hexdigit())) else { continue };
+        let Some(r) = line.strip_prefix("Boot") else {
+            continue;
+        };
+        let Some(num) = r
+            .get(..4)
+            .filter(|n| n.chars().all(|c| c.is_ascii_hexdigit()))
+        else {
+            continue;
+        };
         let r = &r[4..];
         let r = r.strip_prefix('*').unwrap_or(r);
         if !r.is_empty() && !r.starts_with([' ', '\t']) {
@@ -122,7 +137,12 @@ pub fn parse_verbose(out: &str) -> Vec<Entry> {
                 file = path_after(&hd[j + 1..]);
             }
         }
-        v.push(Entry { number: num.to_ascii_uppercase(), label, disk, file });
+        v.push(Entry {
+            number: num.to_ascii_uppercase(),
+            label,
+            disk,
+            file,
+        });
     }
     v
 }
@@ -132,34 +152,62 @@ pub fn parse_verbose(out: &str) -> Vec<Entry> {
 pub fn from_load_option(number: &str, raw: &[u8]) -> Option<Entry> {
     let lo = efi::parse_load_option(raw)?;
     let disk = match lo.hard_drive() {
-        Some(Node::HardDrive { signature, format: 2, .. }) if !signature.is_empty() => Some(Disk::Gpt(signature.to_ascii_lowercase())),
-        Some(Node::HardDrive { partition, signature, format: 1, .. }) => u32::from_str_radix(signature, 16).ok().map(|s| Disk::Mbr(s, *partition)),
+        Some(Node::HardDrive {
+            signature,
+            format: 2,
+            ..
+        }) if !signature.is_empty() => Some(Disk::Gpt(signature.to_ascii_lowercase())),
+        Some(Node::HardDrive {
+            partition,
+            signature,
+            format: 1,
+            ..
+        }) => u32::from_str_radix(signature, 16)
+            .ok()
+            .map(|s| Disk::Mbr(s, *partition)),
         _ => None,
     };
-    Some(Entry { number: number.to_ascii_uppercase(), label: lo.description.clone(), disk, file: lo.file().map(str::to_string) })
+    Some(Entry {
+        number: number.to_ascii_uppercase(),
+        label: lo.description.clone(),
+        disk,
+        file: lo.file().map(str::to_string),
+    })
 }
 
 /// The entries that point at DISK's partition and LOADER.
 pub fn matching<'a>(entries: &'a [Entry], disk: &Disk, loader: &str) -> Vec<&'a Entry> {
     let want = norm_path(loader);
-    entries.iter().filter(|e| e.disk.as_ref() == Some(disk) && e.file.as_deref().is_some_and(|f| norm_path(f) == want)).collect()
+    entries
+        .iter()
+        .filter(|e| {
+            e.disk.as_ref() == Some(disk) && e.file.as_deref().is_some_and(|f| norm_path(f) == want)
+        })
+        .collect()
 }
 
 /// The Boot#### entries in efivarfs under DIR; empty when there are none
 /// or it can't be read.
 fn efivars_entries(dir: &Path) -> Vec<Entry> {
     let suffix = format!("-{}", efi::GLOBAL);
-    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
     let mut names: Vec<String> = rd
         .filter_map(|e| e.ok()?.file_name().into_string().ok())
-        .filter_map(|n| n.strip_suffix(&suffix).and_then(|n| n.strip_prefix("Boot")).map(str::to_string))
+        .filter_map(|n| {
+            n.strip_suffix(&suffix)
+                .and_then(|n| n.strip_prefix("Boot"))
+                .map(str::to_string)
+        })
         .filter(|n| n.len() == 4 && n.chars().all(|c| c.is_ascii_hexdigit()))
         .collect();
     names.sort();
     names
         .iter()
         .filter_map(|n| {
-            let b = crate::bytes::read_bounded(&dir.join(format!("Boot{n}{suffix}")), 1 << 20).ok()?;
+            let b =
+                crate::bytes::read_bounded(&dir.join(format!("Boot{n}{suffix}")), 1 << 20).ok()?;
             from_load_option(n, b.get(4..)?)
         })
         .collect()
@@ -170,28 +218,48 @@ fn efivars_entries(dir: &Path) -> Vec<Entry> {
 fn target_disk(dev: &str, part: u32) -> Result<Disk, String> {
     let src = FileSource::open(Path::new(dev)).map_err(|e| format!("{dev}: {e}"))?;
     let name = dev.rsplit('/').next().unwrap_or(dev);
-    let lbs = crate::bytes::read_to_string_bounded(Path::new(&format!("/sys/class/block/{name}/queue/logical_block_size")), 4096)
-        .ok()
-        .and_then(|s| s.trim().parse::<u64>().ok());
+    let lbs = crate::bytes::read_to_string_bounded(
+        Path::new(&format!("/sys/class/block/{name}/queue/logical_block_size")),
+        4096,
+    )
+    .ok()
+    .and_then(|s| s.trim().parse::<u64>().ok());
     let sizes: Vec<u64> = match lbs {
         Some(n) if n >= 512 => vec![n],
         _ => vec![512, 4096],
     };
     for &ss in &sizes {
         if let Some(g) = parttable::read_gpt(&src as &dyn ByteSource, ss) {
-            return g.parts.iter().find(|p| p.number == part).map(|p| Disk::Gpt(p.uuid.to_ascii_lowercase())).ok_or_else(|| format!("{dev}'s GPT has no partition {part}"));
+            return g
+                .parts
+                .iter()
+                .find(|p| p.number == part)
+                .map(|p| Disk::Gpt(p.uuid.to_ascii_lowercase()))
+                .ok_or_else(|| format!("{dev}'s GPT has no partition {part}"));
         }
     }
     match parttable::read_mbr(&src as &dyn ByteSource, sizes[0]) {
-        Some(m) if m.parts.iter().any(|p| p.number == part) => Ok(Disk::Mbr(m.disk_signature, part)),
-        _ => Err(format!("{dev} has no partition table with a partition {part}")),
+        Some(m) if m.parts.iter().any(|p| p.number == part) => {
+            Ok(Disk::Mbr(m.disk_signature, part))
+        }
+        _ => Err(format!(
+            "{dev} has no partition table with a partition {part}"
+        )),
     }
 }
 
 fn efibootmgr(args: &[&str]) -> Result<String, String> {
-    let o = Command::new("efibootmgr").args(args).output().map_err(|e| format!("efibootmgr: {e}"))?;
+    let o = Command::new("efibootmgr")
+        .args(args)
+        .output()
+        .map_err(|e| format!("efibootmgr: {e}"))?;
     if !o.status.success() {
-        return Err(format!("efibootmgr {}: {} {}", args.join(" "), o.status, String::from_utf8_lossy(&o.stderr).trim()));
+        return Err(format!(
+            "efibootmgr {}: {} {}",
+            args.join(" "),
+            o.status,
+            String::from_utf8_lossy(&o.stderr).trim()
+        ));
     }
     Ok(String::from_utf8_lossy(&o.stdout).into_owned())
 }
@@ -209,7 +277,9 @@ pub fn main(args: &[String]) -> u8 {
     let disk = match target_disk(dev, part) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("warning: bko-holt efi-dedupe: {e}; NVRAM's entries for {loader} not checked for duplicates");
+            eprintln!(
+                "warning: bko-holt efi-dedupe: {e}; NVRAM's entries for {loader} not checked for duplicates"
+            );
             return 0;
         }
     };
@@ -218,15 +288,23 @@ pub fn main(args: &[String]) -> u8 {
         match efibootmgr(&["-v"]) {
             Ok(out) => entries = parse_verbose(&out),
             Err(e) => {
-                eprintln!("warning: bko-holt efi-dedupe: {e}; NVRAM's entries for {loader} not checked for duplicates");
+                eprintln!(
+                    "warning: bko-holt efi-dedupe: {e}; NVRAM's entries for {loader} not checked for duplicates"
+                );
                 return 0;
             }
         }
     }
     for e in matching(&entries, &disk, loader) {
         match efibootmgr(&["--quiet", "--bootnum", &e.number, "--delete-bootnum"]) {
-            Ok(_) => println!("Boot{} ({:?}): the same partition and loader ({loader}) as the entry made next; deleted", e.number, e.label),
-            Err(err) => eprintln!("warning: bko-holt efi-dedupe: Boot{} ({:?}) not deleted: {err}", e.number, e.label),
+            Ok(_) => println!(
+                "Boot{} ({:?}): the same partition and loader ({loader}) as the entry made next; deleted",
+                e.number, e.label
+            ),
+            Err(err) => eprintln!(
+                "warning: bko-holt efi-dedupe: Boot{} ({:?}) not deleted: {err}",
+                e.number, e.label
+            ),
         }
     }
     0
@@ -268,15 +346,35 @@ mod tests {
         assert_eq!(v.len(), 8, "{v:?}");
         assert!(v.iter().all(|e| e.number.len() == 4));
         assert_eq!(v[0].disk, None);
-        assert_eq!(v[3], Entry { number: "0003".into(), label: "debian".into(), disk: Some(Disk::Gpt(ESP.into())), file: Some("\\EFI\\debian\\shimx64.efi".into()) });
+        assert_eq!(
+            v[3],
+            Entry {
+                number: "0003".into(),
+                label: "debian".into(),
+                disk: Some(Disk::Gpt(ESP.into())),
+                file: Some("\\EFI\\debian\\shimx64.efi".into())
+            }
+        );
         assert_eq!(v[7].file.as_deref(), Some("\\EFI\\debian\\shimx64.efi"));
         let d = Disk::Gpt(ESP.into());
         // An upper-case GUID and an upper-case path match; another disk's
         // GUID and another loader don't.
-        assert_eq!(nums(matching(&v, &d, "\\EFI\\debian\\shimx64.efi")), ["0003", "0004", "0007"]);
-        assert_eq!(nums(matching(&v, &d, "/EFI/debian/shimx64.efi")), ["0003", "0004", "0007"]);
-        assert_eq!(nums(matching(&v, &d, "EFI\\Debian\\shimx64.efi")), ["0003", "0004", "0007"]);
-        assert_eq!(nums(matching(&v, &d, "\\EFI\\debian\\grubx64.efi")), ["0006"]);
+        assert_eq!(
+            nums(matching(&v, &d, "\\EFI\\debian\\shimx64.efi")),
+            ["0003", "0004", "0007"]
+        );
+        assert_eq!(
+            nums(matching(&v, &d, "/EFI/debian/shimx64.efi")),
+            ["0003", "0004", "0007"]
+        );
+        assert_eq!(
+            nums(matching(&v, &d, "EFI\\Debian\\shimx64.efi")),
+            ["0003", "0004", "0007"]
+        );
+        assert_eq!(
+            nums(matching(&v, &d, "\\EFI\\debian\\grubx64.efi")),
+            ["0006"]
+        );
         assert!(matching(&v, &Disk::Gpt(OTHER.into()), "\\EFI\\debian\\grubx64.efi").is_empty());
         assert!(matching(&v, &d, "\\EFI\\debian\\mmx64.efi").is_empty());
     }
@@ -297,19 +395,45 @@ mod tests {
              \x20   data: 6b 00 65 00 72 00\n\
              Boot0004* chimera\tHD(1,GPT,{},0x800,0x100000)/\\EFI\\chimera\\grubx64.efi\n\
              Boot0005* Windows Boot Manager\tHD(2,GPT,{},0x100800,0x32000)/\\EFI\\Microsoft\\Boot\\bootmgfw.efi57494e444f5753000100000088000000\n",
-            ESP, OTHER, ESP.to_ascii_uppercase(), ESP, WIN
+            ESP,
+            OTHER,
+            ESP.to_ascii_uppercase(),
+            ESP,
+            WIN
         );
         let v = parse_verbose(&out);
-        assert_eq!(v.iter().map(|e| e.number.as_str()).collect::<Vec<_>>(), ["0000", "0001", "0002", "0003", "0004", "0005"]);
-        assert_eq!(v[3].file.as_deref(), Some("\\EFI\\SYSTEMD\\SYSTEMD-BOOTX64.EFI"));
-        assert_eq!(v[5].file.as_deref(), Some("\\EFI\\Microsoft\\Boot\\bootmgfw.efi"));
+        assert_eq!(
+            v.iter().map(|e| e.number.as_str()).collect::<Vec<_>>(),
+            ["0000", "0001", "0002", "0003", "0004", "0005"]
+        );
+        assert_eq!(
+            v[3].file.as_deref(),
+            Some("\\EFI\\SYSTEMD\\SYSTEMD-BOOTX64.EFI")
+        );
+        assert_eq!(
+            v[5].file.as_deref(),
+            Some("\\EFI\\Microsoft\\Boot\\bootmgfw.efi")
+        );
         let d = Disk::Gpt(ESP.into());
-        assert_eq!(nums(matching(&v, &d, "\\EFI\\systemd\\systemd-bootx64.efi")), ["0001", "0003"]);
-        assert_eq!(nums(matching(&v, &d, "\\EFI\\chimera\\grubx64.efi")), ["0004"]);
+        assert_eq!(
+            nums(matching(&v, &d, "\\EFI\\systemd\\systemd-bootx64.efi")),
+            ["0001", "0003"]
+        );
+        assert_eq!(
+            nums(matching(&v, &d, "\\EFI\\chimera\\grubx64.efi")),
+            ["0004"]
+        );
         assert!(matching(&v, &Disk::Gpt(OTHER.into()), "\\EFI\\chimera\\grubx64.efi").is_empty());
         assert_eq!(v[5].disk, Some(Disk::Gpt(WIN.into())));
         assert!(matching(&v, &d, "\\EFI\\Microsoft\\Boot\\bootmgfw.efi").is_empty());
-        assert_eq!(nums(matching(&v, &Disk::Gpt(WIN.into()), "\\EFI\\Microsoft\\Boot\\bootmgfw.efi")), ["0005"]);
+        assert_eq!(
+            nums(matching(
+                &v,
+                &Disk::Gpt(WIN.into()),
+                "\\EFI\\Microsoft\\Boot\\bootmgfw.efi"
+            )),
+            ["0005"]
+        );
     }
 
     /// Alpine (busybox userland, efibootmgr 18 from apk): the same text,
@@ -327,9 +451,31 @@ mod tests {
         let v = parse_verbose(&out);
         assert_eq!(v.len(), 4, "{v:?}");
         assert_eq!(v[0].label, "alpine");
-        assert_eq!(v[3], Entry { number: "0005".into(), label: "Hidden".into(), disk: None, file: None });
-        assert_eq!(nums(matching(&v, &Disk::Gpt(ESP.into()), "\\EFI\\alpine\\grubx64.efi")), ["0002"]);
-        assert_eq!(nums(matching(&v, &Disk::Mbr(0x1a2b3c4d, 1), "/efi/alpine/grubx64.efi")), ["0004"]);
+        assert_eq!(
+            v[3],
+            Entry {
+                number: "0005".into(),
+                label: "Hidden".into(),
+                disk: None,
+                file: None
+            }
+        );
+        assert_eq!(
+            nums(matching(
+                &v,
+                &Disk::Gpt(ESP.into()),
+                "\\EFI\\alpine\\grubx64.efi"
+            )),
+            ["0002"]
+        );
+        assert_eq!(
+            nums(matching(
+                &v,
+                &Disk::Mbr(0x1a2b3c4d, 1),
+                "/efi/alpine/grubx64.efi"
+            )),
+            ["0004"]
+        );
         assert!(matching(&v, &Disk::Mbr(0x1a2b3c4d, 2), "/efi/alpine/grubx64.efi").is_empty());
     }
 
@@ -345,12 +491,37 @@ mod tests {
     #[test]
     fn load_option() {
         let hex = "0100000062005500620075006e0074007500000004012a0001000000000800000000000000d8170000000000000000bc0000004080000000000000020202040434005c004500460049005c007500620075006e00740075005c007300680069006d007800360034002e0065006600690000007fff0400";
-        let raw: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap()).collect();
+        let raw: Vec<u8> = (0..hex.len() / 2)
+            .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+            .collect();
         let e = from_load_option("0006", &raw).unwrap();
-        assert_eq!(e, Entry { number: "0006".into(), label: "Ubuntu".into(), disk: Some(Disk::Gpt("bc000000-0000-4000-8000-000000000002".into())), file: Some("\\EFI\\ubuntu\\shimx64.efi".into()) });
+        assert_eq!(
+            e,
+            Entry {
+                number: "0006".into(),
+                label: "Ubuntu".into(),
+                disk: Some(Disk::Gpt("bc000000-0000-4000-8000-000000000002".into())),
+                file: Some("\\EFI\\ubuntu\\shimx64.efi".into())
+            }
+        );
         let v = [e];
-        assert_eq!(matching(&v, &Disk::Gpt("BC000000-0000-4000-8000-000000000002".to_ascii_lowercase()), "/EFI/Ubuntu/shimx64.efi").len(), 1);
-        assert!(matching(&v, &Disk::Gpt("bc000000-0000-4000-8000-000000000003".into()), "\\EFI\\ubuntu\\shimx64.efi").is_empty());
+        assert_eq!(
+            matching(
+                &v,
+                &Disk::Gpt("BC000000-0000-4000-8000-000000000002".to_ascii_lowercase()),
+                "/EFI/Ubuntu/shimx64.efi"
+            )
+            .len(),
+            1
+        );
+        assert!(
+            matching(
+                &v,
+                &Disk::Gpt("bc000000-0000-4000-8000-000000000003".into()),
+                "\\EFI\\ubuntu\\shimx64.efi"
+            )
+            .is_empty()
+        );
     }
 
     /// efivarfs read from a directory: each Boot#### file is the 4-byte
@@ -361,9 +532,15 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let hex = "0100000062005500620075006e0074007500000004012a0001000000000800000000000000d8170000000000000000bc0000004080000000000000020202040434005c004500460049005c007500620075006e00740075005c007300680069006d007800360034002e0065006600690000007fff0400";
         let mut raw = vec![7u8, 0, 0, 0];
-        raw.extend((0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap()));
+        raw.extend(
+            (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap()),
+        );
         std::fs::write(dir.join(format!("Boot000A-{}", efi::GLOBAL)), &raw).unwrap();
-        std::fs::write(dir.join(format!("BootOrder-{}", efi::GLOBAL)), [7u8, 0, 0, 0, 10, 0]).unwrap();
+        std::fs::write(
+            dir.join(format!("BootOrder-{}", efi::GLOBAL)),
+            [7u8, 0, 0, 0, 10, 0],
+        )
+        .unwrap();
         std::fs::write(dir.join(format!("Boot0001-{}", efi::LOADER)), &raw).unwrap();
         let v = efivars_entries(&dir);
         std::fs::remove_dir_all(&dir).ok();

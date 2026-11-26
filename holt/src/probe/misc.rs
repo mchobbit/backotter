@@ -1,7 +1,7 @@
 //! Swap areas (and hibernation images in them), ISO9660 and JFS.
 
 use super::Content;
-use crate::bytes::{le32, le64, sub, uuid, ByteSource};
+use crate::bytes::{ByteSource, le32, le64, sub, uuid};
 use crate::json::Obj;
 
 /// Page sizes a Linux swap header may be built for.
@@ -9,7 +9,9 @@ const PAGE_SIZES: &[u64] = &[4096, 8192, 16384, 65536];
 
 pub fn swap(src: &dyn ByteSource) -> Option<Content> {
     for &ps in PAGE_SIZES {
-        let Some(magic) = src.read_exact_at(ps - 10, 10) else { continue };
+        let Some(magic) = src.read_exact_at(ps - 10, 10) else {
+            continue;
+        };
         // v1 headers ("SWAPSPACE2", or a hibernation image's signature in
         // its place) have a UUID and label; the ancient v0 has neither.
         let (v1, hibernation) = match &magic[..] {
@@ -24,9 +26,16 @@ pub fn swap(src: &dyn ByteSource) -> Option<Content> {
         let h = src.read_at(1024, 512);
         // blkid's VERSION is the header's own version field (1), not the
         // "2" in the magic.
-        let version = if v1 { le32(&h, 0).to_string() } else { "0".to_string() };
+        let version = if v1 {
+            le32(&h, 0).to_string()
+        } else {
+            "0".to_string()
+        };
         let last_page = le32(&h, 4) as u64;
-        let mut d = Obj::new().set("page_size", ps).set("last_page", last_page).set("size_bytes", (last_page + 1) * ps);
+        let mut d = Obj::new()
+            .set("page_size", ps)
+            .set("last_page", last_page)
+            .set("size_bytes", (last_page + 1) * ps);
         d.put("bad_pages", le32(&h, 8));
         d.put_some("hibernation_image", hibernation);
         let uuid_bytes = sub(&h, 12, 16);
@@ -34,7 +43,11 @@ pub fn swap(src: &dyn ByteSource) -> Option<Content> {
             kind: "swap".into(),
             usage: "other",
             uuid: (v1 && uuid_bytes.iter().any(|&b| b != 0)).then(|| uuid(uuid_bytes)),
-            label: if v1 { crate::bytes::label(sub(&h, 28, 16)) } else { None },
+            label: if v1 {
+                crate::bytes::label(sub(&h, 28, 16))
+            } else {
+                None
+            },
             version: Some(version),
             details: d,
             extra: None,
@@ -57,8 +70,21 @@ pub fn iso9660(src: &dyn ByteSource) -> Option<Content> {
         .set("creation_time", crate::bytes::label(sub(&b, 813, 16)));
     // blkid's UUID for ISO9660 is the creation time, digits only.
     let created = String::from_utf8_lossy(sub(&b, 813, 16)).to_string();
-    let uuid = (created.len() == 16 && created.bytes().all(|c| c.is_ascii_digit()) && created != "0000000000000000")
-        .then(|| format!("{}-{}-{}-{}-{}-{}-{}", &created[0..4], &created[4..6], &created[6..8], &created[8..10], &created[10..12], &created[12..14], &created[14..16]));
+    let uuid = (created.len() == 16
+        && created.bytes().all(|c| c.is_ascii_digit())
+        && created != "0000000000000000")
+        .then(|| {
+            format!(
+                "{}-{}-{}-{}-{}-{}-{}",
+                &created[0..4],
+                &created[4..6],
+                &created[6..8],
+                &created[8..10],
+                &created[10..12],
+                &created[12..14],
+                &created[14..16]
+            )
+        });
     Some(Content {
         kind: "iso9660".into(),
         usage: "filesystem",
@@ -77,11 +103,18 @@ pub fn jfs(src: &dyn ByteSource) -> Option<Content> {
     }
     let version = le32(&b, 4);
     let bsize = le32(&b, 16) as u64;
-    let label = if version == 1 { crate::bytes::label(sub(&b, 101, 11)) } else { crate::bytes::label(sub(&b, 152, 16)) };
+    let label = if version == 1 {
+        crate::bytes::label(sub(&b, 101, 11))
+    } else {
+        crate::bytes::label(sub(&b, 152, 16))
+    };
     let d = Obj::new()
         .set("block_size", bsize)
         .set("size_bytes", le64(&b, 8) * le32(&b, 24) as u64)
-        .set("external_log", le32(&b, 36) & 0x0000_0800 == 0 && le32(&b, 64) != 0);
+        .set(
+            "external_log",
+            le32(&b, 36) & 0x0000_0800 == 0 && le32(&b, 64) != 0,
+        );
     Some(Content {
         kind: "jfs".into(),
         usage: "filesystem",
@@ -138,10 +171,16 @@ mod tests {
         let c = swap(&MemSource(sample::swap(256, "swap0"))).unwrap();
         assert_eq!(c.kind, "swap");
         assert_eq!(c.version.as_deref(), Some("1"));
-        assert_eq!(c.uuid.as_deref(), Some("c0c1c2c3-c4c5-c6c7-c8c9-cacbcccdcecf"));
+        assert_eq!(
+            c.uuid.as_deref(),
+            Some("c0c1c2c3-c4c5-c6c7-c8c9-cacbcccdcecf")
+        );
         assert_eq!(c.label.as_deref(), Some("swap0"));
         let d = c.details.build();
-        assert_eq!(d.get("size_bytes").and_then(Value::as_u64), Some(256 * 4096));
+        assert_eq!(
+            d.get("size_bytes").and_then(Value::as_u64),
+            Some(256 * 4096)
+        );
         assert!(d.get("hibernation_image").is_none());
     }
 
@@ -150,7 +189,13 @@ mod tests {
         let mut img = sample::swap(256, "");
         img[4086..4096].copy_from_slice(b"S1SUSPEND\0");
         let c = swap(&MemSource(img)).unwrap();
-        assert_eq!(c.details.build().get("hibernation_image").and_then(Value::as_str), Some("S1SUSPEND"));
+        assert_eq!(
+            c.details
+                .build()
+                .get("hibernation_image")
+                .and_then(Value::as_str),
+            Some("S1SUSPEND")
+        );
         let mut img = vec![0u8; 65536 * 4];
         img[65536 - 10..65536].copy_from_slice(b"SWAPSPACE2");
         img[1028..1032].copy_from_slice(&3u32.to_le_bytes());
@@ -187,7 +232,10 @@ mod tests {
         let c = iso9660(&MemSource(img.clone())).unwrap();
         assert_eq!(c.label.as_deref(), Some("BKO_RESCUE"));
         assert_eq!(c.uuid.as_deref(), Some("2026-11-04-12-00-00-00"));
-        assert_eq!(c.details.build().get("size_bytes").and_then(Value::as_u64), Some(2048000));
+        assert_eq!(
+            c.details.build().get("size_bytes").and_then(Value::as_u64),
+            Some(2048000)
+        );
         img[0x8000 + 813] = b' ';
         assert_eq!(iso9660(&MemSource(img.clone())).unwrap().uuid, None);
         img[0x8000] = 2;
@@ -209,7 +257,10 @@ mod tests {
         let c = jfs(&MemSource(img.clone())).unwrap();
         assert_eq!(c.label.as_deref(), Some("new"));
         assert!(c.uuid.unwrap().starts_with("42"));
-        assert_eq!(c.details.build().get("size_bytes").and_then(Value::as_u64), Some(512000));
+        assert_eq!(
+            c.details.build().get("size_bytes").and_then(Value::as_u64),
+            Some(512000)
+        );
         img[0x8004] = 1;
         assert_eq!(jfs(&MemSource(img)).unwrap().label.as_deref(), Some("old"));
         assert!(jfs(&MemSource(vec![0u8; 0x9000])).is_none());

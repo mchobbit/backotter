@@ -12,8 +12,8 @@
 //! exist, makes the UEFI entries, writes its log, and ends as every Linux
 //! boot stage does.
 
-use super::commands::{atimes_cmd, Builder, Cmd};
 use super::RUN_DIR;
+use super::commands::{Builder, Cmd, atimes_cmd};
 use crate::json::Value;
 
 /// What a restored ABRoot tree has once the restore is done: the present
@@ -25,7 +25,9 @@ pub const MARKER_NO_IMAGE: &str = "var/lib/abroot";
 
 /// The layout's boot.abroot, when the source is an ABRoot system.
 pub fn of(layout: &Value) -> Option<&Value> {
-    layout.at(&["boot", "abroot"]).filter(|v| v.as_object().is_some())
+    layout
+        .at(&["boot", "abroot"])
+        .filter(|v| v.as_object().is_some())
 }
 
 fn s(v: &Value, k: &str) -> Option<String> {
@@ -34,11 +36,17 @@ fn s(v: &Value, k: &str) -> Option<String> {
 
 /// boot.abroot's root of label L.
 fn root<'a>(a: &'a Value, l: &str) -> Option<&'a Value> {
-    a.get("roots").and_then(Value::as_array)?.iter().find(|r| r.get("label").and_then(Value::as_str) == Some(l))
+    a.get("roots")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|r| r.get("label").and_then(Value::as_str) == Some(l))
 }
 
 fn present(a: &Value) -> Option<&Value> {
-    a.get("roots").and_then(Value::as_array)?.iter().find(|r| r.get("present") == Some(&Value::Bool(true)))
+    a.get("roots")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|r| r.get("present") == Some(&Value::Bool(true)))
 }
 
 /// The restore gate's file (crate::other::restored_marker).
@@ -73,11 +81,24 @@ pub struct RootWant {
 /// upgrade's grub.cfg swap shows here); an empty root is a warning.  The
 /// errors come after the warnings, ended by a count, so the last lines of
 /// a failure name what failed.
-pub fn check_script(t: &str, default_label: &str, init_lv: &str, init_uuid: &str, roots: &[RootWant]) -> String {
+pub fn check_script(
+    t: &str,
+    default_label: &str,
+    init_lv: &str,
+    init_uuid: &str,
+    roots: &[RootWant],
+) -> String {
     let q = super::shell_quote;
     let mut chk = String::new();
     for r in roots {
-        chk += &format!("chk {} {} {} {} {}\n", q(&r.label), if r.empty { 1 } else { 0 }, q(&r.uuid), q(&r.mapper), q(&r.vg_lv));
+        chk += &format!(
+            "chk {} {} {} {} {}\n",
+            q(&r.label),
+            if r.empty { 1 } else { 0 },
+            q(&r.uuid),
+            q(&r.mapper),
+            q(&r.vg_lv)
+        );
     }
     format!(
         r#"t=$(readlink -f {t}) || exit 1; want={want}; ilv={ilv}; iuuid={iuuid}; errs=; nbad=0
@@ -150,7 +171,11 @@ impl Builder<'_> {
             (crate::abroot::FUTURE_AT, future.as_deref().and_then(|l| root(a, l)).cloned(), format!("the other root ({}), where ABRoot mounts it", future.as_deref().unwrap_or("?"))),
         ];
         if !have.iter().any(|p| p == "/var") {
-            want.push(("/var", a.get("var").cloned(), "/var, which ABRoot's mount-sys mounts by label".into()));
+            want.push((
+                "/var",
+                a.get("var").cloned(),
+                "/var, which ABRoot's mount-sys mounts by label".into(),
+            ));
         }
         let mut out = Vec::new();
         for (path, fs, what) in want {
@@ -161,10 +186,23 @@ impl Builder<'_> {
                 continue;
             };
             let Some(node) = self.names.dev(&dev) else {
-                self.problems.push(format!("ABRoot: {what} is on {dev}, which isn't restored"));
+                self.problems
+                    .push(format!("ABRoot: {what} is on {dev}, which isn't restored"));
                 continue;
             };
-            out.push((path.to_string(), Cmd::new(&["mount", "-t", &ty, "-o", "defaults", &node, &format!("{t}{path}")]).why(format!("ABRoot: {what} (not in fstab)"))));
+            out.push((
+                path.to_string(),
+                Cmd::new(&[
+                    "mount",
+                    "-t",
+                    &ty,
+                    "-o",
+                    "defaults",
+                    &node,
+                    &format!("{t}{path}"),
+                ])
+                .why(format!("ABRoot: {what} (not in fstab)")),
+            ));
         }
         out
     }
@@ -172,8 +210,15 @@ impl Builder<'_> {
     /// What version 1 doesn't restore on ABRoot (plan problems), and what
     /// the plan should say (notes).
     fn abroot_problems(&mut self, a: &Value) {
-        if a.get("thin_two_roots") != Some(&Value::Bool(true)) || a.get("v1_system") == Some(&Value::Bool(true)) {
-            let c = |k: &str| a.at(&["config", k]).and_then(Value::as_str).unwrap_or("").to_string();
+        if a.get("thin_two_roots") != Some(&Value::Bool(true))
+            || a.get("v1_system") == Some(&Value::Bool(true))
+        {
+            let c = |k: &str| {
+                a.at(&["config", k])
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string()
+            };
             self.problems.push(format!(
                 "ABRoot: not the layout version 1 restores (ABRoot v2 with thinProvisioning, the thinInitVolume LV and two roots labelled partLabelA and partLabelB: here thinProvisioning={}, thinInitVolume={:?}, partLabelA={:?}, partLabelB={:?}{}); ABRoot v1's /.system and layouts without thin provisioning aren't restored",
                 a.at(&["config", "thinProvisioning"]).and_then(Value::as_bool).unwrap_or(false),
@@ -207,7 +252,9 @@ impl Builder<'_> {
         if present.is_none() {
             self.problems.push("ABRoot: the dump names no present root (no filesystem labelled partLabelA or partLabelB was mounted at /)".into());
         }
-        if let Some(d) = default_label.filter(|d| root(a, d).is_some_and(|r| r.get("empty") == Some(&Value::Bool(true)))) {
+        if let Some(d) = default_label
+            .filter(|d| root(a, d).is_some_and(|r| r.get("empty") == Some(&Value::Bool(true))))
+        {
             self.problems.push(format!("ABRoot: the source's grub.cfg boots {d} by default, and {d} was empty (no usr/, nothing in init/{d}): the restored system would boot nothing"));
         }
         if let (Some(d), Some(p)) = (default_label, present.as_deref()) {
@@ -215,7 +262,12 @@ impl Builder<'_> {
                 self.notes.push(format!("ABRoot: the source's grub.cfg boots {d} next, not {p}, the root it was running (an upgrade had finished and not been rebooted into, or {p}'s entry was picked at GRUB's menu): the restored system boots {d} first, as the source would have"));
             }
         }
-        for r in a.get("roots").and_then(Value::as_array).into_iter().flatten() {
+        for r in a
+            .get("roots")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let l = s(r, "label").unwrap_or_default();
             if r.get("empty") == Some(&Value::Bool(true)) {
                 self.notes.push(format!("ABRoot: {l} was empty on the source (a fresh install's other root: no usr/, nothing in init/{l}): restored empty, and its grub.cfg entry boots nothing until the next `abroot upgrade`, as on the source"));
@@ -228,7 +280,12 @@ impl Builder<'_> {
 
     /// The consistency check's expectations, from boot.abroot.
     fn abroot_want(&self, a: &Value) -> (String, String, String, Vec<RootWant>) {
-        let default_label = a.at(&["grub", "default_label"]).and_then(Value::as_str).or(a.get("present").and_then(Value::as_str)).unwrap_or("").to_string();
+        let default_label = a
+            .at(&["grub", "default_label"])
+            .and_then(Value::as_str)
+            .or(a.get("present").and_then(Value::as_str))
+            .unwrap_or("")
+            .to_string();
         let init = a.get("init").cloned().unwrap_or(Value::Null);
         let roots = a
             .get("roots")
@@ -237,11 +294,24 @@ impl Builder<'_> {
             .flatten()
             .map(|r| {
                 let mapper = s(r, "dm_name").unwrap_or_default();
-                let vg_lv = crate::blockdev::split_lvm_dm_name(&mapper).map(|(vg, lv)| format!("/dev/{vg}/{lv}")).unwrap_or_default();
-                RootWant { label: s(r, "label").unwrap_or_default(), empty: r.get("empty") == Some(&Value::Bool(true)), uuid: s(r, "uuid").unwrap_or_default(), mapper, vg_lv }
+                let vg_lv = crate::blockdev::split_lvm_dm_name(&mapper)
+                    .map(|(vg, lv)| format!("/dev/{vg}/{lv}"))
+                    .unwrap_or_default();
+                RootWant {
+                    label: s(r, "label").unwrap_or_default(),
+                    empty: r.get("empty") == Some(&Value::Bool(true)),
+                    uuid: s(r, "uuid").unwrap_or_default(),
+                    mapper,
+                    vg_lv,
+                }
             })
             .collect();
-        (default_label, s(&init, "dm_name").unwrap_or_default(), s(&init, "uuid").unwrap_or_default(), roots)
+        (
+            default_label,
+            s(&init, "dm_name").unwrap_or_default(),
+            s(&init, "uuid").unwrap_or_default(),
+            roots,
+        )
     }
 
     /// The boot stage on ABRoot (docs/design/vanillaos.md, "load").
@@ -249,7 +319,9 @@ impl Builder<'_> {
         self.abroot_problems(a);
         let t = self.opts.target.clone();
         let marker = marker(&self.layout.v);
-        let mut out = vec![Cmd::note(format!("refuses to start unless {t}/{marker} is there: the restored present root"))];
+        let mut out = vec![Cmd::note(format!(
+            "refuses to start unless {t}/{marker} is there: the restored present root"
+        ))];
         out.push(Cmd::new(&["sh", "-c", &atimes_cmd(&t, "if-missing", &self.ro_shared())]).why("the restored atimes (the restore stage lists them), to put back after this stage's reads"));
         let what = "ABRoot: /boot (the master grub.cfg), the ESP, the init LV and both roots are restored as they were; no initramfs, no grub-install, no update-grub (a failing stub on Vanilla OS), no chroot";
         self.notes.push(what.into());
@@ -265,7 +337,10 @@ impl Builder<'_> {
         }
         let log = format!("{t}/var/log/bko-holt");
         out.push(Cmd::new(&["mkdir", "-p", &log]));
-        out.push(Cmd::new(&["cp", "-a", &format!("{RUN_DIR}/log/."), &format!("{log}/")]).why("this restore's log, on the restored system (/var is the vos-var filesystem)"));
+        out.push(
+            Cmd::new(&["cp", "-a", &format!("{RUN_DIR}/log/."), &format!("{log}/")])
+                .why("this restore's log, on the restored system (/var is the vos-var filesystem)"),
+        );
         out.extend(self.boot_tail(&t));
         out
     }
@@ -276,8 +351,16 @@ mod tests {
     use super::*;
 
     fn run(script: &str) -> (bool, String, String) {
-        let o = std::process::Command::new("sh").arg("-c").arg(script).output().unwrap();
-        (o.status.success(), String::from_utf8_lossy(&o.stdout).into_owned(), String::from_utf8_lossy(&o.stderr).into_owned())
+        let o = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .output()
+            .unwrap();
+        (
+            o.status.success(),
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        )
     }
 
     const UA: &str = "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
@@ -286,8 +369,20 @@ mod tests {
 
     fn wants(b_empty: bool) -> Vec<RootWant> {
         vec![
-            RootWant { label: "vos-a".into(), empty: false, uuid: UA.into(), mapper: "vos--root-root--a".into(), vg_lv: "/dev/vos-root/root-a".into() },
-            RootWant { label: "vos-b".into(), empty: b_empty, uuid: UB.into(), mapper: "vos--root-root--b".into(), vg_lv: "/dev/vos-root/root-b".into() },
+            RootWant {
+                label: "vos-a".into(),
+                empty: false,
+                uuid: UA.into(),
+                mapper: "vos--root-root--a".into(),
+                vg_lv: "/dev/vos-root/root-a".into(),
+            },
+            RootWant {
+                label: "vos-b".into(),
+                empty: b_empty,
+                uuid: UB.into(),
+                mapper: "vos--root-root--b".into(),
+                vg_lv: "/dev/vos-root/root-b".into(),
+            },
         ]
     }
 
@@ -314,49 +409,129 @@ mod tests {
     fn check_passes_and_fails() {
         let root = |t: &crate::testutil::Tree| t.root().to_string_lossy().into_owned();
         let t = tree(true);
-        let (ok, out, err) = run(&check_script(&root(&t), "vos-a", "vos--root-init", UI, &wants(false)));
+        let (ok, out, err) = run(&check_script(
+            &root(&t),
+            "vos-a",
+            "vos--root-init",
+            UI,
+            &wants(false),
+        ));
         assert!(ok, "{out}{err}");
-        assert!(out.contains("grub.cfg boots vos-a by default") && err.is_empty(), "{out}{err}");
+        assert!(
+            out.contains("grub.cfg boots vos-a by default") && err.is_empty(),
+            "{out}{err}"
+        );
         // A fresh install: vos-b empty, a warning; but not as the default.
         let t = tree(false);
-        let (ok, _, err) = run(&check_script(&root(&t), "vos-a", "vos--root-init", UI, &wants(true)));
-        assert!(ok && err.contains("abroot: warning: vos-b was empty on the source"), "{err}");
-        let (ok, _, err) = run(&check_script(&root(&t), "vos-a", "vos--root-init", UI, &wants(false)));
-        assert!(!ok && err.contains("vos-b: init/vos-b/abroot.cfg isn't on the restored init LV"), "{err}");
+        let (ok, _, err) = run(&check_script(
+            &root(&t),
+            "vos-a",
+            "vos--root-init",
+            UI,
+            &wants(true),
+        ));
+        assert!(
+            ok && err.contains("abroot: warning: vos-b was empty on the source"),
+            "{err}"
+        );
+        let (ok, _, err) = run(&check_script(
+            &root(&t),
+            "vos-a",
+            "vos--root-init",
+            UI,
+            &wants(false),
+        ));
+        assert!(
+            !ok && err.contains("vos-b: init/vos-b/abroot.cfg isn't on the restored init LV"),
+            "{err}"
+        );
         // The default entry leads elsewhere than the dump's.
         let t = tree(true);
-        let (ok, _, err) = run(&check_script(&root(&t), "vos-b", "vos--root-init", UI, &wants(false)));
-        assert!(!ok && err.contains("grub.cfg's default entry (0) leads to vos-a, the dump's to vos-b"), "{err}");
+        let (ok, _, err) = run(&check_script(
+            &root(&t),
+            "vos-b",
+            "vos--root-init",
+            UI,
+            &wants(false),
+        ));
+        assert!(
+            !ok && err.contains("grub.cfg's default entry (0) leads to vos-a, the dump's to vos-b"),
+            "{err}"
+        );
         assert!(err.trim_end().ends_with("abroot: 1 mismatches between grub.cfg, the init LV and the roots in the restored tree (a backup taken across an upgrade?)"), "{err}");
         // A kernel missing, a root= of another root, a search for another
         // filesystem, a set root= of another LV.
         std::fs::remove_file(t.p("/boot/init/vos-a/initrd.img-6.17.8-amd64")).unwrap();
         t.file("/boot/init/vos-b/abroot.cfg", format!("  search --no-floppy --fs-uuid --set=root {UA}\n  linux   /vos-b/vmlinuz-6.18.1-amd64 root=UUID={UA} quiet\n  initrd  /vos-a/initrd.img-6.18.1-amd64\n"));
-        t.file("/boot/grub/grub.cfg", crate::abroot::tests_master().replacen("(lvm/vos--root-init)", "(lvm/other-init)", 1));
-        let (ok, _, err) = run(&check_script(&root(&t), "vos-a", "vos--root-init", UI, &wants(false)));
+        t.file(
+            "/boot/grub/grub.cfg",
+            crate::abroot::tests_master().replacen("(lvm/vos--root-init)", "(lvm/other-init)", 1),
+        );
+        let (ok, _, err) = run(&check_script(
+            &root(&t),
+            "vos-a",
+            "vos--root-init",
+            UI,
+            &wants(false),
+        ));
         assert!(!ok, "{err}");
         for want in [
             "grub.cfg sets root=(lvm/other-init), not (lvm/vos--root-init), the init LV",
             "vos-a: abroot.cfg's (lvm/vos--root-init)/vos-a/initrd.img-6.17.8-amd64 isn't on the restored init LV",
             "vos-b: abroot.cfg's /vos-a/initrd.img-6.18.1-amd64 isn't in init/vos-b/",
             &format!("vos-b: abroot.cfg's root=UUID={UA} isn't vos-b's filesystem"),
-            &format!("vos-b: abroot.cfg searches for the filesystem {UA}, not the init LV's ({UI})"),
+            &format!(
+                "vos-b: abroot.cfg searches for the filesystem {UA}, not the init LV's ({UI})"
+            ),
             "abroot: 5 mismatches",
         ] {
             assert!(err.contains(want), "{want}: {err}");
         }
         // No default, a third configfile.
-        t.file("/boot/grub/grub.cfg", crate::abroot::tests_master().replace("set default=0", "set default=saved") + "menuentry x {\n configfile /x/abroot.cfg\n}\n");
-        let (ok, _, err) = run(&check_script(&root(&t), "vos-a", "vos--root-init", UI, &wants(false)));
-        assert!(!ok && err.contains("grub.cfg has 3 configfile lines, not 2") && err.contains("grub.cfg has no set default=0 or 1"), "{err}");
+        t.file(
+            "/boot/grub/grub.cfg",
+            crate::abroot::tests_master().replace("set default=0", "set default=saved")
+                + "menuentry x {\n configfile /x/abroot.cfg\n}\n",
+        );
+        let (ok, _, err) = run(&check_script(
+            &root(&t),
+            "vos-a",
+            "vos--root-init",
+            UI,
+            &wants(false),
+        ));
+        assert!(
+            !ok && err.contains("grub.cfg has 3 configfile lines, not 2")
+                && err.contains("grub.cfg has no set default=0 or 1"),
+            "{err}"
+        );
         // /dev/VG/LV as root= counts.
         let t = tree(true);
         t.file("/boot/init/vos-b/abroot.cfg", "linux /vos-b/vmlinuz-6.18.1-amd64 root=/dev/vos-root/root-b\ninitrd /vos-b/initrd.img-6.18.1-amd64\n");
-        assert!(run(&check_script(&root(&t), "vos-a", "vos--root-init", UI, &wants(false))).0);
+        assert!(
+            run(&check_script(
+                &root(&t),
+                "vos-a",
+                "vos--root-init",
+                UI,
+                &wants(false)
+            ))
+            .0
+        );
         // Only another root's kernel in vos-b's abroot.cfg.
         t.file("/boot/init/vos-b/abroot.cfg", format!("linux /vos-a/vmlinuz-6.17.8-amd64 root=UUID={UB}\ninitrd /vos-a/initrd.img-6.17.8-amd64\n"));
-        let (ok, _, err) = run(&check_script(&root(&t), "vos-a", "vos--root-init", UI, &wants(false)));
-        assert!(!ok && err.contains("vos-b: abroot.cfg has no linux line with a kernel in init/vos-b/") && err.contains("abroot: 1 mismatches"), "{err}");
+        let (ok, _, err) = run(&check_script(
+            &root(&t),
+            "vos-a",
+            "vos--root-init",
+            UI,
+            &wants(false),
+        ));
+        assert!(
+            !ok && err.contains("vos-b: abroot.cfg has no linux line with a kernel in init/vos-b/")
+                && err.contains("abroot: 1 mismatches"),
+            "{err}"
+        );
     }
 
     #[test]

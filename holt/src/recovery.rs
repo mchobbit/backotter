@@ -46,7 +46,11 @@ fn list() -> &'static [&'static str] {
     static LIST: OnceLock<Vec<&'static str>> = OnceLock::new();
     LIST.get_or_init(|| {
         let v: Vec<&'static str> = LIST_TEXT.lines().collect();
-        assert_eq!(v.len(), 2048, "src/bip39-english.txt isn't BIP39's list of 2048 words");
+        assert_eq!(
+            v.len(),
+            2048,
+            "src/bip39-english.txt isn't BIP39's list of 2048 words"
+        );
         v
     })
 }
@@ -181,7 +185,11 @@ impl fmt::Display for Problem {
 impl fmt::Debug for Problem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Problem::Unknown { words, count } => f.debug_struct("Unknown").field("words", words).field("count", count).finish(),
+            Problem::Unknown { words, count } => f
+                .debug_struct("Unknown")
+                .field("words", words)
+                .field("count", count)
+                .finish(),
             Problem::Count(n) => f.debug_tuple("Count").field(n).finish(),
             Problem::Checksum => f.write_str("Checksum"),
         }
@@ -197,7 +205,9 @@ impl Drop for Unknown {
             // SAFETY: the first N bytes of the buffer were initialised
             // (they were the string's) and are still allocated: clear()
             // keeps the capacity.
-            let zero = unsafe { std::slice::from_raw_parts(self.typed.as_ptr(), n) }.iter().all(|&b| b == 0);
+            let zero = unsafe { std::slice::from_raw_parts(self.typed.as_ptr(), n) }
+                .iter()
+                .all(|&b| b == 0);
             tests::LAST_UNKNOWN_DROP.with(|d| d.set(Some((n, zero))));
         }
         let _ = n;
@@ -206,7 +216,13 @@ impl Drop for Unknown {
 
 impl fmt::Debug for Unknown {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Unknown {{ position: {}, short: {}, suggestions: {} }}", self.position, self.short, self.suggestions.len())
+        write!(
+            f,
+            "Unknown {{ position: {}, short: {}, suggestions: {} }}",
+            self.position,
+            self.short,
+            self.suggestions.len()
+        )
     }
 }
 
@@ -243,16 +259,24 @@ const RANDOM_DEVICE: &str = "/dev/urandom";
 /// such as /dev/zero in its place, not chance (one in 2^120).
 fn random_bytes(path: &str) -> Result<[u8; 16], String> {
     use std::io::Read;
-    let mut f = std::fs::File::open(path).map_err(|e| format!("can't open {path}, the system's random source: {e}"))?;
+    let mut f = std::fs::File::open(path)
+        .map_err(|e| format!("can't open {path}, the system's random source: {e}"))?;
     match f.metadata() {
-        Ok(m) if m.is_file() => return Err(format!("{path} is a plain file, not the system's random source")),
+        Ok(m) if m.is_file() => {
+            return Err(format!(
+                "{path} is a plain file, not the system's random source"
+            ));
+        }
         Ok(_) => {}
         Err(e) => return Err(format!("{path}: {e}")),
     }
     let mut b = [0u8; 16];
-    f.read_exact(&mut b).map_err(|e| format!("can't read 16 bytes from {path}, the system's random source: {e}"))?;
+    f.read_exact(&mut b)
+        .map_err(|e| format!("can't read 16 bytes from {path}, the system's random source: {e}"))?;
     if b.iter().all(|&x| x == b[0]) {
-        return Err(format!("{path} gave 16 equal bytes: it isn't a working random source"));
+        return Err(format!(
+            "{path} gave 16 equal bytes: it isn't a working random source"
+        ));
     }
     Ok(b)
 }
@@ -323,9 +347,14 @@ pub fn check(text: &str) -> Result<Words, Problem> {
             None => unknown.push(Unknown {
                 position: found.len() + unknown.len() + 1,
                 typed: t.to_string(),
-                short: lower.chars().count() < 4 && list().iter().any(|w| w.starts_with(lower.as_str())),
+                short: lower.chars().count() < 4
+                    && list().iter().any(|w| w.starts_with(lower.as_str())),
                 // Past the first 12 (a page pasted, not words typed): none.
-                suggestions: if unknown.len() < COUNT { near(&lower) } else { Vec::new() },
+                suggestions: if unknown.len() < COUNT {
+                    near(&lower)
+                } else {
+                    Vec::new()
+                },
             }),
         }
         zeroize_string(&mut lower);
@@ -333,7 +362,10 @@ pub fn check(text: &str) -> Result<Words, Problem> {
     let count = found.len() + unknown.len();
     if !unknown.is_empty() {
         wipe(&mut found);
-        return Err(Problem::Unknown { words: unknown, count });
+        return Err(Problem::Unknown {
+            words: unknown,
+            count,
+        });
     }
     if found.len() != COUNT {
         wipe(&mut found);
@@ -361,7 +393,8 @@ pub fn typed_count(text: &str) -> usize {
 
 /// The words in TEXT, as `check` splits it.
 fn typed(text: &str) -> impl Iterator<Item = &str> {
-    text.split(|c: char| c.is_whitespace() || c == ',').filter(|t| !t.is_empty() && !is_number(t))
+    text.split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|t| !t.is_empty() && !is_number(t))
 }
 
 /// The repository key's password for WORDS: the twelve words in full, in
@@ -381,7 +414,9 @@ pub fn password(words: &Words) -> String {
 /// A number someone typed before a word: digits, perhaps with one '.', ')'
 /// or ':' after them.  No word on the list is one.
 fn is_number(t: &str) -> bool {
-    let d = t.strip_suffix(|c| matches!(c, '.' | ')' | ':')).unwrap_or(t);
+    let d = t
+        .strip_suffix(|c| matches!(c, '.' | ')' | ':'))
+        .unwrap_or(t);
     !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit())
 }
 
@@ -424,7 +459,11 @@ fn near_letters(t: &str, tc: &[char]) -> Vec<&'static str> {
     if tc.len() < 4 {
         let v: Vec<&'static str> = l.iter().copied().filter(|w| w.starts_with(t)).collect();
         if !v.is_empty() {
-            return if v.len() <= MAX_SUGGESTIONS { v } else { Vec::new() };
+            return if v.len() <= MAX_SUGGESTIONS {
+                v
+            } else {
+                Vec::new()
+            };
         }
     }
     let mut out = Vec::new();
@@ -466,7 +505,13 @@ fn ed1<T: PartialEq>(a: &[T], b: &[T]) -> bool {
     // Where they first differ (they do: a == b is out).
     let i = s.iter().zip(l).take_while(|(x, y)| x == y).count();
     match l.len() - s.len() {
-        0 => s[i + 1..] == l[i + 1..] || (i + 1 < s.len() && s[i] == l[i + 1] && s[i + 1] == l[i] && s[i + 2..] == l[i + 2..]),
+        0 => {
+            s[i + 1..] == l[i + 1..]
+                || (i + 1 < s.len()
+                    && s[i] == l[i + 1]
+                    && s[i + 1] == l[i]
+                    && s[i + 2..] == l[i + 2..])
+        }
         1 => s[i..] == l[i + 1..],
         _ => false,
     }
@@ -488,14 +533,38 @@ mod tests {
     /// https://github.com/trezor/python-mnemonic/blob/master/vectors.json
     /// (fetched 2026-11-19).
     const VECTORS: [(&str, &str); 8] = [
-        ("00000000000000000000000000000000", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"),
-        ("7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f", "legal winner thank year wave sausage worth useful legal winner thank yellow"),
-        ("80808080808080808080808080808080", "letter advice cage absurd amount doctor acoustic avoid letter advice cage above"),
-        ("ffffffffffffffffffffffffffffffff", "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong"),
-        ("9e885d952ad362caeb4efe34a8e91bd2", "ozone drill grab fiber curtain grace pudding thank cruise elder eight picnic"),
-        ("c0ba5a8e914111210f2bd131f3d5e08d", "scheme spot photo card baby mountain device kick cradle pact join borrow"),
-        ("23db8160a31d3e0dca3688ed941adbf3", "cat swing flag economy stadium alone churn speed unique patch report train"),
-        ("f30f8c1da665478f49b001d94c5fc452", "vessel ladder alter error federal sibling chat ability sun glass valve picture"),
+        (
+            "00000000000000000000000000000000",
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+        ),
+        (
+            "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+            "legal winner thank year wave sausage worth useful legal winner thank yellow",
+        ),
+        (
+            "80808080808080808080808080808080",
+            "letter advice cage absurd amount doctor acoustic avoid letter advice cage above",
+        ),
+        (
+            "ffffffffffffffffffffffffffffffff",
+            "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong",
+        ),
+        (
+            "9e885d952ad362caeb4efe34a8e91bd2",
+            "ozone drill grab fiber curtain grace pudding thank cruise elder eight picnic",
+        ),
+        (
+            "c0ba5a8e914111210f2bd131f3d5e08d",
+            "scheme spot photo card baby mountain device kick cradle pact join borrow",
+        ),
+        (
+            "23db8160a31d3e0dca3688ed941adbf3",
+            "cat swing flag economy stadium alone churn speed unique patch report train",
+        ),
+        (
+            "f30f8c1da665478f49b001d94c5fc452",
+            "vessel ladder alter error federal sibling chat ability sun glass valve picture",
+        ),
     ];
 
     fn hex16(h: &str) -> [u8; 16] {
@@ -538,19 +607,29 @@ mod tests {
     /// fetched 2026-11-19), and has what check() counts on.
     #[test]
     fn the_list_is_bip39s() {
-        assert_eq!(crate::bytes::sha256_hex(LIST_TEXT.as_bytes()), "2f5eed53a4727b4bf8880d8f3f199efc90e58503646d9ff8eff3a2ed3b24dbda");
+        assert_eq!(
+            crate::bytes::sha256_hex(LIST_TEXT.as_bytes()),
+            "2f5eed53a4727b4bf8880d8f3f199efc90e58503646d9ff8eff3a2ed3b24dbda"
+        );
         assert!(LIST_TEXT.ends_with('\n') && !LIST_TEXT.contains('\r'));
         let l = list();
         assert_eq!(l.len(), 2048);
         assert!(l.windows(2).all(|p| p[0] < p[1]), "sorted, no word twice");
-        assert!(l.iter().all(|w| (3..=8).contains(&w.len()) && w.bytes().all(|b| b.is_ascii_lowercase())));
+        assert!(
+            l.iter()
+                .all(|w| (3..=8).contains(&w.len()) && w.bytes().all(|b| b.is_ascii_lowercase()))
+        );
         let mut p4: Vec<&str> = l.iter().map(|w| &w[..4.min(w.len())]).collect();
         p4.sort();
         p4.dedup();
         assert_eq!(p4.len(), 2048, "no two words with the same first 4 letters");
         // The 3-letter words that begin longer ones: act (action...), can
         // (canal...): "act" must be act.
-        let begin: Vec<&str> = l.iter().copied().filter(|w| w.len() == 3 && l.iter().any(|x| x != w && x.starts_with(w))).collect();
+        let begin: Vec<&str> = l
+            .iter()
+            .copied()
+            .filter(|w| w.len() == 3 && l.iter().any(|x| x != w && x.starts_with(w)))
+            .collect();
         assert_eq!(begin.len(), 49);
         assert_eq!(&begin[..4], ["act", "add", "age", "air"]);
     }
@@ -586,20 +665,51 @@ mod tests {
             let pw = password(&w);
             assert_eq!(pw.split(' ').count(), 12);
             assert_eq!(check(&pw).as_ref(), Ok(&w));
-            let short: Vec<String> = w.words().iter().map(|x| x[..4.min(x.len())].to_string()).collect();
-            assert_eq!(check(&short.join(" ")).as_ref(), Ok(&w), "{}", short.join(" "));
-            assert_eq!(check(&format!("\n  {}\t\n", pw.to_uppercase().replace(' ', " \r\n "))).as_ref(), Ok(&w));
+            let short: Vec<String> = w
+                .words()
+                .iter()
+                .map(|x| x[..4.min(x.len())].to_string())
+                .collect();
+            assert_eq!(
+                check(&short.join(" ")).as_ref(),
+                Ok(&w),
+                "{}",
+                short.join(" ")
+            );
+            assert_eq!(
+                check(&format!(
+                    "\n  {}\t\n",
+                    pw.to_uppercase().replace(' ', " \r\n ")
+                ))
+                .as_ref(),
+                Ok(&w)
+            );
             seen.insert(pw);
         }
-        assert_eq!(seen.len(), all.len(), "different entropies, different words");
+        assert_eq!(
+            seen.len(),
+            all.len(),
+            "different entropies, different words"
+        );
     }
 
     #[test]
     fn abbreviations() {
         let w = from_entropy(&[0; 16]);
-        assert_eq!(check("aban aban aban aban aban aban aban aban aban aban aban abou"), Ok(w.clone()));
-        assert_eq!(check("aband abando abandon aban abandon aban abandon aban abandon aban abandon about"), Ok(w));
-        assert_eq!(password(&check("lega winn than year wave saus wort usef lega winn than yell").unwrap()), VECTORS[1].1);
+        assert_eq!(
+            check("aban aban aban aban aban aban aban aban aban aban aban abou"),
+            Ok(w.clone())
+        );
+        assert_eq!(
+            check("aband abando abandon aban abandon aban abandon aban abandon aban abandon about"),
+            Ok(w)
+        );
+        assert_eq!(
+            password(
+                &check("lega winn than year wave saus wort usef lega winn than yell").unwrap()
+            ),
+            VECTORS[1].1
+        );
         // A 3-letter word is itself, though longer words begin with it;
         // their first 4 letters are theirs.
         assert_eq!(lookup("act").map(|i| list()[i as usize]), Some("act"));
@@ -607,7 +717,10 @@ mod tests {
         assert_eq!(lookup("acto").map(|i| list()[i as usize]), Some("actor"));
         assert_eq!(lookup("actr").map(|i| list()[i as usize]), Some("actress"));
         assert_eq!(lookup("cat").map(|i| list()[i as usize]), Some("cat"));
-        assert_eq!(password(&check("cat swin flag econ stad alon chur spee uniq patc repo trai").unwrap()), VECTORS[6].1);
+        assert_eq!(
+            password(&check("cat swin flag econ stad alon chur spee uniq patc repo trai").unwrap()),
+            VECTORS[6].1
+        );
         // Fewer than 4 letters of a longer word, or more than the word: no.
         for t in ["", "a", "ab", "aba", "abandons", "abandonx", "actx", "zoos"] {
             assert_eq!(lookup(t), None, "{t:?}");
@@ -632,7 +745,13 @@ mod tests {
         assert_eq!(typed_count("1. aban, 2. xq\n3) zoo 4"), 3);
         assert_eq!(typed_count(" \n"), 0);
         assert!(is_number("12") && is_number("1.") && is_number("3)") && is_number("4:"));
-        assert!(!is_number(".") && !is_number("1.2") && !is_number("x1") && !is_number("1..") && !is_number(""));
+        assert!(
+            !is_number(".")
+                && !is_number("1.2")
+                && !is_number("x1")
+                && !is_number("1..")
+                && !is_number("")
+        );
     }
 
     #[test]
@@ -643,41 +762,99 @@ mod tests {
         assert_eq!(check("zoo"), Err(Problem::Count(1)));
         let v: Vec<&str> = VECTORS[1].1.split(' ').collect();
         assert_eq!(check(&v[..11].join(" ")), Err(Problem::Count(11)));
-        assert_eq!(check(&format!("{} zoo", VECTORS[1].1)), Err(Problem::Count(13)));
-        assert_eq!(check(&format!("{} {}", VECTORS[1].1, VECTORS[2].1)), Err(Problem::Count(24)));
-        assert_eq!(Problem::Count(0).to_string(), "no words: a recovery key has 12");
-        assert_eq!(Problem::Count(1).to_string(), "1 word: a recovery key has 12");
-        assert_eq!(Problem::Count(11).to_string(), "11 words: a recovery key has 12");
+        assert_eq!(
+            check(&format!("{} zoo", VECTORS[1].1)),
+            Err(Problem::Count(13))
+        );
+        assert_eq!(
+            check(&format!("{} {}", VECTORS[1].1, VECTORS[2].1)),
+            Err(Problem::Count(24))
+        );
+        assert_eq!(
+            Problem::Count(0).to_string(),
+            "no words: a recovery key has 12"
+        );
+        assert_eq!(
+            Problem::Count(1).to_string(),
+            "1 word: a recovery key has 12"
+        );
+        assert_eq!(
+            Problem::Count(11).to_string(),
+            "11 words: a recovery key has 12"
+        );
     }
 
     #[test]
     fn unknown_words_by_position() {
         // Words 3 and 7 wrong, counted after the numbers are left out.
-        let (u, count) = unknown(check("1. ozone 2. drill 3. grabb 4. fiber curtain grace xq thank cruise elder eight picnic"));
+        let (u, count) = unknown(check(
+            "1. ozone 2. drill 3. grabb 4. fiber curtain grace xq thank cruise elder eight picnic",
+        ));
         assert_eq!(count, 12);
         assert_eq!(u.len(), 2);
-        assert_eq!((u[0].position, u[0].typed.as_str(), u[0].short, u[0].suggestions.clone()), (3, "grabb", false, vec!["grab", "rabbit"]));
-        assert_eq!((u[1].position, u[1].typed.as_str(), u[1].short, u[1].suggestions.len()), (7, "xq", false, 0));
+        assert_eq!(
+            (
+                u[0].position,
+                u[0].typed.as_str(),
+                u[0].short,
+                u[0].suggestions.clone()
+            ),
+            (3, "grabb", false, vec!["grab", "rabbit"])
+        );
+        assert_eq!(
+            (
+                u[1].position,
+                u[1].typed.as_str(),
+                u[1].short,
+                u[1].suggestions.len()
+            ),
+            (7, "xq", false, 0)
+        );
         assert_eq!(
             Problem::Unknown { words: u, count }.to_string(),
             "word 3, \"grabb\", isn't one of the recovery key's words (did you mean grab or rabbit?)\nword 7, \"xq\", isn't one of the recovery key's words"
         );
         // As typed in the message, but read in any case.
-        let (u, count) = unknown(check("Ozone DRILL ABNDON fiber curtain grace pudding thank cruise elder eight"));
-        assert_eq!((u.len(), u[0].position, u[0].typed.as_str(), count), (1, 3, "ABNDON", 11));
+        let (u, count) = unknown(check(
+            "Ozone DRILL ABNDON fiber curtain grace pudding thank cruise elder eight",
+        ));
+        assert_eq!(
+            (u.len(), u[0].position, u[0].typed.as_str(), count),
+            (1, 3, "ABNDON", 11)
+        );
         assert_eq!(
             Problem::Unknown { words: u, count }.to_string(),
             "word 3, \"ABNDON\", isn't one of the recovery key's words (did you mean abandon?)\nand there are 11 words: a recovery key has 12"
         );
         // Something else pasted: suggestions for the first 12 only.
         let (u, count) = unknown(check(&"abndon ".repeat(20)));
-        assert_eq!((u.len(), count, u[11].suggestions.len(), u[12].suggestions.len()), (20, 20, 1, 0));
-        // Too short to tell which word.
-        let (u, _) = unknown(check("ab aba ozone drill grab fiber curtain grace pudding thank cruise elder"));
-        assert_eq!((u[0].position, u[0].short, u[0].suggestions.len()), (1, true, 0));
-        assert_eq!((u[1].position, u[1].short, u[1].suggestions.clone()), (2, true, vec!["abandon"]));
         assert_eq!(
-            Problem::Unknown { words: u, count: 12 }.to_string(),
+            (
+                u.len(),
+                count,
+                u[11].suggestions.len(),
+                u[12].suggestions.len()
+            ),
+            (20, 20, 1, 0)
+        );
+        // Too short to tell which word.
+        let (u, _) = unknown(check(
+            "ab aba ozone drill grab fiber curtain grace pudding thank cruise elder",
+        ));
+        assert_eq!(
+            (u[0].position, u[0].short, u[0].suggestions.len()),
+            (1, true, 0)
+        );
+        assert_eq!(
+            (u[1].position, u[1].short, u[1].suggestions.clone()),
+            (2, true, vec!["abandon"])
+        );
+        assert_eq!(
+            Problem::Unknown {
+                words: u,
+                count: 12
+            }
+            .to_string(),
             "word 1, \"ab\", is too short: type at least the first 4 letters of each word, or all of a shorter one\n\
              word 2, \"aba\", is too short: type at least the first 4 letters of each word, or all of a shorter one (did you mean abandon?)"
         );
@@ -709,11 +886,36 @@ mod tests {
         for (t, want) in cases {
             assert_eq!(near(t), want, "{t}");
         }
-        let (words, count) = unknown(check("acts drill grab fiber curtain grace pudding thank cruise elder eight picnic"));
-        assert!(Problem::Unknown { words, count }.to_string().ends_with("(did you mean act, action, actor or actress?)"));
-        assert!(ed1(b"ab", b"ba") && ed1(b"abc", b"ab") && ed1(b"ab", b"abc") && ed1(b"abc", b"axc") && ed1(b"abc", b"xbc") && ed1(b"abc", b"abx"));
-        assert!(ed1(b"abcd", b"bacd") && ed1(b"abcd", b"abdc") && ed1(b"a", b"") && ed1(b"abc", b"bc") && ed1(b"abc", b"xabc"));
-        assert!(!ed1(b"abc", b"abc") && !ed1(b"abc", b"cba") && !ed1(b"abc", b"a") && !ed1(b"abcd", b"badc") && !ed1(b"abcd", b"axcx"));
+        let (words, count) = unknown(check(
+            "acts drill grab fiber curtain grace pudding thank cruise elder eight picnic",
+        ));
+        assert!(
+            Problem::Unknown { words, count }
+                .to_string()
+                .ends_with("(did you mean act, action, actor or actress?)")
+        );
+        assert!(
+            ed1(b"ab", b"ba")
+                && ed1(b"abc", b"ab")
+                && ed1(b"ab", b"abc")
+                && ed1(b"abc", b"axc")
+                && ed1(b"abc", b"xbc")
+                && ed1(b"abc", b"abx")
+        );
+        assert!(
+            ed1(b"abcd", b"bacd")
+                && ed1(b"abcd", b"abdc")
+                && ed1(b"a", b"")
+                && ed1(b"abc", b"bc")
+                && ed1(b"abc", b"xabc")
+        );
+        assert!(
+            !ed1(b"abc", b"abc")
+                && !ed1(b"abc", b"cba")
+                && !ed1(b"abc", b"a")
+                && !ed1(b"abcd", b"badc")
+                && !ed1(b"abcd", b"axcx")
+        );
     }
 
     #[test]
@@ -726,7 +928,11 @@ mod tests {
         let mut v: Vec<&str> = VECTORS[4].1.split(' ').collect();
         v.swap(0, 1);
         assert_eq!(check(&v.join(" ")), Err(Problem::Checksum));
-        assert!(Problem::Checksum.to_string().ends_with("one of the words is wrong or the order is swapped"));
+        assert!(
+            Problem::Checksum
+                .to_string()
+                .ends_with("one of the words is wrong or the order is swapped")
+        );
         // ... but the checksum is 4 bits: one swap in 16 or so gets past
         // (words 5 and 11 of this one, other words that also fit).
         let mut v: Vec<&str> = VECTORS[4].1.split(' ').collect();
@@ -760,7 +966,10 @@ mod tests {
                 x[11] = (x[11] & !0xf) | c;
                 if x != w.0 {
                     assert!(!decode(&x).1);
-                    assert_eq!(check(&x.map(|i| l[usize::from(i)]).join(" ")), Err(Problem::Checksum));
+                    assert_eq!(
+                        check(&x.map(|i| l[usize::from(i)]).join(" ")),
+                        Err(Problem::Checksum)
+                    );
                 }
             }
         }
@@ -827,9 +1036,14 @@ mod tests {
                 }
             }
         }
-        println!("one-letter typos making another word, in 100 phrases: {tried}, {past} of them past the checksum");
+        println!(
+            "one-letter typos making another word, in 100 phrases: {tried}, {past} of them past the checksum"
+        );
         assert!(tried > 1000, "{tried}");
-        assert!(past * 10 < tried, "the checksum let {past} of {tried} typos past");
+        assert!(
+            past * 10 < tried,
+            "the checksum let {past} of {tried} typos past"
+        );
         // 3.: every other word in each place.
         let (mut tried, mut past) = (0usize, 0usize);
         for e in entropies(4, 3) {
@@ -847,14 +1061,19 @@ mod tests {
                 }
             }
         }
-        println!("any other word in one place, in 3 phrases: {tried}, {past} of them past the checksum");
+        println!(
+            "any other word in one place, in 3 phrases: {tried}, {past} of them past the checksum"
+        );
         assert!(past * 10 < tried && past * 32 > tried, "{past} of {tried}");
     }
 
     #[test]
     fn password_is_the_canonical_form() {
         let w = check("  ZOO zoo Zoo zoo zoo zoo zoo zoo zoo zoo zoo WRON \n").unwrap();
-        assert_eq!(password(&w), "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong");
+        assert_eq!(
+            password(&w),
+            "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong"
+        );
         let w = check("lega winn than year wave saus wort usef lega winn than yell").unwrap();
         let pw = password(&w);
         assert_eq!(pw, VECTORS[1].1);
@@ -869,7 +1088,10 @@ mod tests {
         let p = check("abandon abandon abndon abandon abandon abandon abandon abandon abandon abandon abandon about").unwrap_err();
         let d = format!("{p:?}");
         assert!(!d.contains("aband") && !d.contains("abnd"), "{d}");
-        assert_eq!(d, "Unknown { words: [Unknown { position: 3, short: false, suggestions: 1 }], count: 12 }");
+        assert_eq!(
+            d,
+            "Unknown { words: [Unknown { position: 3, short: false, suggestions: 1 }], count: 12 }"
+        );
     }
 
     #[test]
@@ -886,13 +1108,25 @@ mod tests {
 
     #[test]
     fn random_source_refusals() {
-        assert!(random_bytes("/no/such/random").unwrap_err().contains("can't open /no/such/random"));
+        assert!(
+            random_bytes("/no/such/random")
+                .unwrap_err()
+                .contains("can't open /no/such/random")
+        );
         // /dev/zero: a device, but not a random one.
-        assert!(random_bytes("/dev/zero").unwrap_err().contains("16 equal bytes"));
+        assert!(
+            random_bytes("/dev/zero")
+                .unwrap_err()
+                .contains("16 equal bytes")
+        );
         let t = crate::testutil::Tree::new("recovery-random");
         t.file("/urandom", "0123456789abcdefghij");
         let p = t.root().join("urandom");
-        assert!(random_bytes(p.to_str().unwrap()).unwrap_err().contains("is a plain file"));
+        assert!(
+            random_bytes(p.to_str().unwrap())
+                .unwrap_err()
+                .contains("is a plain file")
+        );
         // An empty /dev (a directory read as a file) fails too.
         assert!(random_bytes(t.root().to_str().unwrap()).is_err());
         assert_eq!(random_bytes(RANDOM_DEVICE).unwrap().len(), 16);
@@ -908,7 +1142,9 @@ mod tests {
         wipe(&mut h);
         wipe(&mut w);
         wipe(&mut c);
-        assert!(b.iter().all(|&x| x == 0) && h.iter().all(|&x| x == 0) && w.iter().all(|&x| x == 0));
+        assert!(
+            b.iter().all(|&x| x == 0) && h.iter().all(|&x| x == 0) && w.iter().all(|&x| x == 0)
+        );
         assert_eq!(c, vec!['\0'; 9]);
         let mut s = String::from("abandon");
         zeroize_string(&mut s);
@@ -923,6 +1159,9 @@ mod tests {
         let (u, _) = unknown(check("abandon abandon grabbé"));
         assert_eq!(u[0].typed, "grabbé");
         drop(u);
-        assert_eq!(LAST_UNKNOWN_DROP.with(|d| d.take()), Some(("grabbé".len(), true)));
+        assert_eq!(
+            LAST_UNKNOWN_DROP.with(|d| d.take()),
+            Some(("grabbé".len(), true))
+        );
     }
 }

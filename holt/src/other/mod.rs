@@ -85,7 +85,9 @@ impl Family {
 
     /// A report's family: os.family, absent from Linux's.
     pub fn of_layout(v: &Value) -> Option<Family> {
-        v.at(&["os", "family"]).and_then(Value::as_str).and_then(Family::from_name)
+        v.at(&["os", "family"])
+            .and_then(Value::as_str)
+            .and_then(Family::from_name)
     }
 }
 
@@ -116,7 +118,11 @@ pub struct Found {
 impl Found {
     /// One of its table JSON's string fields ("type", "partlabel").
     pub fn field(&self, key: &str) -> Option<&str> {
-        self.json.0.iter().find(|(k, _)| k == key).and_then(|(_, v)| v.as_str())
+        self.json
+            .0
+            .iter()
+            .find(|(k, _)| k == key)
+            .and_then(|(_, v)| v.as_str())
     }
 }
 
@@ -124,22 +130,35 @@ impl Found {
 /// `after_kind` (OpenBSD's softraid), then size_bytes, size and
 /// logical_sector_size, for each family's report to go on from.
 pub fn disk_obj(d: &RawDisk, kind: &str, after_kind: Obj) -> Obj {
-    let mut o = Obj::new().set("name", d.name.as_str()).set("path", d.path.as_str()).set("kind", kind);
+    let mut o = Obj::new()
+        .set("name", d.name.as_str())
+        .set("path", d.path.as_str())
+        .set("kind", kind);
     o.0.extend(after_kind.0);
-    o.set("size_bytes", d.size).set("size", crate::report::human(d.size)).set("logical_sector_size", d.sector)
+    o.set("size_bytes", d.size)
+        .set("size", crate::report::human(d.size))
+        .set("logical_sector_size", d.sector)
 }
 
 /// A disk report's partition_table: the table's header JSON, or null.
 pub fn table_json(t: Option<&Table>, d: &RawDisk) -> Value {
-    t.map(|t| t.header_json(d.sector, d.size / d.sector.max(1))).unwrap_or(Value::Null)
+    t.map(|t| t.header_json(d.sector, d.size / d.sector.max(1)))
+        .unwrap_or(Value::Null)
 }
 
 /// A disk report's boot_code: the MBR's boot code, named by `kind`.
 pub fn boot_code_obj(code: &[u8], kind: &str) -> Obj {
     Obj::new()
         .set("kind", kind)
-        .set("first_bytes", crate::bytes::hex(crate::bytes::sub(code, 0, 16)))
-        .set("code_b64", (!crate::bytes::is_zero(code)).then(|| crate::bytes::base64(crate::bytes::sub(code, 0, 440))))
+        .set(
+            "first_bytes",
+            crate::bytes::hex(crate::bytes::sub(code, 0, 16)),
+        )
+        .set(
+            "code_b64",
+            (!crate::bytes::is_zero(code))
+                .then(|| crate::bytes::base64(crate::bytes::sub(code, 0, 440))),
+        )
 }
 
 /// boot_code_obj, named as bootcode::identify names it.
@@ -153,7 +172,13 @@ pub fn boot_code_json(t: &Table) -> Obj {
 /// names the unit, 512 when it isn't a number of bytes ("1K-blocks", as
 /// BLOCKSIZE=1K prints it, isn't read).
 pub fn swapctl_list(text: &str) -> Vec<(&str, u64)> {
-    let unit: u64 = text.lines().next().and_then(|h| h.split_whitespace().nth(1)).and_then(|w| w.split('-').next()).and_then(|n| n.parse().ok()).unwrap_or(512);
+    let unit: u64 = text
+        .lines()
+        .next()
+        .and_then(|h| h.split_whitespace().nth(1))
+        .and_then(|w| w.split('-').next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(512);
     text.lines()
         .skip(1)
         .filter_map(|l| {
@@ -169,8 +194,21 @@ pub fn swapctl_list(text: &str) -> Vec<(&str, u64)> {
 /// '_', and a word of dots only (or none) is `fallback` ("disk", "prov",
 /// "vol"), so it can't name a directory.
 pub(crate) fn safe_run_token(s: &str, fallback: &str) -> String {
-    let out: String = s.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' }).collect();
-    if out.is_empty() || out.trim_matches('.').is_empty() { fallback.into() } else { out }
+    let out: String = s
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if out.is_empty() || out.trim_matches('.').is_empty() {
+        fallback.into()
+    } else {
+        out
+    }
 }
 
 /// "VALUE # description" lines, as FreeBSD's diskinfo -v prints them.
@@ -185,7 +223,10 @@ pub fn parse_diskinfo_v(text: &str) -> Vec<(String, String)> {
 
 /// "pairs of name and value" from a `NAME: value` listing.
 pub fn colon_pairs(text: &str) -> Vec<(String, String)> {
-    text.lines().filter_map(|l| l.split_once(':')).map(|(k, v)| (k.trim().to_string(), v.trim().to_string())).collect()
+    text.lines()
+        .filter_map(|l| l.split_once(':'))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        .collect()
 }
 
 /// The os section: os-release where the system has one (FreeBSD, GhostBSD,
@@ -213,17 +254,31 @@ pub fn os_release(sys: &Sys) -> Option<crate::osrel::OsRelease> {
         return Some(o);
     }
     let name = sys.run("uname", &["-s"])?.trim().to_string();
-    let rel = sys.run("uname", &["-r"]).unwrap_or_default().trim().to_string();
-    let ver: String = rel.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+    let rel = sys
+        .run("uname", &["-r"])
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let ver: String = rel
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
     let id = name.to_ascii_lowercase();
-    Some(crate::osrel::parse(&format!("ID={id}\nVERSION_ID=\"{ver}\"\nPRETTY_NAME=\"{name} {rel}\"\n")))
+    Some(crate::osrel::parse(&format!(
+        "ID={id}\nVERSION_ID=\"{ver}\"\nPRETTY_NAME=\"{name} {rel}\"\n"
+    )))
 }
 
 /// A disk's or partition's size in bytes, from the system's own tools: its
 /// raw device doesn't seek to its end.
 pub fn dev_size(sys: &Sys, path: &str) -> Option<u64> {
     match Family::current()? {
-        Family::FreeBsd => sys.run("diskinfo", &[path])?.split_whitespace().nth(2)?.parse().ok(),
+        Family::FreeBsd => sys
+            .run("diskinfo", &[path])?
+            .split_whitespace()
+            .nth(2)?
+            .parse()
+            .ok(),
         Family::DragonFly => dfly::parse_diskinfo(&sys.run("diskinfo", &[path])?).map(|(_, n)| n),
         // A disklabel partition's or the whole disk's size, from disklabel.
         Family::NetBsd | Family::OpenBsd => {
@@ -245,9 +300,17 @@ pub fn node_path(sys: &Sys, node: &str) -> String {
     if let Some(p) = softraid::duid_path(sys, node) {
         return p;
     }
-    let Some(name) = node.strip_prefix("NAME=") else { return node.to_string() };
-    for (d, _) in labelled::disk_names(Family::NetBsd, &sys.run("sysctl", &["-n", "hw.disknames"]).unwrap_or_default()) {
-        for (dk, n, _) in labelled::parse_wedges(&sys.run("dkctl", &[&d, "listwedges"]).unwrap_or_default()) {
+    let Some(name) = node.strip_prefix("NAME=") else {
+        return node.to_string();
+    };
+    for (d, _) in labelled::disk_names(
+        Family::NetBsd,
+        &sys.run("sysctl", &["-n", "hw.disknames"])
+            .unwrap_or_default(),
+    ) {
+        for (dk, n, _) in
+            labelled::parse_wedges(&sys.run("dkctl", &[&d, "listwedges"]).unwrap_or_default())
+        {
             if n == name {
                 return format!("/dev/{dk}");
             }
@@ -290,11 +353,19 @@ pub fn open(sys: &Sys, d: &RawDisk) -> Option<FileSource> {
 
 /// Everything on a whole disk: its table's JSON, and each partition with
 /// its contents, named by `name_of(number, table)`.
-pub fn read_disk(src: &dyn ByteSource, d: &RawDisk, name_of: &dyn Fn(u32, &Table) -> String) -> (Option<Table>, Vec<Found>) {
-    let Some(table) = parttable::read_table(src, d.sector) else { return (None, Vec::new()) };
+pub fn read_disk(
+    src: &dyn ByteSource,
+    d: &RawDisk,
+    name_of: &dyn Fn(u32, &Table) -> String,
+) -> (Option<Table>, Vec<Found>) {
+    let Some(table) = parttable::read_table(src, d.sector) else {
+        return (None, Vec::new());
+    };
     let mut out = Vec::new();
     for (n, start, sectors) in table.extents() {
-        let Some(json) = table.partition_json(n, d.sector) else { continue };
+        let Some(json) = table.partition_json(n, d.sector) else {
+            continue;
+        };
         // A GPT entry's LBAs come off the disk as they are: one past
         // u64::MAX / sector (a crafted table's) has no byte offset, so its
         // extent saturates, as its JSON's start_bytes does, and nothing is
@@ -302,9 +373,27 @@ pub fn read_disk(src: &dyn ByteSource, d: &RawDisk, name_of: &dyn Fn(u32, &Table
         let (start_b, size_b) = (start.checked_mul(d.sector), sectors.checked_mul(d.sector));
         let in_range = start_b.is_some() && size_b.is_some();
         let (start_b, size_b) = (start_b.unwrap_or(u64::MAX), size_b.unwrap_or(u64::MAX));
-        let is_ext = json.0.iter().any(|(k, v)| k == "extended" && *v == Value::Bool(true));
-        let contents = if is_ext || !in_range { Vec::new() } else { probe::probe_all(&OffsetSource { inner: src, start: start_b, len: size_b }) };
-        out.push(Found { name: name_of(n, &table), number: n, start: start_b, size: size_b, json, contents });
+        let is_ext = json
+            .0
+            .iter()
+            .any(|(k, v)| k == "extended" && *v == Value::Bool(true));
+        let contents = if is_ext || !in_range {
+            Vec::new()
+        } else {
+            probe::probe_all(&OffsetSource {
+                inner: src,
+                start: start_b,
+                len: size_b,
+            })
+        };
+        out.push(Found {
+            name: name_of(n, &table),
+            number: n,
+            start: start_b,
+            size: size_b,
+            json,
+            contents,
+        });
     }
     (Some(table), out)
 }
@@ -327,7 +416,11 @@ pub fn glabel(src: &dyn ByteSource) -> Option<String> {
 /// what load writes back where they were.  At most 2 MiB.
 pub fn image_b64(src: &dyn ByteSource) -> String {
     let b = src.read_at(0, src.size().min(2 << 20) as usize);
-    let end = b.chunks(512).rposition(|c| !crate::bytes::is_zero(c)).map(|i| (i + 1) * 512).unwrap_or(0);
+    let end = b
+        .chunks(512)
+        .rposition(|c| !crate::bytes::is_zero(c))
+        .map(|i| (i + 1) * 512)
+        .unwrap_or(0);
     crate::bytes::base64(&b[..end.min(b.len())])
 }
 
@@ -343,10 +436,17 @@ const _: () = assert!(10 * (ESP_IMAGE_MAX as u64) * 3 / 2 < crate::LAYOUT_MAX);
 /// write back as they were.  At most ESP_IMAGE_MAX of them.
 pub fn esp_image(disk: &dyn ByteSource, f: &Found, mounted_at: &[String], extra: &mut Obj) {
     let ty = f.field("type").unwrap_or("").to_ascii_lowercase();
-    if !mounted_at.is_empty() || !(ty == crate::parttable::ESP || ty == "0xef") || f.size > (4 << 30) {
+    if !mounted_at.is_empty()
+        || !(ty == crate::parttable::ESP || ty == "0xef")
+        || f.size > (4 << 30)
+    {
         return;
     }
-    let src = OffsetSource { inner: disk, start: f.start, len: f.size };
+    let src = OffsetSource {
+        inner: disk,
+        start: f.start,
+        len: f.size,
+    };
     let mut chunks: Vec<Value> = Vec::new();
     let mut total = 0usize;
     let mut off = 0u64;
@@ -368,7 +468,12 @@ pub fn esp_image(disk: &dyn ByteSource, f: &Found, mounted_at: &[String], extra:
             }
             let run = &b[start..i.min(b.len())];
             total += run.len();
-            chunks.push(Obj::new().set("offset", off + start as u64).set("b64", crate::bytes::base64(run)).build());
+            chunks.push(
+                Obj::new()
+                    .set("offset", off + start as u64)
+                    .set("b64", crate::bytes::base64(run))
+                    .build(),
+            );
         }
         off += step;
         if total > ESP_IMAGE_MAX {
@@ -408,7 +513,9 @@ pub fn dump(sys: &Sys, fam: Family, generated: &str) -> Result<Value, String> {
         Family::DragonFly => Ok(dfly::report(sys, fam, os.as_ref(), generated)),
         Family::Haiku => Ok(haiku::report(sys, fam, os.as_ref(), generated)),
         Family::Illumos => Ok(illumos::report(sys, fam, os.as_ref(), generated)),
-        Family::Redox | Family::Genode => Err("bko-holt dump --disk reads this system, from Linux".into()),
+        Family::Redox | Family::Genode => {
+            Err("bko-holt dump --disk reads this system, from Linux".into())
+        }
     }
 }
 
@@ -428,11 +535,25 @@ pub fn firmware_unknown(sys: &Sys, prog: &str, what: &str, answer: Option<&str>)
 }
 
 /// The report's frame around a family's sections.
-pub fn frame(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, generated: &str, hostname: Option<String>, firmware: &str, storage: Obj, boot: Obj) -> Value {
+pub fn frame(
+    sys: &Sys,
+    fam: Family,
+    os: Option<&crate::osrel::OsRelease>,
+    generated: &str,
+    hostname: Option<String>,
+    firmware: &str,
+    storage: Obj,
+    boot: Obj,
+) -> Value {
     let mut out = Obj::new()
         .set("format", crate::report::FORMAT)
         .set("schema", crate::report::SCHEMA)
-        .set("tool", Obj::new().set("name", "bko-holt").set("version", env!("CARGO_PKG_VERSION")))
+        .set(
+            "tool",
+            Obj::new()
+                .set("name", "bko-holt")
+                .set("version", env!("CARGO_PKG_VERSION")),
+        )
         .set("generated", generated)
         .set("privileged", sys.privileged)
         .set("host", Obj::new().set("hostname", hostname))
@@ -453,20 +574,48 @@ mod tests {
     /// not probed; the entry before it read as ever.
     #[test]
     fn read_disk_gpt_lba_past_u64_bytes() {
-        use crate::parttable::build::{write_gpt, GptSpec};
+        use crate::parttable::build::{GptSpec, write_gpt};
         let mut img = vec![0u8; 512 * 2048];
         let huge = u64::MAX / 512 + 1;
         let spec = GptSpec {
             disk_guid: "11111111-2222-3333-4444-555555555555",
             parts: vec![
-                (crate::parttable::ESP, "aaaaaaaa-0000-0000-0000-000000000001", 40, 1000, 0, "esp"),
-                (crate::parttable::ESP, "aaaaaaaa-0000-0000-0000-000000000002", huge, huge + 10, 0, "far"),
-                (crate::parttable::ESP, "aaaaaaaa-0000-0000-0000-000000000003", 0, u64::MAX, 0, "all"),
+                (
+                    crate::parttable::ESP,
+                    "aaaaaaaa-0000-0000-0000-000000000001",
+                    40,
+                    1000,
+                    0,
+                    "esp",
+                ),
+                (
+                    crate::parttable::ESP,
+                    "aaaaaaaa-0000-0000-0000-000000000002",
+                    huge,
+                    huge + 10,
+                    0,
+                    "far",
+                ),
+                (
+                    crate::parttable::ESP,
+                    "aaaaaaaa-0000-0000-0000-000000000003",
+                    0,
+                    u64::MAX,
+                    0,
+                    "all",
+                ),
             ],
         };
         write_gpt(&mut img, 512, &spec);
         let src = crate::bytes::MemSource(img);
-        let d = RawDisk { name: "vtbd0".into(), path: "/dev/vtbd0".into(), size: 512 * 2048, sector: 512, model: None, serial: None };
+        let d = RawDisk {
+            name: "vtbd0".into(),
+            path: "/dev/vtbd0".into(),
+            size: 512 * 2048,
+            sector: 512,
+            model: None,
+            serial: None,
+        };
         let (table, found) = read_disk(&src, &d, &|n, _| format!("vtbd0p{n}"));
         assert!(table.is_some());
         assert_eq!(found.len(), 3);
@@ -475,7 +624,13 @@ mod tests {
         assert!(found[1].contents.is_empty());
         assert_eq!((found[2].start, found[2].size), (0, u64::MAX));
         assert!(found[2].contents.is_empty());
-        let get = |f: &Found, k: &str| f.json.0.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        let get = |f: &Found, k: &str| {
+            f.json
+                .0
+                .iter()
+                .find(|(n, _)| n == k)
+                .map(|(_, v)| v.clone())
+        };
         assert_eq!(get(&found[1], "start_bytes"), Some(Value::from(u64::MAX)));
         assert_eq!(get(&found[2], "sectors"), Some(Value::from(u64::MAX)));
         assert_eq!(get(&found[2], "size_bytes"), Some(Value::from(u64::MAX)));
@@ -485,18 +640,52 @@ mod tests {
     /// order and units.
     #[test]
     fn shared_disk_pieces() {
-        let d = RawDisk { name: "sd0".into(), path: "/dev/rsd0c".into(), size: 1 << 30, sector: 512, model: None, serial: None };
+        let d = RawDisk {
+            name: "sd0".into(),
+            path: "/dev/rsd0c".into(),
+            size: 1 << 30,
+            sector: 512,
+            model: None,
+            serial: None,
+        };
         let keys = |o: &Obj| o.0.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>();
-        assert_eq!(keys(&disk_obj(&d, "disk", Obj::new())), ["name", "path", "kind", "size_bytes", "size", "logical_sector_size"]);
-        assert_eq!(keys(&disk_obj(&d, "softraid", Obj::new().set("softraid", 1))), ["name", "path", "kind", "softraid", "size_bytes", "size", "logical_sector_size"]);
+        assert_eq!(
+            keys(&disk_obj(&d, "disk", Obj::new())),
+            [
+                "name",
+                "path",
+                "kind",
+                "size_bytes",
+                "size",
+                "logical_sector_size"
+            ]
+        );
+        assert_eq!(
+            keys(&disk_obj(&d, "softraid", Obj::new().set("softraid", 1))),
+            [
+                "name",
+                "path",
+                "kind",
+                "softraid",
+                "size_bytes",
+                "size",
+                "logical_sector_size"
+            ]
+        );
         assert_eq!(table_json(None, &d), Value::Null);
         let b = boot_code_obj(&[0u8; 512], "none");
         assert_eq!(keys(&b), ["kind", "first_bytes", "code_b64"]);
         assert_eq!(b.0[2].1, Value::Null);
         let nb = "Device      512-blocks     Used    Avail Capacity  Priority\n/dev/wd0b       2097152        0  2097152     0%    0\n";
         assert_eq!(swapctl_list(nb), vec![("/dev/wd0b", 2097152 * 512)]);
-        assert_eq!(swapctl_list("Device\n/dev/sd0b 1000 0 1000 0% 0\nbad line\n"), vec![("/dev/sd0b", 1000 * 512)]);
-        assert_eq!(swapctl_list("Device 1024-blocks\n/dev/vbd0s1b 8 0\n"), vec![("/dev/vbd0s1b", 8 * 1024)]);
+        assert_eq!(
+            swapctl_list("Device\n/dev/sd0b 1000 0 1000 0% 0\nbad line\n"),
+            vec![("/dev/sd0b", 1000 * 512)]
+        );
+        assert_eq!(
+            swapctl_list("Device 1024-blocks\n/dev/vbd0s1b 8 0\n"),
+            vec![("/dev/vbd0s1b", 8 * 1024)]
+        );
     }
 
     /// One safe_run_token for load, geli and softraid (RustAudit1 HD3-06).
@@ -511,14 +700,24 @@ mod tests {
 
     #[test]
     fn families() {
-        for f in [Family::FreeBsd, Family::NetBsd, Family::OpenBsd, Family::DragonFly, Family::Illumos, Family::Haiku] {
+        for f in [
+            Family::FreeBsd,
+            Family::NetBsd,
+            Family::OpenBsd,
+            Family::DragonFly,
+            Family::Illumos,
+            Family::Haiku,
+        ] {
             assert_eq!(Family::from_name(f.name()), Some(f));
         }
         assert_eq!(Family::from_name("linux"), None);
         assert_eq!(Family::from_name("solaris"), Some(Family::Illumos));
         let v = crate::json::parse(r#"{"os": {"family": "openbsd"}}"#).unwrap();
         assert_eq!(Family::of_layout(&v), Some(Family::OpenBsd));
-        assert_eq!(Family::of_layout(&crate::json::parse(r#"{"os": {"id": "debian"}}"#).unwrap()), None);
+        assert_eq!(
+            Family::of_layout(&crate::json::parse(r#"{"os": {"id": "debian"}}"#).unwrap()),
+            None
+        );
     }
 
     #[test]
@@ -535,7 +734,10 @@ mod tests {
         let mut img = vec![0u8; 8192];
         img[8192 - 512..8192 - 512 + 12].copy_from_slice(b"GEOM::LABEL\0");
         img[8192 - 512 + 20..8192 - 512 + 27].copy_from_slice(b"rootfs0");
-        assert_eq!(glabel(&crate::bytes::MemSource(img)).as_deref(), Some("rootfs0"));
+        assert_eq!(
+            glabel(&crate::bytes::MemSource(img)).as_deref(),
+            Some("rootfs0")
+        );
         assert_eq!(glabel(&crate::bytes::MemSource(vec![0u8; 8192])), None);
     }
 }

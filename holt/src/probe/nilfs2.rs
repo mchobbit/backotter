@@ -3,7 +3,7 @@
 //! installer's mkfs.nilfs2.
 
 use super::Content;
-use crate::bytes::{le16, le32, le64, sub, uuid, ByteSource};
+use crate::bytes::{ByteSource, le16, le32, le64, sub, uuid};
 use crate::json::Obj;
 
 const MAGIC: u16 = 0x3434;
@@ -34,7 +34,10 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
         let word = le64(&b, off);
         for bit in 0..64 {
             if word & (1 << bit) != 0 {
-                match FEATURES.iter().find(|(o, v, _)| *o == off && *v == 1 << bit) {
+                match FEATURES
+                    .iter()
+                    .find(|(o, v, _)| *o == off && *v == 1 << bit)
+                {
                     Some((_, _, n)) => names.push(n.to_string()),
                     None => names.push(format!("{label}_bit{bit}")),
                 }
@@ -93,15 +96,30 @@ mod tests {
     fn reads_a_superblock() {
         let c = probe(&MemSource(sample::image("zorinroot", 1))).unwrap();
         assert_eq!(c.kind, "nilfs2");
-        assert_eq!(c.uuid.as_deref(), Some("90919293-9495-9697-9899-9a9b9c9d9e9f"));
+        assert_eq!(
+            c.uuid.as_deref(),
+            Some("90919293-9495-9697-9899-9a9b9c9d9e9f")
+        );
         assert_eq!(c.label.as_deref(), Some("zorinroot"));
         assert_eq!(c.version.as_deref(), Some("2.0"));
         let d = c.details.build();
         assert_eq!(d.get("block_size").and_then(Value::as_u64), Some(4096));
-        assert_eq!(d.get("blocks_per_segment").and_then(Value::as_u64), Some(2048));
-        assert_eq!(d.get("reserved_segments_percentage").and_then(Value::as_u64), Some(5));
+        assert_eq!(
+            d.get("blocks_per_segment").and_then(Value::as_u64),
+            Some(2048)
+        );
+        assert_eq!(
+            d.get("reserved_segments_percentage")
+                .and_then(Value::as_u64),
+            Some(5)
+        );
         assert_eq!(d.get("features"), Some(&Value::from(vec!["block_count"])));
-        assert!(probe(&MemSource(sample::image("", 0))).unwrap().label.is_none());
+        assert!(
+            probe(&MemSource(sample::image("", 0)))
+                .unwrap()
+                .label
+                .is_none()
+        );
         assert!(probe(&MemSource(vec![0u8; 65536])).is_none());
     }
 }

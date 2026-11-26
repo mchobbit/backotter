@@ -9,8 +9,13 @@ pub fn unescape(s: &str) -> String {
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'\\' && i + 4 <= b.len() && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c)) {
-            let v = (b[i + 1] - b'0') as u32 * 64 + (b[i + 2] - b'0') as u32 * 8 + (b[i + 3] - b'0') as u32;
+        if b[i] == b'\\'
+            && i + 4 <= b.len()
+            && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c))
+        {
+            let v = (b[i + 1] - b'0') as u32 * 64
+                + (b[i + 2] - b'0') as u32 * 8
+                + (b[i + 3] - b'0') as u32;
             if v <= 0xff {
                 out.push(v as u8);
                 i += 4;
@@ -40,11 +45,15 @@ pub fn parse_mountinfo(text: &str) -> Vec<Mount> {
     let mut out = Vec::new();
     for line in text.lines() {
         let f: Vec<&str> = line.split(' ').collect();
-        let Some(dash) = f.iter().position(|x| *x == "-") else { continue };
+        let Some(dash) = f.iter().position(|x| *x == "-") else {
+            continue;
+        };
         if dash < 6 || f.len() < dash + 3 {
             continue;
         }
-        let (Ok(id), Ok(parent)) = (f[0].parse(), f[1].parse()) else { continue };
+        let (Ok(id), Ok(parent)) = (f[0].parse(), f[1].parse()) else {
+            continue;
+        };
         out.push(Mount {
             id,
             parent,
@@ -62,9 +71,35 @@ pub fn parse_mountinfo(text: &str) -> Vec<Mount> {
 
 /// Virtual filesystems that say nothing about the disk layout.
 pub(crate) const PSEUDO: &[&str] = &[
-    "proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "securityfs", "cgroup", "cgroup2", "pstore", "efivarfs", "bpf",
-    "debugfs", "tracefs", "configfs", "fusectl", "mqueue", "hugetlbfs", "autofs", "binfmt_misc", "rpc_pipefs", "nsfs",
-    "ramfs", "selinuxfs", "fuse.gvfsd-fuse", "fuse.portal", "nfsd", "overlay", "squashfs", "fuse.lxcfs",
+    "proc",
+    "sysfs",
+    "devtmpfs",
+    "devpts",
+    "tmpfs",
+    "securityfs",
+    "cgroup",
+    "cgroup2",
+    "pstore",
+    "efivarfs",
+    "bpf",
+    "debugfs",
+    "tracefs",
+    "configfs",
+    "fusectl",
+    "mqueue",
+    "hugetlbfs",
+    "autofs",
+    "binfmt_misc",
+    "rpc_pipefs",
+    "nsfs",
+    "ramfs",
+    "selinuxfs",
+    "fuse.gvfsd-fuse",
+    "fuse.portal",
+    "nfsd",
+    "overlay",
+    "squashfs",
+    "fuse.lxcfs",
 ];
 
 pub fn is_layout_mount(m: &Mount) -> bool {
@@ -99,7 +134,9 @@ pub fn alias_of<'a>(m: &Mount, mounts: &[&'a Mount]) -> Option<&'a Mount> {
     mounts
         .iter()
         .copied()
-        .filter(|o| !std::ptr::eq(*o, m) && o.id != m.id && o.devno == m.devno && o.fstype == m.fstype)
+        .filter(|o| {
+            !std::ptr::eq(*o, m) && o.id != m.id && o.devno == m.devno && o.fstype == m.fstype
+        })
         .filter(|o| o.fstype != "btrfs" || o.is_subvolume_root())
         .filter(|o| strictly_under(&m.root, &o.root))
         .fold(None, |best: Option<&Mount>, o| match best {
@@ -111,7 +148,10 @@ pub fn alias_of<'a>(m: &Mount, mounts: &[&'a Mount]) -> Option<&'a Mount> {
 impl Mount {
     /// The btrfs subvolume (subvol=) of a btrfs mount.
     pub fn btrfs_subvol(&self) -> Option<String> {
-        self.super_options.split(',').find_map(|o| o.strip_prefix("subvol=")).map(str::to_string)
+        self.super_options
+            .split(',')
+            .find_map(|o| o.strip_prefix("subvol="))
+            .map(str::to_string)
     }
     /// Whether a btrfs mount shows a subvolume's own root (FSROOT is its
     /// subvol=), not a directory inside it.  A mount without subvol= (older
@@ -227,8 +267,21 @@ impl CrypttabEntry {
         Obj::new()
             .set("name", self.name.as_str())
             .set("device", self.device.as_str())
-            .set("key_file", if prompts { None } else { Some(self.key.as_str()) })
-            .set("options", self.options.split(',').filter(|o| !o.is_empty()).collect::<Vec<_>>())
+            .set(
+                "key_file",
+                if prompts {
+                    None
+                } else {
+                    Some(self.key.as_str())
+                },
+            )
+            .set(
+                "options",
+                self.options
+                    .split(',')
+                    .filter(|o| !o.is_empty())
+                    .collect::<Vec<_>>(),
+            )
             .set("resolves_to", resolves_to)
             .build()
     }
@@ -293,10 +346,16 @@ pub fn parse_mdadm_conf(text: &str) -> Value {
             }
             arrays.push(a.build());
         } else {
-            other.put(&kw.to_ascii_lowercase(), words.collect::<Vec<_>>().join(" "));
+            other.put(
+                &kw.to_ascii_lowercase(),
+                words.collect::<Vec<_>>().join(" "),
+            );
         }
     }
-    Obj::new().set("arrays", arrays).set("settings", other).build()
+    Obj::new()
+        .set("arrays", arrays)
+        .set("settings", other)
+        .build()
 }
 
 #[cfg(test)]
@@ -327,7 +386,11 @@ bogus line
         // Optional fields before the "-" are skipped, escapes undone.
         assert_eq!(m[4].target, "/mnt/my disk");
         assert_eq!(m[4].fstype, "xfs");
-        let layout: Vec<&str> = m.iter().filter(|x| is_layout_mount(x)).map(|x| x.target.as_str()).collect();
+        let layout: Vec<&str> = m
+            .iter()
+            .filter(|x| is_layout_mount(x))
+            .map(|x| x.target.as_str())
+            .collect();
         assert_eq!(layout, vec!["/", "/boot/efi", "/home", "/mnt/my disk"]);
         let j = m[1].to_json(Some("nvme1n1p2"), Some((100, 40, 30)));
         assert_eq!(j.get("used_bytes").and_then(Value::as_u64), Some(60));
@@ -354,9 +417,14 @@ bogus line
         let m = parse_mountinfo(OSTREE);
         let all: Vec<&Mount> = m.iter().filter(|x| is_layout_mount(x)).collect();
         assert_eq!(all.len(), 9);
-        let alias = |t: &str| alias_of(all.iter().find(|x| x.target == t).unwrap(), &all).map(|a| a.target.as_str());
+        let alias = |t: &str| {
+            alias_of(all.iter().find(|x| x.target == t).unwrap(), &all).map(|a| a.target.as_str())
+        };
         assert_eq!(alias("/etc"), Some("/sysroot"));
-        assert_eq!(alias("/sysroot/ostree/deploy/default/var"), Some("/sysroot"));
+        assert_eq!(
+            alias("/sysroot/ostree/deploy/default/var"),
+            Some("/sysroot")
+        );
         // Subvolumes' own roots, the top level among them, never are.
         for t in ["/sysroot", "/var", "/var/home", "/mnt/top"] {
             assert_eq!(alias(t), None, "{t}");
@@ -395,7 +463,10 @@ bogus line
         assert_eq!(unescape("\\040\\040\\011\\134"), "  \t\\");
         assert_eq!(unescape("a\\134\\040"), "a\\ ");
         let m = parse_mountinfo("30 26 0:40 / /mnt/a\\040b\\040 rw - tmpfs tmpfs\\040x rw\n");
-        assert_eq!((m[0].target.as_str(), m[0].source.as_str()), ("/mnt/a b ", "tmpfs x"));
+        assert_eq!(
+            (m[0].target.as_str(), m[0].source.as_str()),
+            ("/mnt/a b ", "tmpfs x")
+        );
     }
 
     #[test]
@@ -428,19 +499,29 @@ short line
 
     #[test]
     fn crypttab() {
-        let c = parse_crypttab("# <target name> <source device> <key file> <options>\nvda5_crypt UUID=abcd none luks,discard\nhome /dev/sdb1 /etc/keys/home.key luks\nswap /dev/sdc1 /dev/urandom swap,cipher=aes-xts-plain64\nlonely\nnokey UUID=x\n");
+        let c = parse_crypttab(
+            "# <target name> <source device> <key file> <options>\nvda5_crypt UUID=abcd none luks,discard\nhome /dev/sdb1 /etc/keys/home.key luks\nswap /dev/sdc1 /dev/urandom swap,cipher=aes-xts-plain64\nlonely\nnokey UUID=x\n",
+        );
         assert_eq!(c.len(), 4);
         let j = c[0].to_json(Some("vda5"));
         assert!(j.get("key_file").unwrap().is_null());
-        assert_eq!(j.get("options"), Some(&Value::from(vec!["luks", "discard"])));
-        assert_eq!(c[1].to_json(None).get("key_file").and_then(Value::as_str), Some("/etc/keys/home.key"));
+        assert_eq!(
+            j.get("options"),
+            Some(&Value::from(vec!["luks", "discard"]))
+        );
+        assert_eq!(
+            c[1].to_json(None).get("key_file").and_then(Value::as_str),
+            Some("/etc/keys/home.key")
+        );
         assert_eq!(c[3].key, "none");
         assert_eq!(c[3].to_json(None).get("options"), Some(&Value::Arr(vec![])));
     }
 
     #[test]
     fn swaps() {
-        let s = parse_swaps("Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n/dev/zram0                              partition\t16777212\t0\t\t100\n/dev/nvme0n1p1                          partition\t4194300\t\t0\t\t10\n/swap\\040file file 1024 0 -2\nbad\n");
+        let s = parse_swaps(
+            "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n/dev/zram0                              partition\t16777212\t0\t\t100\n/dev/nvme0n1p1                          partition\t4194300\t\t0\t\t10\n/swap\\040file file 1024 0 -2\nbad\n",
+        );
         assert_eq!(s.len(), 3);
         assert_eq!(s[0].file, "/dev/zram0");
         assert_eq!(s[0].priority, 100);
@@ -461,14 +542,38 @@ ARRAY /dev/md/0  metadata=1.2 UUID=a1b2c3d4:e5f6a7b8:c9d0e1f2:a3b4c5d6
 ARRAY /dev/md1 level=raid1 num-devices=2 UUID=00000000:11111111:22222222:33333333 # comment
 ",
         );
-        assert_eq!(v.at(&["arrays", "0", "device"]).and_then(Value::as_str), Some("/dev/md/0"));
-        assert_eq!(v.at(&["arrays", "0", "metadata"]).and_then(Value::as_str), Some("1.2"));
-        assert_eq!(v.at(&["arrays", "0", "name"]).and_then(Value::as_str), Some("cinqcent:0"));
-        assert_eq!(v.at(&["arrays", "1", "level"]).and_then(Value::as_str), Some("raid1"));
-        assert_eq!(v.at(&["arrays", "1", "uuid"]).and_then(Value::as_str), Some("00000000:11111111:22222222:33333333"));
-        assert_eq!(v.at(&["settings", "homehost"]).and_then(Value::as_str), Some("<system>"));
-        assert_eq!(v.at(&["settings", "mailaddr"]).and_then(Value::as_str), Some("root"));
+        assert_eq!(
+            v.at(&["arrays", "0", "device"]).and_then(Value::as_str),
+            Some("/dev/md/0")
+        );
+        assert_eq!(
+            v.at(&["arrays", "0", "metadata"]).and_then(Value::as_str),
+            Some("1.2")
+        );
+        assert_eq!(
+            v.at(&["arrays", "0", "name"]).and_then(Value::as_str),
+            Some("cinqcent:0")
+        );
+        assert_eq!(
+            v.at(&["arrays", "1", "level"]).and_then(Value::as_str),
+            Some("raid1")
+        );
+        assert_eq!(
+            v.at(&["arrays", "1", "uuid"]).and_then(Value::as_str),
+            Some("00000000:11111111:22222222:33333333")
+        );
+        assert_eq!(
+            v.at(&["settings", "homehost"]).and_then(Value::as_str),
+            Some("<system>")
+        );
+        assert_eq!(
+            v.at(&["settings", "mailaddr"]).and_then(Value::as_str),
+            Some("root")
+        );
         let e = parse_mdadm_conf("   orphan continuation\n");
-        assert_eq!(e.at(&["settings", "orphan"]).and_then(Value::as_str), Some("continuation"));
+        assert_eq!(
+            e.at(&["settings", "orphan"]).and_then(Value::as_str),
+            Some("continuation")
+        );
     }
 }

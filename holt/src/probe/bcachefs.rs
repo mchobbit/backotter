@@ -3,14 +3,20 @@
 //! superblock's flags words (bcachefs_format.h's LE64_BITMASKs).
 
 use super::Content;
-use crate::bytes::{label, le16, le32, le64, sub, u8_at, uuid, ByteSource};
+use crate::bytes::{ByteSource, label, le16, le32, le64, sub, u8_at, uuid};
 use crate::json::Obj;
 
 /// BCACHE_MAGIC (bcache's, which bcachefs's first versions kept) and
 /// BCHFS_MAGIC.
 const MAGICS: [[u8; 16]; 2] = [
-    [0xc6, 0x85, 0x73, 0xf6, 0x4e, 0x1a, 0x45, 0xca, 0x82, 0x65, 0xf5, 0x7f, 0x48, 0xba, 0x6d, 0x81],
-    [0xc6, 0x85, 0x73, 0xf6, 0x66, 0xce, 0x90, 0xa9, 0xd9, 0x6a, 0x60, 0xcf, 0x80, 0x3d, 0xf7, 0xef],
+    [
+        0xc6, 0x85, 0x73, 0xf6, 0x4e, 0x1a, 0x45, 0xca, 0x82, 0x65, 0xf5, 0x7f, 0x48, 0xba, 0x6d,
+        0x81,
+    ],
+    [
+        0xc6, 0x85, 0x73, 0xf6, 0x66, 0xce, 0x90, 0xa9, 0xd9, 0x6a, 0x60, 0xcf, 0x80, 0x3d, 0xf7,
+        0xef,
+    ],
 ];
 
 pub const CSUM: &[&str] = &["none", "crc32c", "crc64", "xxhash"];
@@ -22,7 +28,10 @@ fn bits(w: u64, lo: u32, hi: u32) -> u64 {
 }
 
 fn name(table: &[&str], v: u64) -> String {
-    table.get(v as usize).map(|s| s.to_string()).unwrap_or_else(|| v.to_string())
+    table
+        .get(v as usize)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| v.to_string())
 }
 
 /// "1.13" from BCH_VERSION(major, minor) = major << 10 | minor.
@@ -100,17 +109,31 @@ mod tests {
     fn reads_a_superblock() {
         let c = probe(&MemSource(sample::image("nixroot", 3))).unwrap();
         assert_eq!(c.kind, "bcachefs");
-        assert_eq!(c.uuid.as_deref(), Some("80818283-8485-8687-8889-8a8b8c8d8e8f"));
+        assert_eq!(
+            c.uuid.as_deref(),
+            Some("80818283-8485-8687-8889-8a8b8c8d8e8f")
+        );
         assert_eq!(c.label.as_deref(), Some("nixroot"));
         assert_eq!(c.version.as_deref(), Some("1.13"));
         let d = c.details.build();
         assert_eq!(d.get("block_size").and_then(Value::as_u64), Some(4096));
-        assert_eq!(d.get("btree_node_size").and_then(Value::as_u64), Some(262144));
-        assert_eq!(d.get("data_checksum").and_then(Value::as_str), Some("crc32c"));
+        assert_eq!(
+            d.get("btree_node_size").and_then(Value::as_u64),
+            Some(262144)
+        );
+        assert_eq!(
+            d.get("data_checksum").and_then(Value::as_str),
+            Some("crc32c")
+        );
         assert_eq!(d.get("str_hash").and_then(Value::as_str), Some("siphash"));
         assert_eq!(d.get("compression").and_then(Value::as_str), Some("zstd"));
         assert_eq!(d.get("acl").and_then(Value::as_bool), Some(true));
-        assert!(probe(&MemSource(sample::image("", 0))).unwrap().label.is_none());
+        assert!(
+            probe(&MemSource(sample::image("", 0)))
+                .unwrap()
+                .label
+                .is_none()
+        );
         assert!(probe(&MemSource(vec![0u8; 65536])).is_none());
     }
 }

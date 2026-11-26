@@ -10,21 +10,40 @@
 use super::codes::{Note, NoteCode, Notes, Problem, ProblemCode, Problems};
 use super::layout::{Disk, Layout, Part, TableKind};
 use super::target::Mapping;
-use super::{shell_quote, Options, Stage, RUN_DIR};
+use super::{Options, RUN_DIR, Stage, shell_quote};
 use crate::json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The os-release ids whose GRUB is Debian's (update-grub, and grub-install
 /// with Debian's --force-extra-removable).
-const DEBIAN_GRUB_IDS: [&str; 8] = ["debian", "ubuntu", "linuxmint", "zorin", "neon", "elementary", "anduinos", "kali"];
+const DEBIAN_GRUB_IDS: [&str; 8] = [
+    "debian",
+    "ubuntu",
+    "linuxmint",
+    "zorin",
+    "neon",
+    "elementary",
+    "anduinos",
+    "kali",
+];
 
 /// A closer for a device just let go of (an LV, a LUKS mapping, an md
 /// array): udev probes a device when the last writer closes it, and while
 /// its worker has it open the device can't be stopped.  So udev is waited
 /// for first, and the command is tried up to five times, a second apart.
 fn settled(argv: &[&str]) -> Cmd {
-    let cmd = argv.iter().map(|a| shell_quote(a)).collect::<Vec<_>>().join(" ");
-    Cmd::new(&["sh", "-c", &format!("i=0; until udevadm settle; {cmd}; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done")])
+    let cmd = argv
+        .iter()
+        .map(|a| shell_quote(a))
+        .collect::<Vec<_>>()
+        .join(" ");
+    Cmd::new(&[
+        "sh",
+        "-c",
+        &format!(
+            "i=0; until udevadm settle; {cmd}; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done"
+        ),
+    ])
 }
 
 /// A wait for a zvol's /dev/zvol/NAME, which udev's 60-zvol.rules links
@@ -78,15 +97,25 @@ pub struct Cmd {
 
 impl Cmd {
     pub fn new<S: AsRef<str>>(argv: &[S]) -> Cmd {
-        Cmd { argv: argv.iter().map(|s| s.as_ref().to_string()).collect(), ..Cmd::default() }
+        Cmd {
+            argv: argv.iter().map(|s| s.as_ref().to_string()).collect(),
+            ..Cmd::default()
+        }
     }
 
     pub fn note(text: impl Into<String>) -> Cmd {
-        Cmd { why: Some(text.into()), ..Cmd::default() }
+        Cmd {
+            why: Some(text.into()),
+            ..Cmd::default()
+        }
     }
 
     pub fn write_file(path: &str, contents: String) -> Cmd {
-        Cmd { write: Some(path.to_string()), stdin: Some(contents), ..Cmd::default() }
+        Cmd {
+            write: Some(path.to_string()),
+            stdin: Some(contents),
+            ..Cmd::default()
+        }
     }
 
     /// The file it writes is 0600 (`write_file`): a copy of a file that can
@@ -98,7 +127,10 @@ impl Cmd {
 
     /// The read-back of DEV, just made from the source's CONTENT.
     pub fn read_back(dev: &str, content: &Value) -> Cmd {
-        Cmd { check: Some((dev.to_string(), content.clone())), ..Cmd::default() }
+        Cmd {
+            check: Some((dev.to_string(), content.clone())),
+            ..Cmd::default()
+        }
     }
 
     pub fn why(mut self, w: impl Into<String>) -> Cmd {
@@ -136,7 +168,11 @@ impl Cmd {
     /// shell()'s.
     pub fn shell_elided(&self) -> String {
         match (&self.write, &self.stdin) {
-            (Some(_), Some(text)) if self.private => Cmd { stdin: Some(format!("# ({} bytes, private: not shown)\n", text.len())), ..self.clone() }.shell(),
+            (Some(_), Some(text)) if self.private => Cmd {
+                stdin: Some(format!("# ({} bytes, private: not shown)\n", text.len())),
+                ..self.clone()
+            }
+            .shell(),
             _ => self.shell(),
         }
     }
@@ -170,7 +206,12 @@ impl Cmd {
                 .collect::<Vec<_>>()
                 .join(" "),
             None => std::iter::once("env".to_string())
-                .chain(self.env.iter().filter(|(k, _)| !k.is_empty() && !k.contains('=')).map(|(k, v)| shell_quote(&format!("{k}={v}"))))
+                .chain(
+                    self.env
+                        .iter()
+                        .filter(|(k, _)| !k.is_empty() && !k.contains('='))
+                        .map(|(k, v)| shell_quote(&format!("{k}={v}"))),
+                )
                 .chain(self.argv.iter().map(|a| shell_quote(a)))
                 .collect::<Vec<_>>()
                 .join(" "),
@@ -178,7 +219,9 @@ impl Cmd {
         match &self.stdin {
             // An empty standard input (not the terminal's: mkfs -F pcfs
             // then asks nothing) for a command, not a file to write.
-            Some(s) if s.is_empty() && self.write.is_none() => out += &format!("{line} </dev/null\n"),
+            Some(s) if s.is_empty() && self.write.is_none() => {
+                out += &format!("{line} </dev/null\n")
+            }
             Some(s) => {
                 let mut eof = String::from("EOF");
                 let mut n = 1u32;
@@ -206,14 +249,22 @@ pub(crate) fn safe_target_subpath(p: &str) -> bool {
 /// absolute path in the restored tree, not systemd's path:device form, a
 /// raw key device or a USB stick under /dev, or /proc, /sys or /run.
 fn restorable_key_file(k: &str) -> bool {
-    !k.contains(':') && safe_target_subpath(k) && !["/dev/", "/proc/", "/sys/", "/run/"].iter().any(|d| k.starts_with(d))
+    !k.contains(':')
+        && safe_target_subpath(k)
+        && !["/dev/", "/proc/", "/sys/", "/run/"]
+            .iter()
+            .any(|d| k.starts_with(d))
 }
 
 /// The plan problem for a LUKS container whose key file the restore can't
 /// bring back and no --key-file covers.
 fn needs_key_file(open_as: &str, k: &str) -> Problem {
-    let text = format!("{open_as}: crypttab's key {k:?} isn't a file the restore brings back (it's on another device, or not a path in the restored tree): give --key-file {open_as}=FILE");
-    Problem::new(ProblemCode::KeyFileUnrestorable, text).with("name", open_as).with("key_file", k)
+    let text = format!(
+        "{open_as}: crypttab's key {k:?} isn't a file the restore brings back (it's on another device, or not a path in the restored tree): give --key-file {open_as}=FILE"
+    );
+    Problem::new(ProblemCode::KeyFileUnrestorable, text)
+        .with("name", open_as)
+        .with("key_file", k)
 }
 
 /// The file name of a container's temporary key under RUN_DIR/keys, the
@@ -225,7 +276,9 @@ pub(crate) fn temp_key_name(open_as: &str) -> Option<String> {
 
 fn valid_env_key(k: &str) -> bool {
     let mut b = k.bytes();
-    b.next().is_some_and(|c| c.is_ascii_alphabetic() || c == b'_') && b.all(|c| c.is_ascii_alphanumeric() || c == b'_')
+    b.next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == b'_')
+        && b.all(|c| c.is_ascii_alphanumeric() || c == b'_')
 }
 
 fn dq_escape(s: &str) -> String {
@@ -291,18 +344,40 @@ pub struct Built {
 
 impl Built {
     pub fn stage(&self, s: Stage) -> &[Cmd] {
-        self.stages.iter().find(|(st, _)| *st == s).map(|(_, c)| c.as_slice()).unwrap_or(&[])
+        self.stages
+            .iter()
+            .find(|(st, _)| *st == s)
+            .map(|(_, c)| c.as_slice())
+            .unwrap_or(&[])
     }
 
     /// The problems in their order, each with its code (`other` where its
     /// site has none yet).
     pub fn coded_problems(&self) -> Problems {
-        self.problems.iter().map(|t| self.codes.iter().find(|p| p.text == *t).cloned().unwrap_or_else(|| t.into())).collect()
+        self.problems
+            .iter()
+            .map(|t| {
+                self.codes
+                    .iter()
+                    .find(|p| p.text == *t)
+                    .cloned()
+                    .unwrap_or_else(|| t.into())
+            })
+            .collect()
     }
 
     /// The notes, as coded_problems.
     pub fn coded_notes(&self) -> Notes {
-        self.notes.iter().map(|t| self.note_codes.iter().find(|n| n.text == *t).cloned().unwrap_or_else(|| t.into())).collect()
+        self.notes
+            .iter()
+            .map(|t| {
+                self.note_codes
+                    .iter()
+                    .find(|n| n.text == *t)
+                    .cloned()
+                    .unwrap_or_else(|| t.into())
+            })
+            .collect()
     }
 }
 
@@ -348,12 +423,18 @@ impl Names<'_> {
             return Some(p.clone());
         }
         for d in &self.layout.disks {
-            let Some(t) = self.mapping.target_of(&d.name) else { continue };
+            let Some(t) = self.mapping.target_of(&d.name) else {
+                continue;
+            };
             if d.name == src {
                 // illumos names a pool's whole-disk vdev by the disk; ZFS
                 // is on its slice, which the restored table has.
-                if crate::other::Family::of_layout(&self.layout.v) == Some(crate::other::Family::Illumos) {
-                    if let Some(p) = d.parts.iter().find(|p| p.content.get("type").and_then(Value::as_str) == Some("zfs_member")) {
+                if crate::other::Family::of_layout(&self.layout.v)
+                    == Some(crate::other::Family::Illumos)
+                {
+                    if let Some(p) = d.parts.iter().find(|p| {
+                        p.content.get("type").and_then(Value::as_str) == Some("zfs_member")
+                    }) {
                         return Some(part_node(self.layout, d, t, p.number));
                     }
                     return Some(format!("/dev/dsk/{t}"));
@@ -387,9 +468,17 @@ impl Names<'_> {
         for sect in ["disks", "md_arrays", "dm_devices"] {
             for d in self.layout.arr(&["storage", sect]) {
                 let mut all = vec![d];
-                all.extend(d.get("partitions").and_then(Value::as_array).into_iter().flatten());
+                all.extend(
+                    d.get("partitions")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten(),
+                );
                 for x in all {
-                    if x.get("links").and_then(Value::as_array).is_some_and(|l| l.iter().any(|v| v.as_str() == Some(path))) {
+                    if x.get("links")
+                        .and_then(Value::as_array)
+                        .is_some_and(|l| l.iter().any(|v| v.as_str() == Some(path)))
+                    {
                         return s(x, "name");
                     }
                 }
@@ -405,7 +494,9 @@ impl Names<'_> {
 /// backup has none of it.  Its NAME (Timeshift's date), or None.  Made, it
 /// would be an empty restore point: restoring it would empty `/`.
 fn timeshift_snapshot<'a>(path: &'a str, mounts: &[crate::load::shared::Mount]) -> Option<&'a str> {
-    let (name, sub) = path.strip_prefix("timeshift-btrfs/snapshots/")?.split_once('/')?;
+    let (name, sub) = path
+        .strip_prefix("timeshift-btrfs/snapshots/")?
+        .split_once('/')?;
     if name.is_empty() || !sub.starts_with('@') || sub.contains('/') {
         return None;
     }
@@ -417,7 +508,11 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
     let mut b = Builder {
         layout,
         opts,
-        names: Names { layout, mapping, made: BTreeMap::new() },
+        names: Names {
+            layout,
+            mapping,
+            made: BTreeMap::new(),
+        },
         problems: vec![],
         notes: vec![],
         codes: vec![],
@@ -445,7 +540,13 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
     if let Some(e) = layout.str_at(&["storage", "zfs", "tools", "error"]) {
         b.problems.push(format!("ZFS: {e}"));
     }
-    if [&["firmware", "mode"][..], &["boot", "loader", "firmware"][..]].iter().any(|p| layout.str_at(p) == Some("unknown")) {
+    if [
+        &["firmware", "mode"][..],
+        &["boot", "loader", "firmware"][..],
+    ]
+    .iter()
+    .any(|p| layout.str_at(p) == Some("unknown"))
+    {
         b.problems.push("the dump couldn't tell UEFI from BIOS (its firmware mode is unknown; its warnings say why), so load can't choose the boot code to install: dump again once that tool works".into());
     }
     b.btrfs_plans();
@@ -454,10 +555,18 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
     b.thin_problems();
     // --reformat's findings (reformat.rs), carried in the edited layout
     // with their codes.
-    for p in layout.arr(&["load_reformat", "problems"]).iter().filter_map(Problem::from_json) {
+    for p in layout
+        .arr(&["load_reformat", "problems"])
+        .iter()
+        .filter_map(Problem::from_json)
+    {
         b.coded(p);
     }
-    for n in layout.arr(&["load_reformat", "notes"]).iter().filter_map(Note::from_json) {
+    for n in layout
+        .arr(&["load_reformat", "notes"])
+        .iter()
+        .filter_map(Note::from_json)
+    {
         b.coded_note(n);
     }
     if !opts.reformats.is_empty() && opts.fit_largest.is_some() {
@@ -467,7 +576,8 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
         b.coded(Problem::new(ProblemCode::Unsupported, "--new-uuids isn't built yet: it also has to rewrite the restored fstab, crypttab and boot configuration").with("what", "--new-uuids"));
     }
     if opts.new_machine && super::snapcore::of(&layout.v).is_none() {
-        b.problems.push("--new-machine is for an encrypted Ubuntu Core; this layout isn't one".into());
+        b.problems
+            .push("--new-machine is for an encrypted Ubuntu Core; this layout isn't one".into());
     }
     let partition = b.partition();
     let assemble = b.assemble();
@@ -554,7 +664,10 @@ pub(crate) struct OnMark {
 impl OnMark {
     /// For the steps pushed after the FROM already there.
     pub(crate) fn at(from: usize) -> OnMark {
-        OnMark { from, disks: Vec::new() }
+        OnMark {
+            from,
+            disks: Vec::new(),
+        }
     }
 
     pub(crate) fn next(&mut self, out: &mut [Cmd], disks: Vec<String>) {
@@ -592,7 +705,11 @@ impl Builder<'_> {
                 ds.iter().for_each(|d| add(d));
                 return;
             }
-            if let Some(d) = b.layout.disks.iter().find(|d| d.name == src || d.parts.iter().any(|p| p.name == src) || crate::other::load::label_node(b.layout, d, "", src).is_some()) {
+            if let Some(d) = b.layout.disks.iter().find(|d| {
+                d.name == src
+                    || d.parts.iter().any(|p| p.name == src)
+                    || crate::other::load::label_node(b.layout, d, "", src).is_some()
+            }) {
                 add(&d.name);
                 return;
             }
@@ -609,10 +726,25 @@ impl Builder<'_> {
 
     /// The source disks the vdevs of the layout's pool POOL sit on.
     pub(crate) fn pool_disks(&self, pool: &str) -> Vec<String> {
-        let pools = self.layout.arr(&["storage", "zfs", "tools", "imported_pools"]);
-        let Some(p) = pools.iter().find(|p| s(p, "name").as_deref() == Some(pool)) else { return Vec::new() };
+        let pools = self
+            .layout
+            .arr(&["storage", "zfs", "tools", "imported_pools"]);
+        let Some(p) = pools.iter().find(|p| s(p, "name").as_deref() == Some(pool)) else {
+            return Vec::new();
+        };
         let (mut words, mut leaves, mut probs) = (vec![], vec![], vec![]);
-        vdev_words(&self.names, p.at(&["vdevs", "vdevs"]).and_then(|v| v.as_object()).and_then(|o| o.first()).and_then(|(_, root)| root.get("vdevs")).unwrap_or(&Value::Null), "", &mut words, &mut leaves, &mut probs);
+        vdev_words(
+            &self.names,
+            p.at(&["vdevs", "vdevs"])
+                .and_then(|v| v.as_object())
+                .and_then(|o| o.first())
+                .and_then(|(_, root)| root.get("vdevs"))
+                .unwrap_or(&Value::Null),
+            "",
+            &mut words,
+            &mut leaves,
+            &mut probs,
+        );
         let mut out: Vec<String> = Vec::new();
         for l in leaves {
             for d in self.disks_under(&l) {
@@ -631,8 +763,12 @@ impl Builder<'_> {
 /// The disk signature of a GPT disk's protective MBR (the dump's first
 /// entry's uuid, blkid's SIGNATURE-01), when it isn't zero.
 pub fn pmbr_signature(disk: Option<&Value>) -> Option<u32> {
-    let u = disk?.at(&["partition_table", "protective_mbr", "entries", "0", "uuid"])?.as_str()?;
-    u32::from_str_radix(u.split('-').next()?, 16).ok().filter(|&n| n != 0)
+    let u = disk?
+        .at(&["partition_table", "protective_mbr", "entries", "0", "uuid"])?
+        .as_str()?;
+    u32::from_str_radix(u.split('-').next()?, 16)
+        .ok()
+        .filter(|&n| n != 0)
 }
 
 pub fn gpt_attrs(a: u64) -> Result<String, u32> {
@@ -695,7 +831,10 @@ pub fn sfdisk_script(d: &Disk, target: &str, same_size: bool) -> Result<String, 
     let mut parts: Vec<&Part> = d.parts.iter().collect();
     parts.sort_by_key(|p| p.number);
     for p in parts {
-        let mut f = vec![format!("start={}", p.start_lba), format!("size={}", p.sectors)];
+        let mut f = vec![
+            format!("start={}", p.start_lba),
+            format!("size={}", p.sectors),
+        ];
         match t.kind {
             TableKind::Gpt => {
                 f.push(format!("type={}", p.ptype.to_ascii_uppercase()));
@@ -705,7 +844,12 @@ pub fn sfdisk_script(d: &Disk, target: &str, same_size: bool) -> Result<String, 
                 if let Some(l) = &p.label {
                     f.push(format!("name={}", sfdisk_quote(l)));
                 }
-                let a = gpt_attrs(p.attributes).map_err(|bit| format!("partition {} has GPT attribute bit {bit}, which sfdisk can't set", p.number))?;
+                let a = gpt_attrs(p.attributes).map_err(|bit| {
+                    format!(
+                        "partition {} has GPT attribute bit {bit}, which sfdisk can't set",
+                        p.number
+                    )
+                })?;
                 if !a.is_empty() {
                     f.push(format!("attrs={}", sfdisk_quote(&a)));
                 }
@@ -800,7 +944,10 @@ macro_rules! dracut_keep_done {
 /// hibernation (docs/design/leap16.md).
 pub(crate) const DRACUT_EACH_KERNEL: &str = concat!(
     "n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; ",
-    dracut_keep_read!("-k \"${k##*/}\"", "-k \"${k##*/}\" -f etc/cmdline.d/95resume.conf"),
+    dracut_keep_read!(
+        "-k \"${k##*/}\"",
+        "-k \"${k##*/}\" -f etc/cmdline.d/95resume.conf"
+    ),
     "dracut --force --kver \"${k##*/}\" ",
     dracut_keep_args!(),
     "; ",
@@ -885,7 +1032,12 @@ put '\\000\\000' || exit; trap 'put 44; exit 1' HUP INT TERM; \"$@\"; r=$?; trap
 
 /// `dd` writing COUNT blocks of BS zero bytes to DEV, SEEK blocks in.
 fn zero(dev: &str, bs: u64, seek: u64, count: u64) -> Cmd {
-    let mut a = vec!["dd".to_string(), "if=/dev/zero".into(), format!("of={dev}"), format!("bs={bs}")];
+    let mut a = vec![
+        "dd".to_string(),
+        "if=/dev/zero".into(),
+        format!("of={dev}"),
+        format!("bs={bs}"),
+    ];
     if seek > 0 {
         a.push(format!("seek={seek}"));
     }
@@ -915,7 +1067,11 @@ fn zero_disk(dev: &str) -> Vec<Cmd> {
 fn zero_parts(d: &Disk, dev: &str) -> Vec<Cmd> {
     let ss = d.sector_size;
     let (head, tail) = (ZERO_HEAD / ss, ZERO_TAIL / ss);
-    let mut parts: Vec<&Part> = d.parts.iter().filter(|p| !p.extended && p.sectors > 0 && p.start_lba + p.sectors > head).collect();
+    let mut parts: Vec<&Part> = d
+        .parts
+        .iter()
+        .filter(|p| !p.extended && p.sectors > 0 && p.start_lba + p.sectors > head)
+        .collect();
     parts.sort_by_key(|p| p.number);
     let mut out = Vec::new();
     if !parts.is_empty() {
@@ -928,7 +1084,12 @@ fn zero_parts(d: &Disk, dev: &str) -> Vec<Cmd> {
             continue;
         }
         let t = (p.sectors - h).min(tail);
-        out.push(zero(dev, ss, p.start_lba, h).why(format!("{}: its first {} MiB and its last {} MiB", p.name, ZERO_HEAD >> 20, ZERO_TAIL >> 20)));
+        out.push(zero(dev, ss, p.start_lba, h).why(format!(
+            "{}: its first {} MiB and its last {} MiB",
+            p.name,
+            ZERO_HEAD >> 20,
+            ZERO_TAIL >> 20
+        )));
         out.push(zero(dev, ss, p.start_lba + p.sectors - t, t));
     }
     out
@@ -947,7 +1108,11 @@ fn release_cmds(steps: &[super::release::Step]) -> Vec<Cmd> {
         return vec![];
     }
     let mut disks: Vec<String> = Vec::new();
-    for d in steps.iter().flat_map(|s| s.disks.iter()).map(|d| format!("/dev/{d}")) {
+    for d in steps
+        .iter()
+        .flat_map(|s| s.disks.iter())
+        .map(|d| format!("/dev/{d}"))
+    {
         if !disks.contains(&d) {
             disks.push(d);
         }
@@ -970,7 +1135,10 @@ fn release_cmds(steps: &[super::release::Step]) -> Vec<Cmd> {
         };
         out.push(c.why(why));
     }
-    out.push(Cmd::new(&["udevadm", "settle"]).why("udev done with what was let go of, before wipefs opens the disks O_EXCL"));
+    out.push(
+        Cmd::new(&["udevadm", "settle"])
+            .why("udev done with what was let go of, before wipefs opens the disks O_EXCL"),
+    );
     out
 }
 
@@ -982,35 +1150,71 @@ impl Builder<'_> {
             return out;
         }
         for (src, tgt) in self.names.mapping.pairs.clone() {
-            let Some(d) = self.layout.disk(&src) else { continue };
+            let Some(d) = self.layout.disk(&src) else {
+                continue;
+            };
             let dev = format!("/dev/{tgt}");
             // wipefs first: it opens the disk O_EXCL, so a disk with a
             // partition still mounted or held fails here, before dd (which
             // takes no such lock) writes anything.
-            out.push(Cmd::new(&["wipefs", "--all", &dev]).why(format!("{src} -> {dev}: clear the old table and signatures")));
+            out.push(Cmd::new(&["wipefs", "--all", &dev]).why(format!(
+                "{src} -> {dev}: clear the old table and signatures"
+            )));
             out.extend(zero_disk(&dev));
             if d.table.is_none() {
-                out.push(Cmd::note(format!("{src} has no partition table: its content goes on {dev} itself")));
+                out.push(Cmd::note(format!(
+                    "{src} has no partition table: its content goes on {dev} itself"
+                )));
                 continue;
             }
             out.extend(zero_parts(d, &dev));
-            out.push(Cmd::new(&["udevadm", "settle"]).why(format!("udev done with {dev} before sfdisk takes it")));
+            out.push(
+                Cmd::new(&["udevadm", "settle"])
+                    .why(format!("udev done with {dev} before sfdisk takes it")),
+            );
             let same_size = !self.names.mapping.bigger.contains(&src);
             match sfdisk_script(d, &tgt, same_size) {
-                Ok(script) => out.push(Cmd::new(&["sfdisk", "--wipe", "always", "--wipe-partitions", "always", &dev]).input(script)),
+                Ok(script) => out.push(
+                    Cmd::new(&[
+                        "sfdisk",
+                        "--wipe",
+                        "always",
+                        "--wipe-partitions",
+                        "always",
+                        &dev,
+                    ])
+                    .input(script),
+                ),
                 Err(e) => self.problems.push(format!("{src}: {e}")),
             }
             // A protective MBR marked active (Anaconda does so on BIOS, for
             // firmware that boots only an active partition); sfdisk's isn't.
             let qdev = shell_quote(&dev);
-            let pmbr_active = self.layout.device(&src).and_then(|v| v.at(&["partition_table", "protective_mbr", "entries", "0", "bootable"])).and_then(Value::as_bool) == Some(true);
+            let pmbr_active = self
+                .layout
+                .device(&src)
+                .and_then(|v| {
+                    v.at(&[
+                        "partition_table",
+                        "protective_mbr",
+                        "entries",
+                        "0",
+                        "bootable",
+                    ])
+                })
+                .and_then(Value::as_bool)
+                == Some(true);
             if pmbr_active {
                 out.push(Cmd::new(&["sh", "-c", &format!("printf '\\200' | dd of={qdev} bs=1 seek=446 count=1 conv=notrunc status=none")]).why("the protective MBR's entry active, as the source's"));
             }
             // A protective MBR with a disk signature (KIWI's images, MicroOS's:
             // bytes 440-443); sfdisk writes a GPT's as zero.
             if let Some(sig) = pmbr_signature(self.layout.device(&src)) {
-                let oct: String = sig.to_le_bytes().iter().map(|b| format!("\\{b:03o}")).collect();
+                let oct: String = sig
+                    .to_le_bytes()
+                    .iter()
+                    .map(|b| format!("\\{b:03o}"))
+                    .collect();
                 out.push(Cmd::new(&["sh", "-c", &format!("printf '{oct}' | dd of={qdev} bs=1 seek=440 count=4 conv=notrunc status=none")]).why(format!("the protective MBR's disk signature, {sig:08x}, as the source's")));
             }
             if d.parts.iter().any(|p| p.extended) {
@@ -1069,7 +1273,14 @@ pub fn md_layout_name(level: &str, n: u64) -> Option<String> {
 }
 
 /// The devices a pool's vdev tree names, and its `zpool create` vdev words.
-fn vdev_words(names: &Names, tree: &Value, class: &str, words: &mut Vec<String>, leaves: &mut Vec<String>, problems: &mut Vec<String>) {
+fn vdev_words(
+    names: &Names,
+    tree: &Value,
+    class: &str,
+    words: &mut Vec<String>,
+    leaves: &mut Vec<String>,
+    problems: &mut Vec<String>,
+) {
     let Some(kids) = tree.as_object() else { return };
     let mut first = true;
     for (name, v) in kids {
@@ -1082,17 +1293,35 @@ fn vdev_words(names: &Names, tree: &Value, class: &str, words: &mut Vec<String>,
             "disk" | "file" => leaf(names, v, name, words, leaves, problems),
             "mirror" | "raidz" | "replacing" | "spare" => {
                 let word = name.split('-').next().unwrap_or(ty);
-                words.push(if word == "raidz" { "raidz1".to_string() } else { word.to_string() });
-                for (cn, c) in v.get("vdevs").and_then(Value::as_object).into_iter().flatten() {
+                words.push(if word == "raidz" {
+                    "raidz1".to_string()
+                } else {
+                    word.to_string()
+                });
+                for (cn, c) in v
+                    .get("vdevs")
+                    .and_then(Value::as_object)
+                    .into_iter()
+                    .flatten()
+                {
                     leaf(names, c, cn, words, leaves, problems);
                 }
             }
-            other => problems.push(format!("ZFS vdev {name} is {other}; version 1 makes disk, mirror and raidz vdevs only")),
+            other => problems.push(format!(
+                "ZFS vdev {name} is {other}; version 1 makes disk, mirror and raidz vdevs only"
+            )),
         }
     }
 }
 
-fn leaf(names: &Names, v: &Value, name: &str, words: &mut Vec<String>, leaves: &mut Vec<String>, problems: &mut Vec<String>) {
+fn leaf(
+    names: &Names,
+    v: &Value,
+    name: &str,
+    words: &mut Vec<String>,
+    leaves: &mut Vec<String>,
+    problems: &mut Vec<String>,
+) {
     let path = v.get("path").and_then(Value::as_str).unwrap_or(name);
     match names.src_of_path(path) {
         Some(src) => {
@@ -1106,18 +1335,41 @@ fn leaf(names: &Names, v: &Value, name: &str, words: &mut Vec<String>, leaves: &
 /// Pool properties `zpool create -o` can't or mustn't take.
 /// (bootsize: illumos' zpool create -B, whose ESP the partition stage
 /// writes as the source's instead.)
-const POOL_PROPS_SKIP: [&str; 10] = ["cachefile", "altroot", "readonly", "bootfs", "guid", "load_guid", "name", "version", "health", "bootsize"];
+const POOL_PROPS_SKIP: [&str; 10] = [
+    "cachefile",
+    "altroot",
+    "readonly",
+    "bootfs",
+    "guid",
+    "load_guid",
+    "name",
+    "version",
+    "health",
+    "bootsize",
+];
 
 /// A legacy pool's version (28, say): its `version` property when that's a
 /// number other than 5000.  A feature-flags pool's is 5000, or `-` as
 /// `zpool get -p` gives it.
 fn legacy_pool_version(p: &Value) -> Option<u64> {
-    let v = p.at(&["local_properties", "version"]).or_else(|| p.at(&["properties", "version"]))?;
-    let n = v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))?;
+    let v = p
+        .at(&["local_properties", "version"])
+        .or_else(|| p.at(&["properties", "version"]))?;
+    let n = v
+        .as_u64()
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))?;
     (n != 5000).then_some(n)
 }
 /// Dataset properties `zfs create -o` can't take.
-const DS_PROPS_SKIP: [&str; 7] = ["pbkdf2salt", "objsetid", "guid", "createtxg", "keystatus", "encryptionroot", "mounted"];
+const DS_PROPS_SKIP: [&str; 7] = [
+    "pbkdf2salt",
+    "objsetid",
+    "guid",
+    "createtxg",
+    "keystatus",
+    "encryptionroot",
+    "mounted",
+];
 
 /// An LVM metadata value in its text format.
 fn lvm_text(v: &Value, indent: usize, out: &mut String) {
@@ -1140,7 +1392,10 @@ fn lvm_text(v: &Value, indent: usize, out: &mut String) {
 fn lvm_scalar(v: &Value) -> String {
     match v {
         Value::Str(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
-        Value::Arr(a) => format!("[{}]", a.iter().map(lvm_scalar).collect::<Vec<_>>().join(", ")),
+        Value::Arr(a) => format!(
+            "[{}]",
+            a.iter().map(lvm_scalar).collect::<Vec<_>>().join(", ")
+        ),
         Value::UInt(n) => n.to_string(),
         Value::Int(n) => n.to_string(),
         Value::Bool(b) => (*b as u8).to_string(),
@@ -1203,10 +1458,23 @@ pub struct LvAttrs {
 
 impl LvAttrs {
     fn of(lv: &Value) -> LvAttrs {
-        let list = |k: &str| lv.get(k).and_then(Value::as_array).cloned().unwrap_or_default();
-        let has = |f: &str| list("status").iter().chain(list("flags").iter()).any(|x| x.as_str() == Some(f));
+        let list = |k: &str| {
+            lv.get(k)
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+        };
+        let has = |f: &str| {
+            list("status")
+                .iter()
+                .chain(list("flags").iter())
+                .any(|x| x.as_str() == Some(f))
+        };
         LvAttrs {
-            tags: list("tags").iter().filter_map(|x| x.as_str().map(str::to_string)).collect(),
+            tags: list("tags")
+                .iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect(),
             activation_skip: has("ACTIVATION_SKIP"),
             read_only: lv.get("status").is_some() && !has("WRITE"),
         }
@@ -1227,7 +1495,10 @@ pub struct Thin {
 }
 
 fn lv_segments(lv: &Value) -> Vec<Value> {
-    lv.get("segments").and_then(Value::as_array).cloned().unwrap_or_default()
+    lv.get("segments")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// The volume group's thin pools and thin LVs.  Refused: a thin LV with an
@@ -1240,17 +1511,41 @@ fn lv_segments(lv: &Value) -> Vec<Value> {
 pub fn thin_of(vg: &Value) -> Result<Thin, String> {
     let name = s(vg, "name").unwrap_or_default();
     let ext = num(vg, "extent_size_bytes").unwrap_or(0);
-    let lvs = vg.get("logical_volumes").and_then(Value::as_array).cloned().unwrap_or_default();
-    let pvs = vg.get("physical_volumes").and_then(Value::as_array).cloned().unwrap_or_default();
+    let lvs = vg
+        .get("logical_volumes")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let pvs = vg
+        .get("physical_volumes")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     let by_name = |n: &str| lvs.iter().find(|l| s(l, "name").as_deref() == Some(n));
-    let ty_of = |seg: &Value| seg.get("type").and_then(Value::as_str).unwrap_or("?").to_string();
+    let ty_of = |seg: &Value| {
+        seg.get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("?")
+            .to_string()
+    };
     // The PVs a striped segment sits on that lvcreate can't allocate on.
     let unallocatable = |seg: &Value| -> Vec<String> {
-        let on = seg.get("stripes").and_then(Value::as_array).cloned().unwrap_or_default();
+        let on = seg
+            .get("stripes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         on.iter()
             .step_by(2)
             .filter_map(|x| x.as_str())
-            .filter(|pv| !pvs.iter().any(|p| s(p, "name").as_deref() == Some(pv) && p.get("status").and_then(Value::as_array).is_some_and(|a| a.iter().any(|x| x.as_str() == Some("ALLOCATABLE")))))
+            .filter(|pv| {
+                !pvs.iter().any(|p| {
+                    s(p, "name").as_deref() == Some(pv)
+                        && p.get("status")
+                            .and_then(Value::as_array)
+                            .is_some_and(|a| a.iter().any(|x| x.as_str() == Some("ALLOCATABLE")))
+                })
+            })
             .map(str::to_string)
             .collect()
     };
@@ -1262,32 +1557,49 @@ pub fn thin_of(vg: &Value) -> Result<Thin, String> {
             continue;
         }
         if segs.len() != 1 {
-            return Err(format!("thin pool {name}/{ln} has {} segments; version 1 makes a pool of one", segs.len()));
+            return Err(format!(
+                "thin pool {name}/{ln} has {} segments; version 1 makes a pool of one",
+                segs.len()
+            ));
         }
         let seg = &segs[0];
         // A sub-LV's size, and its stripes (count, stripe size) when more
         // than one.
         let mut size = |key: &str, what: &str| -> Result<(u64, Option<(u64, u64)>), String> {
-            let sub = s(seg, key).ok_or_else(|| format!("thin pool {name}/{ln} doesn't name its {what} LV"))?;
-            let l = by_name(&sub).ok_or_else(|| format!("thin pool {name}/{ln}'s {what} LV {sub} isn't in the group"))?;
+            let sub = s(seg, key)
+                .ok_or_else(|| format!("thin pool {name}/{ln} doesn't name its {what} LV"))?;
+            let l = by_name(&sub).ok_or_else(|| {
+                format!("thin pool {name}/{ln}'s {what} LV {sub} isn't in the group")
+            })?;
             let mut extents = 0;
             let mut stripes: Vec<(u64, u64)> = vec![];
             for g in lv_segments(l) {
                 let ty = ty_of(&g);
                 if ty != "striped" {
-                    return Err(format!("thin pool {name}/{ln}'s {what} LV {sub} has a {ty} segment; version 1 makes thin pools on linear and striped LVs only (not RAID or cache)"));
+                    return Err(format!(
+                        "thin pool {name}/{ln}'s {what} LV {sub} has a {ty} segment; version 1 makes thin pools on linear and striped LVs only (not RAID or cache)"
+                    ));
                 }
                 if let Some(pv) = unallocatable(&g).first() {
-                    return Err(format!("thin pool {name}/{ln}'s {what} LV {sub} is on {pv}, which isn't allocatable (pvchange -x n): lvcreate can't make it there again"));
+                    return Err(format!(
+                        "thin pool {name}/{ln}'s {what} LV {sub} is on {pv}, which isn't allocatable (pvchange -x n): lvcreate can't make it there again"
+                    ));
                 }
                 extents += num(&g, "extent_count").unwrap_or(0);
-                stripes.push((num(&g, "stripe_count").unwrap_or(1).max(1), num(&g, "stripe_size").unwrap_or(0) * 512));
+                stripes.push((
+                    num(&g, "stripe_count").unwrap_or(1).max(1),
+                    num(&g, "stripe_size").unwrap_or(0) * 512,
+                ));
             }
             stripes.dedup();
             let striped = match stripes.as_slice() {
                 [] | [(1, _)] => None,
                 [one] => Some(*one),
-                _ => return Err(format!("thin pool {name}/{ln}'s {what} LV {sub} has segments of different stripes; version 1 makes a pool's data LV with one stripe count and size")),
+                _ => {
+                    return Err(format!(
+                        "thin pool {name}/{ln}'s {what} LV {sub} has segments of different stripes; version 1 makes a pool's data LV with one stripe count and size"
+                    ));
+                }
             };
             t.dropped.push(sub);
             Ok((extents * ext, striped))
@@ -1295,7 +1607,9 @@ pub fn thin_of(vg: &Value) -> Result<Thin, String> {
         let (data_bytes, data_stripes) = size("pool", "data")?;
         let (meta_bytes, meta_stripes) = size("metadata", "metadata")?;
         if let Some((n, _)) = meta_stripes {
-            return Err(format!("thin pool {name}/{ln}'s metadata LV is striped across {n} PVs; version 1 makes a pool's metadata LV linear only"));
+            return Err(format!(
+                "thin pool {name}/{ln}'s metadata LV is striped across {n} PVs; version 1 makes a pool's metadata LV linear only"
+            ));
         }
         t.dropped.push(ln.clone());
         t.pools.push(ThinPool {
@@ -1306,7 +1620,12 @@ pub fn thin_of(vg: &Value) -> Result<Thin, String> {
             chunk_bytes: num(seg, "chunk_size").map(|c| c * 512),
             discards: s(seg, "discards"),
             zero: num(seg, "zero_new_blocks").is_some_and(|z| z != 0),
-            error_when_full: [lv.get("status"), lv.get("flags")].into_iter().flatten().filter_map(Value::as_array).flatten().any(|x| x.as_str() == Some("ERROR_WHEN_FULL")),
+            error_when_full: [lv.get("status"), lv.get("flags")]
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_array)
+                .flatten()
+                .any(|x| x.as_str() == Some("ERROR_WHEN_FULL")),
             attrs: LvAttrs::of(lv),
             thins: vec![],
             data_used: num(lv, "data_used_bytes"),
@@ -1320,15 +1639,22 @@ pub fn thin_of(vg: &Value) -> Result<Thin, String> {
             continue;
         }
         if segs.len() != 1 {
-            return Err(format!("thin LV {name}/{ln} has {} segments; version 1 makes a thin LV of one", segs.len()));
+            return Err(format!(
+                "thin LV {name}/{ln} has {} segments; version 1 makes a thin LV of one",
+                segs.len()
+            ));
         }
         let seg = &segs[0];
         if let Some(o) = s(seg, "external_origin") {
-            return Err(format!("thin LV {name}/{ln} has the external origin {o}; version 1 doesn't make thin LVs with one"));
+            return Err(format!(
+                "thin LV {name}/{ln} has the external origin {o}; version 1 doesn't make thin LVs with one"
+            ));
         }
         let pool = s(seg, "thin_pool").unwrap_or_default();
         let Some(p) = t.pools.iter_mut().find(|p| p.name == pool) else {
-            return Err(format!("thin LV {name}/{ln}'s pool {pool} isn't a thin pool in the group"));
+            return Err(format!(
+                "thin LV {name}/{ln}'s pool {pool} isn't a thin pool in the group"
+            ));
         };
         p.thins.push(ThinLv {
             name: ln.clone(),
@@ -1351,11 +1677,16 @@ pub fn thin_of(vg: &Value) -> Result<Thin, String> {
         let mut spare_bytes = 0;
         for lv in &lvs {
             let ln = s(lv, "name").unwrap_or_default();
-            let visible = lv.get("status").and_then(Value::as_array).is_some_and(|a| a.iter().any(|x| x.as_str() == Some("VISIBLE")));
+            let visible = lv
+                .get("status")
+                .and_then(Value::as_array)
+                .is_some_and(|a| a.iter().any(|x| x.as_str() == Some("VISIBLE")));
             if ln.ends_with("_pmspare") && !visible {
                 for g in lv_segments(lv) {
                     if let Some(pv) = unallocatable(&g).first() {
-                        return Err(format!("the pool metadata spare {name}/{ln} is on {pv}, which isn't allocatable (pvchange -x n): lvcreate can't make it there again"));
+                        return Err(format!(
+                            "the pool metadata spare {name}/{ln} is on {pv}, which isn't allocatable (pvchange -x n): lvcreate can't make it there again"
+                        ));
                     }
                     spare_bytes += num(&g, "extent_count").unwrap_or(0) * ext;
                 }
@@ -1366,7 +1697,13 @@ pub fn thin_of(vg: &Value) -> Result<Thin, String> {
         let meta = t.pools.iter().map(|p| p.meta_bytes).max().unwrap_or(0);
         if t.spare && spare_bytes < meta {
             let total: u64 = pvs.iter().filter_map(|p| num(p, "pe_count")).sum::<u64>() * ext;
-            let used: u64 = lvs.iter().flat_map(lv_segments).filter(|g| ty_of(g) == "striped").filter_map(|g| num(&g, "extent_count")).sum::<u64>() * ext;
+            let used: u64 = lvs
+                .iter()
+                .flat_map(lv_segments)
+                .filter(|g| ty_of(g) == "striped")
+                .filter_map(|g| num(&g, "extent_count"))
+                .sum::<u64>()
+                * ext;
             let free = total.saturating_sub(used);
             if free < meta - spare_bytes {
                 t.spare = false;
@@ -1393,7 +1730,10 @@ pub fn thin_forest(vg: &str, pool: &str, mut thins: Vec<ThinLv>) -> Result<Vec<T
     for l in &thins {
         if let Some(o) = &l.origin {
             if !thins.iter().any(|x| &x.name == o) {
-                return Err(format!("thin LV {vg}/{} is a thin snapshot of {o}, which isn't a thin LV of pool {pool} in the dump: bko-holt load can't make it without its origin", l.name));
+                return Err(format!(
+                    "thin LV {vg}/{} is a thin snapshot of {o}, which isn't a thin LV of pool {pool} in the dump: bko-holt load can't make it without its origin",
+                    l.name
+                ));
             }
         }
     }
@@ -1401,7 +1741,14 @@ pub fn thin_forest(vg: &str, pool: &str, mut thins: Vec<ThinLv>) -> Result<Vec<T
     let mut left = thins;
     loop {
         let before = out.len();
-        let ready: Vec<usize> = (0..left.len()).filter(|&i| left[i].origin.as_ref().is_none_or(|o| out.iter().any(|x| &x.name == o))).collect();
+        let ready: Vec<usize> = (0..left.len())
+            .filter(|&i| {
+                left[i]
+                    .origin
+                    .as_ref()
+                    .is_none_or(|o| out.iter().any(|x| &x.name == o))
+            })
+            .collect();
         for i in ready.into_iter().rev() {
             out.push(left.remove(i));
         }
@@ -1411,7 +1758,13 @@ pub fn thin_forest(vg: &str, pool: &str, mut thins: Vec<ThinLv>) -> Result<Vec<T
             return Ok(out);
         }
         if out.len() == before {
-            return Err(format!("thin LVs {} in {vg}/{pool} are snapshots of each other in a loop", left.iter().map(|l| l.name.as_str()).collect::<Vec<_>>().join(", ")));
+            return Err(format!(
+                "thin LVs {} in {vg}/{pool} are snapshots of each other in a loop",
+                left.iter()
+                    .map(|l| l.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
         }
     }
 }
@@ -1437,14 +1790,25 @@ pub fn vg_metadata(vg: &Value) -> Result<String, String> {
     let ext = num(vg, "extent_size_bytes").ok_or("no extent size")? / 512;
     let thin = thin_of(vg)?;
     let mut pvs = Obj::new();
-    for pv in vg.get("physical_volumes").and_then(Value::as_array).into_iter().flatten() {
+    for pv in vg
+        .get("physical_volumes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let pn = s(pv, "name").ok_or("a PV without a name")?;
         pvs.put(
             &pn,
             Obj::new()
                 .set("id", pv.get("id").cloned().unwrap_or(Value::Null))
-                .set("device", pv.get("device_hint").cloned().unwrap_or(Value::Null))
-                .set("status", pv.get("status").cloned().unwrap_or(Value::Arr(vec![])))
+                .set(
+                    "device",
+                    pv.get("device_hint").cloned().unwrap_or(Value::Null),
+                )
+                .set(
+                    "status",
+                    pv.get("status").cloned().unwrap_or(Value::Arr(vec![])),
+                )
                 .set("flags", Value::Arr(vec![]))
                 .set("dev_size", num(pv, "dev_size_bytes").map(|b| b / 512))
                 .set("pe_start", num(pv, "pe_start_bytes").map(|b| b / 512))
@@ -1453,16 +1817,27 @@ pub fn vg_metadata(vg: &Value) -> Result<String, String> {
         );
     }
     let mut lvs = Obj::new();
-    for lv in vg.get("logical_volumes").and_then(Value::as_array).into_iter().flatten() {
+    for lv in vg
+        .get("logical_volumes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let ln = s(lv, "name").ok_or("an LV without a name")?;
         if thin.dropped.contains(&ln) {
             continue;
         }
-        let segs = lv.get("segments").and_then(Value::as_array).cloned().unwrap_or_default();
+        let segs = lv
+            .get("segments")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         for seg in &segs {
             let ty = seg.get("type").and_then(Value::as_str).unwrap_or("?");
             if ty != "striped" {
-                return Err(format!("LV {name}/{ln} has a {ty} segment; version 1 makes linear and striped LVs only"));
+                return Err(format!(
+                    "LV {name}/{ln} has a {ty} segment; version 1 makes linear and striped LVs only"
+                ));
             }
         }
         let mut status: Vec<Value> = lv
@@ -1474,7 +1849,10 @@ pub fn vg_metadata(vg: &Value) -> Result<String, String> {
             .filter(|x| x.as_str() != Some("ACTIVATION_SKIP"))
             .collect();
         if lv.get("status").is_some() && !status.iter().any(|x| x.as_str() == Some("WRITE")) {
-            let idx = status.iter().position(|x| x.as_str() == Some("READ")).map_or(0, |i| i + 1);
+            let idx = status
+                .iter()
+                .position(|x| x.as_str() == Some("READ"))
+                .map_or(0, |i| i + 1);
             status.insert(idx, Value::Str("WRITE".into()));
         }
         let flags: Vec<Value> = lv
@@ -1489,8 +1867,14 @@ pub fn vg_metadata(vg: &Value) -> Result<String, String> {
             .set("id", lv.get("id").cloned().unwrap_or(Value::Null))
             .set("status", Value::Arr(status))
             .set("flags", Value::Arr(flags))
-            .set("creation_host", lv.get("creation_host").cloned().unwrap_or(Value::Null))
-            .set("creation_time", lv.get("creation_time").cloned().unwrap_or(Value::Null))
+            .set(
+                "creation_host",
+                lv.get("creation_host").cloned().unwrap_or(Value::Null),
+            )
+            .set(
+                "creation_time",
+                lv.get("creation_time").cloned().unwrap_or(Value::Null),
+            )
             .set("segment_count", segs.len() as u64);
         for (i, seg) in segs.into_iter().enumerate() {
             o.put(&format!("segment{}", i + 1), seg);
@@ -1501,8 +1885,14 @@ pub fn vg_metadata(vg: &Value) -> Result<String, String> {
         .set("id", vg.get("id").cloned().unwrap_or(Value::Null))
         .set("seqno", num(vg, "seqno").unwrap_or(1))
         .set("format", s(vg, "format").unwrap_or("lvm2".into()))
-        .set("status", vg.get("status").cloned().unwrap_or(Value::Arr(vec![])))
-        .set("flags", vg.get("flags").cloned().unwrap_or(Value::Arr(vec![])))
+        .set(
+            "status",
+            vg.get("status").cloned().unwrap_or(Value::Arr(vec![])),
+        )
+        .set(
+            "flags",
+            vg.get("flags").cloned().unwrap_or(Value::Arr(vec![])),
+        )
         .set("extent_size", ext)
         .set("max_lv", num(vg, "max_lv").unwrap_or(0))
         .set("max_pv", num(vg, "max_pv").unwrap_or(0))
@@ -1514,8 +1904,14 @@ pub fn vg_metadata(vg: &Value) -> Result<String, String> {
         .set("contents", "Text Format Volume Group")
         .set("version", 1u64)
         .set("description", "made by bko-holt load from a bko-holt dump")
-        .set("creation_host", vg.get("creation_host").cloned().unwrap_or(Value::Null))
-        .set("creation_time", vg.get("creation_time").cloned().unwrap_or(Value::Null))
+        .set(
+            "creation_host",
+            vg.get("creation_host").cloned().unwrap_or(Value::Null),
+        )
+        .set(
+            "creation_time",
+            vg.get("creation_time").cloned().unwrap_or(Value::Null),
+        )
         .build();
     let mut out = String::new();
     lvm_text(&doc, 0, &mut out);
@@ -1551,10 +1947,24 @@ impl Builder<'_> {
     /// name, so they're one group, named by the first of them met; any
     /// other container is a group of its own.
     pub(crate) fn key_group(&self, open_as: &str, uuid: Option<&str>) -> String {
-        let Some(mine) = self.layout.crypttab_entry(open_as, uuid).and_then(Self::keyctl_key) else { return open_as.to_string() };
+        let Some(mine) = self
+            .layout
+            .crypttab_entry(open_as, uuid)
+            .and_then(Self::keyctl_key)
+        else {
+            return open_as.to_string();
+        };
         for k in self.key_asks.iter().filter(|k| k.kind == "luks") {
-            let Some(name) = k.names.first() else { continue };
-            if self.layout.crypttab_entry(name, None).and_then(Self::keyctl_key).as_deref() == Some(mine.as_str()) {
+            let Some(name) = k.names.first() else {
+                continue;
+            };
+            if self
+                .layout
+                .crypttab_entry(name, None)
+                .and_then(Self::keyctl_key)
+                .as_deref()
+                == Some(mine.as_str())
+            {
                 return k.group.clone();
             }
         }
@@ -1569,7 +1979,9 @@ impl Builder<'_> {
             Some(Value::Str(o)) => o.split(',').collect(),
             _ => Vec::new(),
         };
-        opts.iter().any(|o| o.trim() == "keyscript=decrypt_keyctl").then(|| s(e, "key_file").unwrap_or_default())
+        opts.iter()
+            .any(|o| o.trim() == "keyscript=decrypt_keyctl")
+            .then(|| s(e, "key_file").unwrap_or_default())
     }
 
     /// A coded note.
@@ -1583,9 +1995,22 @@ impl Builder<'_> {
         for md in self.layout.arr(&["storage", "md_arrays"]) {
             let name = s(md, "name").unwrap_or_default();
             let inputs = self.layout.slaves(&name);
-            let devname = md.at(&["md", "devname"]).and_then(Value::as_str).map(str::to_string);
-            let short = devname.or_else(|| md.at(&["md", "name"]).and_then(Value::as_str).map(|n| n.rsplit(':').next().unwrap_or(n).to_string())).unwrap_or_else(|| name.clone());
-            items.push((Item::Md(md.clone()), inputs, vec![(name, format!("/dev/md/{short}"))]));
+            let devname = md
+                .at(&["md", "devname"])
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let short = devname
+                .or_else(|| {
+                    md.at(&["md", "name"])
+                        .and_then(Value::as_str)
+                        .map(|n| n.rsplit(':').next().unwrap_or(n).to_string())
+                })
+                .unwrap_or_else(|| name.clone());
+            items.push((
+                Item::Md(md.clone()),
+                inputs,
+                vec![(name, format!("/dev/md/{short}"))],
+            ));
         }
         for dm in self.layout.arr(&["storage", "dm_devices"]) {
             if dm.at(&["dm", "target"]).and_then(Value::as_str) != Some("crypt") {
@@ -1601,26 +2026,64 @@ impl Builder<'_> {
                 ));
                 continue;
             }
-            let dm_name = dm.at(&["dm", "dm_name"]).and_then(Value::as_str).unwrap_or(&name).to_string();
-            let open_as = self.layout.crypttab_entry(&dm_name, dm.at(&["dm", "luks_uuid"]).and_then(Value::as_str)).and_then(|e| s(e, "name")).unwrap_or(dm_name);
-            items.push((Item::Luks(dm.clone()), self.layout.slaves(&name), vec![(name, format!("/dev/mapper/{open_as}"))]));
+            let dm_name = dm
+                .at(&["dm", "dm_name"])
+                .and_then(Value::as_str)
+                .unwrap_or(&name)
+                .to_string();
+            let open_as = self
+                .layout
+                .crypttab_entry(
+                    &dm_name,
+                    dm.at(&["dm", "luks_uuid"]).and_then(Value::as_str),
+                )
+                .and_then(|e| s(e, "name"))
+                .unwrap_or(dm_name);
+            items.push((
+                Item::Luks(dm.clone()),
+                self.layout.slaves(&name),
+                vec![(name, format!("/dev/mapper/{open_as}"))],
+            ));
         }
         for vg in self.layout.arr(&["storage", "lvm", "volume_groups"]) {
             let vgname = s(vg, "name").unwrap_or_default();
-            let inputs: Vec<String> = vg.get("physical_volumes").and_then(Value::as_array).into_iter().flatten().filter_map(|p| s(p, "device")).collect();
+            let inputs: Vec<String> = vg
+                .get("physical_volumes")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|p| s(p, "device"))
+                .collect();
             let outputs: Vec<(String, String)> = self
                 .layout
                 .arr(&["storage", "dm_devices"])
                 .iter()
                 .filter(|d| d.at(&["dm", "vg"]).and_then(Value::as_str) == Some(vgname.as_str()))
-                .filter_map(|d| Some((s(d, "name")?, format!("/dev/mapper/{}", d.at(&["dm", "dm_name"]).and_then(Value::as_str)?))))
+                .filter_map(|d| {
+                    Some((
+                        s(d, "name")?,
+                        format!(
+                            "/dev/mapper/{}",
+                            d.at(&["dm", "dm_name"]).and_then(Value::as_str)?
+                        ),
+                    ))
+                })
                 .collect();
             items.push((Item::Vg(vg.clone()), inputs, outputs));
         }
-        let pools = self.layout.v.at(&["storage", "zfs", "tools", "imported_pools"]).and_then(Value::as_array).cloned().unwrap_or_default();
+        let pools = self
+            .layout
+            .v
+            .at(&["storage", "zfs", "tools", "imported_pools"])
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         for p in self.layout.arr(&["storage", "zfs", "pools_from_labels"]) {
             let n = s(p, "name").unwrap_or_default();
-            if !pools.iter().any(|q| s(q, "name").as_deref() == Some(n.as_str())) {
+            if !pools
+                .iter()
+                .any(|q| s(q, "name").as_deref() == Some(n.as_str()))
+            {
                 self.problems.push(format!("ZFS pool {n} has labels on disk but wasn't imported when the dump was made, so its properties and datasets weren't recorded"));
             }
         }
@@ -1628,8 +2091,23 @@ impl Builder<'_> {
             let mut words = vec![];
             let mut leaves = vec![];
             let mut probs = vec![];
-            vdev_words(&self.names, p.at(&["vdevs", "vdevs"]).and_then(|v| v.as_object()).and_then(|o| o.first()).and_then(|(_, root)| root.get("vdevs")).unwrap_or(&Value::Null), "", &mut words, &mut leaves, &mut probs);
-            let outs = self.zvols_of(&s(&p, "name").unwrap_or_default()).into_iter().map(|(src, ds)| (src, format!("/dev/zvol/{}", self.zname(&ds)))).collect();
+            vdev_words(
+                &self.names,
+                p.at(&["vdevs", "vdevs"])
+                    .and_then(|v| v.as_object())
+                    .and_then(|o| o.first())
+                    .and_then(|(_, root)| root.get("vdevs"))
+                    .unwrap_or(&Value::Null),
+                "",
+                &mut words,
+                &mut leaves,
+                &mut probs,
+            );
+            let outs = self
+                .zvols_of(&s(&p, "name").unwrap_or_default())
+                .into_iter()
+                .map(|(src, ds)| (src, format!("/dev/zvol/{}", self.zname(&ds))))
+                .collect();
             items.push((Item::Pool(p), leaves, outs));
         }
         items
@@ -1650,7 +2128,10 @@ impl Builder<'_> {
         let mut out = self.geli_assemble(&mut have);
         // So too OpenBSD's softraid volumes, on their DUIDs.
         out.extend(self.softraid_assemble());
-        while let Some(i) = left.iter().position(|(_, ins, _)| ins.iter().all(|x| have.contains(x))) {
+        while let Some(i) = left
+            .iter()
+            .position(|(_, ins, _)| ins.iter().all(|x| have.contains(x)))
+        {
             let (item, ins, outs) = left.remove(i);
             let mut on = OnMark::at(out.len());
             ins.iter().for_each(|x| on.add(self.disks_under(x)));
@@ -1669,10 +2150,15 @@ impl Builder<'_> {
         }
         for (item, ins, _) in left {
             let what = match item {
-                Item::Md(v) | Item::Luks(v) | Item::Vg(v) | Item::Pool(v) => s(&v, "name").unwrap_or_default(),
+                Item::Md(v) | Item::Luks(v) | Item::Vg(v) | Item::Pool(v) => {
+                    s(&v, "name").unwrap_or_default()
+                }
             };
             let missing: Vec<String> = ins.into_iter().filter(|x| !have.contains(x)).collect();
-            self.problems.push(format!("{what} sits on {}, which nothing in this layout makes (an unmapped disk?)", missing.join(", ")));
+            self.problems.push(format!(
+                "{what} sits on {}, which nothing in this layout makes (an unmapped disk?)",
+                missing.join(", ")
+            ));
         }
         out
     }
@@ -1685,7 +2171,12 @@ impl Builder<'_> {
         let n = num(&md, "raid_disks").unwrap_or(0) as usize;
         let mut slots: Vec<String> = vec!["missing".into(); n];
         let mut first_member = None;
-        for m in md.get("members").and_then(Value::as_array).into_iter().flatten() {
+        for m in md
+            .get("members")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let dev = s(m, "device").unwrap_or_default();
             first_member.get_or_insert(dev.clone());
             let node = self.names.dev(&dev).unwrap_or_else(|| format!("<{dev}>"));
@@ -1694,9 +2185,22 @@ impl Builder<'_> {
                 _ => slots.push(node), // a spare
             }
         }
-        let sb = first_member.and_then(|m| self.layout.content(&m).cloned()).unwrap_or(Value::Null);
-        let meta = s(&md, "metadata_version").or_else(|| s(&sb, "version")).unwrap_or("1.2".into());
-        let mut a = vec!["mdadm".to_string(), "--create".into(), node.clone(), "--run".into(), "--assume-clean".into(), format!("--metadata={meta}"), format!("--level={level}"), format!("--raid-devices={n}")];
+        let sb = first_member
+            .and_then(|m| self.layout.content(&m).cloned())
+            .unwrap_or(Value::Null);
+        let meta = s(&md, "metadata_version")
+            .or_else(|| s(&sb, "version"))
+            .unwrap_or("1.2".into());
+        let mut a = vec![
+            "mdadm".to_string(),
+            "--create".into(),
+            node.clone(),
+            "--run".into(),
+            "--assume-clean".into(),
+            format!("--metadata={meta}"),
+            format!("--level={level}"),
+            format!("--raid-devices={n}"),
+        ];
         if let Some(c) = num(&md, "chunk_size").filter(|&c| c > 0 && level != "raid1") {
             a.push(format!("--chunk={}K", c / 1024));
         }
@@ -1722,20 +2226,35 @@ impl Builder<'_> {
                 a.push(format!("--data-offset={}K", off / 1024));
             }
         }
-        let bitmap = sb.get("write_intent_bitmap").and_then(Value::as_bool).unwrap_or(false);
-        a.push(format!("--bitmap={}", if bitmap { "internal" } else { "none" }));
+        let bitmap = sb
+            .get("write_intent_bitmap")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        a.push(format!(
+            "--bitmap={}",
+            if bitmap { "internal" } else { "none" }
+        ));
         a.extend(slots);
-        out.push(Cmd { argv: a, why: Some(format!("md array {name} ({level})")), ..Cmd::default() });
+        out.push(Cmd {
+            argv: a,
+            why: Some(format!("md array {name} ({level})")),
+            ..Cmd::default()
+        });
         self.closers.push(settled(&["mdadm", "--stop", &node]));
     }
 
     fn luks(&mut self, v: &Value, outs: &[(String, String)], out: &mut Vec<Cmd>) {
         let name = s(v, "name").unwrap_or_default();
         let Some(under) = self.layout.slaves(&name).first().cloned() else {
-            self.problems.push(format!("LUKS device {name}: what it sits on isn't recorded"));
+            self.problems.push(format!(
+                "LUKS device {name}: what it sits on isn't recorded"
+            ));
             return;
         };
-        let dev = self.names.dev(&under).unwrap_or_else(|| format!("<{under}>"));
+        let dev = self
+            .names
+            .dev(&under)
+            .unwrap_or_else(|| format!("<{under}>"));
         let node = outs.first().map(|o| o.1.clone()).unwrap_or_default();
         let open_as = node.trim_start_matches("/dev/mapper/").to_string();
         let c = self.layout.content(&under).cloned().unwrap_or(Value::Null);
@@ -1750,7 +2269,12 @@ impl Builder<'_> {
             return;
         }
         let version = s(&c, "version").unwrap_or("2".into());
-        let mut a = vec!["cryptsetup".to_string(), "luksFormat".into(), "--batch-mode".into(), format!("--type=luks{version}")];
+        let mut a = vec![
+            "cryptsetup".to_string(),
+            "luksFormat".into(),
+            "--batch-mode".into(),
+            format!("--type=luks{version}"),
+        ];
         // LUKS1's volume key digest iterations, as the source's: luksFormat
         // sets its own (1000 when the keyslot's count is forced, below), so
         // load gives it a volume key of its own and then sets the count and
@@ -1759,7 +2283,9 @@ impl Builder<'_> {
         let mut vk: Option<(String, u64, u64)> = None;
         if version == "1" {
             let mk = num(&c, "mk_iterations").filter(|&m| m >= 1000 && m <= u32::MAX as u64);
-            let bytes = num(&c, "key_bits").filter(|&k| k > 0 && k % 8 == 0 && k <= 4096).map(|k| k / 8);
+            let bytes = num(&c, "key_bits")
+                .filter(|&k| k > 0 && k % 8 == 0 && k <= 4096)
+                .map(|k| k / 8);
             match (mk, bytes, temp_key_name(&open_as)) {
                 (Some(m), Some(n), Some(t)) if s(&c, "hash").as_deref() == Some("sha256") => {
                     let path = format!("{RUN_DIR}/keys/{t}.volume-key");
@@ -1806,13 +2332,19 @@ impl Builder<'_> {
             // on a typed passphrase would cost an attacker nothing; with no
             // other, cryptsetup's own (benchmarked) instead.
             let ks = luks_passphrase_keyslot(&c);
-            if ks.is_null() && c.get("keyslots").and_then(Value::as_array).is_some_and(|k| !k.is_empty()) {
+            if ks.is_null()
+                && c.get("keyslots")
+                    .and_then(Value::as_array)
+                    .is_some_and(|k| !k.is_empty())
+            {
                 self.coded_note(Note::new(NoteCode::LuksPbkdf, format!("LUKS2 on {dev}: every keyslot of the source is a token's (systemd-tpm2, systemd-recovery and the like: high-entropy keys with systemd-cryptenroll's minimal PBKDF), so the new passphrase's keyslot gets cryptsetup's default PBKDF, benchmarked here, not their cost")).with("dev", dev.as_str()));
             }
             if let Some(e) = s(&seg, "encryption") {
                 a.push(format!("--cipher={e}"));
             }
-            if let Some(k) = num(&ks, "key_bits").or_else(|| c.at(&["keyslots", "0"]).and_then(|k| num(k, "key_bits"))) {
+            if let Some(k) = num(&ks, "key_bits")
+                .or_else(|| c.at(&["keyslots", "0"]).and_then(|k| num(k, "key_bits")))
+            {
                 a.push(format!("--key-size={k}"));
             }
             if let Some(ss) = num(&seg, "sector_size") {
@@ -1837,7 +2369,12 @@ impl Builder<'_> {
             }
             // PBKDF2's hash, or else (argon2) the volume key digest's: one
             // --hash sets both.
-            let digest = c.get("digest_hashes").and_then(Value::as_array).and_then(|d| d.first()).and_then(Value::as_str).map(str::to_string);
+            let digest = c
+                .get("digest_hashes")
+                .and_then(Value::as_array)
+                .and_then(|d| d.first())
+                .and_then(Value::as_str)
+                .map(str::to_string);
             if let Some(h) = s(&ks, "kdf_hash").or(digest) {
                 a.push(format!("--hash={h}"));
             }
@@ -1862,18 +2399,28 @@ impl Builder<'_> {
         // prompt for a new passphrase.  Either way the boot stage adds the
         // restored key file, when it's in the restored tree
         // (restored_key_files).
-        let tab_key = self.layout.crypttab_entry(&open_as, s(&c, "uuid").as_deref()).and_then(|e| s(e, "key_file")).filter(|k| !matches!(k.as_str(), "none" | "-" | ""));
+        let tab_key = self
+            .layout
+            .crypttab_entry(&open_as, s(&c, "uuid").as_deref())
+            .and_then(|e| s(e, "key_file"))
+            .filter(|k| !matches!(k.as_str(), "none" | "-" | ""));
         // The question this container is (holt-json.md, the plan's keys):
         // what unlocks it, given a --key-file or not.
         // A passphrase the source asked for once at boot for a group
         // (keyscript=decrypt_keyctl: the key field is the key's name, not a
         // file) is a passphrase still, given by --key-file.
         let group = self.key_group(&open_as, s(&c, "uuid").as_deref());
-        let keyctl = group != open_as || self.layout.crypttab_entry(&open_as, s(&c, "uuid").as_deref()).is_some_and(|e| Self::keyctl_key(e).is_some());
+        let keyctl = group != open_as
+            || self
+                .layout
+                .crypttab_entry(&open_as, s(&c, "uuid").as_deref())
+                .is_some_and(|e| Self::keyctl_key(e).is_some());
         let unlock = match &tab_key {
             None => "passphrase",
             Some(_) if keyctl => "passphrase",
-            Some(k) if !restorable_key_file(k) || temp_key_name(&open_as).is_none() => "key_file_elsewhere",
+            Some(k) if !restorable_key_file(k) || temp_key_name(&open_as).is_none() => {
+                "key_file_elsewhere"
+            }
             Some(_) => "temporary",
         };
         let given = self.opts.key_file(&open_as).is_some();
@@ -1894,10 +2441,13 @@ impl Builder<'_> {
         // (key_file_unrestorable).
         if self.opts.json && tab_key.is_none() && !given {
             self.coded(
-                Problem::new(ProblemCode::KeyNeeded, format!("{open_as}: give its new passphrase with --key-file {open_as}=FILE"))
-                    .with("name", &open_as)
-                    .with("group", &group)
-                    .with("kind", "luks"),
+                Problem::new(
+                    ProblemCode::KeyNeeded,
+                    format!("{open_as}: give its new passphrase with --key-file {open_as}=FILE"),
+                )
+                .with("name", &open_as)
+                .with("group", &group)
+                .with("kind", "luks"),
             );
         }
         let key = match (self.opts.key_file(&open_as), &tab_key) {
@@ -1914,8 +2464,17 @@ impl Builder<'_> {
                 None
             }
             (None, Some(k)) => {
-                let tmp = format!("{RUN_DIR}/keys/{}", temp_key_name(&open_as).unwrap_or_default());
-                out.push(Cmd::new(&["mkdir", "-p", "-m", "700", &format!("{RUN_DIR}/keys")]));
+                let tmp = format!(
+                    "{RUN_DIR}/keys/{}",
+                    temp_key_name(&open_as).unwrap_or_default()
+                );
+                out.push(Cmd::new(&[
+                    "mkdir",
+                    "-p",
+                    "-m",
+                    "700",
+                    &format!("{RUN_DIR}/keys"),
+                ]));
                 out.push(Cmd::new(&["dd", "if=/dev/urandom", &format!("of={tmp}"), "bs=64", "count=1", "status=none"]).why(format!(
                     "{open_as} unlocks with the key file {k} on the restored system; until that's restored, a temporary key"
                 )));
@@ -1923,14 +2482,24 @@ impl Builder<'_> {
             }
             (None, None) => None,
         };
-        let why = if key.is_none() { format!("LUKS{version} on {dev}: asks for the new passphrase") } else { format!("LUKS{version} on {dev}") };
+        let why = if key.is_none() {
+            format!("LUKS{version} on {dev}: asks for the new passphrase")
+        } else {
+            format!("LUKS{version} on {dev}")
+        };
         if let Some(k) = &key {
             a.push(format!("--key-file={k}"));
         }
         a.push(dev.clone());
-        out.push(Cmd { argv: a, why: Some(why), ..Cmd::default() });
+        out.push(Cmd {
+            argv: a,
+            why: Some(why),
+            ..Cmd::default()
+        });
         if let Some((path, _, m)) = &vk {
-            let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
+            let exe = std::env::current_exe()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "bko-holt".into());
             out.push(Cmd::new(&[exe.as_str(), "luks1-digest", dev.as_str(), path.as_str(), m.to_string().as_str()]).why(format!("LUKS1 on {dev}: the volume key digest with the source's {m} iterations (luksFormat's own count is 1000)")));
             out.push(Cmd::new(&["rm", "-f", path]));
         }
@@ -1940,8 +2509,12 @@ impl Builder<'_> {
         }
         o.push(dev);
         o.push(open_as.clone());
-        out.push(Cmd { argv: o, ..Cmd::default() });
-        self.closers.push(settled(&["cryptsetup", "close", &open_as]));
+        out.push(Cmd {
+            argv: o,
+            ..Cmd::default()
+        });
+        self.closers
+            .push(settled(&["cryptsetup", "close", &open_as]));
     }
 
     /// keep_header (docs/design/ubuntu-core.md, Decision 2): the LUKS2
@@ -1950,7 +2523,15 @@ impl Builder<'_> {
     /// device): the source's volume key, keyslots and tokens, so whatever
     /// opened it there (a TPM-sealed key, a recovery key) opens it here.  No
     /// luksFormat, no luksAddKey, no token change.
-    fn luks_keep_header(&mut self, under: &str, dev: &str, open_as: &str, c: &Value, h: &Value, out: &mut Vec<Cmd>) {
+    fn luks_keep_header(
+        &mut self,
+        under: &str,
+        dev: &str,
+        open_as: &str,
+        c: &Value,
+        h: &Value,
+        out: &mut Vec<Cmd>,
+    ) {
         let label = s(c, "label");
         if s(c, "version").as_deref() != Some("2") {
             self.problems.push(format!("{under}: the dump kept its LUKS header, which is LUKS{}: load keeps LUKS2 headers only", s(c, "version").unwrap_or("?".into())));
@@ -1959,7 +2540,11 @@ impl Builder<'_> {
         if self.opts.new_uuids {
             self.problems.push(format!("{under}: --new-uuids, and the dump kept its LUKS2 header, which carries the source's UUID"));
         }
-        let file = crate::luksheader::path_at_load(self.opts.luks_header_dir.as_deref(), &self.opts.layout, &s(h, "file").unwrap_or_default());
+        let file = crate::luksheader::path_at_load(
+            self.opts.luks_header_dir.as_deref(),
+            &self.opts.layout,
+            &s(h, "file").unwrap_or_default(),
+        );
         if let Some(e) = crate::luksheader::check_file(&file, h) {
             self.problems.push(format!("{under}: the LUKS2 header the dump kept: {e} (dump wrote it to {}; give its directory with --luks-header-dir, where `bko-holt luks-headers` fetches it from the backup)", s(h, "written_to").unwrap_or_default()));
         }
@@ -1979,7 +2564,12 @@ impl Builder<'_> {
                 _ => {}
             }
         }
-        let key = self.opts.key_file(open_as).or_else(|| label.as_deref().and_then(|l| self.opts.key_file(l))).or_else(|| self.opts.key_file(under)).map(str::to_string);
+        let key = self
+            .opts
+            .key_file(open_as)
+            .or_else(|| label.as_deref().and_then(|l| self.opts.key_file(l)))
+            .or_else(|| self.opts.key_file(under))
+            .map(str::to_string);
         // The question it is: a key it already has (holt-json.md, the plan's
         // keys: old_passphrase, no new one).  --key-file takes any of its
         // three names; the messages name its label first.
@@ -1990,7 +2580,13 @@ impl Builder<'_> {
                 names.push(n.to_string());
             }
         }
-        let provides = self.layout.arr(&["storage", "dm_devices"]).iter().filter(|d| d.at(&["dm", "dm_name"]).and_then(Value::as_str) == Some(open_as)).filter_map(|d| s(d, "name")).collect();
+        let provides = self
+            .layout
+            .arr(&["storage", "dm_devices"])
+            .iter()
+            .filter(|d| d.at(&["dm", "dm_name"]).and_then(Value::as_str) == Some(open_as))
+            .filter_map(|d| s(d, "name"))
+            .collect();
         self.key_asks.push(KeyAsk {
             kind: "luks_kept_header",
             group: first,
@@ -2014,8 +2610,15 @@ impl Builder<'_> {
             "LUKS2 on {dev}: the source's header{}, kept byte for byte (its volume key, keyslots and tokens); no luksFormat, no luksAddKey",
             label.map(|l| format!(" ({l})")).unwrap_or_default()
         )));
-        out.push(Cmd::new(&["cryptsetup", "open", &format!("--key-file={key}"), dev, open_as]));
-        self.closers.push(settled(&["cryptsetup", "close", open_as]));
+        out.push(Cmd::new(&[
+            "cryptsetup",
+            "open",
+            &format!("--key-file={key}"),
+            dev,
+            open_as,
+        ]));
+        self.closers
+            .push(settled(&["cryptsetup", "close", open_as]));
     }
 
     fn vg(&mut self, vg: &Value, out: &mut Vec<Cmd>) {
@@ -2028,8 +2631,16 @@ impl Builder<'_> {
             }
         };
         let file = format!("{RUN_DIR}/lvm/{name}.vg");
-        out.push(Cmd::new(&["mkdir", "-p", "-m", "700", &format!("{RUN_DIR}/lvm")]));
-        out.push(Cmd::write_file(&file, text).why(format!("volume group {name}: its metadata, for pvcreate and vgcfgrestore")));
+        out.push(Cmd::new(&[
+            "mkdir",
+            "-p",
+            "-m",
+            "700",
+            &format!("{RUN_DIR}/lvm"),
+        ]));
+        out.push(Cmd::write_file(&file, text).why(format!(
+            "volume group {name}: its metadata, for pvcreate and vgcfgrestore"
+        )));
         // LVM sees the group's own PVs only (--devices, and no devices file):
         // a group of the same name elsewhere on this system, or a PV of
         // another's with one of this group's UUIDs, is never what these
@@ -2042,15 +2653,34 @@ impl Builder<'_> {
             .flatten()
             .map(|pv| {
                 let src = s(pv, "device").unwrap_or_default();
-                (self.names.dev(&src).unwrap_or_else(|| format!("<{src}>")), s(pv, "id").unwrap_or_default())
+                (
+                    self.names.dev(&src).unwrap_or_else(|| format!("<{src}>")),
+                    s(pv, "id").unwrap_or_default(),
+                )
             })
             .collect();
-        let devices = pvs.iter().map(|(d, _)| d.as_str()).collect::<Vec<_>>().join(",");
+        let devices = pvs
+            .iter()
+            .map(|(d, _)| d.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
         for (dev, id) in &pvs {
-            out.push(Cmd::new(&lvm_argv("pvcreate", &devices, &["--uuid", id, "--restorefile", &file, dev])));
+            out.push(Cmd::new(&lvm_argv(
+                "pvcreate",
+                &devices,
+                &["--uuid", id, "--restorefile", &file, dev],
+            )));
         }
-        out.push(Cmd::new(&lvm_argv("vgcfgrestore", &devices, &["--file", &file, &name])));
-        out.push(Cmd::new(&lvm_argv("vgchange", &devices, &["--activate", "y", &name])));
+        out.push(Cmd::new(&lvm_argv(
+            "vgcfgrestore",
+            &devices,
+            &["--file", &file, &name],
+        )));
+        out.push(Cmd::new(&lvm_argv(
+            "vgchange",
+            &devices,
+            &["--activate", "y", &name],
+        )));
         // Thin pools and their thin LVs, which vgcfgrestore left out: made
         // empty by lvcreate, at the dump's sizes and names, before the
         // format stage formats the thin LVs.
@@ -2067,13 +2697,32 @@ impl Builder<'_> {
             }
             let full = format!("{name}/{lv}");
             if at.activation_skip {
-                later.push(Cmd::new(&lvm_argv("lvchange", &devices, &["--setactivationskip", "y", &full])).why(format!("{full}: ACTIVATION_SKIP, as on the source")));
+                later.push(
+                    Cmd::new(&lvm_argv(
+                        "lvchange",
+                        &devices,
+                        &["--setactivationskip", "y", &full],
+                    ))
+                    .why(format!("{full}: ACTIVATION_SKIP, as on the source")),
+                );
             }
             if at.read_only {
-                later.push(Cmd::new(&lvm_argv("lvchange", &devices, &["--permission", "r", &full])).why(format!("{full}: read-only, as on the source")));
+                later.push(
+                    Cmd::new(&lvm_argv(
+                        "lvchange",
+                        &devices,
+                        &["--permission", "r", &full],
+                    ))
+                    .why(format!("{full}: read-only, as on the source")),
+                );
             }
         };
-        for lv in vg.get("logical_volumes").and_then(Value::as_array).into_iter().flatten() {
+        for lv in vg
+            .get("logical_volumes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let ln = s(lv, "name").unwrap_or_default();
             if ln.is_empty() || thin.dropped.contains(&ln) {
                 continue;
@@ -2081,15 +2730,42 @@ impl Builder<'_> {
             let at = LvAttrs::of(lv);
             let full = format!("{name}/{ln}");
             if at.activation_skip {
-                later.push(Cmd::new(&lvm_argv("lvchange", &devices, &["--setactivationskip", "y", &full])).why(format!("{full}: ACTIVATION_SKIP, as on the source")));
+                later.push(
+                    Cmd::new(&lvm_argv(
+                        "lvchange",
+                        &devices,
+                        &["--setactivationskip", "y", &full],
+                    ))
+                    .why(format!("{full}: ACTIVATION_SKIP, as on the source")),
+                );
             }
             if at.read_only {
-                later.push(Cmd::new(&lvm_argv("lvchange", &devices, &["--permission", "r", &full])).why(format!("{full}: read-only, as on the source")));
+                later.push(
+                    Cmd::new(&lvm_argv(
+                        "lvchange",
+                        &devices,
+                        &["--permission", "r", &full],
+                    ))
+                    .why(format!("{full}: read-only, as on the source")),
+                );
             }
         }
         for p in &thin.pools {
             let (data, meta) = (lvm_size(p.data_bytes), lvm_size(p.meta_bytes));
-            let mut a: Vec<String> = ["--yes", "--type", "thin-pool", "-n", &p.name, "-L", &data, "--poolmetadatasize", &meta].iter().map(|x| x.to_string()).collect();
+            let mut a: Vec<String> = [
+                "--yes",
+                "--type",
+                "thin-pool",
+                "-n",
+                &p.name,
+                "-L",
+                &data,
+                "--poolmetadatasize",
+                &meta,
+            ]
+            .iter()
+            .map(|x| x.to_string())
+            .collect();
             if let Some((n, size)) = p.data_stripes {
                 a.extend(["-i".into(), n.to_string(), "-I".into(), lvm_size(size)]);
             }
@@ -2105,14 +2781,25 @@ impl Builder<'_> {
             // vanilla3, V7); a new pool queues writes when full, and
             // lvchange sets error-when-full just after, below, where the
             // source's had it.)
-            a.extend(["--poolmetadataspare".into(), if thin.spare { "y" } else { "n" }.into()]);
+            a.extend([
+                "--poolmetadataspare".into(),
+                if thin.spare { "y" } else { "n" }.into(),
+            ]);
             // A read-only pool stays as lvcreate makes it: its thin LVs are
             // what format and restore write to.
-            let pool_attrs = LvAttrs { read_only: false, ..p.attrs.clone() };
+            let pool_attrs = LvAttrs {
+                read_only: false,
+                ..p.attrs.clone()
+            };
             attrs(&p.name, &pool_attrs, &mut a, &mut later);
             a.push(name.clone());
             let rest: Vec<&str> = a.iter().map(String::as_str).collect();
-            let thins = p.thins.iter().map(|l| format!("{name}/{}", l.name)).collect::<Vec<_>>().join(", ");
+            let thins = p
+                .thins
+                .iter()
+                .map(|l| format!("{name}/{}", l.name))
+                .collect::<Vec<_>>()
+                .join(", ");
             out.push(Cmd::new(&lvm_argv("lvcreate", &devices, &rest)).why(format!(
                 "volume group {name}: thin pool {} (data {}, metadata {}) made again by lvcreate, empty; its LV UUID, its data and metadata LVs', {} and their device ids are new (vgcfgrestore keeps the PVs', the group's and its other LVs' UUIDs); tags, activation skip and read-only are set as on the source, a profile and crop_metadata aren't carried over{}",
                 p.name,
@@ -2125,7 +2812,16 @@ impl Builder<'_> {
             // "Error when full is already unset".)
             if p.error_when_full {
                 let full = format!("{name}/{}", p.name);
-                out.push(Cmd::new(&lvm_argv("lvchange", &devices, &["--errorwhenfull", "y", &full])).why(format!("{full}: errors at once when its data space is full, as on the source")));
+                out.push(
+                    Cmd::new(&lvm_argv(
+                        "lvchange",
+                        &devices,
+                        &["--errorwhenfull", "y", &full],
+                    ))
+                    .why(format!(
+                        "{full}: errors at once when its data space is full, as on the source"
+                    )),
+                );
             }
             out.extend(super::rawvol::pool_use_note(&name, p, &mut self.problems));
             for l in &p.thins {
@@ -2135,14 +2831,37 @@ impl Builder<'_> {
                     continue;
                 }
                 let v = lvm_size(l.bytes);
-                let mut a: Vec<String> = ["--type", "thin", "-V", &v, "-n", &l.name, "--thinpool", &p.name].iter().map(|x| x.to_string()).collect();
+                let mut a: Vec<String> = [
+                    "--type",
+                    "thin",
+                    "-V",
+                    &v,
+                    "-n",
+                    &l.name,
+                    "--thinpool",
+                    &p.name,
+                ]
+                .iter()
+                .map(|x| x.to_string())
+                .collect();
                 attrs(&l.name, &l.attrs, &mut a, &mut later);
                 a.push(name.clone());
                 let rest: Vec<&str> = a.iter().map(String::as_str).collect();
-                out.push(Cmd::new(&lvm_argv("lvcreate", &devices, &rest)).why(format!("thin LV {name}/{}: {} virtual, device id {} on the source", l.name, crate::report::human(l.bytes), l.device_id)));
+                out.push(
+                    Cmd::new(&lvm_argv("lvcreate", &devices, &rest)).why(format!(
+                        "thin LV {name}/{}: {} virtual, device id {} on the source",
+                        l.name,
+                        crate::report::human(l.bytes),
+                        l.device_id
+                    )),
+                );
             }
         }
-        self.closers.push(settled(&lvm_argv("vgchange", &devices, &["--activate", "n", &name])));
+        self.closers.push(settled(&lvm_argv(
+            "vgchange",
+            &devices,
+            &["--activate", "n", &name],
+        )));
         self.closers.extend(later);
     }
 
@@ -2151,7 +2870,12 @@ impl Builder<'_> {
         let mut words = vec![];
         let mut leaves = vec![];
         let mut probs = vec![];
-        let root = p.at(&["vdevs", "vdevs"]).and_then(Value::as_object).and_then(|o| o.first()).and_then(|(_, r)| r.get("vdevs")).cloned();
+        let root = p
+            .at(&["vdevs", "vdevs"])
+            .and_then(Value::as_object)
+            .and_then(|o| o.first())
+            .and_then(|(_, r)| r.get("vdevs"))
+            .cloned();
         let Some(root) = root else {
             self.problems.push(format!("ZFS pool {name}: its vdev tree isn't in the dump (zpool status -j failed when it was made)"));
             return;
@@ -2164,11 +2888,20 @@ impl Builder<'_> {
         }
         for k in ["special", "dedup"] {
             if p.at(&["vdevs", k]).is_some_and(|v| !v.is_null()) {
-                probs.push(format!("ZFS pool {name} has {k} vdevs; version 1 doesn't make them"));
+                probs.push(format!(
+                    "ZFS pool {name} has {k} vdevs; version 1 doesn't make them"
+                ));
             }
         }
         self.problems.extend(probs);
-        let mut a = vec!["zpool".to_string(), "create".into(), "-f".into(), "-d".into(), "-o".into(), "cachefile=none".into()];
+        let mut a = vec![
+            "zpool".to_string(),
+            "create".into(),
+            "-f".into(),
+            "-d".into(),
+            "-o".into(),
+            "cachefile=none".into(),
+        ];
         // The system load runs on has a pool of this name already (an
         // illumos rescue system's rpool): this one goes by another name
         // here, and keeps its own on the disks.
@@ -2177,11 +2910,20 @@ impl Builder<'_> {
             a.extend(["-t".into(), here.clone()]);
         }
         self.truenas_pool_name(&name, &here);
-        for (k, v) in p.get("local_properties").and_then(Value::as_object).into_iter().flatten() {
+        for (k, v) in p
+            .get("local_properties")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
             if POOL_PROPS_SKIP.contains(&k.as_str()) {
                 continue;
             }
-            if let Some(v) = v.as_str().map(str::to_string).or_else(|| v.as_u64().map(|n| n.to_string())) {
+            if let Some(v) = v
+                .as_str()
+                .map(str::to_string)
+                .or_else(|| v.as_u64().map(|n| n.to_string()))
+            {
                 a.push("-o".into());
                 a.push(format!("{k}={v}"));
             }
@@ -2190,11 +2932,29 @@ impl Builder<'_> {
         // The vdevs' ashift, from their labels, where the pool's property is
         // 0 (automatic): FreeBSD's installer raises the minimum to 12, and a
         // pool made here would take the disk's 512-byte sectors (9).
-        let has_ashift = p.get("local_properties").and_then(|l| l.get("ashift")).is_some();
-        if !has_ashift && matches!(p.at(&["properties", "ashift"]).and_then(Value::as_str), Some("0") | None) {
-            let label_ashift = self.layout.arr(&["storage", "zfs", "pools_from_labels"]).iter().find(|l| s(l, "name").as_deref() == Some(name.as_str())).and_then(|l| {
-                l.get("top_level_vdevs").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.get("ashift").and_then(Value::as_u64)).max()
-            });
+        let has_ashift = p
+            .get("local_properties")
+            .and_then(|l| l.get("ashift"))
+            .is_some();
+        if !has_ashift
+            && matches!(
+                p.at(&["properties", "ashift"]).and_then(Value::as_str),
+                Some("0") | None
+            )
+        {
+            let label_ashift = self
+                .layout
+                .arr(&["storage", "zfs", "pools_from_labels"])
+                .iter()
+                .find(|l| s(l, "name").as_deref() == Some(name.as_str()))
+                .and_then(|l| {
+                    l.get("top_level_vdevs")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|v| v.get("ashift").and_then(Value::as_u64))
+                        .max()
+                });
             // As FreeBSD's installer does it: through the minimum the
             // system picks, so that the pool's own property stays 0.
             min_ashift = label_ashift;
@@ -2209,7 +2969,12 @@ impl Builder<'_> {
             a.push("-o".into());
             a.push(format!("version={v}"));
         }
-        for (f, state) in p.get("features").and_then(Value::as_object).into_iter().flatten() {
+        for (f, state) in p
+            .get("features")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
             if legacy.is_none() && matches!(state.as_str(), Some("enabled" | "active")) {
                 a.push("-o".into());
                 a.push(format!("feature@{f}=enabled"));
@@ -2232,42 +2997,99 @@ impl Builder<'_> {
         };
         match min_ashift {
             Some(n) => {
-                let create = a.iter().map(|w| crate::load::shell_quote(w)).collect::<Vec<_>>().join(" ");
+                let create = a
+                    .iter()
+                    .map(|w| crate::load::shell_quote(w))
+                    .collect::<Vec<_>>()
+                    .join(" ");
                 let p = "/sys/module/zfs/parameters/zfs_vdev_min_auto_ashift";
                 let script = if self.fam == Some(crate::other::Family::FreeBsd) {
-                    format!("old=$(sysctl -n vfs.zfs.min_auto_ashift); sysctl vfs.zfs.min_auto_ashift={n} >/dev/null; {create}; s=$?; sysctl vfs.zfs.min_auto_ashift=$old >/dev/null; exit $s")
+                    format!(
+                        "old=$(sysctl -n vfs.zfs.min_auto_ashift); sysctl vfs.zfs.min_auto_ashift={n} >/dev/null; {create}; s=$?; sysctl vfs.zfs.min_auto_ashift=$old >/dev/null; exit $s"
+                    )
                 } else {
-                    format!("old=$(cat {p}); echo {n} > {p}; {create}; s=$?; echo $old > {p}; exit $s")
+                    format!(
+                        "old=$(cat {p}); echo {n} > {p}; {create}; s=$?; echo $old > {p}; exit $s"
+                    )
                 };
-                out.push(Cmd::new(&["sh", "-c", &script]).why(format!("{why}; its vdevs' ashift {n}, as the source's")));
+                out.push(
+                    Cmd::new(&["sh", "-c", &script])
+                        .why(format!("{why}; its vdevs' ashift {n}, as the source's")),
+                );
             }
-            None => out.push(Cmd { argv: a, why: Some(why), ..Cmd::default() }),
+            None => out.push(Cmd {
+                argv: a,
+                why: Some(why),
+                ..Cmd::default()
+            }),
         }
-        let guid = self.layout.arr(&["storage", "zfs", "pools_from_labels"]).iter().find(|l| s(l, "name").as_deref() == Some(name.as_str())).and_then(|l| {
-            l.get("pool_guid").and_then(|g| g.as_str().map(str::to_string).or_else(|| g.as_u64().map(|n| n.to_string())))
-        });
+        let guid = self
+            .layout
+            .arr(&["storage", "zfs", "pools_from_labels"])
+            .iter()
+            .find(|l| s(l, "name").as_deref() == Some(name.as_str()))
+            .and_then(|l| {
+                l.get("pool_guid").and_then(|g| {
+                    g.as_str()
+                        .map(str::to_string)
+                        .or_else(|| g.as_u64().map(|n| n.to_string()))
+                })
+            });
         match guid {
             // illumos' zpool reguid has no -g.
-            Some(_) if self.fam == Some(crate::other::Family::Illumos) => self.notes.push(format!("ZFS pool {name}: illumos can't set a pool's GUID; it gets a new one")),
-            Some(g) => out.push(Cmd::new(&["zpool", "reguid", "-g", &g, &here]).why("the source pool's GUID (vdev GUIDs can't be kept)")),
-            None => self.notes.push(format!("ZFS pool {name}: no pool GUID in the dump, so it gets a new one")),
+            Some(_) if self.fam == Some(crate::other::Family::Illumos) => self.notes.push(format!(
+                "ZFS pool {name}: illumos can't set a pool's GUID; it gets a new one"
+            )),
+            Some(g) => out.push(
+                Cmd::new(&["zpool", "reguid", "-g", &g, &here])
+                    .why("the source pool's GUID (vdev GUIDs can't be kept)"),
+            ),
+            None => self.notes.push(format!(
+                "ZFS pool {name}: no pool GUID in the dump, so it gets a new one"
+            )),
         }
         // zpool create mounts the pool's own dataset (FreeBSD's zroot, at
         // /zroot) at once; mount mounts it again in its place, after /.
         let qhere = shell_quote(&here);
-        out.push(Cmd::new(&["sh", "-c", &format!("[ \"$(zfs get -H -o value mounted {qhere})\" != yes ] || zfs unmount {qhere}")]).why("mount mounts every dataset in order"));
+        out.push(
+            Cmd::new(&[
+                "sh",
+                "-c",
+                &format!(
+                    "[ \"$(zfs get -H -o value mounted {qhere})\" != yes ] || zfs unmount {qhere}"
+                ),
+            ])
+            .why("mount mounts every dataset in order"),
+        );
         // (On Linux, udev and its workers' mount namespaces can keep the
         // pool busy for a moment after the last unmount.)
         let export = ["zpool", "export", here.as_str()];
-        self.closers.push(if self.fam.map_or(true, |f| f.on_linux()) { settled(&export) } else { Cmd::new(&export) });
+        self.closers
+            .push(if self.fam.map_or(true, |f| f.on_linux()) {
+                settled(&export)
+            } else {
+                Cmd::new(&export)
+            });
         // Under another name here, the pool's own dataset would mount at
         // /<that name>: at the source's default place while load works,
         // inherited again before the export (closers run last first).
-        if here != name && p.get("local_properties").and_then(|l| l.get("mountpoint")).is_none() {
-            let local_mp = self.dataset(&name).and_then(|d| d.at(&["properties", "mountpoint", "source"]).and_then(Value::as_str).map(str::to_string));
+        if here != name
+            && p.get("local_properties")
+                .and_then(|l| l.get("mountpoint"))
+                .is_none()
+        {
+            let local_mp = self.dataset(&name).and_then(|d| {
+                d.at(&["properties", "mountpoint", "source"])
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            });
             if local_mp.as_deref() != Some("local") {
-                out.push(Cmd::new(&["zfs", "set", &format!("mountpoint=/{name}"), &here]).why(format!("{here} mounts where {name} does")));
-                self.closers.push(Cmd::new(&["zfs", "inherit", "mountpoint", &here]));
+                out.push(
+                    Cmd::new(&["zfs", "set", &format!("mountpoint=/{name}"), &here])
+                        .why(format!("{here} mounts where {name} does")),
+                );
+                self.closers
+                    .push(Cmd::new(&["zfs", "inherit", "mountpoint", &here]));
             }
         }
         self.pools.push(here.clone());
@@ -2281,7 +3103,10 @@ impl Builder<'_> {
                 p = parent;
             }
             for d in chain.into_iter().rev().chain([zv.clone()]) {
-                if let Some(ds) = self.dataset(&d).filter(|_| d != name && !self.datasets.contains(&self.zname(&d))) {
+                if let Some(ds) = self
+                    .dataset(&d)
+                    .filter(|_| d != name && !self.datasets.contains(&self.zname(&d)))
+                {
                     self.make_dataset(&ds, out);
                 }
             }
@@ -2293,8 +3118,17 @@ impl Builder<'_> {
         let mut out = vec![];
         for d in self.layout.arr(&["storage", "disks"]) {
             let Some(name) = s(d, "name") else { continue };
-            for l in d.get("links").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
-                if let Some(ds) = l.strip_prefix("/dev/zvol/").filter(|ds| ds.split('/').next() == Some(pool)) {
+            for l in d
+                .get("links")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                if let Some(ds) = l
+                    .strip_prefix("/dev/zvol/")
+                    .filter(|ds| ds.split('/').next() == Some(pool))
+                {
                     out.push((name.clone(), ds.to_string()));
                 }
             }
@@ -2308,23 +3142,45 @@ impl Builder<'_> {
     fn new_key(&mut self, ds: &Value, out: &mut Vec<Cmd>) {
         let name = s(ds, "name").unwrap_or_default();
         let fmt = s(ds, "keyformat").unwrap_or_default();
-        if s(ds, "encryptionroot").as_deref() != Some(name.as_str()) || self.opts.key_file(&name).is_some() || !matches!(fmt.as_str(), "raw" | "hex") {
+        if s(ds, "encryptionroot").as_deref() != Some(name.as_str())
+            || self.opts.key_file(&name).is_some()
+            || !matches!(fmt.as_str(), "raw" | "hex")
+        {
             return;
         }
         let key_name = name.replace('/', "_");
-        if key_name.is_empty() || matches!(key_name.as_str(), "." | "..") || key_name.contains('\0') {
-            self.problems.push(format!("ZFS encryption root {name:?}: invalid dataset name"));
+        if key_name.is_empty() || matches!(key_name.as_str(), "." | "..") || key_name.contains('\0')
+        {
+            self.problems.push(format!(
+                "ZFS encryption root {name:?}: invalid dataset name"
+            ));
             return;
         }
         let key = format!("{RUN_DIR}/keys/{key_name}");
         let qkey = shell_quote(&key);
-        out.push(Cmd::new(&["mkdir", "-p", "-m", "700", &format!("{RUN_DIR}/keys")]));
-        let make_key = if fmt == "raw" { format!("head -c 32 /dev/urandom > {qkey}") } else { format!("od -An -tx1 -N32 /dev/urandom | tr -d ' \\n' > {qkey}") };
+        out.push(Cmd::new(&[
+            "mkdir",
+            "-p",
+            "-m",
+            "700",
+            &format!("{RUN_DIR}/keys"),
+        ]));
+        let make_key = if fmt == "raw" {
+            format!("head -c 32 /dev/urandom > {qkey}")
+        } else {
+            format!("od -An -tx1 -N32 /dev/urandom | tr -d ' \\n' > {qkey}")
+        };
         out.push(Cmd::new(&["sh", "-c", &format!("umask 077; {make_key}")]).why(format!("ZFS encryption root {name}: a new {fmt} key (the data is all rewritten by the restore)")));
     }
 
     fn dataset(&self, name: &str) -> Option<Value> {
-        self.layout.v.at(&["storage", "zfs", "tools", "datasets"]).and_then(Value::as_array)?.iter().find(|d| s(d, "name").as_deref() == Some(name)).cloned()
+        self.layout
+            .v
+            .at(&["storage", "zfs", "tools", "datasets"])
+            .and_then(Value::as_array)?
+            .iter()
+            .find(|d| s(d, "name").as_deref() == Some(name))
+            .cloned()
     }
 
     /// A dataset's own properties for `zfs create -o` / `zpool create -O`.
@@ -2333,11 +3189,23 @@ impl Builder<'_> {
         let name = s(ds, "name").unwrap_or_default();
         let mut out = vec![];
         let is_enc_root = s(ds, "encryptionroot").as_deref() == Some(name.as_str());
-        for (k, v) in ds.get("properties").and_then(Value::as_object).into_iter().flatten() {
+        for (k, v) in ds
+            .get("properties")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
             if DS_PROPS_SKIP.contains(&k.as_str()) {
                 continue;
             }
-            let val = v.get("value").and_then(|x| x.as_str().map(str::to_string).or_else(|| x.as_u64().map(|n| n.to_string()))).unwrap_or_default();
+            let val = v
+                .get("value")
+                .and_then(|x| {
+                    x.as_str()
+                        .map(str::to_string)
+                        .or_else(|| x.as_u64().map(|n| n.to_string()))
+                })
+                .unwrap_or_default();
             if k == "keylocation" {
                 continue;
             }
@@ -2359,11 +3227,17 @@ impl Builder<'_> {
         // local` doesn't list: Debian's and Ubuntu's root pools have
         // normalization=formD and utf8only=on.
         if s(ds, "type").as_deref() == Some("volume") {
-            if let Some(b) = num(ds, "volblocksize").filter(|_| !out.iter().any(|(k, _)| k == "volblocksize")) {
+            if let Some(b) =
+                num(ds, "volblocksize").filter(|_| !out.iter().any(|(k, _)| k == "volblocksize"))
+            {
                 out.push(("volblocksize".into(), b.to_string()));
             }
         } else {
-            for (k, default) in [("normalization", "none"), ("utf8only", "off"), ("casesensitivity", "sensitive")] {
+            for (k, default) in [
+                ("normalization", "none"),
+                ("utf8only", "off"),
+                ("casesensitivity", "sensitive"),
+            ] {
                 if let Some(v) = s(ds, k).filter(|v| v != default && v != "-") {
                     if !out.iter().any(|(x, _)| x == k) {
                         out.push((k.into(), v));
@@ -2377,7 +3251,11 @@ impl Builder<'_> {
         if enc == "off" && !out.iter().any(|(k, _)| k == "encryption") {
             let mut p = name.as_str();
             while let Some((parent, _)) = p.rsplit_once('/') {
-                if self.dataset(parent).and_then(|d| s(&d, "encryption")).is_some_and(|e| e != "off") {
+                if self
+                    .dataset(parent)
+                    .and_then(|d| s(&d, "encryption"))
+                    .is_some_and(|e| e != "off")
+                {
                     out.push(("encryption".into(), "off".into()));
                     break;
                 }
@@ -2388,7 +3266,9 @@ impl Builder<'_> {
             // Set at creation, so `zfs get -s local` doesn't list them; the
             // dump has them as the dataset's own fields.
             for k in ["encryption", "keyformat"] {
-                if let Some(v) = s(ds, k).filter(|v| !out.iter().any(|(x, _)| x == k) && v != "none" && v != "off") {
+                if let Some(v) = s(ds, k)
+                    .filter(|v| !out.iter().any(|(x, _)| x == k) && v != "none" && v != "off")
+                {
                     out.push((k.into(), v));
                 }
             }
@@ -2417,9 +3297,36 @@ impl Builder<'_> {
 /// e2fsprogs feature names mke2fs can set; anything else in a superblock
 /// (needs_recovery, orphan_present, ...) is state, not a choice.
 pub(crate) const EXT_SETTABLE: [&str; 30] = [
-    "has_journal", "ext_attr", "resize_inode", "dir_index", "sparse_super2", "fast_commit", "stable_inodes", "orphan_file", "filetype", "meta_bg", "extent", "64bit",
-    "mmp", "flex_bg", "ea_inode", "metadata_csum_seed", "large_dir", "inline_data", "encrypt", "casefold", "sparse_super", "large_file", "huge_file",
-    "dir_nlink", "extra_isize", "quota", "bigalloc", "metadata_csum", "project", "verity",
+    "has_journal",
+    "ext_attr",
+    "resize_inode",
+    "dir_index",
+    "sparse_super2",
+    "fast_commit",
+    "stable_inodes",
+    "orphan_file",
+    "filetype",
+    "meta_bg",
+    "extent",
+    "64bit",
+    "mmp",
+    "flex_bg",
+    "ea_inode",
+    "metadata_csum_seed",
+    "large_dir",
+    "inline_data",
+    "encrypt",
+    "casefold",
+    "sparse_super",
+    "large_file",
+    "huge_file",
+    "dir_nlink",
+    "extra_isize",
+    "quota",
+    "bigalloc",
+    "metadata_csum",
+    "project",
+    "verity",
 ];
 
 /// The -E resize=BLOCKS that has mke2fs reserve exactly the content's
@@ -2431,11 +3338,20 @@ pub(crate) const EXT_SETTABLE: [&str; 30] = [
 /// resize_inode, and for 0 reserved: mke2fs takes a resize= that reserves
 /// none as no request, and refuses one that isn't past the size.
 pub(crate) fn resize_for(c: &Value) -> Option<u64> {
-    let has = |f: &str| c.get("features").and_then(Value::as_array).is_some_and(|a| a.iter().any(|x| x.as_str() == Some(f)));
+    let has = |f: &str| {
+        c.get("features")
+            .and_then(Value::as_array)
+            .is_some_and(|a| a.iter().any(|x| x.as_str() == Some(f)))
+    };
     if !has("resize_inode") {
         return None;
     }
-    let (r, bs, n, bpg) = (num(c, "reserved_gdt_blocks")?, num(c, "block_size")?, num(c, "blocks")?, num(c, "blocks_per_group")?);
+    let (r, bs, n, bpg) = (
+        num(c, "reserved_gdt_blocks")?,
+        num(c, "block_size")?,
+        num(c, "blocks")?,
+        num(c, "blocks_per_group")?,
+    );
     let desc = num(c, "descriptor_size").filter(|&d| d >= 32).unwrap_or(32);
     let gdpb = bs / desc;
     if r == 0 || gdpb == 0 || bpg == 0 {
@@ -2447,8 +3363,24 @@ pub(crate) fn resize_for(c: &Value) -> Option<u64> {
 
 pub fn mke2fs(dev: &str, c: &Value) -> Vec<String> {
     let ty = s(c, "type").unwrap_or("ext4".into());
-    let feats: Vec<String> = c.get("features").and_then(Value::as_array).into_iter().flatten().filter_map(|f| f.as_str()).filter(|f| EXT_SETTABLE.contains(f)).map(str::to_string).collect();
-    let mut a = vec!["mke2fs".to_string(), "-F".into(), "-q".into(), "-t".into(), ty, "-O".into(), format!("none,{}", feats.join(","))];
+    let feats: Vec<String> = c
+        .get("features")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|f| f.as_str())
+        .filter(|f| EXT_SETTABLE.contains(f))
+        .map(str::to_string)
+        .collect();
+    let mut a = vec![
+        "mke2fs".to_string(),
+        "-F".into(),
+        "-q".into(),
+        "-t".into(),
+        ty,
+        "-O".into(),
+        format!("none,{}", feats.join(",")),
+    ];
     if let Some(u) = s(c, "uuid") {
         a.extend(["-U".into(), u]);
     }
@@ -2502,9 +3434,20 @@ pub fn mke2fs(dev: &str, c: &Value) -> Vec<String> {
 }
 
 pub fn mkfs_xfs(dev: &str, c: &Value, logdev: Option<&str>) -> Vec<String> {
-    let f: Vec<&str> = c.get("features").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str()).collect();
+    let f: Vec<&str> = c
+        .get("features")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|x| x.as_str())
+        .collect();
     let on = |n: &str| if f.contains(&n) { "1" } else { "0" };
-    let mut m = vec![format!("crc={}", on("crc")), format!("finobt={}", on("finobt")), format!("rmapbt={}", on("rmapbt")), format!("reflink={}", on("reflink"))];
+    let mut m = vec![
+        format!("crc={}", on("crc")),
+        format!("finobt={}", on("finobt")),
+        format!("rmapbt={}", on("rmapbt")),
+        format!("reflink={}", on("reflink")),
+    ];
     m.push(format!("inobtcount={}", on("inobtcount")));
     m.push(format!("bigtime={}", on("bigtime")));
     if let Some(u) = s(c, "uuid") {
@@ -2517,7 +3460,10 @@ pub fn mkfs_xfs(dev: &str, c: &Value, logdev: Option<&str>) -> Vec<String> {
     // the Linux image's 6.18.0 (both tried, 2026-11-14).  An xfsprogs older
     // than 6.13 would refuse metadir, and one older than 6.10 the other two.
     m.push(format!("metadir={}", on("metadir")));
-    let mut i = vec![format!("sparse={}", on("sparse")), format!("nrext64={}", on("nrext64"))];
+    let mut i = vec![
+        format!("sparse={}", on("sparse")),
+        format!("nrext64={}", on("nrext64")),
+    ];
     if let Some(sz) = num(c, "inode_size") {
         i.push(format!("size={sz}"));
     }
@@ -2533,7 +3479,16 @@ pub fn mkfs_xfs(dev: &str, c: &Value, logdev: Option<&str>) -> Vec<String> {
         n.push(format!("size={d}"));
     }
     n.push(format!("parent={}", on("parent")));
-    let mut a = vec!["mkfs.xfs".to_string(), "-f".into(), "-m".into(), m.join(","), "-i".into(), i.join(","), "-n".into(), n.join(",")];
+    let mut a = vec![
+        "mkfs.xfs".to_string(),
+        "-f".into(),
+        "-m".into(),
+        m.join(","),
+        "-i".into(),
+        i.join(","),
+        "-n".into(),
+        n.join(","),
+    ];
     if let Some(b) = num(c, "block_size") {
         a.extend(["-b".into(), format!("size={b}")]);
     }
@@ -2558,8 +3513,14 @@ pub fn mkfs_xfs(dev: &str, c: &Value, logdev: Option<&str>) -> Vec<String> {
     }
     if let (Some(su), Some(sw)) = (num(c, "stripe_unit"), num(c, "stripe_width")) {
         if su > 0 {
-            d.push(format!("sunit={}", su * num(c, "block_size").unwrap_or(4096) / 512));
-            d.push(format!("swidth={}", sw * num(c, "block_size").unwrap_or(4096) / 512));
+            d.push(format!(
+                "sunit={}",
+                su * num(c, "block_size").unwrap_or(4096) / 512
+            ));
+            d.push(format!(
+                "swidth={}",
+                sw * num(c, "block_size").unwrap_or(4096) / 512
+            ));
         }
     }
     if !d.is_empty() {
@@ -2603,10 +3564,36 @@ pub(crate) const BTRFS_FEATURES: [(&str, &str); 9] = [
 ];
 
 pub fn mkfs_btrfs(devs: &[String], c: &Value, fs: &Value) -> Vec<String> {
-    let mut have: Vec<&str> = c.get("features").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str()).collect();
-    have.extend(c.get("compat_ro_features").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str()));
-    let feats: Vec<String> = BTRFS_FEATURES.iter().map(|(sb, opt)| if have.contains(sb) { opt.to_string() } else { format!("^{opt}") }).collect();
-    let mut a = vec!["mkfs.btrfs".to_string(), "-f".into(), "-O".into(), feats.join(",")];
+    let mut have: Vec<&str> = c
+        .get("features")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|x| x.as_str())
+        .collect();
+    have.extend(
+        c.get("compat_ro_features")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|x| x.as_str()),
+    );
+    let feats: Vec<String> = BTRFS_FEATURES
+        .iter()
+        .map(|(sb, opt)| {
+            if have.contains(sb) {
+                opt.to_string()
+            } else {
+                format!("^{opt}")
+            }
+        })
+        .collect();
+    let mut a = vec![
+        "mkfs.btrfs".to_string(),
+        "-f".into(),
+        "-O".into(),
+        feats.join(","),
+    ];
     if let Some(u) = s(c, "uuid") {
         a.extend(["-U".into(), u]);
     }
@@ -2626,13 +3613,19 @@ pub fn mkfs_btrfs(devs: &[String], c: &Value, fs: &Value) -> Vec<String> {
         a.push("--mixed".into());
     }
     for (kind, flag) in [("data", "-d"), ("metadata", "-m")] {
-        if let Some(p) = fs.at(&["allocation_profiles", kind, "0"]).and_then(Value::as_str) {
+        if let Some(p) = fs
+            .at(&["allocation_profiles", kind, "0"])
+            .and_then(Value::as_str)
+        {
             a.extend([flag.into(), p.to_string()]);
         }
     }
     // The device's own UUID (dev_item's), which mkfs.btrfs can set for a
     // single device only.
-    if let (1, Some(u)) = (devs.len(), c.at(&["device", "uuid"]).and_then(Value::as_str)) {
+    if let (1, Some(u)) = (
+        devs.len(),
+        c.at(&["device", "uuid"]).and_then(Value::as_str),
+    ) {
         a.extend(["--device-uuid".into(), u.to_string()]);
     }
     a.extend(devs.iter().cloned());
@@ -2651,7 +3644,10 @@ pub fn grub_env_block(dev: &str, vars: &Value) -> Result<Cmd, String> {
         b += &format!("{k}={}\n", v.as_str().unwrap_or_default());
     }
     if b.len() > GRUB_ENV_SIZE {
-        return Err(format!("GRUB's environment block on it holds {} bytes, more than its {GRUB_ENV_SIZE}", b.len()));
+        return Err(format!(
+            "GRUB's environment block on it holds {} bytes, more than its {GRUB_ENV_SIZE}",
+            b.len()
+        ));
     }
     b += &"#".repeat(GRUB_ENV_SIZE - b.len());
     let seek = GRUB_ENV_BLOCK / GRUB_ENV_SIZE as u64;
@@ -2671,7 +3667,14 @@ pub fn mkfs_fat(dev: &str, c: &Value) -> Vec<String> {
     if let Some(l) = s(c, "label") {
         a.extend(["-n".into(), l]);
     }
-    for (k, f) in [("bytes_per_sector", "-S"), ("sectors_per_cluster", "-s"), ("fats", "-f"), ("reserved_sectors", "-R"), ("root_entries", "-r"), ("hidden_sectors", "-h")] {
+    for (k, f) in [
+        ("bytes_per_sector", "-S"),
+        ("sectors_per_cluster", "-s"),
+        ("fats", "-f"),
+        ("reserved_sectors", "-R"),
+        ("root_entries", "-r"),
+        ("hidden_sectors", "-h"),
+    ] {
         if let Some(n) = num(c, k).filter(|&n| n > 0 || k == "hidden_sectors") {
             a.extend([f.into(), n.to_string()]);
         }
@@ -2686,12 +3689,31 @@ pub fn mkfs_fat(dev: &str, c: &Value) -> Vec<String> {
 /// F2FS features mkfs.f2fs -O can set; the rest of the superblock's bits
 /// (atomic_write, blkzoned) aren't chosen there.
 pub(crate) const F2FS_SETTABLE: [&str; 13] = [
-    "encrypt", "extra_attr", "project_quota", "inode_checksum", "flexible_inline_xattr", "quota", "inode_crtime", "lost_found", "verity", "sb_checksum",
-    "casefold", "compression", "ro",
+    "encrypt",
+    "extra_attr",
+    "project_quota",
+    "inode_checksum",
+    "flexible_inline_xattr",
+    "quota",
+    "inode_crtime",
+    "lost_found",
+    "verity",
+    "sb_checksum",
+    "casefold",
+    "compression",
+    "ro",
 ];
 
 pub fn mkfs_f2fs(dev: &str, c: &Value) -> Vec<String> {
-    let feats: Vec<String> = c.get("features").and_then(Value::as_array).into_iter().flatten().filter_map(|f| f.as_str()).filter(|f| F2FS_SETTABLE.contains(f)).map(str::to_string).collect();
+    let feats: Vec<String> = c
+        .get("features")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|f| f.as_str())
+        .filter(|f| F2FS_SETTABLE.contains(f))
+        .map(str::to_string)
+        .collect();
     let mut a = vec!["mkfs.f2fs".to_string(), "-f".into(), "-q".into()];
     if let Some(u) = s(c, "uuid") {
         a.extend(["-U".into(), u]);
@@ -2737,7 +3759,12 @@ pub(crate) fn bcachefs_version(v: &str) -> Option<u32> {
 /// initializes it at its first mount instead, load's or the restored
 /// system's, as it does for every other version.
 pub fn mkfs_bcachefs(dev: &str, c: &Value) -> Vec<String> {
-    let mut a = vec!["bcachefs".to_string(), "format".into(), "--force".into(), "--no_initialize".into()];
+    let mut a = vec![
+        "bcachefs".to_string(),
+        "format".into(),
+        "--force".into(),
+        "--no_initialize".into(),
+    ];
     // Left to itself, format writes the tools' newest version (1.39 from
     // the Linux image's 1.39 tools), which the source's older kernel may
     // not mount: the one-kernel rescue recreates the source's version
@@ -2746,7 +3773,11 @@ pub fn mkfs_bcachefs(dev: &str, c: &Value) -> Vec<String> {
     // reads --version with kstrtouint base 10, and 1.39's Rust
     // version_parse reads a bare integer as the minor with major 0, the
     // same number.  "1.13" wouldn't parse in the C tools.
-    if let Some(n) = s(c, "version_min").or_else(|| s(c, "version")).as_deref().and_then(bcachefs_version) {
+    if let Some(n) = s(c, "version_min")
+        .or_else(|| s(c, "version"))
+        .as_deref()
+        .and_then(bcachefs_version)
+    {
         a.push(format!("--version={n}"));
     }
     if let Some(u) = s(c, "uuid") {
@@ -2760,7 +3791,12 @@ pub fn mkfs_bcachefs(dev: &str, c: &Value) -> Vec<String> {
             a.push(format!("--{k}={n}"));
         }
     }
-    for k in ["metadata_checksum", "data_checksum", "compression", "str_hash"] {
+    for k in [
+        "metadata_checksum",
+        "data_checksum",
+        "compression",
+        "str_hash",
+    ] {
         // No compression is the default, and isn't a value --compression takes.
         if let Some(v) = s(c, k).filter(|v| !(k == "compression" && v == "none")) {
             a.push(format!("--{k}={v}"));
@@ -2780,7 +3816,13 @@ pub fn mkfs_bcachefs(dev: &str, c: &Value) -> Vec<String> {
 
 /// mkfs.nilfs2 can't set a UUID: `nilfs-tune -U` sets it after (nilfs_tune).
 pub fn mkfs_nilfs2(dev: &str, c: &Value) -> Vec<String> {
-    let have: Vec<&str> = c.get("features").and_then(Value::as_array).into_iter().flatten().filter_map(|f| f.as_str()).collect();
+    let have: Vec<&str> = c
+        .get("features")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|f| f.as_str())
+        .collect();
     let mut a = vec!["mkfs.nilfs2".to_string(), "-f".into(), "-q".into()];
     if let Some(l) = s(c, "label") {
         a.extend(["-L".into(), l]);
@@ -2794,7 +3836,16 @@ pub fn mkfs_nilfs2(dev: &str, c: &Value) -> Vec<String> {
     if let Some(n) = num(c, "reserved_segments_percentage") {
         a.extend(["-m".into(), n.to_string()]);
     }
-    let feats: Vec<String> = crate::probe::nilfs2::FEATURES.iter().map(|(_, _, n)| if have.contains(n) { n.to_string() } else { format!("^{n}") }).collect();
+    let feats: Vec<String> = crate::probe::nilfs2::FEATURES
+        .iter()
+        .map(|(_, _, n)| {
+            if have.contains(n) {
+                n.to_string()
+            } else {
+                format!("^{n}")
+            }
+        })
+        .collect();
     a.extend(["-O".into(), feats.join(",")]);
     a.push(dev.to_string());
     a
@@ -2823,8 +3874,14 @@ pub fn jfs_tune(dev: &str, c: &Value) -> Option<Vec<String>> {
 /// field: mkfs.jfs writes one there.
 pub fn jfs_version1(dev: &str) -> Vec<String> {
     let qdev = shell_quote(dev);
-    let w = |off: u32| format!("printf '\\001' | dd of={qdev} bs=1 seek={off} count=1 conv=notrunc status=none");
-    vec!["sh".to_string(), "-c".into(), format!("{} && {}", w(0x8000 + 4), w(0xF000 + 4))]
+    let w = |off: u32| {
+        format!("printf '\\001' | dd of={qdev} bs=1 seek={off} count=1 conv=notrunc status=none")
+    };
+    vec![
+        "sh".to_string(),
+        "-c".into(),
+        format!("{} && {}", w(0x8000 + 4), w(0xF000 + 4)),
+    ]
 }
 
 pub fn mkswap(dev: &str, c: &Value) -> Vec<String> {
@@ -2843,7 +3900,14 @@ pub fn mkswap(dev: &str, c: &Value) -> Vec<String> {
 }
 
 /// Contents assemble makes, not format.
-const MADE_BY_ASSEMBLE: [&str; 6] = ["linux_raid_member", "crypto_LUKS", "LVM2_member", "zfs_member", "xfs_external_log", "geli"];
+const MADE_BY_ASSEMBLE: [&str; 6] = [
+    "linux_raid_member",
+    "crypto_LUKS",
+    "LVM2_member",
+    "zfs_member",
+    "xfs_external_log",
+    "geli",
+];
 
 impl Builder<'_> {
     /// Every source device that holds a filesystem or swap, with its content.
@@ -2863,8 +3927,17 @@ impl Builder<'_> {
                     out.extend(crate::other::geli::inner_leaf(self.layout, &p.name));
                 }
             }
-            for p in self.layout.device(&d.name).and_then(|v| v.get("label_partitions")).and_then(Value::as_array).into_iter().flatten() {
-                if let (Some(n), Some(c)) = (s(p, "name"), p.get("content").filter(|c| !c.is_null())) {
+            for p in self
+                .layout
+                .device(&d.name)
+                .and_then(|v| v.get("label_partitions"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if let (Some(n), Some(c)) =
+                    (s(p, "name"), p.get("content").filter(|c| !c.is_null()))
+                {
                     out.push((n, c.clone()));
                 }
             }
@@ -2874,17 +3947,26 @@ impl Builder<'_> {
                 // A thin pool's own devices (its data and metadata LVs, the
                 // pool): what a probe found on them is a thin LV's, or
                 // nothing.  lvcreate makes them (vg).
-                if matches!(x.at(&["dm", "lv_layer"]).and_then(Value::as_str), Some("tdata" | "tmeta" | "tpool" | "pool")) {
+                if matches!(
+                    x.at(&["dm", "lv_layer"]).and_then(Value::as_str),
+                    Some("tdata" | "tmeta" | "tpool" | "pool")
+                ) {
                     continue;
                 }
-                if let (Some(n), Some(c)) = (s(x, "name"), x.get("content").filter(|c| !c.is_null())) {
+                if let (Some(n), Some(c)) =
+                    (s(x, "name"), x.get("content").filter(|c| !c.is_null()))
+                {
                     out.push((n, c.clone()));
                 }
             }
         }
         // OpenBSD's softraid volumes' disklabel partitions, once assemble
         // has planned the volume (other/softraid.rs).
-        out.extend(crate::other::softraid::leaves(self.layout).into_iter().filter(|(n, _)| self.names.made.contains_key(n)));
+        out.extend(
+            crate::other::softraid::leaves(self.layout)
+                .into_iter()
+                .filter(|(n, _)| self.names.made.contains_key(n)),
+        );
         out
     }
 
@@ -2909,23 +3991,54 @@ impl Builder<'_> {
             }
             let Some(dev) = self.names.dev(&src) else {
                 if !self.names.made.contains_key(&src) {
-                    self.problems.push(format!("{src} holds {ty}, but nothing in this layout makes {src}"));
+                    self.problems.push(format!(
+                        "{src} holds {ty}, but nothing in this layout makes {src}"
+                    ));
                 }
                 continue;
             };
-            let why = format!("{src}: {ty}{}", s(&c, "label").map(|l| format!(" \"{l}\"")).unwrap_or_default());
+            let why = format!(
+                "{src}: {ty}{}",
+                s(&c, "label")
+                    .map(|l| format!(" \"{l}\""))
+                    .unwrap_or_default()
+            );
             // An ESP written byte for byte by the partition stage (esp_image)
             // isn't format's.
-            let imaged = self.layout.device(&src).is_some_and(|v| v.get("esp_image").is_some());
+            let imaged = self
+                .layout
+                .device(&src)
+                .is_some_and(|v| v.get("esp_image").is_some());
             // Bug: format() omitted bcachefs from self.filesystems (so status
             // ignored bcachefs and --through skipped formatting BIOS bcachefs
             // roots) and pushed before checking rejected bcachefs/jfs options
             // or unformatted non-Linux swap. Push only for formatted targets.
             let non_linux_swap = ty == "swap" && self.fam.is_some_and(|f| !f.on_linux());
-            let bad_fs = (ty == "bcachefs" && (c.get("encrypted").and_then(Value::as_bool) == Some(true) || num(&c, "nr_devices").unwrap_or(1) > 1))
+            let bad_fs = (ty == "bcachefs"
+                && (c.get("encrypted").and_then(Value::as_bool) == Some(true)
+                    || num(&c, "nr_devices").unwrap_or(1) > 1))
                 || (ty == "jfs" && c.get("external_log").and_then(Value::as_bool) == Some(true));
-            if !imaged && !non_linux_swap && !bad_fs && matches!(ty.as_str(), "ext2" | "ext3" | "ext4" | "xfs" | "btrfs" | "f2fs" | "bcachefs" | "nilfs2" | "jfs" | "vfat" | "msdos" | "swap") {
-                self.filesystems.push((dev.clone(), ty.clone(), s(&c, "uuid")));
+            if !imaged
+                && !non_linux_swap
+                && !bad_fs
+                && matches!(
+                    ty.as_str(),
+                    "ext2"
+                        | "ext3"
+                        | "ext4"
+                        | "xfs"
+                        | "btrfs"
+                        | "f2fs"
+                        | "bcachefs"
+                        | "nilfs2"
+                        | "jfs"
+                        | "vfat"
+                        | "msdos"
+                        | "swap"
+                )
+            {
+                self.filesystems
+                    .push((dev.clone(), ty.clone(), s(&c, "uuid")));
             }
             // plan's check 4: a feature the probes can't name is one load
             // can't ask for, nor read back.
@@ -2935,7 +4048,11 @@ impl Builder<'_> {
             }
             match ty.as_str() {
                 "ext2" | "ext3" | "ext4" => {
-                    out.push(Cmd { argv: mke2fs(&dev, &c), why: Some(why), ..Cmd::default() });
+                    out.push(Cmd {
+                        argv: mke2fs(&dev, &c),
+                        why: Some(why),
+                        ..Cmd::default()
+                    });
                     // The exact count: mke2fs takes only a percentage, and
                     // rounds it down.
                     if let Some(r) = num(&c, "reserved_blocks") {
@@ -2945,12 +4062,21 @@ impl Builder<'_> {
                 }
                 "xfs" => {
                     let uuid = s(&c, "uuid").unwrap_or_default();
-                    let logsrc = self.layout.arr(&["storage", "xfs_external_logs"]).iter().find(|l| s(l, "filesystem_uuid").as_deref() == Some(uuid.as_str())).and_then(|l| s(l, "log_device"));
+                    let logsrc = self
+                        .layout
+                        .arr(&["storage", "xfs_external_logs"])
+                        .iter()
+                        .find(|l| s(l, "filesystem_uuid").as_deref() == Some(uuid.as_str()))
+                        .and_then(|l| s(l, "log_device"));
                     if let Some(ld) = &logsrc {
                         on.add(self.disks_under(ld));
                     }
                     let logdev = logsrc.and_then(|ld| self.names.dev(&ld));
-                    out.push(Cmd { argv: mkfs_xfs(&dev, &c, logdev.as_deref()), why: Some(why), ..Cmd::default() });
+                    out.push(Cmd {
+                        argv: mkfs_xfs(&dev, &c, logdev.as_deref()),
+                        why: Some(why),
+                        ..Cmd::default()
+                    });
                     out.push(Cmd::read_back(&dev, &c));
                 }
                 "btrfs" => {
@@ -2959,23 +4085,47 @@ impl Builder<'_> {
                         continue;
                     }
                     btrfs_done.push(uuid.clone());
-                    let fs = self.layout.arr(&["storage", "btrfs"]).iter().find(|f| s(f, "uuid").as_deref() == Some(uuid.as_str())).cloned().unwrap_or(Value::Null);
+                    let fs = self
+                        .layout
+                        .arr(&["storage", "btrfs"])
+                        .iter()
+                        .find(|f| s(f, "uuid").as_deref() == Some(uuid.as_str()))
+                        .cloned()
+                        .unwrap_or(Value::Null);
                     let mut members: Vec<(u64, String, Option<Value>)> = vec![];
-                    for m in fs.get("devices").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str()) {
+                    for m in fs
+                        .get("devices")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|x| x.as_str())
+                    {
                         on.add(self.disks_under(m));
                         let mc = self.layout.content(m);
                         let devid = mc.and_then(|c| num(c, "devid")).unwrap_or(0);
-                        members.push((devid, self.names.dev(m).unwrap_or_else(|| format!("<{m}>")), mc.and_then(|c| c.get("grub_env_block")).cloned()));
+                        members.push((
+                            devid,
+                            self.names.dev(m).unwrap_or_else(|| format!("<{m}>")),
+                            mc.and_then(|c| c.get("grub_env_block")).cloned(),
+                        ));
                     }
                     if members.is_empty() {
                         members.push((1, dev.clone(), c.get("grub_env_block").cloned()));
                     }
                     members.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
                     let devs: Vec<String> = members.iter().map(|m| m.1.clone()).collect();
-                    out.push(Cmd { argv: mkfs_btrfs(&devs, &c, &fs), why: Some(why), ..Cmd::default() });
+                    out.push(Cmd {
+                        argv: mkfs_btrfs(&devs, &c, &fs),
+                        why: Some(why),
+                        ..Cmd::default()
+                    });
                     out.push(Cmd::read_back(&dev, &c));
                     for (_, d, env) in &members {
-                        match env.as_ref().filter(|e| !e.is_null()).map(|e| grub_env_block(d, e)) {
+                        match env
+                            .as_ref()
+                            .filter(|e| !e.is_null())
+                            .map(|e| grub_env_block(d, e))
+                        {
                             Some(Ok(cmd)) => out.push(cmd),
                             Some(Err(e)) => self.problems.push(format!("{src}: {e}")),
                             None => {}
@@ -2983,30 +4133,64 @@ impl Builder<'_> {
                     }
                     self.btrfs_inside(&uuid, &devs[0], &fs, &mut out);
                 }
-                "vfat" | "msdos" if self.fam.is_none_or(|f| f.on_linux()) && self.layout.device(&src).is_none_or(|v| v.get("esp_image").is_none()) => {
-                    out.push(Cmd { argv: mkfs_fat(&dev, &c), why: Some(why), ..Cmd::default() });
+                "vfat" | "msdos"
+                    if self.fam.is_none_or(|f| f.on_linux())
+                        && self
+                            .layout
+                            .device(&src)
+                            .is_none_or(|v| v.get("esp_image").is_none()) =>
+                {
+                    out.push(Cmd {
+                        argv: mkfs_fat(&dev, &c),
+                        why: Some(why),
+                        ..Cmd::default()
+                    });
                     out.push(Cmd::read_back(&dev, &c));
                 }
                 "f2fs" => {
-                    out.push(Cmd { argv: mkfs_f2fs(&dev, &c), why: Some(why), ..Cmd::default() });
+                    out.push(Cmd {
+                        argv: mkfs_f2fs(&dev, &c),
+                        why: Some(why),
+                        ..Cmd::default()
+                    });
                     out.push(Cmd::read_back(&dev, &c));
                 }
                 "bcachefs" => {
                     if c.get("encrypted").and_then(Value::as_bool) == Some(true) {
-                        self.coded(Problem::new(ProblemCode::Unsupported, format!("{src}: encrypted bcachefs isn't one bko-holt load can make")).with("what", "bcachefs_encrypted"));
+                        self.coded(
+                            Problem::new(
+                                ProblemCode::Unsupported,
+                                format!(
+                                    "{src}: encrypted bcachefs isn't one bko-holt load can make"
+                                ),
+                            )
+                            .with("what", "bcachefs_encrypted"),
+                        );
                         continue;
                     }
                     if num(&c, "nr_devices").unwrap_or(1) > 1 {
                         self.coded(Problem::new(ProblemCode::Unsupported, format!("{src}: bcachefs on more than one device isn't one bko-holt load can make")).with("what", "bcachefs_multi_device"));
                         continue;
                     }
-                    out.push(Cmd { argv: mkfs_bcachefs(&dev, &c), why: Some(why), ..Cmd::default() });
+                    out.push(Cmd {
+                        argv: mkfs_bcachefs(&dev, &c),
+                        why: Some(why),
+                        ..Cmd::default()
+                    });
                     out.push(Cmd::read_back(&dev, &c));
                 }
                 "nilfs2" => {
-                    out.push(Cmd { argv: mkfs_nilfs2(&dev, &c), why: Some(why), ..Cmd::default() });
+                    out.push(Cmd {
+                        argv: mkfs_nilfs2(&dev, &c),
+                        why: Some(why),
+                        ..Cmd::default()
+                    });
                     if let Some(t) = nilfs_tune(&dev, &c) {
-                        out.push(Cmd { argv: t, why: Some("the source's UUID (mkfs.nilfs2 can't set one)".into()), ..Cmd::default() });
+                        out.push(Cmd {
+                            argv: t,
+                            why: Some("the source's UUID (mkfs.nilfs2 can't set one)".into()),
+                            ..Cmd::default()
+                        });
                     }
                     out.push(Cmd::read_back(&dev, &c));
                 }
@@ -3015,26 +4199,49 @@ impl Builder<'_> {
                         self.coded(Problem::new(ProblemCode::Unsupported, format!("{src}: JFS with an external log isn't one bko-holt load can make")).with("what", "jfs_external_log"));
                         continue;
                     }
-                    out.push(Cmd { argv: mkfs_jfs(&dev, &c), why: Some(why), ..Cmd::default() });
+                    out.push(Cmd {
+                        argv: mkfs_jfs(&dev, &c),
+                        why: Some(why),
+                        ..Cmd::default()
+                    });
                     if let Some(t) = jfs_tune(&dev, &c) {
-                        out.push(Cmd { argv: t, why: Some("the source's UUID (mkfs.jfs can't set one)".into()), ..Cmd::default() });
+                        out.push(Cmd {
+                            argv: t,
+                            why: Some("the source's UUID (mkfs.jfs can't set one)".into()),
+                            ..Cmd::default()
+                        });
                         if s(&c, "version").as_deref() == Some("1") {
                             out.push(Cmd { argv: jfs_version1(&dev), why: Some("jfs_tune -U makes the superblock version 2; mkfs.jfs's, and the source's, is 1".into()), ..Cmd::default() });
                         }
                     }
                     out.push(Cmd::read_back(&dev, &c));
                 }
-                "swap" if self.fam.is_some_and(|f| !f.on_linux()) => self.notes.push(format!("{src}: swap needs no format here")),
+                "swap" if self.fam.is_some_and(|f| !f.on_linux()) => {
+                    self.notes.push(format!("{src}: swap needs no format here"))
+                }
                 "swap" => {
                     if c.get("hibernation_image").is_some_and(|h| !h.is_null()) {
                         self.notes.push(format!("{src}: the source's swap held a hibernation image; the new swap doesn't"));
                     }
-                    out.push(Cmd { argv: mkswap(&dev, &c), why: Some(why), ..Cmd::default() });
+                    out.push(Cmd {
+                        argv: mkswap(&dev, &c),
+                        why: Some(why),
+                        ..Cmd::default()
+                    });
                     out.push(Cmd::read_back(&dev, &c));
                 }
-                "ntfs" | "exfat" => self.notes.push(format!("{src}: {ty} isn't restored by BackOtter; the partition is left empty")),
-                "vfat" | "msdos" if self.layout.device(&src).is_some_and(|v| v.get("esp_image").is_some()) => {
-                    self.notes.push(format!("{src}: the ESP, written as the source's with the partition table"));
+                "ntfs" | "exfat" => self.notes.push(format!(
+                    "{src}: {ty} isn't restored by BackOtter; the partition is left empty"
+                )),
+                "vfat" | "msdos"
+                    if self
+                        .layout
+                        .device(&src)
+                        .is_some_and(|v| v.get("esp_image").is_some()) =>
+                {
+                    self.notes.push(format!(
+                        "{src}: the ESP, written as the source's with the partition table"
+                    ));
                 }
                 "vfat" | "msdos" => out.extend(self.other_newfs_msdos(&src, &dev, &c)),
                 "redoxfs" => {
@@ -3056,7 +4263,13 @@ impl Builder<'_> {
                     let c = self.other_newfs(&src, &dev);
                     out.extend(c);
                 }
-                other => self.coded(Problem::new(ProblemCode::Unsupported, format!("{src}: {other} isn't a filesystem bko-holt load can make")).with("what", other)),
+                other => self.coded(
+                    Problem::new(
+                        ProblemCode::Unsupported,
+                        format!("{src}: {other} isn't a filesystem bko-holt load can make"),
+                    )
+                    .with("what", other),
+                ),
             }
         }
         on.done(&mut out);
@@ -3087,7 +4300,11 @@ impl Builder<'_> {
         // restored pool unbootable. Resolve via mounts[].device and src_of_path,
         // normalize slashes, and require the keystore block device to be formatted.
         fn trim(p: &str) -> &str {
-            if p == "/" { "/" } else { p.trim_end_matches('/') }
+            if p == "/" {
+                "/"
+            } else {
+                p.trim_end_matches('/')
+            }
         }
         let mounts = self.layout.arr(&["storage", "mounts"]).to_vec();
         let fstab_mounts: Vec<String> = self
@@ -3097,7 +4314,14 @@ impl Builder<'_> {
             .filter(|e| s(e, "type").as_deref() != Some("swap"))
             .filter_map(|e| s(e, "file").map(|f| trim(&f).to_string()))
             .collect();
-        for ds in self.layout.v.at(&["storage", "zfs", "tools", "datasets"]).and_then(Value::as_array).cloned().unwrap_or_default() {
+        for ds in self
+            .layout
+            .v
+            .at(&["storage", "zfs", "tools", "datasets"])
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+        {
             let name = s(&ds, "name").unwrap_or_default();
             if s(&ds, "encryptionroot").as_deref() != Some(name.as_str()) {
                 continue;
@@ -3107,55 +4331,70 @@ impl Builder<'_> {
                 continue;
             }
             let fmt = s(&ds, "keyformat").unwrap_or_default();
-            let need_random = self.opts.key_file(&name).is_none() && matches!(fmt.as_str(), "raw" | "hex");
+            let need_random =
+                self.opts.key_file(&name).is_none() && matches!(fmt.as_str(), "raw" | "hex");
             let refuse = |this: &mut Self| {
                 if need_random {
                     let kept = this.key_file_in_tree(&ds).map(|p| format!(" (the source keeps its {fmt} key in {p}, inside the encrypted datasets: give that key)")).unwrap_or_default();
                     this.problem_once_coded(Problem::new(ProblemCode::KeyNeeded, format!("ZFS encryption root {name}: give its new key with --key-file {name}=FILE{kept}")).with("name", &name).with("group", &name).with("kind", "zfs"));
                 }
             };
-            let Some(path) = s(&ds, "keylocation").and_then(|l| l.strip_prefix("file://").map(str::to_string)).filter(|p| safe_target_subpath(p)) else {
+            let Some(path) = s(&ds, "keylocation")
+                .and_then(|l| l.strip_prefix("file://").map(str::to_string))
+                .filter(|p| safe_target_subpath(p))
+            else {
                 refuse(self);
                 continue;
             };
             let Some(m) = mounts
                 .iter()
                 .filter_map(|m| Some((s(m, "target")?, s(m, "source")?, s(m, "device"))))
-                .filter(|(t, _, _)| t == "/" || path.starts_with(&format!("{}/", t.trim_end_matches('/'))))
+                .filter(|(t, _, _)| {
+                    t == "/" || path.starts_with(&format!("{}/", t.trim_end_matches('/')))
+                })
                 .max_by_key(|(t, _, _)| trim(t).len())
             else {
                 refuse(self);
                 continue;
             };
             let base = trim(&m.0);
-            if fstab_mounts.iter().any(|f| f == base) || (base != "/run" && !base.starts_with("/run/")) {
+            if fstab_mounts.iter().any(|f| f == base)
+                || (base != "/run" && !base.starts_with("/run/"))
+            {
                 refuse(self);
                 continue;
             }
-            let src_dev = m
-                .2
-                .clone()
-                .filter(|n| self.names.dev(n).is_some())
-                .or_else(|| self.names.src_of_path(&m.1))
-                .or_else(|| {
-                    self.layout
-                        .arr(&["storage", "dm_devices"])
-                        .iter()
-                        .chain(self.layout.arr(&["storage", "md_arrays"]))
-                        .chain(self.layout.arr(&["storage", "disks"]))
-                        .find_map(|d| {
-                            let n = s(d, "name")?;
-                            let mapper = d.at(&["dm", "mapper_path"]).and_then(Value::as_str);
-                            if m.1 == format!("/dev/{n}") || Some(m.1.as_str()) == mapper {
-                                return Some(n);
-                            }
-                            d.get("partitions").and_then(Value::as_array).into_iter().flatten().find_map(|p| {
-                                let pn = s(p, "name")?;
-                                (m.1 == format!("/dev/{pn}")).then_some(pn)
+            let src_dev =
+                m.2.clone()
+                    .filter(|n| self.names.dev(n).is_some())
+                    .or_else(|| self.names.src_of_path(&m.1))
+                    .or_else(|| {
+                        self.layout
+                            .arr(&["storage", "dm_devices"])
+                            .iter()
+                            .chain(self.layout.arr(&["storage", "md_arrays"]))
+                            .chain(self.layout.arr(&["storage", "disks"]))
+                            .find_map(|d| {
+                                let n = s(d, "name")?;
+                                let mapper = d.at(&["dm", "mapper_path"]).and_then(Value::as_str);
+                                if m.1 == format!("/dev/{n}") || Some(m.1.as_str()) == mapper {
+                                    return Some(n);
+                                }
+                                d.get("partitions")
+                                    .and_then(Value::as_array)
+                                    .into_iter()
+                                    .flatten()
+                                    .find_map(|p| {
+                                        let pn = s(p, "name")?;
+                                        (m.1 == format!("/dev/{pn}")).then_some(pn)
+                                    })
                             })
-                        })
-                });
-            let Some(dev) = src_dev.as_deref().and_then(|n| self.names.dev(n)).filter(|d| self.filesystems.iter().any(|(f, _, _)| f == d)) else {
+                    });
+            let Some(dev) = src_dev
+                .as_deref()
+                .and_then(|n| self.names.dev(n))
+                .filter(|d| self.filesystems.iter().any(|(f, _, _)| f == d))
+            else {
                 if m.1.starts_with("/dev/") || m.2.is_some() {
                     self.problem_once(format!("ZFS encryption root {name}: its key file {path} lives on {}, which this layout doesn't format", m.1));
                 } else {
@@ -3177,14 +4416,27 @@ impl Builder<'_> {
             let base = m.0.trim_end_matches('/');
             let rel = &path[base.len()..];
             let dest = format!("{mnt}{rel}");
-            let dir = dest.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or(mnt.clone());
+            let dir = dest
+                .rsplit_once('/')
+                .map(|(d, _)| d.to_string())
+                .unwrap_or(mnt.clone());
             let from = out.len();
             out.push(Cmd::new(&["mkdir", "-p", &mnt]));
-            out.push(Cmd::new(&["mount", &dev, &mnt]).why(format!("{name}'s key file {path} lives on {}", m.1)));
+            out.push(
+                Cmd::new(&["mount", &dev, &mnt])
+                    .why(format!("{name}'s key file {path} lives on {}", m.1)),
+            );
             out.push(Cmd::new(&["mkdir", "-p", &dir]));
             out.push(Cmd::new(&["install", "-m", "400", &key, &dest]));
             out.push(Cmd::new(&["umount", &mnt]));
-            mark_on(out, from, &src_dev.as_deref().map(|n| self.disks_under(n)).unwrap_or_default());
+            mark_on(
+                out,
+                from,
+                &src_dev
+                    .as_deref()
+                    .map(|n| self.disks_under(n))
+                    .unwrap_or_default(),
+            );
         }
     }
 
@@ -3193,25 +4445,59 @@ impl Builder<'_> {
     /// on the dump's path): fstab's subvol= and those mounted when it was
     /// dumped, without the top level, parents first.
     fn btrfs_named_subvolumes(&self, fs: &Value) -> Vec<String> {
-        let devs: Vec<String> = fs.get("devices").and_then(Value::as_array).into_iter().flatten().filter_map(|d| d.as_str().map(str::to_string)).collect();
-        let strip = |p: &str| p.trim_start_matches("<FS_TREE>/").trim_matches('/').to_string();
+        let devs: Vec<String> = fs
+            .get("devices")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|d| d.as_str().map(str::to_string))
+            .collect();
+        let strip = |p: &str| {
+            p.trim_start_matches("<FS_TREE>/")
+                .trim_matches('/')
+                .to_string()
+        };
         let mut names: Vec<String> = Vec::new();
         for e in self.layout.arr(&["storage", "fstab"]) {
-            if s(e, "type").as_deref() != Some("btrfs") || !s(e, "resolves_to").is_some_and(|r| devs.contains(&r)) {
+            if s(e, "type").as_deref() != Some("btrfs")
+                || !s(e, "resolves_to").is_some_and(|r| devs.contains(&r))
+            {
                 continue;
             }
             let o = s(e, "options").unwrap_or_default();
-            names.extend(o.split(',').filter_map(|x| x.strip_prefix("subvol=")).map(strip));
+            names.extend(
+                o.split(',')
+                    .filter_map(|x| x.strip_prefix("subvol="))
+                    .map(strip),
+            );
         }
-        names.extend(fs.get("mounted_subvolumes").and_then(Value::as_array).into_iter().flatten().filter_map(|m| s(m, "subvol")).map(|p| strip(&p)));
-        names.retain(|p| !p.is_empty() && !p.split('/').any(|c| c.is_empty() || c == "." || c == ".."));
-        names.sort_by(|a, b| a.matches('/').count().cmp(&b.matches('/').count()).then(a.cmp(b)));
+        names.extend(
+            fs.get("mounted_subvolumes")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|m| s(m, "subvol"))
+                .map(|p| strip(&p)),
+        );
+        names.retain(|p| {
+            !p.is_empty() && !p.split('/').any(|c| c.is_empty() || c == "." || c == "..")
+        });
+        names.sort_by(|a, b| {
+            a.matches('/')
+                .count()
+                .cmp(&b.matches('/').count())
+                .then(a.cmp(b))
+        });
         names.dedup();
         names
     }
 
     fn btrfs_inside(&mut self, uuid: &str, dev: &str, fs: &Value, out: &mut Vec<Cmd>) {
-        let mut subs = fs.get("subvolumes").and_then(Value::as_array).cloned().unwrap_or_default();
+        let mut subs = fs
+            .get("subvolumes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         if fs.get("subvolumes").and_then(Value::as_array).is_none() {
             let named = self.btrfs_named_subvolumes(fs);
             if !named.is_empty() {
@@ -3219,32 +4505,61 @@ impl Builder<'_> {
                     "btrfs {uuid}: the layout doesn't list its subvolumes (its dump couldn't run btrfs); made are those its mounts name, {}: any other comes back as a plain directory, without its properties",
                     named.join(", ")
                 ));
-                subs = named.into_iter().map(|p| crate::json::Obj::new().set("path", p).build()).collect();
+                subs = named
+                    .into_iter()
+                    .map(|p| crate::json::Obj::new().set("path", p).build())
+                    .collect();
             }
         }
         // Timeshift's snapshots aren't made, nor their NAME directories
         // (btrfs_plans noted them).
         let ts_ids = self.timeshift_ids(fs);
         subs.retain(|v| !self.is_timeshift(fs, v));
-        let quota = fs.get("quota_enabled").and_then(Value::as_bool).unwrap_or(false);
-        let default_id = fs.at(&["default_subvolume", "id"]).and_then(Value::as_u64).unwrap_or(5);
+        let quota = fs
+            .get("quota_enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let default_id = fs
+            .at(&["default_subvolume", "id"])
+            .and_then(Value::as_u64)
+            .unwrap_or(5);
         // `btrfs subvolume set-default` sets the incompat flag DEFAULT_SUBVOL
         // whatever the ID it names, and nothing else sets it: a source on
         // which it was run for ID 5 (BigLinux's big-btrfs-fix-to-timeshift,
         // at every boot) has the flag with the top level as its default.
-        let flag_only = default_id == 5 && fs.get("features").and_then(Value::as_array).is_some_and(|f| f.iter().any(|x| x.as_str() == Some("default_subvol")));
+        let flag_only = default_id == 5
+            && fs
+                .get("features")
+                .and_then(Value::as_array)
+                .is_some_and(|f| f.iter().any(|x| x.as_str() == Some("default_subvol")));
         if subs.is_empty() && !quota && default_id == 5 && !flag_only {
             return;
         }
         let top = format!("{RUN_DIR}/btrfs/{uuid}");
         out.push(Cmd::new(&["mkdir", "-p", &top]));
-        out.push(Cmd::new(&["mount", "-t", "btrfs", "-o", "subvolid=5", dev, &top]).why(format!("btrfs {uuid}: its subvolumes")));
-        let mut list: Vec<(String, Value)> = subs.iter().filter_map(|v| Some((s(v, "path")?.trim_start_matches("<FS_TREE>/").to_string(), v.clone()))).collect();
+        out.push(
+            Cmd::new(&["mount", "-t", "btrfs", "-o", "subvolid=5", dev, &top])
+                .why(format!("btrfs {uuid}: its subvolumes")),
+        );
+        let mut list: Vec<(String, Value)> = subs
+            .iter()
+            .filter_map(|v| {
+                Some((
+                    s(v, "path")?.trim_start_matches("<FS_TREE>/").to_string(),
+                    v.clone(),
+                ))
+            })
+            .collect();
         // In the source's ID order, so that each gets the source's ID: btrfs
         // numbers subvolumes from 256 up, and a gap (a deleted subvolume)
         // is burnt with a placeholder, deleted once all are made.  A
         // subvolume inside another always has the larger ID.
-        list.sort_by_key(|(p, v)| (v.get("id").and_then(Value::as_u64).unwrap_or(u64::MAX), p.clone()));
+        list.sort_by_key(|(p, v)| {
+            (
+                v.get("id").and_then(Value::as_u64).unwrap_or(u64::MAX),
+                p.clone(),
+            )
+        });
         let mut next = 256u64;
         let mut placeholders = Vec::new();
         let mut made: Vec<(String, String)> = Vec::new();
@@ -3260,7 +4575,10 @@ impl Builder<'_> {
             if let Some(id) = v.get("id").and_then(Value::as_u64) {
                 while next < id && id - next <= 4096 {
                     let ph = format!("{top}/.bko-holt-placeholder-{next}");
-                    out.push(Cmd::new(&["btrfs", "subvolume", "create", &ph]).why(format!("burns ID {next}, unused on the source")));
+                    out.push(
+                        Cmd::new(&["btrfs", "subvolume", "create", &ph])
+                            .why(format!("burns ID {next}, unused on the source")),
+                    );
                     placeholders.push(ph);
                     next += 1;
                 }
@@ -3273,7 +4591,10 @@ impl Builder<'_> {
             // Inside a subvolume made as a snapshot of one that has a
             // subvolume here too (transactional-update's /etc in each slot):
             // the snapshot has an empty directory in its place, which goes.
-            let holder = made_paths.iter().filter(|m| path.starts_with(&format!("{m}/"))).max_by_key(|m| m.len());
+            let holder = made_paths
+                .iter()
+                .filter(|m| path.starts_with(&format!("{m}/")))
+                .max_by_key(|m| m.len());
             if let Some((h, o)) = holder.and_then(|h| snapped.iter().find(|(p, _)| p == h)) {
                 let theirs = format!("{o}/{}", &path[h.len() + 1..]);
                 if made_paths.contains(&theirs) {
@@ -3282,19 +4603,37 @@ impl Builder<'_> {
             }
             // A snapshot is made as one of its origin (still empty: the
             // restore fills both), so that it stays a snapshot.
-            let origin = v.get("parent_uuid").and_then(Value::as_str).and_then(|pu| made.iter().find(|(u, _)| u == pu)).map(|(_, p)| p.clone());
+            let origin = v
+                .get("parent_uuid")
+                .and_then(Value::as_str)
+                .and_then(|pu| made.iter().find(|(u, _)| u == pu))
+                .map(|(_, p)| p.clone());
             if let Some(o) = &origin {
                 snapped.push((path.clone(), o.clone()));
             }
             made_paths.push(path.clone());
             match &origin {
-                Some(o) => out.push(Cmd::new(&["btrfs", "subvolume", "snapshot", &format!("{top}/{o}"), &full]).why(format!("a snapshot of {o}, as on the source"))),
+                Some(o) => out.push(
+                    Cmd::new(&[
+                        "btrfs",
+                        "subvolume",
+                        "snapshot",
+                        &format!("{top}/{o}"),
+                        &full,
+                    ])
+                    .why(format!("a snapshot of {o}, as on the source")),
+                ),
                 None => out.push(Cmd::new(&["btrfs", "subvolume", "create", &full])),
             }
             if let Some(u) = s(v, "uuid") {
                 made.push((u, path.clone()));
             }
-            for (k, pv) in v.get("properties").and_then(Value::as_object).into_iter().flatten() {
+            for (k, pv) in v
+                .get("properties")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flatten()
+            {
                 if k == "ro" {
                     continue; // read-only comes after the restore (boot)
                 }
@@ -3302,7 +4641,11 @@ impl Builder<'_> {
                     out.push(Cmd::new(&["btrfs", "property", "set", &full, k, val]));
                 }
             }
-            let later = v.get("parent_uuid").and_then(Value::as_str).and_then(|pu| list.iter().find(|(p, w)| plan.is_shared(p) && w.get("uuid").and_then(Value::as_str) == Some(pu)));
+            let later = v.get("parent_uuid").and_then(Value::as_str).and_then(|pu| {
+                list.iter().find(|(p, w)| {
+                    plan.is_shared(p) && w.get("uuid").and_then(Value::as_str) == Some(pu)
+                })
+            });
             if let Some((o, _)) = later {
                 self.notes.push(format!("btrfs {uuid}: {path} was a snapshot of {o}, which is made after the restore; it's made as a plain subvolume"));
             } else if origin.is_none() && v.get("parent_uuid").is_some_and(|p| !p.is_null()) {
@@ -3310,10 +4653,21 @@ impl Builder<'_> {
             }
         }
         if !placeholders.is_empty() {
-            let mut a = vec!["btrfs".to_string(), "subvolume".into(), "delete".into(), "--commit-after".into()];
+            let mut a = vec![
+                "btrfs".to_string(),
+                "subvolume".into(),
+                "delete".into(),
+                "--commit-after".into(),
+            ];
             a.extend(placeholders);
-            out.push(Cmd { argv: a, ..Cmd::default() });
-            out.push(Cmd::new(&["btrfs", "subvolume", "sync", &top]).why("the placeholders gone before quotas are on (no qgroups for them)"));
+            out.push(Cmd {
+                argv: a,
+                ..Cmd::default()
+            });
+            out.push(
+                Cmd::new(&["btrfs", "subvolume", "sync", &top])
+                    .why("the placeholders gone before quotas are on (no qgroups for them)"),
+            );
         }
         if default_id != 5 {
             match list.iter().find(|(_, v)| v.get("id").and_then(Value::as_u64) == Some(default_id)) {
@@ -3336,7 +4690,13 @@ impl Builder<'_> {
     /// Quotas, as the source had them: on, the higher-level qgroups
     /// (snapper's 1/0), their members and limits.  A shared snapshot's
     /// level-0 qgroup is by the ID it has here.
-    fn btrfs_quota(&self, fs: &Value, top: &str, plan: &crate::load::shared::Plan, out: &mut Vec<Cmd>) {
+    fn btrfs_quota(
+        &self,
+        fs: &Value,
+        top: &str,
+        plan: &crate::load::shared::Plan,
+        out: &mut Vec<Cmd>,
+    ) {
         let top = top.to_string();
         let here = |id: &str| -> String {
             id.strip_prefix("0/")
@@ -3347,9 +4707,17 @@ impl Builder<'_> {
         {
             out.push(Cmd::new(&["btrfs", "quota", "enable", &top]));
             out.push(Cmd::new(&["btrfs", "quota", "rescan", "-w", &top]));
-            let mut qgroups = fs.get("qgroups").and_then(Value::as_array).cloned().unwrap_or_default();
+            let mut qgroups = fs
+                .get("qgroups")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
             // A Timeshift snapshot's level-0 qgroup: its subvolume isn't made.
-            let ts: Vec<String> = self.timeshift_ids(fs).iter().map(|i| format!("0/{i}")).collect();
+            let ts: Vec<String> = self
+                .timeshift_ids(fs)
+                .iter()
+                .map(|i| format!("0/{i}"))
+                .collect();
             qgroups.retain(|q| !s(q, "qgroupid").is_some_and(|id| ts.contains(&id)));
             // Higher-level qgroups (snapper's 1/0), their members, and limits.
             for q in &qgroups {
@@ -3359,20 +4727,43 @@ impl Builder<'_> {
                 }
             }
             for q in &qgroups {
-                let Some(id) = s(q, "qgroupid").map(|i| here(&i)) else { continue };
-                for p in q.get("parents").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
-                    out.push(Cmd::new(&["btrfs", "qgroup", "assign", "--no-rescan", &id, p, &top]));
+                let Some(id) = s(q, "qgroupid").map(|i| here(&i)) else {
+                    continue;
+                };
+                for p in q
+                    .get("parents")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                {
+                    out.push(Cmd::new(&[
+                        "btrfs",
+                        "qgroup",
+                        "assign",
+                        "--no-rescan",
+                        &id,
+                        p,
+                        &top,
+                    ]));
                 }
                 for (k, flag) in [("max_referenced", None), ("max_exclusive", Some("-e"))] {
                     if let Some(n) = num(q, k) {
                         let mut a = vec!["btrfs".to_string(), "qgroup".into(), "limit".into()];
                         a.extend(flag.map(str::to_string));
                         a.extend([n.to_string(), id.clone(), top.clone()]);
-                        out.push(Cmd { argv: a, ..Cmd::default() });
+                        out.push(Cmd {
+                            argv: a,
+                            ..Cmd::default()
+                        });
                     }
                 }
             }
-            if qgroups.iter().any(|q| q.get("parents").and_then(Value::as_array).is_some_and(|p| !p.is_empty())) {
+            if qgroups.iter().any(|q| {
+                q.get("parents")
+                    .and_then(Value::as_array)
+                    .is_some_and(|p| !p.is_empty())
+            }) {
                 out.push(Cmd::new(&["btrfs", "quota", "rescan", "-w", &top]));
             }
         }
@@ -3390,7 +4781,11 @@ impl Builder<'_> {
         let share = !self.opts.btrfs_copy;
         for fs in self.layout.arr(&["storage", "btrfs"]).to_vec() {
             let Some(uuid) = s(&fs, "uuid") else { continue };
-            let strip = |p: &str| p.trim_start_matches("<FS_TREE>/").trim_start_matches('/').to_string();
+            let strip = |p: &str| {
+                p.trim_start_matches("<FS_TREE>/")
+                    .trim_start_matches('/')
+                    .to_string()
+            };
             let mut subs: Vec<Sub> = fs
                 .get("subvolumes")
                 .and_then(Value::as_array)
@@ -3407,23 +4802,52 @@ impl Builder<'_> {
                     })
                 })
                 .collect();
-            let devs: Vec<String> = fs.get("devices").and_then(Value::as_array).into_iter().flatten().filter_map(|d| d.as_str().map(str::to_string)).collect();
-            let by_id = |id: u64| if id == 5 { Some(String::new()) } else { subs.iter().find(|x| x.id == Some(id)).map(|x| x.path.clone()) };
-            let default = fs.at(&["default_subvolume", "id"]).and_then(Value::as_u64).unwrap_or(5);
+            let devs: Vec<String> = fs
+                .get("devices")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|d| d.as_str().map(str::to_string))
+                .collect();
+            let by_id = |id: u64| {
+                if id == 5 {
+                    Some(String::new())
+                } else {
+                    subs.iter()
+                        .find(|x| x.id == Some(id))
+                        .map(|x| x.path.clone())
+                }
+            };
+            let default = fs
+                .at(&["default_subvolume", "id"])
+                .and_then(Value::as_u64)
+                .unwrap_or(5);
             let mut mounts = Vec::new();
             for e in self.layout.arr(&["storage", "fstab"]) {
-                if s(e, "type").as_deref() != Some("btrfs") || !s(e, "resolves_to").is_some_and(|r| devs.contains(&r)) {
+                if s(e, "type").as_deref() != Some("btrfs")
+                    || !s(e, "resolves_to").is_some_and(|r| devs.contains(&r))
+                {
                     continue;
                 }
-                let Some(target) = s(e, "file").filter(|f| f.starts_with('/')) else { continue };
+                let Some(target) = s(e, "file").filter(|f| f.starts_with('/')) else {
+                    continue;
+                };
                 let o = s(e, "options").unwrap_or_default();
-                let opt = |k: &str| o.split(',').find_map(|x| x.strip_prefix(k).map(str::to_string));
-                let subvol = match (opt("subvol="), opt("subvolid=").and_then(|i| i.parse().ok())) {
+                let opt = |k: &str| {
+                    o.split(',')
+                        .find_map(|x| x.strip_prefix(k).map(str::to_string))
+                };
+                let subvol = match (
+                    opt("subvol="),
+                    opt("subvolid=").and_then(|i| i.parse().ok()),
+                ) {
                     (Some(p), _) => Some(strip(&p)),
                     (None, Some(id)) => by_id(id),
                     // transactional-update's /: the booted slot, which the
                     // mount stage mounts (a pending update's default isn't).
-                    (None, None) => match super::transactional::booted_root(&self.layout.v).filter(|_| target == "/") {
+                    (None, None) => match super::transactional::booted_root(&self.layout.v)
+                        .filter(|_| target == "/")
+                    {
                         Some(b) => Some(strip(&b)),
                         None => by_id(default),
                     },
@@ -3435,18 +4859,35 @@ impl Builder<'_> {
             // Timeshift's snapshots: not in the backup, so neither made by
             // format nor planned as shared snapshots.  Their IDs are burnt
             // by format's placeholders when a later subvolume needs its own.
-            let ts: Vec<(String, String)> = subs.iter().filter_map(|x| timeshift_snapshot(&x.path, &mounts).map(|n| (x.path.clone(), n.to_string()))).collect();
+            let ts: Vec<(String, String)> = subs
+                .iter()
+                .filter_map(|x| {
+                    timeshift_snapshot(&x.path, &mounts).map(|n| (x.path.clone(), n.to_string()))
+                })
+                .collect();
             if !ts.is_empty() {
                 let names: BTreeSet<&str> = ts.iter().map(|(_, n)| n.as_str()).collect();
-                let what = if names.len() == 1 { "Timeshift snapshot (NAMES) is" } else { "Timeshift snapshots (NAMES) are" };
-                let what = what.replace("NAMES", &names.iter().copied().collect::<Vec<_>>().join(", "));
-                self.notes.push(format!("btrfs {uuid}: {} {what} not in the backup; not made", names.len()));
+                let what = if names.len() == 1 {
+                    "Timeshift snapshot (NAMES) is"
+                } else {
+                    "Timeshift snapshots (NAMES) are"
+                };
+                let what = what.replace(
+                    "NAMES",
+                    &names.iter().copied().collect::<Vec<_>>().join(", "),
+                );
+                self.notes.push(format!(
+                    "btrfs {uuid}: {} {what} not in the backup; not made",
+                    names.len()
+                ));
                 subs.retain(|x| !ts.iter().any(|(p, _)| *p == x.path));
-                self.timeshift.insert(uuid.clone(), ts.into_iter().map(|(p, _)| p).collect());
+                self.timeshift
+                    .insert(uuid.clone(), ts.into_iter().map(|(p, _)| p).collect());
             }
             let mut plan = crate::load::shared::plan(&subs, &mounts);
             if share {
-                self.notes.extend(plan.notes.iter().map(|n| format!("btrfs {uuid}: {n}")));
+                self.notes
+                    .extend(plan.notes.iter().map(|n| format!("btrfs {uuid}: {n}")));
                 if self.opts.repo.is_none() && !plan.shared.is_empty() {
                     let list: Vec<&str> = plan.shared.iter().map(|x| x.path.as_str()).collect();
                     self.notes.push(format!(
@@ -3476,7 +4917,11 @@ impl Builder<'_> {
             .flat_map(|p| p.shared.iter())
             .flat_map(|x| {
                 let me = x.readonly.then(|| format!("{t}{}", x.backup));
-                let kids = x.children.iter().filter(|c| c.readonly && !x.readonly).map(move |c| format!("{t}{}/{}", x.backup, c.rest));
+                let kids = x
+                    .children
+                    .iter()
+                    .filter(|c| c.readonly && !x.readonly)
+                    .map(move |c| format!("{t}{}/{}", x.backup, c.rest));
                 me.into_iter().chain(kids)
             })
             .collect()
@@ -3485,32 +4930,79 @@ impl Builder<'_> {
     /// `v`, a subvolume of the btrfs `fs`, is one of its Timeshift
     /// snapshots (btrfs_plans), which aren't made.
     fn is_timeshift(&self, fs: &Value, v: &Value) -> bool {
-        let Some(ts) = s(fs, "uuid").and_then(|u| self.timeshift.get(&u)) else { return false };
-        s(v, "path").is_some_and(|p| ts.contains(p.trim_start_matches("<FS_TREE>/").trim_start_matches('/')))
+        let Some(ts) = s(fs, "uuid").and_then(|u| self.timeshift.get(&u)) else {
+            return false;
+        };
+        s(v, "path").is_some_and(|p| {
+            ts.contains(p.trim_start_matches("<FS_TREE>/").trim_start_matches('/'))
+        })
     }
 
     /// The source's IDs of the btrfs `fs`'s Timeshift snapshots.
     fn timeshift_ids(&self, fs: &Value) -> Vec<u64> {
-        fs.get("subvolumes").and_then(Value::as_array).into_iter().flatten().filter(|v| self.is_timeshift(fs, v)).filter_map(|v| v.get("id").and_then(Value::as_u64)).collect()
+        fs.get("subvolumes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|v| self.is_timeshift(fs, v))
+            .filter_map(|v| v.get("id").and_then(Value::as_u64))
+            .collect()
     }
 
     fn datasets(&mut self, out: &mut Vec<Cmd>) {
-        let pools: Vec<String> = self.layout.v.at(&["storage", "zfs", "tools", "imported_pools"]).and_then(Value::as_array).into_iter().flatten().filter_map(|p| s(p, "name")).collect();
-        let mut list: Vec<Value> = self.layout.v.at(&["storage", "zfs", "tools", "datasets"]).and_then(Value::as_array).cloned().unwrap_or_default();
+        let pools: Vec<String> = self
+            .layout
+            .v
+            .at(&["storage", "zfs", "tools", "imported_pools"])
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|p| s(p, "name"))
+            .collect();
+        let mut list: Vec<Value> = self
+            .layout
+            .v
+            .at(&["storage", "zfs", "tools", "datasets"])
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         list.sort_by_key(|d| s(d, "name").unwrap_or_default());
         let mut on = OnMark::at(out.len());
         for ds in list {
             let name = s(&ds, "name").unwrap_or_default();
-            on.next(out, self.pool_disks(name.split('/').next().unwrap_or_default()));
+            on.next(
+                out,
+                self.pool_disks(name.split('/').next().unwrap_or_default()),
+            );
             if pools.contains(&name) || self.datasets.contains(&self.zname(&name)) {
                 continue; // the root dataset came with zpool create; zvols with assemble
             }
             self.make_dataset(&ds, out);
         }
         on.done(out);
-        for p in self.layout.v.at(&["storage", "zfs", "tools", "imported_pools"]).and_then(Value::as_array).into_iter().flatten() {
-            if let (Some(n), Some(b)) = (s(p, "name"), p.at(&["properties", "bootfs"]).and_then(Value::as_str).filter(|b| *b != "-")) {
-                out.push(Cmd::new(&["zpool", "set", &format!("bootfs={}", self.zname(b)), &self.zname(&n)]).made_on(self.pool_disks(&n)));
+        for p in self
+            .layout
+            .v
+            .at(&["storage", "zfs", "tools", "imported_pools"])
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let (Some(n), Some(b)) = (
+                s(p, "name"),
+                p.at(&["properties", "bootfs"])
+                    .and_then(Value::as_str)
+                    .filter(|b| *b != "-"),
+            ) {
+                out.push(
+                    Cmd::new(&[
+                        "zpool",
+                        "set",
+                        &format!("bootfs={}", self.zname(b)),
+                        &self.zname(&n),
+                    ])
+                    .made_on(self.pool_disks(&n)),
+                );
             }
         }
         self.clone_notes();
@@ -3525,8 +5017,18 @@ impl Builder<'_> {
             let mut a = vec!["zfs".to_string(), "create".into()];
             if s(&ds, "type").as_deref() == Some("volume") {
                 a.extend(["-V".into(), num(&ds, "volsize").unwrap_or(0).to_string()]);
-                let pve = if self.layout.str_at(&["boot", "packages", "pve-manager"]).is_some() { "; Proxmox: VM disks are vzdump's or Proxmox Backup Server's to back up" } else { "" };
-                self.notes.push(format!("ZFS volume {name}: made empty; archivers back up files, not zvols{pve}"));
+                let pve = if self
+                    .layout
+                    .str_at(&["boot", "packages", "pve-manager"])
+                    .is_some()
+                {
+                    "; Proxmox: VM disks are vzdump's or Proxmox Backup Server's to back up"
+                } else {
+                    ""
+                };
+                self.notes.push(format!(
+                    "ZFS volume {name}: made empty; archivers back up files, not zvols{pve}"
+                ));
             } else if self.fam != Some(crate::other::Family::Illumos) {
                 a.push("-u".into());
             }
@@ -3541,13 +5043,21 @@ impl Builder<'_> {
             a.push(here.clone());
             // (volmode=none: no device node, nothing to wait for.)
             let node = !a.iter().any(|x| x == "volmode=none");
-            out.push(Cmd { argv: a, ..Cmd::default() });
-            if s(&ds, "type").as_deref() == Some("volume") && node && self.fam.map_or(true, |f| f.on_linux()) {
+            out.push(Cmd {
+                argv: a,
+                ..Cmd::default()
+            });
+            if s(&ds, "type").as_deref() == Some("volume")
+                && node
+                && self.fam.map_or(true, |f| f.on_linux())
+            {
                 out.push(zvol_wait(&here));
             }
             // illumos' zfs create has no -u: what it mounted, unmounted
             // (mount mounts every dataset in order).
-            if self.fam == Some(crate::other::Family::Illumos) && s(&ds, "type").as_deref() != Some("volume") {
+            if self.fam == Some(crate::other::Family::Illumos)
+                && s(&ds, "type").as_deref() != Some("volume")
+            {
                 let qhere = shell_quote(&here);
                 out.push(Cmd::new(&["sh", "-c", &format!("[ \"$(zfs get -H -o value mounted {qhere})\" != yes ] || zfs unmount {qhere}")]));
             }
@@ -3564,7 +5074,13 @@ impl Builder<'_> {
             Some((p, r)) => (p, Some(r)),
             None => (ds, None),
         };
-        match self.names.mapping.pool_names.iter().find(|(s, _)| s == pool) {
+        match self
+            .names
+            .mapping
+            .pool_names
+            .iter()
+            .find(|(s, _)| s == pool)
+        {
             Some((_, h)) => rest.map_or_else(|| h.clone(), |r| format!("{h}/{r}")),
             None => ds.to_string(),
         }
@@ -3585,12 +5101,30 @@ fn mount_options(o: &str) -> String {
     let keep: Vec<&str> = o
         .split(',')
         .filter(|x| !x.is_empty())
-        .filter(|x| !matches!(*x, "defaults" | "noauto" | "auto" | "nofail" | "_netdev" | "user" | "users" | "owner" | "sw" | "ro"))
+        .filter(|x| {
+            !matches!(
+                *x,
+                "defaults"
+                    | "noauto"
+                    | "auto"
+                    | "nofail"
+                    | "_netdev"
+                    | "user"
+                    | "users"
+                    | "owner"
+                    | "sw"
+                    | "ro"
+            )
+        })
         // util-linux's ro=vfs (or ro=fs): read-only too (MicroOS's /).
         .filter(|x| !x.starts_with("ro="))
         .filter(|x| !x.starts_with("x-") && !x.starts_with("comment="))
         .collect();
-    if keep.is_empty() { "defaults".to_string() } else { keep.join(",") }
+    if keep.is_empty() {
+        "defaults".to_string()
+    } else {
+        keep.join(",")
+    }
 }
 
 /// The option a FAT filesystem's mount for the restore needs so that the
@@ -3608,8 +5142,16 @@ fn mount_options(o: &str) -> String {
 /// when it is (so a rescue whose own sys_tz isn't 0, live media that ran
 /// hwclock --systz, doesn't shift the stamps).  None: nothing to add (an
 /// older dump without sys_tz: the rescue's own, 0 on our images).
-pub(crate) fn fat_time_option(opts: &str, source: Option<&str>, sys_tz_minuteswest: Option<i64>) -> Option<String> {
-    let named = |o: &str| o.split(',').find(|x| x.starts_with("tz=") || x.starts_with("time_offset=")).map(str::to_string);
+pub(crate) fn fat_time_option(
+    opts: &str,
+    source: Option<&str>,
+    sys_tz_minuteswest: Option<i64>,
+) -> Option<String> {
+    let named = |o: &str| {
+        o.split(',')
+            .find(|x| x.starts_with("tz=") || x.starts_with("time_offset="))
+            .map(str::to_string)
+    };
     if named(opts).is_some() {
         return None;
     }
@@ -3617,7 +5159,13 @@ pub(crate) fn fat_time_option(opts: &str, source: Option<&str>, sys_tz_minuteswe
         return Some(o);
     }
     // vfat refuses a time_offset beyond a day.
-    sys_tz_minuteswest.filter(|&m| m.abs() <= 24 * 60).map(|m| if m == 0 { "tz=UTC".to_string() } else { format!("time_offset={}", -m) })
+    sys_tz_minuteswest.filter(|&m| m.abs() <= 24 * 60).map(|m| {
+        if m == 0 {
+            "tz=UTC".to_string()
+        } else {
+            format!("time_offset={}", -m)
+        }
+    })
 }
 
 impl Builder<'_> {
@@ -3626,30 +5174,63 @@ impl Builder<'_> {
     /// when the source had a vfat/msdos filesystem mounted there) with
     /// fat_time_option's option added, and the plan saying why.
     fn fat_time(&self, at: &str, c: &mut Cmd) {
-        if self.fam.is_some() || c.argv.len() != 7 || c.argv[0] != "mount" || c.argv[1] != "-t" || c.argv[3] != "-o" || !matches!(c.argv[2].as_str(), "vfat" | "msdos" | "auto") {
+        if self.fam.is_some()
+            || c.argv.len() != 7
+            || c.argv[0] != "mount"
+            || c.argv[1] != "-t"
+            || c.argv[3] != "-o"
+            || !matches!(c.argv[2].as_str(), "vfat" | "msdos" | "auto")
+        {
             return;
         }
         let source: Option<String> = self
             .layout
             .arr(&["storage", "mounts"])
             .iter()
-            .find(|m| s(m, "target").as_deref() == Some(at) && s(m, "fstype").is_some_and(|t| matches!(t.as_str(), "vfat" | "msdos")))
-            .map(|m| format!("{},{}", s(m, "options").unwrap_or_default(), s(m, "super_options").unwrap_or_default()));
+            .find(|m| {
+                s(m, "target").as_deref() == Some(at)
+                    && s(m, "fstype").is_some_and(|t| matches!(t.as_str(), "vfat" | "msdos"))
+            })
+            .map(|m| {
+                format!(
+                    "{},{}",
+                    s(m, "options").unwrap_or_default(),
+                    s(m, "super_options").unwrap_or_default()
+                )
+            });
         if c.argv[2] == "auto" && source.is_none() {
             return;
         }
-        let tz = self.layout.v.at(&["storage", "sys_tz_minuteswest"]).and_then(Value::as_i64);
+        let tz = self
+            .layout
+            .v
+            .at(&["storage", "sys_tz_minuteswest"])
+            .and_then(Value::as_i64);
         let Some(add) = fat_time_option(&c.argv[4], source.as_deref(), tz) else {
             return;
         };
-        let why = if source.as_deref().is_some_and(|o| o.split(',').any(|x| x == add)) {
-            format!("{add}: as the source's {at} was mounted, so FAT's local-time stamps are written as its were")
+        let why = if source
+            .as_deref()
+            .is_some_and(|o| o.split(',').any(|x| x == add))
+        {
+            format!(
+                "{add}: as the source's {at} was mounted, so FAT's local-time stamps are written as its were"
+            )
         } else if add == "tz=UTC" {
-            format!("{add}: the source's vfat kept {at}'s FAT local-time stamps as UTC (sys_tz tz_minuteswest 0), whatever the rescue's kernel time zone; the restore and the boot stage write through this mount")
+            format!(
+                "{add}: the source's vfat kept {at}'s FAT local-time stamps as UTC (sys_tz tz_minuteswest 0), whatever the rescue's kernel time zone; the restore and the boot stage write through this mount"
+            )
         } else {
-            format!("{add}: the source's vfat kept {at}'s FAT local-time stamps by its kernel time zone (sys_tz tz_minuteswest {}), not the rescue's; the restore and the boot stage write through this mount", tz.unwrap_or(0))
+            format!(
+                "{add}: the source's vfat kept {at}'s FAT local-time stamps by its kernel time zone (sys_tz tz_minuteswest {}), not the rescue's; the restore and the boot stage write through this mount",
+                tz.unwrap_or(0)
+            )
         };
-        c.argv[4] = if c.argv[4] == "defaults" { add } else { format!("{},{add}", c.argv[4]) };
+        c.argv[4] = if c.argv[4] == "defaults" {
+            add
+        } else {
+            format!("{},{add}", c.argv[4])
+        };
         c.why = Some(match c.why.take() {
             Some(w) => format!("{w}; {why}"),
             None => why,
@@ -3663,7 +5244,11 @@ impl Builder<'_> {
         let mut out_mkdir: Vec<String> = Vec::new();
         // Ubuntu Core's fstab is the base snap's binds and tmpfs, none of
         // them the backup's tree (load/snapcore.rs mounts that).
-        let fstab = if super::snapcore::of(&self.layout.v).is_some() { &[][..] } else { self.layout.arr(&["storage", "fstab"]) };
+        let fstab = if super::snapcore::of(&self.layout.v).is_some() {
+            &[][..]
+        } else {
+            self.layout.arr(&["storage", "fstab"])
+        };
         for e in fstab {
             let file = s(e, "file").unwrap_or_default();
             let ty = s(e, "type").unwrap_or_default();
@@ -3671,45 +5256,71 @@ impl Builder<'_> {
                 continue;
             }
             if !safe_target_subpath(&file) {
-                self.problems.push(format!("fstab's {file:?} isn't a safe mount path under the target"));
+                self.problems.push(format!(
+                    "fstab's {file:?} isn't a safe mount path under the target"
+                ));
                 continue;
             }
             let Some(src) = s(e, "resolves_to") else {
                 // A legacy ZFS dataset fstab mounts (TrueNAS's boot-pool/grub,
                 // perhaps): load/zfs_be.rs's legacy mounts mount it, as the
                 // source had it mounted there.
-                let legacy_source = ty == "zfs" && self.layout.arr(&["storage", "backup_sources"]).iter().any(|b| s(b, "path").as_deref() == Some(file.as_str()) && s(b, "source") == s(e, "spec"));
+                let legacy_source = ty == "zfs"
+                    && self
+                        .layout
+                        .arr(&["storage", "backup_sources"])
+                        .iter()
+                        .any(|b| {
+                            s(b, "path").as_deref() == Some(file.as_str())
+                                && s(b, "source") == s(e, "spec")
+                        });
                 if !legacy_source {
-                    self.notes.push(format!("fstab's {file} ({ty}) isn't on the layout's disks; not mounted"));
+                    self.notes.push(format!(
+                        "fstab's {file} ({ty}) isn't on the layout's disks; not mounted"
+                    ));
                 }
                 continue;
             };
             let src = crate::other::geli::fstab_src(self.layout, e, src);
             let Some(dev) = self.names.dev(&src) else {
-                self.notes.push(format!("fstab's {file} is on {src}, which isn't restored"));
+                self.notes
+                    .push(format!("fstab's {file} is on {src}, which isn't restored"));
                 continue;
             };
             let mut opts = mount_options(&s(e, "options").unwrap_or_default());
             // A transactional-update root names no subvolume: the default,
             // which during a pending update isn't the slot the backup's /
             // holds (load/transactional.rs).
-            if let Some(b) = (file == "/" && ty == "btrfs").then(|| super::transactional::booted_root(&self.layout.v)).flatten() {
-                if !opts.split(',').any(|o| o.starts_with("subvol=") || o.starts_with("subvolid=")) {
-                    opts = if opts == "defaults" { format!("subvol={b}") } else { format!("{opts},subvol={b}") };
+            if let Some(b) = (file == "/" && ty == "btrfs")
+                .then(|| super::transactional::booted_root(&self.layout.v))
+                .flatten()
+            {
+                if !opts
+                    .split(',')
+                    .any(|o| o.starts_with("subvol=") || o.starts_with("subvolid="))
+                {
+                    opts = if opts == "defaults" {
+                        format!("subvol={b}")
+                    } else {
+                        format!("{opts},subvol={b}")
+                    };
                 }
             }
             // A HAMMER2 PFS (DragonFly's vbd0s1d@ROOT): the same PFS here.
-            let dev = match s(e, "spec").and_then(|sp| sp.split_once('@').map(|(_, l)| l.to_string())) {
-                Some(l) if ty == "hammer2" => format!("{dev}@{l}"),
-                _ => dev,
-            };
+            let dev =
+                match s(e, "spec").and_then(|sp| sp.split_once('@').map(|(_, l)| l.to_string())) {
+                    Some(l) if ty == "hammer2" => format!("{dev}@{l}"),
+                    _ => dev,
+                };
             let dir = format!("{target}{}", if file == "/" { "" } else { &file });
             // RedoxFS mounts through its FUSE driver (it goes to the
             // background once the tree is up).
             if ty == "redoxfs" {
                 // Its daemon would hold load's output pipe open: its own log.
                 let (qdev, qdir) = (shell_quote(&dev), shell_quote(&dir));
-                let script = format!("redoxfs {qdev} {qdir} >{RUN_DIR}/redoxfs.log 2>&1 </dev/null; i=0; until mountpoint -q {qdir}; do i=$((i + 1)); [ $i -lt 60 ] || {{ cat {RUN_DIR}/redoxfs.log; exit 1; }}; sleep 1; done");
+                let script = format!(
+                    "redoxfs {qdev} {qdir} >{RUN_DIR}/redoxfs.log 2>&1 </dev/null; i=0; until mountpoint -q {qdir}; do i=$((i + 1)); [ $i -lt 60 ] || {{ cat {RUN_DIR}/redoxfs.log; exit 1; }}; sleep 1; done"
+                );
                 ms.push((file.clone(), Cmd::new(&["sh", "-c", &script])));
                 out_mkdir.push(dir.clone());
                 continue;
@@ -3719,11 +5330,32 @@ impl Builder<'_> {
                 ms.push((file.clone(), Cmd::new(&["mount", "-t", &ty, &dev, &dir])));
                 continue;
             }
-            ms.push((file.clone(), Cmd::new(&["mount", "-t", &ty, "-o", &opts, &dev, &dir])));
+            ms.push((
+                file.clone(),
+                Cmd::new(&["mount", "-t", &ty, "-o", &opts, &dev, &dir]),
+            ));
         }
-        let bootfs: Vec<String> =
-            self.layout.v.at(&["storage", "zfs", "tools", "imported_pools"]).and_then(Value::as_array).into_iter().flatten().filter_map(|p| p.at(&["properties", "bootfs"]).and_then(Value::as_str).map(str::to_string)).collect();
-        for ds in self.layout.v.at(&["storage", "zfs", "tools", "datasets"]).and_then(Value::as_array).cloned().unwrap_or_default() {
+        let bootfs: Vec<String> = self
+            .layout
+            .v
+            .at(&["storage", "zfs", "tools", "imported_pools"])
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|p| {
+                p.at(&["properties", "bootfs"])
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .collect();
+        for ds in self
+            .layout
+            .v
+            .at(&["storage", "zfs", "tools", "datasets"])
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+        {
             let name = s(&ds, "name").unwrap_or_default();
             let mp = s(&ds, "mountpoint").unwrap_or_default();
             let canmount = s(&ds, "canmount").unwrap_or("on".into());
@@ -3733,7 +5365,11 @@ impl Builder<'_> {
             // An illumos boot environment (POOL/ROOT/NAME, beadm's) that
             // isn't the pool's bootfs and wasn't mounted: not in the backup,
             // so made but not filled (docs/design/openindiana.md, decision 3).
-            if self.fam == Some(crate::other::Family::Illumos) && !bootfs.contains(&name) && !was_mounted && s(&ds, "type").as_deref() != Some("volume") {
+            if self.fam == Some(crate::other::Family::Illumos)
+                && !bootfs.contains(&name)
+                && !was_mounted
+                && s(&ds, "type").as_deref() != Some("volume")
+            {
                 if let [_, "ROOT", be] = name.split('/').collect::<Vec<_>>()[..] {
                     self.notes.push(format!("boot environment {be} ({name}) isn't the booted one: it comes back as an empty plain dataset (only the booted BE is restored)"));
                 }
@@ -3743,7 +5379,10 @@ impl Builder<'_> {
             if self.in_restored_be(&name) {
                 continue;
             }
-            if !mp.starts_with('/') || canmount == "off" || (canmount == "noauto" && !bootfs.contains(&name) && !was_mounted) {
+            if !mp.starts_with('/')
+                || canmount == "off"
+                || (canmount == "noauto" && !bootfs.contains(&name) && !was_mounted)
+            {
                 continue;
             }
             // illumos won't mount over a directory that isn't empty (the
@@ -3758,10 +5397,31 @@ impl Builder<'_> {
         // the boot loader and the kernel mount it as /, fstab doesn't): mounted
         // as / with the system's mount, since zfs mount refuses legacy ones.
         if !ms.iter().any(|(p, _)| p == "/") {
-            let ds = self.layout.v.at(&["storage", "zfs", "tools", "datasets"]).and_then(Value::as_array).cloned().unwrap_or_default();
-            if let Some(name) = ds.iter().filter_map(|d| s(d, "name").filter(|n| bootfs.contains(n) && s(d, "mountpoint").as_deref() == Some("legacy"))).next() {
-                let fs_flag = if self.fam == Some(crate::other::Family::Illumos) { "-F" } else { "-t" };
-                ms.push(("/".into(), Cmd::new(&["mount", fs_flag, "zfs", &self.zname(&name), &target])));
+            let ds = self
+                .layout
+                .v
+                .at(&["storage", "zfs", "tools", "datasets"])
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if let Some(name) = ds
+                .iter()
+                .filter_map(|d| {
+                    s(d, "name").filter(|n| {
+                        bootfs.contains(n) && s(d, "mountpoint").as_deref() == Some("legacy")
+                    })
+                })
+                .next()
+            {
+                let fs_flag = if self.fam == Some(crate::other::Family::Illumos) {
+                    "-F"
+                } else {
+                    "-t"
+                };
+                ms.push((
+                    "/".into(),
+                    Cmd::new(&["mount", fs_flag, "zfs", &self.zname(&name), &target]),
+                ));
             }
         }
         // Legacy datasets mounted at a backup source's path on the source
@@ -3797,11 +5457,16 @@ impl Builder<'_> {
             depth(&a.0).cmp(&depth(&b.0)).then(a.0.cmp(&b.0))
         });
         if !ms.iter().any(|(p, _)| p == "/") && snapcore.is_none() {
-            self.problems.push("nothing in fstab or the ZFS datasets mounts /".into());
+            self.problems
+                .push("nothing in fstab or the ZFS datasets mounts /".into());
         }
         let mut out = Vec::new();
         for (p, mut c) in ms {
-            let dir = if p == "/" { target.clone() } else { format!("{target}{p}") };
+            let dir = if p == "/" {
+                target.clone()
+            } else {
+                format!("{target}{p}")
+            };
             self.fat_time(&p, &mut c);
             self.mount_points.push(dir.clone());
             if c.argv[0] == "mount" || out_mkdir.contains(&dir) {
@@ -3821,7 +5486,11 @@ impl Builder<'_> {
             v.extend(self.thin_by_hand_note());
             return v;
         };
-        let mut a = vec![self.opts.archiver.clone(), "--repository".into(), repo.clone()];
+        let mut a = vec![
+            self.opts.archiver.clone(),
+            "--repository".into(),
+            repo.clone(),
+        ];
         if let Some(p) = &self.opts.password_file {
             a.extend(["--password-file".into(), p.clone()]);
         }
@@ -3833,7 +5502,11 @@ impl Builder<'_> {
         let mut dump_prefix = a.clone();
         dump_prefix.push("--no-progress".into());
         if self.opts.json {
-            a.extend(["--json-progress".into(), "--progress-interval".into(), "1s".into()]);
+            a.extend([
+                "--json-progress".into(),
+                "--progress-interval".into(),
+                "1s".into(),
+            ]);
         } else {
             a.push("--no-progress".into());
         }
@@ -3844,7 +5517,13 @@ impl Builder<'_> {
         // btrfs's aliases and snapshots.
         let mut globs: Vec<String> = self.btrfs.values().flat_map(|p| p.globs()).collect();
         let pool_globs = self.left_out_pool_globs();
-        let reformat_globs: Vec<String> = self.layout.arr(&["load_reformat", "restore_globs"]).iter().filter_map(Value::as_str).map(str::to_string).collect();
+        let reformat_globs: Vec<String> = self
+            .layout
+            .arr(&["load_reformat", "restore_globs"])
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect();
         let raw_globs = self.raw_globs();
         // The kept LUKS2 headers' copies in the backup (luksfetch.rs): key
         // material, fetched by `bko-holt luks-headers`, never put in the
@@ -3852,18 +5531,29 @@ impl Builder<'_> {
         // under it: the backup tool's staging, not the system's (a glob
         // leaves out the one path it names, `/**` only what is under it;
         // rustic-bko 0.12.0+backotter.4 checked, oq12 review).
-        let header_globs: Vec<String> = if self.layout.arr(&["storage", "luks_headers"]).is_empty() {
+        let header_globs: Vec<String> = if self.layout.arr(&["storage", "luks_headers"]).is_empty()
+        {
             Vec::new()
         } else {
-            let mut g = vec![format!("!{}/**", crate::luksfetch::REPO_DIR), format!("!{}", crate::luksfetch::REPO_DIR)];
+            let mut g = vec![
+                format!("!{}/**", crate::luksfetch::REPO_DIR),
+                format!("!{}", crate::luksfetch::REPO_DIR),
+            ];
             if raw_globs.is_empty() {
                 g.push(format!("!{}", crate::luksfetch::BKO_DIR));
             }
             g
         };
-        let only_headers = globs.is_empty() && pool_globs.is_empty() && reformat_globs.is_empty() && raw_globs.is_empty() && !header_globs.is_empty();
+        let only_headers = globs.is_empty()
+            && pool_globs.is_empty()
+            && reformat_globs.is_empty()
+            && raw_globs.is_empty()
+            && !header_globs.is_empty();
         let headers_too = !header_globs.is_empty();
-        let only_raw = globs.is_empty() && pool_globs.is_empty() && reformat_globs.is_empty() && !raw_globs.is_empty();
+        let only_raw = globs.is_empty()
+            && pool_globs.is_empty()
+            && reformat_globs.is_empty()
+            && !raw_globs.is_empty();
         let only_pools = globs.is_empty() && !pool_globs.is_empty() && reformat_globs.is_empty();
         let only_reformat = globs.is_empty() && pool_globs.is_empty();
         globs.extend(pool_globs);
@@ -3886,7 +5576,10 @@ impl Builder<'_> {
         }
         if !need.is_empty() {
             let arch = shell_quote(&self.opts.archiver);
-            let checks: Vec<String> = need.iter().map(|f| format!("grep -q -- '{f}' {RUN_DIR}/restore.help")).collect();
+            let checks: Vec<String> = need
+                .iter()
+                .map(|f| format!("grep -q -- '{f}' {RUN_DIR}/restore.help"))
+                .collect();
             pre.push(Cmd::new(&["mkdir", "-p", "-m", "700", RUN_DIR]));
             pre.push(
                 Cmd::new(&[
@@ -3924,9 +5617,15 @@ impl Builder<'_> {
                 } else {
                     "left out of the restore: btrfs subvolumes mounted elsewhere, seen again (aliases), and the contents of the shared snapshots, made after it"
                 };
-                if headers_too { format!("{base}; and {HEADERS_WHY}") } else { base.to_string() }
+                if headers_too {
+                    format!("{base}; and {HEADERS_WHY}")
+                } else {
+                    base.to_string()
+                }
             };
-            pre.push(Cmd::write_file(&file, globs.iter().map(|g| format!("{g}\n")).collect()).why(why));
+            pre.push(
+                Cmd::write_file(&file, globs.iter().map(|g| format!("{g}\n")).collect()).why(why),
+            );
             a.extend(["--glob-file".into(), file]);
         }
         a.extend([self.opts.snapshot.clone(), self.opts.target.clone()]);
@@ -3937,21 +5636,39 @@ impl Builder<'_> {
         // whose rustic-bko predates the option (0.11.4+backotter.8) still
         // runs the command: clap reads only the variables it knows.
         let env = vec![("RUSTIC_STRICT_EXIT".to_string(), "true".to_string())];
-        let why = Some(format!("snapshot {} of {repo}, with BackOtter's restore flags", self.opts.snapshot));
+        let why = Some(format!(
+            "snapshot {} of {repo}, with BackOtter's restore flags",
+            self.opts.snapshot
+        ));
         if self.fam.is_some() {
             // The boot stage there reads nothing of the restored tree.  The
             // glob file (--pools) is written first there too.
             let mut out = pre;
-            out.extend(self.msdosfs_roots_spared(Cmd { argv: a, why, env, archiver: true, ..Cmd::default() }));
+            out.extend(self.msdosfs_roots_spared(Cmd {
+                argv: a,
+                why,
+                env,
+                archiver: true,
+                ..Cmd::default()
+            }));
             return out;
         }
         let mut out = pre;
-        out.push(Cmd { argv: a, why, env, archiver: true, ..Cmd::default() });
+        out.push(Cmd {
+            argv: a,
+            why,
+            env,
+            archiver: true,
+            ..Cmd::default()
+        });
         self.shared_snapshots(&prefix, &mut out);
         // Thin snapshots and raw volumes (load/rawvol.rs), once their
         // origins' content is restored.
         self.thin_restore(&dump_prefix, &mut out);
-        out.push(Cmd::new(&["sh", "-c", &self.atimes(&self.opts.target, "before")]).why("the atimes the restore set, for boot to put back after its reads"));
+        out.push(
+            Cmd::new(&["sh", "-c", &self.atimes(&self.opts.target, "before")])
+                .why("the atimes the restore set, for boot to put back after its reads"),
+        );
         out
     }
 
@@ -3978,12 +5695,24 @@ impl Builder<'_> {
         let allowed = format!("{RUN_DIR}/restore.fatroots");
         let lines: String = roots
             .iter()
-            .flat_map(|r| ["setting UID/GID failed", "setting User/Group failed", "chmod failed", "setting file times failed"].map(|w| format!("[WARN] restore {r}: {w}.\n")))
+            .flat_map(|r| {
+                [
+                    "setting UID/GID failed",
+                    "setting User/Group failed",
+                    "chmod failed",
+                    "setting file times failed",
+                ]
+                .map(|w| format!("[WARN] restore {r}: {w}.\n"))
+            })
             .collect();
         let err = format!("{RUN_DIR}/restore.err");
         let msg = shell_quote(&format!(
             "bko-holt: the restore set no owner, mode or times on the root of {}: msdosfs keeps none there",
-            roots.iter().map(|r| format!("/{r}")).collect::<Vec<_>>().join(", ")
+            roots
+                .iter()
+                .map(|r| format!("/{r}"))
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
         let script = format!(
             "\"$@\" 2>{err}; s=$?; cat {err} >&2; [ $s -eq 1 ] || exit $s; e=$(printf '\\033'); sed -e \"s/$e\\[[0-9;]*m//g\" -e 's/[[:space:]]*$//' {err} > {err}.plain; \
@@ -3994,7 +5723,8 @@ impl Builder<'_> {
         argv.extend(restore.argv);
         vec![
             Cmd::new(&["mkdir", "-p", "-m", "700", RUN_DIR]),
-            Cmd::write_file(&allowed, lines).why("the restore errors msdosfs's mount roots give, and only those, let pass"),
+            Cmd::write_file(&allowed, lines)
+                .why("the restore errors msdosfs's mount roots give, and only those, let pass"),
             Cmd { argv, ..restore },
         ]
     }
@@ -4023,7 +5753,10 @@ impl Builder<'_> {
         if let Some(dev) = self
             .leaves()
             .into_iter()
-            .find(|(_, c)| s(c, "type").as_deref() == Some("btrfs") && s(c, "uuid").is_some_and(|u| u.eq_ignore_ascii_case(uuid)))
+            .find(|(_, c)| {
+                s(c, "type").as_deref() == Some("btrfs")
+                    && s(c, "uuid").is_some_and(|u| u.eq_ignore_ascii_case(uuid))
+            })
             .and_then(|(src, _)| self.names.dev(&src))
         {
             return Some(dev);
@@ -4035,30 +5768,71 @@ impl Builder<'_> {
     fn shared_snapshots(&mut self, prefix: &[String], out: &mut Vec<Cmd>) {
         for fs in self.layout.arr(&["storage", "btrfs"]).to_vec() {
             let uuid = s(&fs, "uuid").unwrap_or_default();
-            let Some(plan) = self.btrfs.get(&uuid).cloned().filter(|p| !p.shared.is_empty()) else { continue };
-            let Some(dev) = self.btrfs_dev(&uuid, Some(&fs)) else { continue };
+            let Some(plan) = self
+                .btrfs
+                .get(&uuid)
+                .cloned()
+                .filter(|p| !p.shared.is_empty())
+            else {
+                continue;
+            };
+            let Some(dev) = self.btrfs_dev(&uuid, Some(&fs)) else {
+                continue;
+            };
             let top = format!("{RUN_DIR}/btrfs/{uuid}");
             out.push(Cmd::new(&["mkdir", "-p", &top]));
-            out.push(Cmd::new(&["mount", "-t", "btrfs", "-o", "subvolid=5,noatime", &dev, &top]).why(format!("btrfs {uuid}: its shared snapshots (noatime: reading them changes nothing)")));
-            let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
+            out.push(
+                Cmd::new(&[
+                    "mount",
+                    "-t",
+                    "btrfs",
+                    "-o",
+                    "subvolid=5,noatime",
+                    &dev,
+                    &top,
+                ])
+                .why(format!(
+                    "btrfs {uuid}: its shared snapshots (noatime: reading them changes nothing)"
+                )),
+            );
+            let exe = std::env::current_exe()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "bko-holt".into());
             let mut placeholders = Vec::new();
             for x in &plan.shared {
                 for n in &x.placeholders {
                     let ph = format!("{top}/.bko-holt-placeholder-{n}");
-                    out.push(Cmd::new(&["btrfs", "subvolume", "create", &ph]).why(format!("burns ID {n}, unused on the source")));
+                    out.push(
+                        Cmd::new(&["btrfs", "subvolume", "create", &ph])
+                            .why(format!("burns ID {n}, unused on the source")),
+                    );
                     placeholders.push(ph);
                 }
                 let d = format!("{top}/{}", x.path);
-                let parent = d.rsplit_once('/').map_or(top.clone(), |(p, _)| p.to_string());
+                let parent = d
+                    .rsplit_once('/')
+                    .map_or(top.clone(), |(p, _)| p.to_string());
                 let mut r: Vec<String> = prefix.to_vec();
                 r.extend(["restore".into(), "--numeric-id".into(), "--exact".into()]);
                 if let Some((b, sub)) = &x.clone_from {
-                    r.extend(["--clone-from".into(), format!("{}={top}/{sub}", snapshot_path(&self.opts.snapshot, b).1)]);
+                    r.extend([
+                        "--clone-from".into(),
+                        format!("{}={top}/{sub}", snapshot_path(&self.opts.snapshot, b).1),
+                    ]);
                 }
                 let (id, path) = snapshot_path(&self.opts.snapshot, &x.backup);
                 r.extend([format!("{id}:{path}"), d.clone()]);
-                let r = r.iter().map(|w| shell_quote(w)).collect::<Vec<_>>().join(" ");
-                let (qd, qb, qp, qpath) = (shell_quote(&d), shell_quote(&format!("{top}/{}", x.base)), shell_quote(&parent), dq_escape(&x.path));
+                let r = r
+                    .iter()
+                    .map(|w| shell_quote(w))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let (qd, qb, qp, qpath) = (
+                    shell_quote(&d),
+                    shell_quote(&format!("{top}/{}", x.base)),
+                    shell_quote(&parent),
+                    dq_escape(&x.path),
+                );
                 let id = x.new_id;
                 // Its children (each slot's /etc on transactional-update):
                 // made in it once it's made, where its snapshot has an empty
@@ -4071,7 +5845,8 @@ impl Builder<'_> {
                 // exact restore gives back each entry's flags as the
                 // backup has them (load/unflag.rs).
                 let unflag = format!("{} clear-restricting-flags", shell_quote(&exe));
-                let (mut kids_snap, mut kids_empty, mut kids_ids) = (String::new(), String::new(), String::new());
+                let (mut kids_snap, mut kids_empty, mut kids_ids) =
+                    (String::new(), String::new(), String::new());
                 for c in &x.children {
                     let mut ph = String::new();
                     for n in &c.placeholders {
@@ -4081,14 +5856,27 @@ impl Builder<'_> {
                     }
                     let qc = format!("\"$d\"/{}", shell_quote(&c.rest));
                     let make = match &c.base {
-                        Some(b) => format!("btrfs subvolume snapshot {} {qc}", shell_quote(&format!("{top}/{b}"))),
+                        Some(b) => format!(
+                            "btrfs subvolume snapshot {} {qc}",
+                            shell_quote(&format!("{top}/{b}"))
+                        ),
                         None => format!("btrfs subvolume create {qc}"),
                     };
-                    let clear = if c.base.is_some() { format!("{unflag} {qc} && ") } else { String::new() };
-                    kids_snap += &format!("{ph}rm -rf -- {qc} && mkdir -p \"$(dirname {qc})\" && {make} && {clear}");
-                    kids_empty += &format!("{ph}mkdir -p \"$(dirname {qc})\" && btrfs subvolume create {qc} && ");
+                    let clear = if c.base.is_some() {
+                        format!("{unflag} {qc} && ")
+                    } else {
+                        String::new()
+                    };
+                    kids_snap += &format!(
+                        "{ph}rm -rf -- {qc} && mkdir -p \"$(dirname {qc})\" && {make} && {clear}"
+                    );
+                    kids_empty += &format!(
+                        "{ph}mkdir -p \"$(dirname {qc})\" && btrfs subvolume create {qc} && "
+                    );
                     let (cp, cid) = (dq_escape(&c.path), c.new_id);
-                    kids_ids += &format!("; cid=$(btrfs inspect-internal rootid {qc}) && [ \"$cid\" = {cid} ] || echo \"{cp}: ID $cid here, {cid} in the plan\"");
+                    kids_ids += &format!(
+                        "; cid=$(btrfs inspect-internal rootid {qc}) && [ \"$cid\" = {cid} ] || echo \"{cp}: ID $cid here, {cid} in the plan\""
+                    );
                 }
                 // The directory it's in keeps its times (snapper's N/, with
                 // info.xml), which rmdir and the snapshot would change.
@@ -4100,43 +5888,95 @@ impl Builder<'_> {
                      id=$(btrfs inspect-internal rootid \"$d\") && [ \"$id\" = {id} ] || echo \"{qpath}: ID $id here, {id} in the plan\"{kids_ids}"
                 );
                 let mut why = match x.id {
-                    Some(src) if src == id => format!("{}: a snapshot of {}, then made exact from the backup's {} (ID {id}, as on the source)", x.path, x.base, x.backup),
-                    Some(src) => format!("{}: a snapshot of {}, then made exact from the backup's {} (ID {id}; {src} on the source)", x.path, x.base, x.backup),
-                    None => format!("{}: a snapshot of {}, then made exact from the backup's {}", x.path, x.base, x.backup),
+                    Some(src) if src == id => format!(
+                        "{}: a snapshot of {}, then made exact from the backup's {} (ID {id}, as on the source)",
+                        x.path, x.base, x.backup
+                    ),
+                    Some(src) => format!(
+                        "{}: a snapshot of {}, then made exact from the backup's {} (ID {id}; {src} on the source)",
+                        x.path, x.base, x.backup
+                    ),
+                    None => format!(
+                        "{}: a snapshot of {}, then made exact from the backup's {}",
+                        x.path, x.base, x.backup
+                    ),
                 };
                 for c in &x.children {
-                    let from = c.base.as_ref().map_or_else(|| "made empty".to_string(), |b| format!("a snapshot of {b}"));
+                    let from = c.base.as_ref().map_or_else(
+                        || "made empty".to_string(),
+                        |b| format!("a snapshot of {b}"),
+                    );
                     let ids = match c.id {
-                        Some(src) if src == c.new_id => format!("ID {}, as on the source", c.new_id),
+                        Some(src) if src == c.new_id => {
+                            format!("ID {}, as on the source", c.new_id)
+                        }
                         Some(src) => format!("ID {}; {src} on the source", c.new_id),
                         None => format!("ID {}", c.new_id),
                     };
-                    why += &format!("; {} nested in it before the restore ({from}, {ids})", c.rest);
+                    why += &format!(
+                        "; {} nested in it before the restore ({from}, {ids})",
+                        c.rest
+                    );
                 }
                 // It runs the archiver on one branch only: tagged all the
                 // same (holt-json.md: archiver.parts is an upper bound).
                 out.push(Cmd::new(&["sh", "-c", &script]).why(why).archiver());
             }
             if !placeholders.is_empty() {
-                let mut a = vec!["btrfs".to_string(), "subvolume".into(), "delete".into(), "--commit-after".into()];
+                let mut a = vec![
+                    "btrfs".to_string(),
+                    "subvolume".into(),
+                    "delete".into(),
+                    "--commit-after".into(),
+                ];
                 a.extend(placeholders);
-                out.push(Cmd { argv: a, ..Cmd::default() });
-                out.push(Cmd::new(&["btrfs", "subvolume", "sync", &top]).why("the placeholders gone before quotas are on (no qgroups for them)"));
+                out.push(Cmd {
+                    argv: a,
+                    ..Cmd::default()
+                });
+                out.push(
+                    Cmd::new(&["btrfs", "subvolume", "sync", &top])
+                        .why("the placeholders gone before quotas are on (no qgroups for them)"),
+                );
             }
             // Read-only last: a child (a slot's /etc) is made and filled in
             // its slot first, and a child that is read-only itself comes
             // before its slot.
             for x in &plan.shared {
                 for c in x.children.iter().rev().filter(|c| c.readonly) {
-                    out.push(Cmd::new(&["btrfs", "property", "set", "-ts", &format!("{top}/{}", c.path), "ro", "true"]));
+                    out.push(Cmd::new(&[
+                        "btrfs",
+                        "property",
+                        "set",
+                        "-ts",
+                        &format!("{top}/{}", c.path),
+                        "ro",
+                        "true",
+                    ]));
                 }
                 if x.readonly {
-                    out.push(Cmd::new(&["btrfs", "property", "set", "-ts", &format!("{top}/{}", x.path), "ro", "true"]));
+                    out.push(Cmd::new(&[
+                        "btrfs",
+                        "property",
+                        "set",
+                        "-ts",
+                        &format!("{top}/{}", x.path),
+                        "ro",
+                        "true",
+                    ]));
                 }
             }
-            let default_id = fs.at(&["default_subvolume", "id"]).and_then(Value::as_u64).unwrap_or(5);
+            let default_id = fs
+                .at(&["default_subvolume", "id"])
+                .and_then(Value::as_u64)
+                .unwrap_or(5);
             if let Some(x) = plan.shared.iter().find(|x| x.id == Some(default_id)) {
-                out.push(Cmd::new(&["btrfs", "subvolume", "set-default", &format!("{top}/{}", x.path)]));
+                out.push(Cmd::new(&[
+                    "btrfs",
+                    "subvolume",
+                    "set-default",
+                    &format!("{top}/{}", x.path),
+                ]));
             }
             if fs.get("quota_enabled").and_then(Value::as_bool) == Some(true) {
                 self.btrfs_quota(&fs, &top, &plan, out);
@@ -4155,7 +5995,14 @@ fn snapshot_path(snapshot: &str, path: &str) -> (String, String) {
     match snapshot.split_once(':') {
         Some((id, sub)) if !sub.trim_end_matches('/').is_empty() => {
             let sub = sub.trim_end_matches('/');
-            (id.to_string(), if path == "/" { sub.to_string() } else { format!("{sub}{path}") })
+            (
+                id.to_string(),
+                if path == "/" {
+                    sub.to_string()
+                } else {
+                    format!("{sub}{path}")
+                },
+            )
         }
         Some((id, _)) => (id.to_string(), path.to_string()),
         None => (snapshot.to_string(), path.to_string()),
@@ -4176,7 +6023,10 @@ pub(crate) fn atimes_cmd(t: &str, what: &str, prune: &[String]) -> String {
 /// atimes_cmd; with RUN_MNT, T/run/mnt is listed, not pruned with the rest
 /// of T/run: Ubuntu Core's whole tree is there (load/snapcore.rs).
 pub(crate) fn atimes_cmd_in(t: &str, what: &str, prune: &[String], run_mnt: bool) -> String {
-    let more: String = prune.iter().map(|p| format!(" -o -path {}", shell_quote(p))).collect();
+    let more: String = prune
+        .iter()
+        .map(|p| format!(" -o -path {}", shell_quote(p)))
+        .collect();
     let qt = shell_quote(t);
     let run = if run_mnt {
         format!(
@@ -4250,19 +6100,57 @@ impl Builder<'_> {
         // used the untranslated source name. That formatted host zvols, mutated
         // the host pool's keylocation and cachefile, and left the restored pool
         // unable to unlock or import at boot. Translate via self.zname().
-        for ds in self.layout.v.at(&["storage", "zfs", "tools", "datasets"]).and_then(Value::as_array).cloned().unwrap_or_default() {
+        for ds in self
+            .layout
+            .v
+            .at(&["storage", "zfs", "tools", "datasets"])
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+        {
             let name = s(&ds, "name").unwrap_or_default();
             let pool = name.split('/').next().unwrap_or("");
-            if s(&ds, "encryptionroot").as_deref() != Some(name.as_str()) || !self.pools.contains(&self.zname(pool)) {
+            if s(&ds, "encryptionroot").as_deref() != Some(name.as_str())
+                || !self.pools.contains(&self.zname(pool))
+            {
                 continue;
             }
             let loc = s(&ds, "keylocation").unwrap_or("prompt".into());
-            out.push(Cmd::new(&["zfs", "set", &format!("keylocation={loc}"), &self.zname(&name)]).why(format!("{name}: unlocks as the source did")));
+            out.push(
+                Cmd::new(&[
+                    "zfs",
+                    "set",
+                    &format!("keylocation={loc}"),
+                    &self.zname(&name),
+                ])
+                .why(format!("{name}: unlocks as the source did")),
+            );
         }
-        for p in self.layout.v.at(&["storage", "zfs", "tools", "imported_pools"]).and_then(Value::as_array).into_iter().flatten() {
+        for p in self
+            .layout
+            .v
+            .at(&["storage", "zfs", "tools", "imported_pools"])
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let here = self.zname(&s(p, "name").unwrap_or_default());
-            if self.pools.contains(&here) && !self.layout.v.at(&["storage", "zfs", "zpool_cache"]).is_none_or(Value::is_null) {
-                out.push(Cmd::new(&["zpool", "set", &format!("cachefile={t}/etc/zfs/zpool.cache"), &here]).why("the restored system's zpool.cache names the new pool"));
+            if self.pools.contains(&here)
+                && !self
+                    .layout
+                    .v
+                    .at(&["storage", "zfs", "zpool_cache"])
+                    .is_none_or(Value::is_null)
+            {
+                out.push(
+                    Cmd::new(&[
+                        "zpool",
+                        "set",
+                        &format!("cachefile={t}/etc/zfs/zpool.cache"),
+                        &here,
+                    ])
+                    .why("the restored system's zpool.cache names the new pool"),
+                );
             }
         }
         // The target is mounted with the source's own options (dracut
@@ -4281,7 +6169,13 @@ impl Builder<'_> {
         let lvm_devices_back =
             Cmd::new(&["sh", "-c", &format!("[ ! -d {RUN_DIR}/lvm-devices ] || {{ rm -rf {qdevdir} && cp -a {RUN_DIR}/lvm-devices {qdevdir} && touch -r {RUN_DIR}/lvm-devices.parent {qlvm}; }}")]).why("the restored LVM devices file, put back");
         for d in ["dev", "proc", "sys", "run"] {
-            out.push(Cmd::new(&["mount", "--rbind", "--make-rslave", &format!("/{d}"), &format!("{t}/{d}")]));
+            out.push(Cmd::new(&[
+                "mount",
+                "--rbind",
+                "--make-rslave",
+                &format!("/{d}"),
+                &format!("{t}/{d}"),
+            ]));
         }
         // NixOS and Guix System (crate::store): their notes and paths.
         let store = crate::store::system(self.layout.str_at(&["os", "id"]));
@@ -4312,9 +6206,18 @@ impl Builder<'_> {
                 None => self.notes.push("the initramfs came prebuilt with the kernel and was restored with it; nothing to rebuild".into()),
             }
         }
-        let loader = self.layout.str_at(&["boot", "loader", "name"]).unwrap_or("unknown").to_string();
+        let loader = self
+            .layout
+            .str_at(&["boot", "loader", "name"])
+            .unwrap_or("unknown")
+            .to_string();
         let uefi = self.layout.uefi();
-        let via_shim = self.layout.v.at(&["boot", "loader", "via_shim"]).and_then(Value::as_bool) == Some(true);
+        let via_shim = self
+            .layout
+            .v
+            .at(&["boot", "loader", "via_shim"])
+            .and_then(Value::as_bool)
+            == Some(true);
         match (loader.as_str(), uefi) {
             // Proxmox VE on ZFS root: proxmox-boot-tool owns the ESPs, which
             // nothing mounts and the archive doesn't hold; it rebuilds them
@@ -4374,38 +6277,49 @@ impl Builder<'_> {
             // /boot/grub/i386-pc and the restore brought back, are written
             // to each disk by the rescue system's grub-bios-setup, outside
             // the chroot, which patches their sector addresses for it.
-            ("grub", false) if store.is_some() => if let Some(st) = store {
-                let devs = self.grub_bios_devices();
-                if devs.is_empty() {
-                    self.problems.push("BIOS GRUB: no disk's MBR holds GRUB".into());
-                }
-                let qt = shell_quote(&t);
-                match st.grub_install {
-                    Some(install) => {
-                        let pick = st.bios_grub_pick(&t);
-                        for d in devs {
-                            let qd = shell_quote(&d);
-                            out.push(Cmd::new(&["sh", "-c", &format!("{pick}; chroot {qt} \"$g/{install}\" --target=i386-pc --boot-directory=/boot {qd}")]).why(format!("{}'s GRUB; the restored grub.cfg stays", st.store_name)));
-                        }
+            ("grub", false) if store.is_some() => {
+                if let Some(st) = store {
+                    let devs = self.grub_bios_devices();
+                    if devs.is_empty() {
+                        self.problems
+                            .push("BIOS GRUB: no disk's MBR holds GRUB".into());
                     }
-                    None => {
-                        let dir = format!("{t}{}/i386-pc", self.grub_dir());
-                        let missing: Vec<&str> = ["boot_img", "core_img"].into_iter().filter(|k| self.layout.v.at(&["boot", "store", k]).and_then(Value::as_bool) == Some(false)).collect();
-                        if !missing.is_empty() {
-                            self.problems.push(format!(
+                    let qt = shell_quote(&t);
+                    match st.grub_install {
+                        Some(install) => {
+                            let pick = st.bios_grub_pick(&t);
+                            for d in devs {
+                                let qd = shell_quote(&d);
+                                out.push(Cmd::new(&["sh", "-c", &format!("{pick}; chroot {qt} \"$g/{install}\" --target=i386-pc --boot-directory=/boot {qd}")]).why(format!("{}'s GRUB; the restored grub.cfg stays", st.store_name)));
+                            }
+                        }
+                        None => {
+                            let dir = format!("{t}{}/i386-pc", self.grub_dir());
+                            let missing: Vec<&str> = ["boot_img", "core_img"]
+                                .into_iter()
+                                .filter(|k| {
+                                    self.layout
+                                        .v
+                                        .at(&["boot", "store", k])
+                                        .and_then(Value::as_bool)
+                                        == Some(false)
+                                })
+                                .collect();
+                            if !missing.is_empty() {
+                                self.problems.push(format!(
                                 "{}: the source's {}/i386-pc has no {}, which grub-install leaves there and bko-holt load writes to the new disk's MBR and BIOS boot partition (its store has no GRUB to install with)",
                                 st.name,
                                 self.grub_dir(),
                                 missing.iter().map(|k| k.replace('_', ".")).collect::<Vec<_>>().join(" or ")
                             ));
-                        }
-                        if let Some(why) = self.store_core_img_moved(st) {
-                            self.problems.push(why);
-                        }
-                        let q = shell_quote(&dir);
-                        for d in devs {
-                            let (qd, ed) = (shell_quote(&d), dq_escape(&d));
-                            out.push(
+                            }
+                            if let Some(why) = self.store_core_img_moved(st) {
+                                self.problems.push(why);
+                            }
+                            let q = shell_quote(&dir);
+                            for d in devs {
+                                let (qd, ed) = (shell_quote(&d), dq_escape(&d));
+                                out.push(
                                 Cmd::new(&[
                                     "sh",
                                     "-c",
@@ -4413,13 +6327,14 @@ impl Builder<'_> {
                                 ])
                                 .why(format!("{}'s own boot.img and core.img, restored in {}/i386-pc; the rescue's grub-bios-setup writes them to the new disk", st.name, self.grub_dir())),
                             );
+                            }
                         }
                     }
+                    if let Some(n) = st.bios_grub {
+                        self.notes.push(n.into());
+                    }
+                    self.check_store_grub_cfg(st);
                 }
-                if let Some(n) = st.bios_grub {
-                    self.notes.push(n.into());
-                }
-                self.check_store_grub_cfg(st);
             }
             ("grub", false) => {
                 let devs = self.grub_bios_devices();
@@ -4432,7 +6347,11 @@ impl Builder<'_> {
                 // Only where debconf holds the answer (Debian and its
                 // derivatives: dpkg's grub-pc asked it).  Arch, Fedora,
                 // Chimera, Void and the rest have no debconf to go stale.
-                if self.layout.str_at(&["boot", "grub", "debconf", "grub-pc/install_devices"]).is_some() {
+                if self
+                    .layout
+                    .str_at(&["boot", "grub", "debconf", "grub-pc/install_devices"])
+                    .is_some()
+                {
                     self.notes.push("debconf's grub-pc/install_devices still names the source's disks; `dpkg-reconfigure grub-pc` on the restored system fixes it".into());
                 }
                 self.remake_grub_cfg(&t, &mut out);
@@ -4480,21 +6399,38 @@ impl Builder<'_> {
             // filesystem's UUID, which the new one keeps (as BIOS GRUB's
             // grub.cfg does, above).  Only the boot entry is made
             // (efi_entries, below).
-            ("grub", true) if store.is_some() => if let Some(st) = store {
-                self.notes.push(st.uefi_grub.into());
-                let g = self.boot_names().grub;
-                let img = self.esp_file(&format!("/{g}")).unwrap_or_else(|| format!("EFI/{}/{g}", self.bootloader_id()));
-                if st.efi_prefix_by_number {
-                    out.extend(self.store_grub_prefix(&img));
+            ("grub", true) if store.is_some() => {
+                if let Some(st) = store {
+                    self.notes.push(st.uefi_grub.into());
+                    let g = self.boot_names().grub;
+                    let img = self
+                        .esp_file(&format!("/{g}"))
+                        .unwrap_or_else(|| format!("EFI/{}/{g}", self.bootloader_id()));
+                    if st.efi_prefix_by_number {
+                        out.extend(self.store_grub_prefix(&img));
+                    }
+                    out.extend(self.store_removable(&img));
+                    self.check_store_grub_cfg(st);
                 }
-                out.extend(self.store_removable(&img));
-                self.check_store_grub_cfg(st);
             }
             ("grub", true) => {
-                let esp = self.layout.str_at(&["boot", "esps", "0", "mounted_at"]).filter(|m| safe_target_subpath(m)).unwrap_or("/boot/efi").to_string();
+                let esp = self
+                    .layout
+                    .str_at(&["boot", "esps", "0", "mounted_at"])
+                    .filter(|m| safe_target_subpath(m))
+                    .unwrap_or("/boot/efi")
+                    .to_string();
                 let id = self.bootloader_id();
                 let n = self.boot_names();
-                let a = vec!["chroot".to_string(), t.clone(), "grub-install".into(), format!("--target={}", n.grub_efi_target), format!("--efi-directory={esp}"), format!("--bootloader-id={id}"), "--no-nvram".into()];
+                let a = vec![
+                    "chroot".to_string(),
+                    t.clone(),
+                    "grub-install".into(),
+                    format!("--target={}", n.grub_efi_target),
+                    format!("--efi-directory={esp}"),
+                    format!("--bootloader-id={id}"),
+                    "--no-nvram".into(),
+                ];
                 // --removable: Debian's grub-install writes the fallback
                 // path itself (--force-extra-removable, a Debian patch), and
                 // Ubuntu's 2.12 by default (its option is the opposite,
@@ -4514,7 +6450,10 @@ impl Builder<'_> {
                 // inventory says it's a copy, always; with --reformat, also
                 // when the restored files compare equal.  (FAT finds EFI/BOOT
                 // in any case.)
-                let (fallback, loader) = (format!("{t}{esp}/{}", n.fallback), format!("{t}{esp}/EFI/{id}/{}", n.grub));
+                let (fallback, loader) = (
+                    format!("{t}{esp}/{}", n.fallback),
+                    format!("{t}{esp}/EFI/{id}/{}", n.grub),
+                );
                 let (qfb, qld) = (shell_quote(&fallback), shell_quote(&loader));
                 let copy = !self.opts.removable && self.fallback_is_grub_copy(&id);
                 let renew = !self.opts.reformats.is_empty() && !self.opts.removable && !copy;
@@ -4524,10 +6463,20 @@ impl Builder<'_> {
                 if self.opts.removable && debian {
                     out.push(self.debian_grub_removable(&a, &t, &esp, &id, via_shim));
                 } else {
-                    out.push(Cmd { argv: a, ..Cmd::default() });
+                    out.push(Cmd {
+                        argv: a,
+                        ..Cmd::default()
+                    });
                 }
                 if renew {
-                    out.push(Cmd::new(&["sh", "-c", &format!("[ ! -e {RUN_DIR}/fallback-is-grub ] || cp {qld} {qfb}")]).why("--reformat: the fallback loader, a copy of GRUB, renewed with it"));
+                    out.push(
+                        Cmd::new(&[
+                            "sh",
+                            "-c",
+                            &format!("[ ! -e {RUN_DIR}/fallback-is-grub ] || cp {qld} {qfb}"),
+                        ])
+                        .why("--reformat: the fallback loader, a copy of GRUB, renewed with it"),
+                    );
                 }
                 if copy {
                     out.push(Cmd::new(&["cp", &loader, &fallback]).why(format!("the fallback loader, {}, a copy of GRUB on the source, renewed with it: the old one names /boot's partition as it was", n.fallback)));
@@ -4541,24 +6490,47 @@ impl Builder<'_> {
             // signed systemd-boot and the fallback came back with the ESP.
             // bootctl install would put an unsigned systemd-boot where shim
             // is the fallback, EFI/BOOT/BOOTX64.EFI.
-            ("systemd-boot", true) if self.layout.v.at(&["boot", "loader", "via_shim"]).and_then(Value::as_bool) == Some(true) => {
+            ("systemd-boot", true)
+                if self
+                    .layout
+                    .v
+                    .at(&["boot", "loader", "via_shim"])
+                    .and_then(Value::as_bool)
+                    == Some(true) =>
+            {
                 self.notes.push("systemd-boot through shim: shim, systemd-boot and the loader entries are the restored ESP's; only the boot entries are made".into());
             }
             ("systemd-boot", true) if store.is_some_and(|s| s.systemd_boot.is_some()) => {
-                self.notes.push(store.and_then(|s| s.systemd_boot).unwrap_or_default().into());
+                self.notes.push(
+                    store
+                        .and_then(|s| s.systemd_boot)
+                        .unwrap_or_default()
+                        .into(),
+                );
                 let sd = self.boot_names().systemd_boot;
-                let img = self.esp_file(&format!("/{sd}")).unwrap_or_else(|| format!("EFI/systemd/{sd}"));
+                let img = self
+                    .esp_file(&format!("/{sd}"))
+                    .unwrap_or_else(|| format!("EFI/systemd/{sd}"));
                 out.extend(self.store_removable(&img));
             }
             ("systemd-boot", true) => {
-                out.push(Cmd::new(&["chroot", &t, "bootctl", "install", "--no-variables"]));
+                out.push(Cmd::new(&[
+                    "chroot",
+                    &t,
+                    "bootctl",
+                    "install",
+                    "--no-variables",
+                ]));
                 if let Some(c) = self.gen_systemd_boot(&t) {
                     out.push(c);
                 }
             }
             // Limine on UEFI is files on the ESP (its EFI binary,
             // limine.conf), restored with it; only the boot entries are made.
-            ("limine", true) => self.notes.push("Limine: its EFI binary and limine.conf came back with the ESP; nothing to install".into()),
+            ("limine", true) => self.notes.push(
+                "Limine: its EFI binary and limine.conf came back with the ESP; nothing to install"
+                    .into(),
+            ),
             // rEFInd through shim: PikaOS doesn't, and nothing here keeps
             // shim's MOK enrolment of rEFInd's key.
             ("refind", true) if via_shim => {
@@ -4589,18 +6561,50 @@ impl Builder<'_> {
                 let cmds = self.elilo_cmds(&t);
                 out.extend(cmds);
             }
-            (other, _) => self.coded(Problem::new(ProblemCode::Unsupported, format!("boot loader {other} ({}) isn't one bko-holt load can install", if uefi { "UEFI" } else { "BIOS" })).with("what", other)),
+            (other, _) => self.coded(
+                Problem::new(
+                    ProblemCode::Unsupported,
+                    format!(
+                        "boot loader {other} ({}) isn't one bko-holt load can install",
+                        if uefi { "UEFI" } else { "BIOS" }
+                    ),
+                )
+                .with("what", other),
+            ),
         }
         // BigLinux's installer ends with btrfs-fix: /boot and GRUB's files
         // rewritten uncompressed, which the restore and this stage wrote
         // through compress-force=zstd.  After the initramfs and grub.cfg.
-        if self.layout.str_at(&["os", "id"]) == Some("biglinux") && self.fstab_type_of("/boot").as_deref() == Some("btrfs") {
-            for d in ["/boot", "/usr/share/grub"].into_iter().filter(|d| self.fstab_type_of(d).as_deref() == Some("btrfs")) {
-                out.push(Cmd::new(&["btrfs", "filesystem", "defragment", "--nocomp", "-r", &format!("{t}{d}")]).why(format!("{d} uncompressed, as BigLinux's installer leaves it (its btrfs-fix)")));
+        if self.layout.str_at(&["os", "id"]) == Some("biglinux")
+            && self.fstab_type_of("/boot").as_deref() == Some("btrfs")
+        {
+            for d in ["/boot", "/usr/share/grub"]
+                .into_iter()
+                .filter(|d| self.fstab_type_of(d).as_deref() == Some("btrfs"))
+            {
+                out.push(
+                    Cmd::new(&[
+                        "btrfs",
+                        "filesystem",
+                        "defragment",
+                        "--nocomp",
+                        "-r",
+                        &format!("{t}{d}"),
+                    ])
+                    .why(format!(
+                        "{d} uncompressed, as BigLinux's installer leaves it (its btrfs-fix)"
+                    )),
+                );
             }
         }
         // AnduinOS's Disk Snapshots Manager (decision 6): a note only.
-        if self.layout.str_at(&["os", "id"]) == Some("anduinos") && self.layout.str_at(&["boot", "packages", "anduinos-btrfs-snapshots-manager"]).is_some() && !self.layout.arr(&["storage", "btrfs"]).is_empty() {
+        if self.layout.str_at(&["os", "id"]) == Some("anduinos")
+            && self
+                .layout
+                .str_at(&["boot", "packages", "anduinos-btrfs-snapshots-manager"])
+                .is_some()
+            && !self.layout.arr(&["storage", "btrfs"]).is_empty()
+        {
             self.notes.push("AnduinOS: the Disk Snapshots Manager's records name each snapshot by its Btrfs subvolume UUID, which a restore can't keep (the subvolumes are made anew), so its snapshot list and Factory Reset may need re-pointing at the restored snapshots".into());
         }
         if uefi && !self.opts.no_nvram {
@@ -4617,7 +6621,15 @@ impl Builder<'_> {
         }
         out.extend(self.rewrite_cmd(true));
         out.push(Cmd::new(&["mkdir", "-p", &format!("{t}/var/log/bko-holt")]));
-        out.push(Cmd::new(&["cp", "-a", &format!("{RUN_DIR}/log/."), &format!("{t}/var/log/bko-holt/")]).why("this restore's log, on the restored system"));
+        out.push(
+            Cmd::new(&[
+                "cp",
+                "-a",
+                &format!("{RUN_DIR}/log/."),
+                &format!("{t}/var/log/bko-holt/"),
+            ])
+            .why("this restore's log, on the restored system"),
+        );
         if store.is_none() {
             // The restore kept every file's SELinux label; what this stage
             // wrote (initramfs images, grub.cfg, the log, bootctl's
@@ -4659,11 +6671,21 @@ impl Builder<'_> {
             .mount_points
             .iter()
             .filter_map(|d| d.strip_prefix(t))
-            .map(|p| if p.is_empty() { "/".to_string() } else { p.to_string() })
+            .map(|p| {
+                if p.is_empty() {
+                    "/".to_string()
+                } else {
+                    p.to_string()
+                }
+            })
             // Not under the chroot's own /dev, /proc, /sys and /run, which
             // hide the restored ones (and TrueNAS's other boot environments
             // at /run/bko-be: load's mounts, not the system's).
-            .filter(|p| !["/dev", "/proc", "/sys", "/run"].iter().any(|d| p == d || p.starts_with(&format!("{d}/"))))
+            .filter(|p| {
+                !["/dev", "/proc", "/sys", "/run"]
+                    .iter()
+                    .any(|d| p == d || p.starts_with(&format!("{d}/")))
+            })
             .collect();
         mps.sort();
         mps.dedup();
@@ -4671,8 +6693,15 @@ impl Builder<'_> {
         // (filesystem's mount point, the mount points directly on it), shallowest first.
         let mut groups: Vec<(String, Vec<String>)> = Vec::new();
         for m in mps.iter().filter(|m| *m != "/") {
-            let Some(p) = mps.iter().filter(|p| under(p, m)).max_by_key(|p| p.len()) else { continue };
-            if self.fstab_type_of(p).is_some_and(|ty| matches!(ty.as_str(), "vfat" | "msdos" | "exfat" | "ntfs" | "ntfs3" | "fuseblk")) {
+            let Some(p) = mps.iter().filter(|p| under(p, m)).max_by_key(|p| p.len()) else {
+                continue;
+            };
+            if self.fstab_type_of(p).is_some_and(|ty| {
+                matches!(
+                    ty.as_str(),
+                    "vfat" | "msdos" | "exfat" | "ntfs" | "ntfs3" | "fuseblk"
+                )
+            }) {
                 continue;
             }
             match groups.iter_mut().find(|(g, _)| g == p) {
@@ -4686,8 +6715,15 @@ impl Builder<'_> {
         groups.sort_by_key(|(p, _)| if p == "/" { 0 } else { p.matches('/').count() });
         let mut script = format!("{SELINUX_SETFILES_GATE}r={RUN_DIR}/mount-points");
         for (p, ms) in &groups {
-            let at = if p == "/" { "\"$r\"".to_string() } else { format!("\"$r\"{}", shell_quote(p)) };
-            let paths: Vec<String> = ms.iter().map(|m| format!("\"$r\"{}", shell_quote(m))).collect();
+            let at = if p == "/" {
+                "\"$r\"".to_string()
+            } else {
+                format!("\"$r\"{}", shell_quote(p))
+            };
+            let paths: Vec<String> = ms
+                .iter()
+                .map(|m| format!("\"$r\"{}", shell_quote(m)))
+                .collect();
             script.push_str(&format!("; mkdir -p {at} && mount --bind {} {at} || exit 1; setfiles -r \"$r\" \"$f\" {}; s=$?; umount {at}; [ $s = 0 ] || exit $s", shell_quote(p), paths.join(" ")));
         }
         Some(Cmd::new(&["chroot", &self.opts.target, "sh", "-c", &script]).why("SELinux labels for the mount points load made, which the mounts hide from the restore"))
@@ -4706,16 +6742,42 @@ impl Builder<'_> {
             if self.layout.random_key_crypt(&name).is_some() {
                 continue;
             }
-            let dm_name = dm.at(&["dm", "dm_name"]).and_then(Value::as_str).unwrap_or(&name).to_string();
-            let Some(e) = self.layout.crypttab_entry(&dm_name, dm.at(&["dm", "luks_uuid"]).and_then(Value::as_str)).cloned() else { continue };
+            let dm_name = dm
+                .at(&["dm", "dm_name"])
+                .and_then(Value::as_str)
+                .unwrap_or(&name)
+                .to_string();
+            let Some(e) = self
+                .layout
+                .crypttab_entry(
+                    &dm_name,
+                    dm.at(&["dm", "luks_uuid"]).and_then(Value::as_str),
+                )
+                .cloned()
+            else {
+                continue;
+            };
             let open_as = s(&e, "name").unwrap_or(dm_name);
-            let Some(k) = s(&e, "key_file").filter(|k| !matches!(k.as_str(), "none" | "-" | "")) else { continue };
+            let Some(k) = s(&e, "key_file").filter(|k| !matches!(k.as_str(), "none" | "-" | ""))
+            else {
+                continue;
+            };
             // A kept header (luks_keep_header) has the source's keyslots,
             // its key file's among them: nothing to add.
-            if self.layout.slaves(&name).first().is_some_and(|u| crate::luksheader::kept(&self.layout.v, u).is_some()) {
+            if self
+                .layout
+                .slaves(&name)
+                .first()
+                .is_some_and(|u| crate::luksheader::kept(&self.layout.v, u).is_some())
+            {
                 continue;
             }
-            let under = self.layout.slaves(&name).first().and_then(|u| self.names.dev(u)).unwrap_or_default();
+            let under = self
+                .layout
+                .slaves(&name)
+                .first()
+                .and_then(|u| self.names.dev(u))
+                .unwrap_or_default();
             // Made with --key-file's key: that keyslot stays (it's how the
             // restore was opened, and BackShot1's typed passphrase), and the
             // restored key file gets one beside it, as the source had (Manjaro's
@@ -4738,20 +6800,37 @@ impl Builder<'_> {
                 .filter(|(n, _)| matches!(*n, "keyfile-offset" | "keyfile-size"))
                 .map(|(n, v)| (n, v.to_string()))
                 .collect();
-            let new_slice: String = slice.iter().map(|(n, v)| format!(" --new-{n}={}", shell_quote(v))).collect();
+            let new_slice: String = slice
+                .iter()
+                .map(|(n, v)| format!(" --new-{n}={}", shell_quote(v)))
+                .collect();
             if let Some(given) = self.opts.key_file(&open_as) {
                 // Not a file in the restored tree (Debian's keyscript=
                 // takes a name in the key field, decrypt_derived's or
                 // decrypt_keyctl's): --key-file's keyslot is the one.
-                if k.contains(':') || !k.starts_with('/') || ["/dev/", "/proc/", "/sys/", "/run/"].iter().any(|d| k.starts_with(d)) {
+                if k.contains(':')
+                    || !k.starts_with('/')
+                    || ["/dev/", "/proc/", "/sys/", "/run/"]
+                        .iter()
+                        .any(|d| k.starts_with(d))
+                {
                     continue;
                 }
                 if !safe_target_subpath(&k) {
-                    self.problem_once(format!("{open_as}: crypttab key file {k:?} isn't a path under the target"));
+                    self.problem_once(format!(
+                        "{open_as}: crypttab key file {k:?} isn't a path under the target"
+                    ));
                     continue;
                 }
-                let (r, g, u) = (shell_quote(&format!("{t}{k}")), shell_quote(given), shell_quote(&under));
-                let test_slice: String = slice.iter().map(|(n, v)| format!(" --{n}={}", shell_quote(v))).collect();
+                let (r, g, u) = (
+                    shell_quote(&format!("{t}{k}")),
+                    shell_quote(given),
+                    shell_quote(&under),
+                );
+                let test_slice: String = slice
+                    .iter()
+                    .map(|(n, v)| format!(" --{n}={}", shell_quote(v)))
+                    .collect();
                 out.push(
                     Cmd::new(&["sh", "-c", &format!("cryptsetup open --test-passphrase --key-file={r}{test_slice} {u} 2>/dev/null || cryptsetup luksAddKey --key-file={g}{new_slice} {u} {r}")])
                         .why(format!("{open_as}: the restored key file {k}, a keyslot beside --key-file's, unless it opens {under} already")),
@@ -4770,10 +6849,18 @@ impl Builder<'_> {
                 continue;
             };
             let tmp = format!("{RUN_DIR}/keys/{safe_open}");
-            let mut add = vec!["cryptsetup".to_string(), "luksAddKey".into(), format!("--key-file={tmp}")];
+            let mut add = vec![
+                "cryptsetup".to_string(),
+                "luksAddKey".into(),
+                format!("--key-file={tmp}"),
+            ];
             add.extend(slice.iter().map(|(n, v)| format!("--new-{n}={v}")));
             add.extend([under.clone(), format!("{t}{k}")]);
-            out.push(Cmd { argv: add, why: Some(format!("{open_as}: the restored key file {k}")), ..Cmd::default() });
+            out.push(Cmd {
+                argv: add,
+                why: Some(format!("{open_as}: the restored key file {k}")),
+                ..Cmd::default()
+            });
             out.push(Cmd::new(&["cryptsetup", "luksRemoveKey", &under, &tmp]));
         }
         out
@@ -4787,8 +6874,15 @@ impl Builder<'_> {
         if self.opts.reformats.is_empty() {
             return None;
         }
-        let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
-        let mut a = vec![exe, "rewrite".into(), self.opts.layout.clone(), self.opts.target.clone()];
+        let exe = std::env::current_exe()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "bko-holt".into());
+        let mut a = vec![
+            exe,
+            "rewrite".into(),
+            self.opts.layout.clone(),
+            self.opts.target.clone(),
+        ];
         if check {
             a.push("--check".into());
         }
@@ -4796,13 +6890,26 @@ impl Builder<'_> {
             a.push("--reformat".into());
             a.push(format!("{m}={ty}"));
         }
-        let why = if check { "--reformat: the initramfs has the new type's module; what's left of the old type, listed" } else { "--reformat: fstab and the kernel command lines for the new filesystem" };
-        Some(Cmd { argv: a, why: Some(why.into()), ..Cmd::default() })
+        let why = if check {
+            "--reformat: the initramfs has the new type's module; what's left of the old type, listed"
+        } else {
+            "--reformat: fstab and the kernel command lines for the new filesystem"
+        };
+        Some(Cmd {
+            argv: a,
+            why: Some(why.into()),
+            ..Cmd::default()
+        })
     }
 
     /// atimes_cmd for this layout (Ubuntu Core's tree is under T/run/mnt).
     pub(crate) fn atimes(&self, t: &str, what: &str) -> String {
-        atimes_cmd_in(t, what, &self.ro_shared(), super::snapcore::of(&self.layout.v).is_some())
+        atimes_cmd_in(
+            t,
+            what,
+            &self.ro_shared(),
+            super::snapcore::of(&self.layout.v).is_some(),
+        )
     }
 
     /// How every Linux boot stage ends (ostree's too, load/ostree.rs): the
@@ -4810,7 +6917,10 @@ impl Builder<'_> {
     pub(crate) fn boot_tail(&mut self, t: &str) -> Vec<Cmd> {
         let mut out = Vec::new();
         // Last but for read-only flags: nothing may read the tree after this.
-        out.push(Cmd::new(&["bash", "-c", &self.atimes(t, "restore")]).why("the atimes this stage's reads changed, put back"));
+        out.push(
+            Cmd::new(&["bash", "-c", &self.atimes(t, "restore")])
+                .why("the atimes this stage's reads changed, put back"),
+        );
         // Read-only btrfs subvolumes: set now that the restore filled them,
         // and after the atimes are put back (touch can't on a read-only one).
         for fs in self.layout.arr(&["storage", "btrfs"]).to_vec() {
@@ -4823,17 +6933,37 @@ impl Builder<'_> {
                 .flatten()
                 .filter(|v| v.get("readonly").and_then(Value::as_bool) == Some(true))
                 .filter(|v| !self.is_timeshift(&fs, v)) // not made
-                .filter_map(|v| s(v, "path").map(|p| p.trim_start_matches("<FS_TREE>/").to_string()))
+                .filter_map(|v| {
+                    s(v, "path").map(|p| p.trim_start_matches("<FS_TREE>/").to_string())
+                })
                 .filter(|p| !plan.is_shared(p)) // the restore stage did those
                 .collect();
             if ro.is_empty() {
                 continue;
             }
-            let Some(dev) = self.btrfs_dev(&uuid, Some(&fs)) else { continue };
+            let Some(dev) = self.btrfs_dev(&uuid, Some(&fs)) else {
+                continue;
+            };
             let top = format!("{RUN_DIR}/btrfs/{uuid}");
-            out.push(Cmd::new(&["mount", "-t", "btrfs", "-o", "subvolid=5", &dev, &top]));
+            out.push(Cmd::new(&[
+                "mount",
+                "-t",
+                "btrfs",
+                "-o",
+                "subvolid=5",
+                &dev,
+                &top,
+            ]));
             for p in ro {
-                out.push(Cmd::new(&["btrfs", "property", "set", "-ts", &format!("{top}/{p}"), "ro", "true"]));
+                out.push(Cmd::new(&[
+                    "btrfs",
+                    "property",
+                    "set",
+                    "-ts",
+                    &format!("{top}/{p}"),
+                    "ro",
+                    "true",
+                ]));
             }
             out.push(Cmd::new(&["umount", &top]));
         }
@@ -4852,14 +6982,25 @@ impl Builder<'_> {
             return Cmd::new(&["chroot", t, "env", &lang, "update-grub"]);
         }
         let cfg = format!("{}/grub.cfg", self.grub_dir());
-        Cmd::new(&["chroot", t, "env", &lang, self.grub_tool("mkconfig"), "-o", &cfg])
+        Cmd::new(&[
+            "chroot",
+            t,
+            "env",
+            &lang,
+            self.grub_tool("mkconfig"),
+            "-o",
+            &cfg,
+        ])
     }
 
     /// grub.cfg remade with os-prober out of the way: in the rescue system
     /// it would find the rescue system's own disks and list them.
     pub(crate) fn remake_grub_cfg(&self, t: &str, out: &mut Vec<Cmd>) {
         let (off, on) = super::qubes::os_prober_off(t);
-        out.push(Cmd::new(&["sh", "-c", &off]).why("os-prober off: it would list the rescue system's disks"));
+        out.push(
+            Cmd::new(&["sh", "-c", &off])
+                .why("os-prober off: it would list the rescue system's disks"),
+        );
         out.push(self.update_grub(t));
         out.push(Cmd::new(&["sh", "-c", &on]));
     }
@@ -4871,7 +7012,12 @@ impl Builder<'_> {
             .arr(&["storage", "fstab"])
             .iter()
             .filter_map(|e| Some((s(e, "file")?, s(e, "type")?)))
-            .filter(|(f, ty)| ty != "swap" && (f == "/" || dir == f || dir.starts_with(&format!("{}/", f.trim_end_matches('/')))))
+            .filter(|(f, ty)| {
+                ty != "swap"
+                    && (f == "/"
+                        || dir == f
+                        || dir.starts_with(&format!("{}/", f.trim_end_matches('/'))))
+            })
             .max_by_key(|(f, _)| f.len())
             .map(|(_, ty)| ty)
     }
@@ -4884,22 +7030,47 @@ impl Builder<'_> {
     /// mount's options; fstab has no line for it.
     fn solus_esp_mount(&mut self) -> Vec<(String, Cmd)> {
         let target = self.opts.target.clone();
-        let esp = self.layout.arr(&["boot", "esps"]).iter().find(|e| s(e, "mounted_at").as_deref() == Some("/boot")).and_then(|e| s(e, "device"));
+        let esp = self
+            .layout
+            .arr(&["boot", "esps"])
+            .iter()
+            .find(|e| s(e, "mounted_at").as_deref() == Some("/boot"))
+            .and_then(|e| s(e, "device"));
         let Some(src) = esp else {
             self.problems.push("Solus: no ESP was mounted at /boot when the dump was made, so the restore has nowhere to put the kernels and the loader".into());
             return Vec::new();
         };
         let Some(dev) = self.names.dev(&src) else {
-            self.problems.push(format!("Solus: its ESP {src} (at /boot) isn't restored"));
+            self.problems
+                .push(format!("Solus: its ESP {src} (at /boot) isn't restored"));
             return Vec::new();
         };
-        let opts = self.layout.arr(&["storage", "mounts"]).iter().find(|m| s(m, "target").as_deref() == Some("/boot")).and_then(|m| s(m, "options")).map(|o| mount_options(&o)).unwrap_or_else(|| "defaults".into());
+        let opts = self
+            .layout
+            .arr(&["storage", "mounts"])
+            .iter()
+            .find(|m| s(m, "target").as_deref() == Some("/boot"))
+            .and_then(|m| s(m, "options"))
+            .map(|o| mount_options(&o))
+            .unwrap_or_else(|| "defaults".into());
         self.notes.push(format!("Solus: its ESP {src} is mounted at /boot for the restore, though fstab has no line for it (clr-boot-manager mounts it when it needs it)"));
-        vec![("/boot".into(), Cmd::new(&["mount", "-t", "vfat", "-o", &opts, &dev, &format!("{target}/boot")]))]
+        vec![(
+            "/boot".into(),
+            Cmd::new(&[
+                "mount",
+                "-t",
+                "vfat",
+                "-o",
+                &opts,
+                &dev,
+                &format!("{target}/boot"),
+            ]),
+        )]
     }
 
     fn solus_cbm(&self) -> bool {
-        self.layout.str_at(&["os", "id"]) == Some("solus") && self.layout.str_at(&["boot", "loader", "manager"]) == Some(crate::boot::CBM)
+        self.layout.str_at(&["os", "id"]) == Some("solus")
+            && self.layout.str_at(&["boot", "loader", "manager"]) == Some(crate::boot::CBM)
     }
 
     /// Solus's boot entry, as clr-boot-manager makes it ("Solus Linux
@@ -4910,26 +7081,74 @@ impl Builder<'_> {
     fn solus_entry(&mut self) -> Vec<Cmd> {
         let shim = crate::boot::CBM_SHIM;
         let loader = format!("\\{}", shim.replace('/', "\\"));
-        let order: Vec<String> = self.layout.v.at(&["boot", "efi", "boot_order"]).and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
-        let on_layout = |part: &str| self.layout.disks.iter().any(|d| d.parts.iter().any(|p| p.name == part));
-        let made = self.layout.arr(&["boot", "efi", "entries"]).iter().any(|e| {
-            s(e, "number").is_some_and(|n| order.contains(&n))
-                && s(e, "file").is_some_and(|f| f.replace('/', "\\").trim_start_matches('\\').eq_ignore_ascii_case(&loader[1..]))
-                && e.at(&["partition", "device"]).and_then(Value::as_str).is_some_and(on_layout)
-        });
+        let order: Vec<String> = self
+            .layout
+            .v
+            .at(&["boot", "efi", "boot_order"])
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect();
+        let on_layout = |part: &str| {
+            self.layout
+                .disks
+                .iter()
+                .any(|d| d.parts.iter().any(|p| p.name == part))
+        };
+        let made = self
+            .layout
+            .arr(&["boot", "efi", "entries"])
+            .iter()
+            .any(|e| {
+                s(e, "number").is_some_and(|n| order.contains(&n))
+                    && s(e, "file").is_some_and(|f| {
+                        f.replace('/', "\\")
+                            .trim_start_matches('\\')
+                            .eq_ignore_ascii_case(&loader[1..])
+                    })
+                    && e.at(&["partition", "device"])
+                        .and_then(Value::as_str)
+                        .is_some_and(on_layout)
+            });
         if made {
             return Vec::new();
         }
-        let holds = |esp: &Value| esp.at(&["contents", "files"]).and_then(Value::as_array).is_some_and(|f| f.iter().any(|f| f.get("path").and_then(Value::as_str).is_some_and(|p| p.eq_ignore_ascii_case(shim))));
-        let Some(part) = self.layout.arr(&["boot", "esps"]).iter().find(|e| holds(e)).and_then(|e| s(e, "device")) else {
+        let holds = |esp: &Value| {
+            esp.at(&["contents", "files"])
+                .and_then(Value::as_array)
+                .is_some_and(|f| {
+                    f.iter().any(|f| {
+                        f.get("path")
+                            .and_then(Value::as_str)
+                            .is_some_and(|p| p.eq_ignore_ascii_case(shim))
+                    })
+                })
+        };
+        let Some(part) = self
+            .layout
+            .arr(&["boot", "esps"])
+            .iter()
+            .find(|e| holds(e))
+            .and_then(|e| s(e, "device"))
+        else {
             self.problems.push(format!("Solus: no ESP in the dump holds clr-boot-manager's shim, {shim}, so there's nothing to boot"));
             return Vec::new();
         };
-        let Some((disk, num)) = self.layout.disks.iter().find_map(|d| d.parts.iter().find(|p| p.name == part).map(|p| (d.name.clone(), p.number))) else {
-            self.notes.push(format!("Solus: its ESP {part} isn't on the layout's disks; no boot entry made"));
+        let Some((disk, num)) = self.layout.disks.iter().find_map(|d| {
+            d.parts
+                .iter()
+                .find(|p| p.name == part)
+                .map(|p| (d.name.clone(), p.number))
+        }) else {
+            self.notes.push(format!(
+                "Solus: its ESP {part} isn't on the layout's disks; no boot entry made"
+            ));
             return Vec::new();
         };
-        let Some(tgt) = self.names.mapping.target_of(&disk) else { return Vec::new() };
+        let Some(tgt) = self.names.mapping.target_of(&disk) else {
+            return Vec::new();
+        };
         vec![
             efi_dedupe(&format!("/dev/{tgt}"), num, &loader),
             Cmd::new(&["efibootmgr", "--quiet", "--create", "--disk", &format!("/dev/{tgt}"), "--part", &num.to_string(), "--label", crate::boot::CBM_ENTRY, "--loader", &loader])
@@ -4939,13 +7158,25 @@ impl Builder<'_> {
 
     fn anduinos_signed_grub(&self, via_shim: bool) -> bool {
         self.layout.str_at(&["os", "id"]) == Some("anduinos")
-            && (self.layout.v.at(&["boot", "loader", "mok"]).is_some_and(|m| !m.is_null()) || (via_shim && self.layout.str_at(&["boot", "packages", "anduinos-grub"]).is_some()))
+            && (self
+                .layout
+                .v
+                .at(&["boot", "loader", "mok"])
+                .is_some_and(|m| !m.is_null())
+                || (via_shim
+                    && self
+                        .layout
+                        .str_at(&["boot", "packages", "anduinos-grub"])
+                        .is_some()))
     }
 
     /// What the restored machine's firmware needs to boot AnduinOS's
     /// MOK-signed GRUB: the same MOK, which only the source's machine has.
     fn anduinos_mok_note(&self) -> String {
-        let cert = self.layout.str_at(&["boot", "loader", "mok", "cert"]).unwrap_or(crate::boot::ANDUINOS_MOK);
+        let cert = self
+            .layout
+            .str_at(&["boot", "loader", "mok", "cert"])
+            .unwrap_or(crate::boot::ANDUINOS_MOK);
         let key = match self.layout.str_at(&["boot", "loader", "mok", "sha256"]) {
             Some(fp) => format!("the MOK {cert} (SHA-256 {fp})"),
             None => format!("the MOK {cert} (its fingerprint not in the dump)"),
@@ -4958,15 +7189,27 @@ impl Builder<'_> {
 
     /// /boot/grub, or Fedora's /boot/grub2.
     pub(crate) fn grub_dir(&self) -> &str {
-        self.layout.str_at(&["boot", "grub", "dir"]).unwrap_or("/boot/grub")
+        self.layout
+            .str_at(&["boot", "grub", "dir"])
+            .unwrap_or("/boot/grub")
     }
 
     /// BIOS GRUB's grub-install onto DISK, in the target T; when the layout
     /// has NILFS2, through GRUB_BIOS_NILFS2, which makes it hide a NILFS2
     /// superblock at the disk's end from GRUB's look at the whole disk.
     fn grub_bios_install(&self, t: &str, disk: &str) -> Cmd {
-        let install = ["chroot", t, self.grub_tool("install"), "--target=i386-pc", disk];
-        if !self.leaves().iter().any(|(_, c)| s(c, "type").as_deref() == Some("nilfs2")) {
+        let install = [
+            "chroot",
+            t,
+            self.grub_tool("install"),
+            "--target=i386-pc",
+            disk,
+        ];
+        if !self
+            .leaves()
+            .iter()
+            .any(|(_, c)| s(c, "type").as_deref() == Some("nilfs2"))
+        {
             return Cmd::new(&install);
         }
         let mut a = vec!["sh", "-c", GRUB_BIOS_NILFS2, "sh", disk];
@@ -5004,7 +7247,11 @@ impl Builder<'_> {
         if self.layout.str_at(&["boot", "initramfs", "generator"]) != Some("dracut") {
             return None;
         }
-        let m = self.layout.arr(&["storage", "mounts"]).iter().find(|m| s(m, "target").as_deref() == Some("/"))?;
+        let m = self
+            .layout
+            .arr(&["storage", "mounts"])
+            .iter()
+            .find(|m| s(m, "target").as_deref() == Some("/"))?;
         let o = s(m, "options")?;
         let has = |x: &str| o.split(',').any(|y| y == x);
         let mut a = if has("noatime") {
@@ -5018,47 +7265,78 @@ impl Builder<'_> {
         if has("nodiratime") {
             a.push_str(",nodiratime");
         }
-        Some(Cmd::new(&["mount", "-o", &format!("remount,{a}"), t]).why(format!("/ with the source's atime options ({o}), for host-only dracut's rootflags=")))
+        Some(
+            Cmd::new(&["mount", "-o", &format!("remount,{a}"), t]).why(format!(
+                "/ with the source's atime options ({o}), for host-only dracut's rootflags="
+            )),
+        )
     }
 
     /// Every initramfs remade by the source's own generator; None for one
     /// that came prebuilt with its kernel (AerynOS).
     fn initramfs(&self, t: &str) -> Option<Cmd> {
-        Some(match self.layout.str_at(&["boot", "initramfs", "generator"]) {
-            Some("prebuilt") => return None,
-            Some("mkinitcpio") => Cmd::new(&["chroot", t, "mkinitcpio", "-P"]),
-            // EndeavourOS with GRUB (eos-dracut) and Garuda
-            // (garuda-dracut-support) both name each initramfs after its
-            // kernel's package (/boot/initramfs-linux.img,
-            // initramfs-linux-garuda.img), which dracut's own choice of path
-            // would miss; their dracut-rebuild builds them, with fallbacks.
-            // With a swap device, the resume module kept (DRACUT_REBUILD_RESUME).
-            Some("dracut") if ["eos-dracut", "garuda-dracut-support"].iter().any(|p| self.layout.str_at(&["boot", "packages", *p]).is_some()) => match self.swap_device() {
-                true => Cmd::new(&["chroot", t, "sh", "-c", DRACUT_REBUILD_RESUME]),
-                false => Cmd::new(&["chroot", t, "dracut-rebuild"]),
+        Some(
+            match self.layout.str_at(&["boot", "initramfs", "generator"]) {
+                Some("prebuilt") => return None,
+                Some("mkinitcpio") => Cmd::new(&["chroot", t, "mkinitcpio", "-P"]),
+                // EndeavourOS with GRUB (eos-dracut) and Garuda
+                // (garuda-dracut-support) both name each initramfs after its
+                // kernel's package (/boot/initramfs-linux.img,
+                // initramfs-linux-garuda.img), which dracut's own choice of path
+                // would miss; their dracut-rebuild builds them, with fallbacks.
+                // With a swap device, the resume module kept (DRACUT_REBUILD_RESUME).
+                Some("dracut")
+                    if ["eos-dracut", "garuda-dracut-support"]
+                        .iter()
+                        .any(|p| self.layout.str_at(&["boot", "packages", *p]).is_some()) =>
+                {
+                    match self.swap_device() {
+                        true => Cmd::new(&["chroot", t, "sh", "-c", DRACUT_REBUILD_RESUME]),
+                        false => Cmd::new(&["chroot", t, "dracut-rebuild"]),
+                    }
+                }
+                Some("dracut") => Cmd::new(&["chroot", t, "sh", "-c", DRACUT_EACH_KERNEL]),
+                // Alpine: mkinitfs KVER writes /boot/initramfs-FLAVOR.
+                Some("mkinitfs") => Cmd::new(&[
+                    "chroot",
+                    t,
+                    "sh",
+                    "-c",
+                    "for k in /lib/modules/*; do mkinitfs \"${k##*/}\" || exit; done",
+                ]),
+                // PikaOS: what booster's own update-initramfs runs for each
+                // kernel, without its dpkg-trigger and backup paths; host-only
+                // as booster.yaml says, from the chroot's /sys (this machine's).
+                // The same guard as dracut's loop.
+                Some("booster") => Cmd::new(&[
+                    "chroot",
+                    t,
+                    "sh",
+                    "-c",
+                    "n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; k=${k##*/}; booster build --force --kernel-version \"$k\" \"/boot/booster.img-$k\" || exit; n=$((n + 1)); done; [ \"$n\" -gt 0 ]",
+                ]),
+                // initramfs-tools picked the resume device itself (RESUME unset
+                // or auto, a swap device to pick): UPDATE_INITRAMFS_RESUME.
+                Some("initramfs-tools")
+                    if self.swap_device()
+                        && self
+                            .layout
+                            .str_at(&["boot", "initramfs", "resume"])
+                            .is_none_or(|r| r == "auto") =>
+                {
+                    Cmd::new(&["chroot", t, "sh", "-c", UPDATE_INITRAMFS_RESUME])
+                }
+                _ => Cmd::new(&["chroot", t, "update-initramfs", "-u", "-k", "all"]),
             },
-            Some("dracut") => Cmd::new(&["chroot", t, "sh", "-c", DRACUT_EACH_KERNEL]),
-            // Alpine: mkinitfs KVER writes /boot/initramfs-FLAVOR.
-            Some("mkinitfs") => Cmd::new(&["chroot", t, "sh", "-c", "for k in /lib/modules/*; do mkinitfs \"${k##*/}\" || exit; done"]),
-            // PikaOS: what booster's own update-initramfs runs for each
-            // kernel, without its dpkg-trigger and backup paths; host-only
-            // as booster.yaml says, from the chroot's /sys (this machine's).
-            // The same guard as dracut's loop.
-            Some("booster") => Cmd::new(&["chroot", t, "sh", "-c", "n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; k=${k##*/}; booster build --force --kernel-version \"$k\" \"/boot/booster.img-$k\" || exit; n=$((n + 1)); done; [ \"$n\" -gt 0 ]"]),
-            // initramfs-tools picked the resume device itself (RESUME unset
-            // or auto, a swap device to pick): UPDATE_INITRAMFS_RESUME.
-            Some("initramfs-tools") if self.swap_device() && self.layout.str_at(&["boot", "initramfs", "resume"]).is_none_or(|r| r == "auto") => {
-                Cmd::new(&["chroot", t, "sh", "-c", UPDATE_INITRAMFS_RESUME])
-            }
-            _ => Cmd::new(&["chroot", t, "update-initramfs", "-u", "-k", "all"]),
-        })
+        )
     }
 
     /// Whether the source's fstab swaps on a device (not a swap file: what
     /// initramfs-tools' resume hook and dracut's resume module look for).
     fn swap_device(&self) -> bool {
         self.layout.arr(&["storage", "fstab"]).iter().any(|e| {
-            s(e, "type").as_deref() == Some("swap") && s(e, "spec").is_some_and(|sp| !sp.starts_with('/') || sp.starts_with("/dev/"))
+            s(e, "type").as_deref() == Some("swap")
+                && s(e, "spec").is_some_and(|sp| !sp.starts_with('/') || sp.starts_with("/dev/"))
         })
     }
 
@@ -5077,7 +7355,12 @@ impl Builder<'_> {
     /// /boot as they were.
     fn gentoo_initramfs(&mut self, t: &str) -> Vec<Cmd> {
         let mut out = Vec::new();
-        let ik = self.layout.v.at(&["boot", "initramfs", "installkernel"]).filter(|v| !v.is_null()).cloned();
+        let ik = self
+            .layout
+            .v
+            .at(&["boot", "initramfs", "installkernel"])
+            .filter(|v| !v.is_null())
+            .cloned();
         if let Some(ik) = &ik {
             let conf = s(ik, "conf").unwrap_or_else(|| "install.conf".into());
             match s(ik, "uki_generator").as_deref() {
@@ -5090,11 +7373,19 @@ impl Builder<'_> {
                 None => self.problems.push(format!("Gentoo: {conf} names no layout; bko-holt load supports only installkernel's grub and compat layouts (the kernels and their images in /boot)")),
             }
         }
-        for k in self.layout.arr(&["boot", "initramfs", "lib_modules_initrd"]).to_vec() {
+        for k in self
+            .layout
+            .arr(&["boot", "initramfs", "lib_modules_initrd"])
+            .to_vec()
+        {
             let k = k.as_str().unwrap_or_default();
             self.problems.push(format!("Gentoo: kernel {k} has its initramfs at /lib/modules/{k}/initrd, where bko-holt load doesn't make one"));
         }
-        let generator = self.layout.str_at(&["boot", "initramfs", "generator"]).unwrap_or("unknown").to_string();
+        let generator = self
+            .layout
+            .str_at(&["boot", "initramfs", "generator"])
+            .unwrap_or("unknown")
+            .to_string();
         match generator.as_str() {
             "dracut" => {
                 // Kernels with an initramfs in /boot, remade or not: one whose
@@ -5121,7 +7412,12 @@ impl Builder<'_> {
             "genkernel" | "ugrd" => self.problems.push(format!("Gentoo: the initramfs is {generator}'s; bko-holt load remakes only dracut's (or none)")),
             other => self.problems.push(format!("Gentoo: initramfs generator {other} isn't one bko-holt load can run (only dracut, or none)")),
         }
-        let old: Vec<String> = self.layout.arr(&["boot", "kernels", "old_copies"]).iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
+        let old: Vec<String> = self
+            .layout
+            .arr(&["boot", "kernels", "old_copies"])
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
         if !old.is_empty() {
             self.notes.push(format!("Gentoo: installkernel's .old copies in /boot ({}) came back as they were: grub-mkconfig lists them, and this stage doesn't remake them", old.join(", ")));
         }
@@ -5130,15 +7426,26 @@ impl Builder<'_> {
 
     /// boot.proxmox_boot, when the source's ESPs are proxmox-boot-tool's.
     fn proxmox_boot(&self) -> Option<&Value> {
-        self.layout.v.at(&["boot", "proxmox_boot"]).filter(|v| !v.is_null())
+        self.layout
+            .v
+            .at(&["boot", "proxmox_boot"])
+            .filter(|v| !v.is_null())
     }
 
     /// The source devices of the ESPs that proxmox-boot-tool keeps in
     /// systemd-boot mode: `init` runs bootctl install on each, which makes
     /// its own boot entry for it.
     fn proxmox_systemd_boot_esps(&self) -> Vec<String> {
-        let Some(pb) = self.proxmox_boot() else { return Vec::new() };
-        pb.get("esps").and_then(Value::as_array).into_iter().flatten().filter(|e| s(e, "mode").as_deref() == Some("systemd-boot")).filter_map(|e| s(e, "device")).collect()
+        let Some(pb) = self.proxmox_boot() else {
+            return Vec::new();
+        };
+        pb.get("esps")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|e| s(e, "mode").as_deref() == Some("systemd-boot"))
+            .filter_map(|e| s(e, "device"))
+            .collect()
     }
 
     /// Proxmox VE's ESPs, rebuilt by their owner (docs/design/proxmox.md,
@@ -5162,14 +7469,26 @@ impl Builder<'_> {
         if via_shim {
             self.problems.push("Proxmox through shim (Secure Boot, signed GRUB on each ESP): bko-holt load doesn't support it (not tested)".into());
         }
-        let uuids: Vec<String> = pb.get("uuids").and_then(Value::as_array).into_iter().flatten().filter_map(|u| u.as_str().map(str::to_string)).collect();
+        let uuids: Vec<String> = pb
+            .get("uuids")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|u| u.as_str().map(str::to_string))
+            .collect();
         if uuids.is_empty() {
             self.problems.push(format!("Proxmox: {} lists no ESP, so proxmox-boot-tool has nothing to rebuild and the restored system wouldn't boot", crate::boot::PROXMOX_BOOT_UUIDS));
         }
-        let esps = pb.get("esps").and_then(Value::as_array).cloned().unwrap_or_default();
+        let esps = pb
+            .get("esps")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         let mut modes: Vec<String> = Vec::new();
         for u in &uuids {
-            let e = esps.iter().find(|e| s(e, "uuid").as_deref() == Some(u.as_str()));
+            let e = esps
+                .iter()
+                .find(|e| s(e, "uuid").as_deref() == Some(u.as_str()));
             let Some(dev) = e.and_then(|e| s(e, "device")) else {
                 self.problems.push(format!("Proxmox: {} lists ESP {u}, which no partition on the source has; proxmox-boot-tool couldn't rebuild it", crate::boot::PROXMOX_BOOT_UUIDS));
                 continue;
@@ -5179,7 +7498,11 @@ impl Builder<'_> {
                 continue;
             }
             let mode = e.and_then(|e| s(e, "mode"));
-            let mut a = vec!["proxmox-boot-tool".to_string(), "init".into(), format!("/dev/disk/by-uuid/{u}")];
+            let mut a = vec![
+                "proxmox-boot-tool".to_string(),
+                "init".into(),
+                format!("/dev/disk/by-uuid/{u}"),
+            ];
             match mode.as_deref() {
                 Some("systemd-boot") => {}
                 Some(m @ ("grub-efi" | "grub-bios")) => {
@@ -5195,7 +7518,9 @@ impl Builder<'_> {
             if !modes.contains(&m) {
                 modes.push(m.clone());
             }
-            let why = format!("ESP {u} ({dev}): made again by proxmox-boot-tool, in its {m} mode as on the source");
+            let why = format!(
+                "ESP {u} ({dev}): made again by proxmox-boot-tool, in its {m} mode as on the source"
+            );
             // --no-nvram: bootctl install (in init) would make its boot
             // entry.  With efivarfs merely unmounted, systemd 257's bootctl
             // --graceful still fails ("Failed to create EFI Boot variable
@@ -5213,9 +7538,16 @@ impl Builder<'_> {
                 Cmd { argv, why: Some(why), ..Cmd::default() }
             });
         }
-        out.push(Cmd::new(&["chroot", t, "proxmox-boot-tool", "refresh"]).why("every kernel, initrd and loader entry onto every ESP, as a kernel update does"));
+        out.push(
+            Cmd::new(&["chroot", t, "proxmox-boot-tool", "refresh"]).why(
+                "every kernel, initrd and loader entry onto every ESP, as a kernel update does",
+            ),
+        );
         let list: String = uuids.iter().map(|u| format!("{u}\n")).collect();
-        out.push(Cmd::write_file(&format!("{t}{}", crate::boot::PROXMOX_BOOT_UUIDS), list).why("proxmox-boot-tool's list of ESPs as the source had it (init adds to it)"));
+        out.push(
+            Cmd::write_file(&format!("{t}{}", crate::boot::PROXMOX_BOOT_UUIDS), list)
+                .why("proxmox-boot-tool's list of ESPs as the source had it (init adds to it)"),
+        );
         let n = out.len() - 2;
         self.notes.push(format!(
             "Proxmox: proxmox-boot-tool rebuilt {n} ESP{} ({}); their old content isn't in the archive",
@@ -5238,7 +7570,12 @@ impl Builder<'_> {
     /// Other systems with systemd-boot write their entries with
     /// kernel-install or their own tools, and they came back with the ESP.
     fn gen_systemd_boot(&self, t: &str) -> Option<Cmd> {
-        if self.layout.str_at(&["os", "id"]) != Some("chimera") || self.layout.str_at(&["boot", "packages", "systemd-boot"]).is_none() {
+        if self.layout.str_at(&["os", "id"]) != Some("chimera")
+            || self
+                .layout
+                .str_at(&["boot", "packages", "systemd-boot"])
+                .is_none()
+        {
             return None;
         }
         Some(
@@ -5263,11 +7600,14 @@ impl Builder<'_> {
     /// The path on the first ESP, as the dump listed it, of the file whose
     /// name ends in `suffix` (any case), outside EFI/BOOT.
     fn esp_file(&self, suffix: &str) -> Option<String> {
-        let files = self.layout.arr(&["boot", "esps", "0", "contents", "files"]).to_vec();
-        files
-            .iter()
-            .filter_map(|f| s(f, "path"))
-            .find(|p| p.to_ascii_lowercase().ends_with(suffix) && !p.to_ascii_lowercase().starts_with("efi/boot/"))
+        let files = self
+            .layout
+            .arr(&["boot", "esps", "0", "contents", "files"])
+            .to_vec();
+        files.iter().filter_map(|f| s(f, "path")).find(|p| {
+            p.to_ascii_lowercase().ends_with(suffix)
+                && !p.to_ascii_lowercase().starts_with("efi/boot/")
+        })
     }
 
     /// Whether the source's grub-install is Debian's, which has
@@ -5275,8 +7615,13 @@ impl Builder<'_> {
     /// option): Debian's GRUB comes in grub-common and its UEFI packages
     /// are grub-efi-ARCH(-signed); or the system is one of Debian's family.
     fn grub_install_is_debians(&self) -> bool {
-        self.layout.str_at(&["boot", "packages", "grub-common"]).is_some()
-            || self.layout.str_at(&["boot", "loader", "package"]).is_some_and(|p| p.starts_with("grub-efi-"))
+        self.layout
+            .str_at(&["boot", "packages", "grub-common"])
+            .is_some()
+            || self
+                .layout
+                .str_at(&["boot", "loader", "package"])
+                .is_some_and(|p| p.starts_with("grub-efi-"))
             || matches!(self.layout.str_at(&["os", "id"]), Some(id) if DEBIAN_GRUB_IDS.contains(&id))
     }
 
@@ -5294,10 +7639,24 @@ impl Builder<'_> {
     /// same_as: either way round, or both naming a third).
     fn esp_files_same(&self, a: &str, b: &str) -> bool {
         let files = self.layout.arr(&["boot", "esps", "0", "contents", "files"]);
-        let find = |p: &str| files.iter().find(|f| s(f, "path").is_some_and(|x| x.eq_ignore_ascii_case(p)));
-        let (Some(fa), Some(fb)) = (find(a), find(b)) else { return false };
-        let names = |x: &Value, y: &Value| s(x, "same_as").zip(s(y, "path")).is_some_and(|(x, y)| x.eq_ignore_ascii_case(&y));
-        names(fa, fb) || names(fb, fa) || s(fa, "same_as").zip(s(fb, "same_as")).is_some_and(|(x, y)| x.eq_ignore_ascii_case(&y))
+        let find = |p: &str| {
+            files
+                .iter()
+                .find(|f| s(f, "path").is_some_and(|x| x.eq_ignore_ascii_case(p)))
+        };
+        let (Some(fa), Some(fb)) = (find(a), find(b)) else {
+            return false;
+        };
+        let names = |x: &Value, y: &Value| {
+            s(x, "same_as")
+                .zip(s(y, "path"))
+                .is_some_and(|(x, y)| x.eq_ignore_ascii_case(&y))
+        };
+        names(fa, fb)
+            || names(fb, fa)
+            || s(fa, "same_as")
+                .zip(s(fb, "same_as"))
+                .is_some_and(|(x, y)| x.eq_ignore_ascii_case(&y))
     }
 
     /// --removable for upstream GRUB, whose grub-install has no
@@ -5312,11 +7671,16 @@ impl Builder<'_> {
     /// grub_removable_copy()'s shell command.
     fn grub_removable_copy_script(&self, t: &str, esp: &str, id: &str, via_shim: bool) -> String {
         let n = self.boot_names();
-        let (from, dir) = (shell_quote(&format!("{t}{esp}/EFI/{id}")), shell_quote(&format!("{t}{esp}/EFI/BOOT")));
+        let (from, dir) = (
+            shell_quote(&format!("{t}{esp}/EFI/{id}")),
+            shell_quote(&format!("{t}{esp}/EFI/BOOT")),
+        );
         let (f, g) = (n.fallback_file, n.grub);
         if via_shim {
             let sh = n.shim;
-            return format!("mkdir -p {dir} && cp {from}/{sh} {dir}/{f} && cp {from}/{g} {dir}/{g}");
+            return format!(
+                "mkdir -p {dir} && cp {from}/{sh} {dir}/{f} && cp {from}/{g} {dir}/{g}"
+            );
         }
         format!("mkdir -p {dir} && cp {from}/{g} {dir}/{f}")
     }
@@ -5334,12 +7698,27 @@ impl Builder<'_> {
     /// after it (grub_removable_copy).  Then, whichever it was, the fallback
     /// loader must be a byte copy of EFI/ID's shim or GRUB, or load fails
     /// there: the request is never dropped unseen.
-    fn debian_grub_removable(&self, a: &[String], t: &str, esp: &str, id: &str, via_shim: bool) -> Cmd {
+    fn debian_grub_removable(
+        &self,
+        a: &[String],
+        t: &str,
+        esp: &str,
+        id: &str,
+        via_shim: bool,
+    ) -> Cmd {
         let n = self.boot_names();
-        let install = a.iter().map(|x| shell_quote(x)).collect::<Vec<_>>().join(" ");
+        let install = a
+            .iter()
+            .map(|x| shell_quote(x))
+            .collect::<Vec<_>>()
+            .join(" ");
         let copy = self.grub_removable_copy_script(t, esp, id, via_shim);
         let dir = format!("{t}{esp}/EFI/{id}");
-        let (fb, sh, g) = (shell_quote(&format!("{t}{esp}/{}", n.fallback)), shell_quote(&format!("{dir}/{}", n.shim)), shell_quote(&format!("{dir}/{}", n.grub)));
+        let (fb, sh, g) = (
+            shell_quote(&format!("{t}{esp}/{}", n.fallback)),
+            shell_quote(&format!("{dir}/{}", n.shim)),
+            shell_quote(&format!("{dir}/{}", n.grub)),
+        );
         let script = format!(
             "h=$(chroot {} grub-install --help 2>&1); case \"$h\" in *--force-extra-removable*) {install} --force-extra-removable ;; *--no-extra-removable*) {install} ;; *) {install} && {copy} ;; esac && {{ cmp -s {fb} {sh} || cmp -s {fb} {g} || {{ echo \"--removable: {} is not a copy of EFI/{id}/{} or {} after grub-install\" >&2; exit 1; }}; }}",
             shell_quote(t),
@@ -5374,11 +7753,25 @@ impl Builder<'_> {
     /// (LUKS, LVM, RAID: grub-install searched for it instead).
     fn store_grub_prefix(&mut self, img: &str) -> Vec<Cmd> {
         let mounts = self.layout.arr(&["storage", "mounts"]).to_vec();
-        let dev = ["/boot", "/"].iter().find_map(|t| mounts.iter().find(|m| s(m, "target").as_deref() == Some(*t)).and_then(|m| s(m, "device")));
+        let dev = ["/boot", "/"].iter().find_map(|t| {
+            mounts
+                .iter()
+                .find(|m| s(m, "target").as_deref() == Some(*t))
+                .and_then(|m| s(m, "device"))
+        });
         let Some(dev) = dev else { return Vec::new() };
-        let esp_dev = self.layout.str_at(&["boot", "esps", "0", "device"]).map(str::to_string);
-        let found = self.layout.disks.iter().find_map(|d| d.parts.iter().find(|p| p.name == dev).map(|p| (d, p)));
-        let Some((disk, part)) = found else { return Vec::new() };
+        let esp_dev = self
+            .layout
+            .str_at(&["boot", "esps", "0", "device"])
+            .map(str::to_string);
+        let found = self
+            .layout
+            .disks
+            .iter()
+            .find_map(|d| d.parts.iter().find(|p| p.name == dev).map(|p| (d, p)));
+        let Some((disk, part)) = found else {
+            return Vec::new();
+        };
         if !esp_dev.is_some_and(|e| disk.parts.iter().any(|p| p.name == e)) {
             return Vec::new();
         }
@@ -5387,11 +7780,26 @@ impl Builder<'_> {
             Some(super::layout::TableKind::Mbr) => "msdos",
             None => return Vec::new(),
         };
-        let esp = format!("{}{}", self.opts.target, self.layout.str_at(&["boot", "esps", "0", "mounted_at"]).filter(|m| safe_target_subpath(m)).unwrap_or("/boot").trim_end_matches('/'));
-        let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
+        let esp = format!(
+            "{}{}",
+            self.opts.target,
+            self.layout
+                .str_at(&["boot", "esps", "0", "mounted_at"])
+                .filter(|m| safe_target_subpath(m))
+                .unwrap_or("/boot")
+                .trim_end_matches('/')
+        );
+        let exe = std::env::current_exe()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "bko-holt".into());
         let n = self.boot_names();
         let at = format!("{kind}{}", part.number);
-        let mut argv = vec![exe, "grub-prefix".into(), at.clone(), format!("{esp}/{img}")];
+        let mut argv = vec![
+            exe,
+            "grub-prefix".into(),
+            at.clone(),
+            format!("{esp}/{img}"),
+        ];
         let copy = self.esp_files_same(n.fallback, img);
         if copy {
             argv.push(format!("{esp}/{}", n.fallback));
@@ -5413,10 +7821,23 @@ impl Builder<'_> {
     /// redundancy after it): GRUB would stop in grub rescue, so load
     /// refuses.  None when the numbers agree, or the dump doesn't say.
     fn store_core_img_moved(&self, st: &crate::store::StoreSystem) -> Option<String> {
-        let want = self.layout.str_at(&["boot", "store", "core_img_part"])?.to_string();
+        let want = self
+            .layout
+            .str_at(&["boot", "store", "core_img_part"])?
+            .to_string();
         let mounts = self.layout.arr(&["storage", "mounts"]).to_vec();
-        let (target, dev) = ["/boot", "/"].iter().find_map(|t| mounts.iter().find(|m| s(m, "target").as_deref() == Some(*t)).and_then(|m| s(m, "device")).map(|d| (*t, d)))?;
-        let (disk, part) = self.layout.disks.iter().find_map(|d| d.parts.iter().find(|p| p.name == dev).map(|p| (d, p)))?;
+        let (target, dev) = ["/boot", "/"].iter().find_map(|t| {
+            mounts
+                .iter()
+                .find(|m| s(m, "target").as_deref() == Some(*t))
+                .and_then(|m| s(m, "device"))
+                .map(|d| (*t, d))
+        })?;
+        let (disk, part) = self
+            .layout
+            .disks
+            .iter()
+            .find_map(|d| d.parts.iter().find(|p| p.name == dev).map(|p| (d, p)))?;
         let kind = match disk.table.as_ref().map(|t| &t.kind) {
             Some(super::layout::TableKind::Gpt) => "gpt",
             Some(super::layout::TableKind::Mbr) => "msdos",
@@ -5435,10 +7856,28 @@ impl Builder<'_> {
         if !self.opts.removable {
             return Vec::new();
         }
-        let esp = format!("{}{}", self.opts.target, self.layout.str_at(&["boot", "esps", "0", "mounted_at"]).filter(|m| safe_target_subpath(m)).unwrap_or("/boot").trim_end_matches('/'));
-        let (src, dir) = (shell_quote(&format!("{esp}/{img}")), shell_quote(&format!("{esp}/EFI/BOOT")));
+        let esp = format!(
+            "{}{}",
+            self.opts.target,
+            self.layout
+                .str_at(&["boot", "esps", "0", "mounted_at"])
+                .filter(|m| safe_target_subpath(m))
+                .unwrap_or("/boot")
+                .trim_end_matches('/')
+        );
+        let (src, dir) = (
+            shell_quote(&format!("{esp}/{img}")),
+            shell_quote(&format!("{esp}/EFI/BOOT")),
+        );
         let f = self.boot_names().fallback_file;
-        vec![Cmd::new(&["sh", "-c", &format!("[ -e {dir}/{f} ] || {{ mkdir -p {dir} && cp {src} {dir}/{f}; }}")]).why("--removable: the ESP's loader at the fallback path too")]
+        vec![
+            Cmd::new(&[
+                "sh",
+                "-c",
+                &format!("[ -e {dir}/{f} ] || {{ mkdir -p {dir} && cp {src} {dir}/{f}; }}"),
+            ])
+            .why("--removable: the ESP's loader at the fallback path too"),
+        ]
     }
 
     /// The target disks whose source has GRUB's BIOS core in its BIOS boot
@@ -5449,13 +7888,21 @@ impl Builder<'_> {
         const BIOS_BOOT: &str = "21686148-6449-6e6f-744e-656564454649";
         let mut out = Vec::new();
         for d in &self.layout.disks {
-            let Some(t) = self.names.mapping.target_of(&d.name) else { continue };
-            if !d.parts.iter().any(|p| p.ptype.eq_ignore_ascii_case(BIOS_BOOT)) {
+            let Some(t) = self.names.mapping.target_of(&d.name) else {
+                continue;
+            };
+            if !d
+                .parts
+                .iter()
+                .any(|p| p.ptype.eq_ignore_ascii_case(BIOS_BOOT))
+            {
                 continue;
             }
             let code = self.layout.device(&d.name).and_then(|v| v.get("boot_code"));
             let at = |k: &str| code.and_then(|c| c.get(k));
-            let core = at("kind").and_then(Value::as_str) == Some("grub2") && at("grub_core_in").and_then(Value::as_str) == Some("partition") && at("grub_core_present").and_then(Value::as_bool) == Some(true);
+            let core = at("kind").and_then(Value::as_str) == Some("grub2")
+                && at("grub_core_in").and_then(Value::as_str) == Some("partition")
+                && at("grub_core_present").and_then(Value::as_bool) == Some(true);
             if core {
                 out.push(format!("/dev/{t}"));
             } else {
@@ -5467,16 +7914,32 @@ impl Builder<'_> {
 
     fn grub_bios_devices(&self) -> Vec<String> {
         let mut out = Vec::new();
-        if let Some(list) = self.layout.str_at(&["boot", "grub", "debconf", "grub-pc/install_devices"]) {
-            for p in list.split([',', ' ']).map(str::trim).filter(|p| !p.is_empty()) {
-                if let Some(d) = self.names.src_of_path(p).and_then(|src| self.names.dev(&src)) {
+        if let Some(list) =
+            self.layout
+                .str_at(&["boot", "grub", "debconf", "grub-pc/install_devices"])
+        {
+            for p in list
+                .split([',', ' '])
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+            {
+                if let Some(d) = self
+                    .names
+                    .src_of_path(p)
+                    .and_then(|src| self.names.dev(&src))
+                {
                     out.push(d);
                 }
             }
         }
         if out.is_empty() {
             for d in &self.layout.disks {
-                let grub = self.layout.device(&d.name).and_then(|v| v.at(&["boot_code", "kind"])).and_then(Value::as_str) == Some("grub2");
+                let grub = self
+                    .layout
+                    .device(&d.name)
+                    .and_then(|v| v.at(&["boot_code", "kind"]))
+                    .and_then(Value::as_str)
+                    == Some("grub2");
                 if let (true, Some(t)) = (grub, self.names.mapping.target_of(&d.name)) {
                     out.push(format!("/dev/{t}"));
                 }
@@ -5495,21 +7958,62 @@ impl Builder<'_> {
             let parts: Vec<&str> = f.split(['\\', '/']).filter(|p| !p.is_empty()).collect();
             // As the source spells it (BigLinux's EFI/BigLinux): FAT ignores
             // case, but the plan says what the installer did.
-            (parts.len() >= 3 && parts[0].eq_ignore_ascii_case("EFI") && !parts[1].eq_ignore_ascii_case("BOOT")).then(|| parts[1].to_string())
+            (parts.len() >= 3
+                && parts[0].eq_ignore_ascii_case("EFI")
+                && !parts[1].eq_ignore_ascii_case("BOOT"))
+            .then(|| parts[1].to_string())
         };
-        let mut wanted: Vec<String> = self.layout.str_at(&["boot", "efi", "boot_current"]).map(str::to_string).into_iter().collect();
-        wanted.extend(self.layout.v.at(&["boot", "efi", "boot_order"]).and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)));
-        let rank = |e: &Value| s(e, "number").and_then(|n| wanted.iter().position(|w| *w == n)).unwrap_or(usize::MAX);
-        let on_layout = |e: &Value| e.at(&["partition", "device"]).and_then(Value::as_str).is_some_and(|part| self.layout.disks.iter().any(|d| d.parts.iter().any(|p| p.name == part)));
-        let mut entries: Vec<&Value> = self.layout.arr(&["boot", "efi", "entries"]).iter().filter(|e| on_layout(e)).collect();
+        let mut wanted: Vec<String> = self
+            .layout
+            .str_at(&["boot", "efi", "boot_current"])
+            .map(str::to_string)
+            .into_iter()
+            .collect();
+        wanted.extend(
+            self.layout
+                .v
+                .at(&["boot", "efi", "boot_order"])
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|x| x.as_str().map(str::to_string)),
+        );
+        let rank = |e: &Value| {
+            s(e, "number")
+                .and_then(|n| wanted.iter().position(|w| *w == n))
+                .unwrap_or(usize::MAX)
+        };
+        let on_layout = |e: &Value| {
+            e.at(&["partition", "device"])
+                .and_then(Value::as_str)
+                .is_some_and(|part| {
+                    self.layout
+                        .disks
+                        .iter()
+                        .any(|d| d.parts.iter().any(|p| p.name == part))
+                })
+        };
+        let mut entries: Vec<&Value> = self
+            .layout
+            .arr(&["boot", "efi", "entries"])
+            .iter()
+            .filter(|e| on_layout(e))
+            .collect();
         entries.sort_by_key(|e| rank(e));
-        if let Some(id) = entries.iter().find_map(|e| e.get("file").and_then(Value::as_str).and_then(dir_of)) {
+        if let Some(id) = entries
+            .iter()
+            .find_map(|e| e.get("file").and_then(Value::as_str).and_then(dir_of))
+        {
             return id;
         }
         let n = self.boot_names();
         let (shim, grub) = (format!("/{}", n.shim), format!("/{}", n.grub));
         for esp in self.layout.arr(&["boot", "esps"]) {
-            let files = esp.at(&["contents", "files"]).and_then(Value::as_array).into_iter().flatten();
+            let files = esp
+                .at(&["contents", "files"])
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten();
             for path in files.filter_map(|f| f.get("path").and_then(Value::as_str)) {
                 let low = path.to_ascii_lowercase();
                 if low.ends_with(&shim) || low.ends_with(&grub) {
@@ -5527,10 +8031,21 @@ impl Builder<'_> {
     /// one at the front), each with its optional data.
     pub(crate) fn efi_entries(&mut self) -> Vec<Cmd> {
         let entries = self.layout.arr(&["boot", "efi", "entries"]).to_vec();
-        let order: Vec<String> = self.layout.v.at(&["boot", "efi", "boot_order"]).and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
+        let order: Vec<String> = self
+            .layout
+            .v
+            .at(&["boot", "efi", "boot_order"])
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect();
         let mut picked: Vec<&Value> = Vec::new();
         for n in &order {
-            if let Some(e) = entries.iter().find(|e| s(e, "number").as_deref() == Some(n.as_str())) {
+            if let Some(e) = entries
+                .iter()
+                .find(|e| s(e, "number").as_deref() == Some(n.as_str()))
+            {
                 picked.push(e);
             }
         }
@@ -5542,31 +8057,72 @@ impl Builder<'_> {
         let mut deduped: Vec<(String, u32, String)> = Vec::new();
         for e in picked.into_iter().rev() {
             let desc = s(e, "description").unwrap_or_default();
-            let (Some(file), Some(part)) = (s(e, "file"), e.at(&["partition", "device"]).and_then(Value::as_str)) else { continue };
+            let (Some(file), Some(part)) = (
+                s(e, "file"),
+                e.at(&["partition", "device"]).and_then(Value::as_str),
+            ) else {
+                continue;
+            };
             // proxmox-boot-tool init's bootctl install makes this one (the
             // same partition and file) itself: not made twice.
-            if proxmox_sd.iter().any(|d| d == part) && file.replace('/', "\\").trim_start_matches('\\').eq_ignore_ascii_case(&format!("EFI\\systemd\\{}", self.boot_names().systemd_boot)) {
+            if proxmox_sd.iter().any(|d| d == part)
+                && file
+                    .replace('/', "\\")
+                    .trim_start_matches('\\')
+                    .eq_ignore_ascii_case(&format!(
+                        "EFI\\systemd\\{}",
+                        self.boot_names().systemd_boot
+                    ))
+            {
                 self.notes.push(format!("UEFI entry {desc:?} ({part}, {file}): proxmox-boot-tool init's bootctl install makes it again; not recreated"));
                 continue;
             }
-            let Some((disk, num)) = self.layout.disks.iter().find_map(|d| d.parts.iter().find(|p| p.name == part).map(|p| (d.name.clone(), p.number))) else {
-                self.notes.push(format!("UEFI entry {desc:?} isn't on the layout's disks; not recreated"));
+            let Some((disk, num)) = self.layout.disks.iter().find_map(|d| {
+                d.parts
+                    .iter()
+                    .find(|p| p.name == part)
+                    .map(|p| (d.name.clone(), p.number))
+            }) else {
+                self.notes.push(format!(
+                    "UEFI entry {desc:?} isn't on the layout's disks; not recreated"
+                ));
                 continue;
             };
-            let Some(t) = self.names.mapping.target_of(&disk) else { continue };
+            let Some(t) = self.names.mapping.target_of(&disk) else {
+                continue;
+            };
             let key = (t.to_string(), num, crate::load::efidedupe::norm_path(&file));
             if !deduped.contains(&key) {
                 out.push(efi_dedupe(&format!("/dev/{t}"), num, &file));
                 deduped.push(key);
             }
-            let mut a: Vec<String> = ["efibootmgr", "--quiet", "--create", "--disk", &format!("/dev/{t}"), "--part", &num.to_string(), "--label", &desc, "--loader", &file].iter().map(|x| x.to_string()).collect();
+            let mut a: Vec<String> = [
+                "efibootmgr",
+                "--quiet",
+                "--create",
+                "--disk",
+                &format!("/dev/{t}"),
+                "--part",
+                &num.to_string(),
+                "--label",
+                &desc,
+                "--loader",
+                &file,
+            ]
+            .iter()
+            .map(|x| x.to_string())
+            .collect();
             // The entry's optional data (the loader's arguments), as the
             // source had it: UCS-2 text as efibootmgr's --unicode argument,
             // anything else from a file.
             match efi_optional_data(e) {
                 Some(OptionalData::Text(text)) => a.extend(["--unicode".to_string(), text]),
                 Some(OptionalData::Bytes(b)) => {
-                    let num_tok: String = s(e, "number").unwrap_or_default().chars().filter(char::is_ascii_alphanumeric).collect();
+                    let num_tok: String = s(e, "number")
+                        .unwrap_or_default()
+                        .chars()
+                        .filter(char::is_ascii_alphanumeric)
+                        .collect();
                     let f = format!("{RUN_DIR}/efi-optional-data-{num_tok}");
                     let qf = shell_quote(&f);
                     let octal: String = b.iter().map(|c| format!("\\{c:03o}")).collect();
@@ -5575,7 +8131,10 @@ impl Builder<'_> {
                 }
                 None => {}
             }
-            out.push(Cmd { argv: a, ..Cmd::default() });
+            out.push(Cmd {
+                argv: a,
+                ..Cmd::default()
+            });
         }
         out
     }
@@ -5590,24 +8149,41 @@ impl Builder<'_> {
         for sect in ["disks", "md_arrays", "dm_devices"] {
             for d in self.layout.arr(&["storage", sect]) {
                 let mut all = vec![d];
-                all.extend(d.get("partitions").and_then(Value::as_array).into_iter().flatten());
-                have.extend(all.iter().filter_map(|x| x.at(&["content", "uuid"]).and_then(Value::as_str)).map(str::to_ascii_lowercase));
+                all.extend(
+                    d.get("partitions")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten(),
+                );
+                have.extend(
+                    all.iter()
+                        .filter_map(|x| x.at(&["content", "uuid"]).and_then(Value::as_str))
+                        .map(str::to_ascii_lowercase),
+                );
             }
         }
-        let conf = self.layout.str_at(&["boot", "refind", "linux_conf", "path"]).unwrap_or("/boot/refind_linux.conf").to_string();
+        let conf = self
+            .layout
+            .str_at(&["boot", "refind", "linux_conf", "path"])
+            .unwrap_or("/boot/refind_linux.conf")
+            .to_string();
         let mut missing: Vec<String> = Vec::new();
         for l in self.layout.arr(&["boot", "refind", "linux_conf", "lines"]) {
             for w in s(l, "options").unwrap_or_default().split_whitespace() {
                 let u = if let Some(r) = w.strip_prefix("root=") {
-                    r.strip_prefix("UUID=").or_else(|| r.strip_prefix("/dev/disk/by-uuid/"))
+                    r.strip_prefix("UUID=")
+                        .or_else(|| r.strip_prefix("/dev/disk/by-uuid/"))
                 } else if let Some(r) = w.strip_prefix("rd.luks.name=") {
                     // rd.luks.name=UUID=NAME, the UUID bare or with UUID=.
                     let r = r.strip_prefix("UUID=").unwrap_or(r);
                     r.split_once('=').map(|(u, _)| u)
                 } else {
-                    w.strip_prefix("rd.luks.uuid=").map(|r| r.strip_prefix("luks-").unwrap_or(r))
+                    w.strip_prefix("rd.luks.uuid=")
+                        .map(|r| r.strip_prefix("luks-").unwrap_or(r))
                 };
-                let Some(u) = u.filter(|u| !u.is_empty()) else { continue };
+                let Some(u) = u.filter(|u| !u.is_empty()) else {
+                    continue;
+                };
                 let what = format!("{}={u}", w.split('=').next().unwrap_or(w));
                 if !have.contains(&u.to_ascii_lowercase()) && !missing.contains(&what) {
                     missing.push(what);
@@ -5630,12 +8206,25 @@ impl Builder<'_> {
     /// --file` and a /dev path are fine.  A dump without boot.store
     /// (NixOS's) has nothing to check.
     fn check_store_grub_cfg(&mut self, st: &crate::store::StoreSystem) {
-        let Some(store) = self.layout.v.at(&["boot", "store"]).filter(|v| !v.is_null()).cloned() else { return };
+        let Some(store) = self
+            .layout
+            .v
+            .at(&["boot", "store"])
+            .filter(|v| !v.is_null())
+            .cloned()
+        else {
+            return;
+        };
         let (mut uuids, mut labels): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
         for sect in ["disks", "md_arrays", "dm_devices"] {
             for d in self.layout.arr(&["storage", sect]) {
                 let mut all = vec![d];
-                all.extend(d.get("partitions").and_then(Value::as_array).into_iter().flatten());
+                all.extend(
+                    d.get("partitions")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten(),
+                );
                 for c in all.iter().filter_map(|x| x.get("content")) {
                     uuids.extend(s(c, "uuid").map(|u| u.to_ascii_lowercase()));
                     labels.extend(s(c, "label"));
@@ -5643,40 +8232,82 @@ impl Builder<'_> {
             }
         }
         let name = st.name;
-        let cfg = store.at(&["grub_cfg", "path"]).and_then(Value::as_str).unwrap_or("/boot/grub/grub.cfg").to_string();
+        let cfg = store
+            .at(&["grub_cfg", "path"])
+            .and_then(Value::as_str)
+            .unwrap_or("/boot/grub/grub.cfg")
+            .to_string();
         let mut missing: Vec<String> = Vec::new();
         let mut miss = |m: String| {
             if !missing.contains(&m) {
                 missing.push(m);
             }
         };
-        for x in store.at(&["grub_cfg", "searches"]).and_then(Value::as_array).into_iter().flatten() {
-            let (Some(k), Some(v)) = (s(x, "kind"), s(x, "value")) else { continue };
+        for x in store
+            .at(&["grub_cfg", "searches"])
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let (Some(k), Some(v)) = (s(x, "kind"), s(x, "value")) else {
+                continue;
+            };
             let found = match k.as_str() {
                 "fs-uuid" => uuids.contains(&v.to_ascii_lowercase()),
                 "label" => labels.contains(&v),
                 _ => true,
             };
             if !found {
-                miss(format!("{cfg} searches --{} {v}, which no file system in the layout has; the restored GRUB couldn't find it", if k == "fs-uuid" { "fs-uuid" } else { "label" }));
+                miss(format!(
+                    "{cfg} searches --{} {v}, which no file system in the layout has; the restored GRUB couldn't find it",
+                    if k == "fs-uuid" { "fs-uuid" } else { "label" }
+                ));
             }
         }
-        let root_ok = |r: &str| r.starts_with('/') || uuids.contains(&r.to_ascii_lowercase()) || labels.iter().any(|l| l == r);
-        for r in store.at(&["grub_cfg", "roots"]).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+        let root_ok = |r: &str| {
+            r.starts_with('/')
+                || uuids.contains(&r.to_ascii_lowercase())
+                || labels.iter().any(|l| l == r)
+        };
+        for r in store
+            .at(&["grub_cfg", "roots"])
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
             if !root_ok(r) {
-                miss(format!("{cfg} boots with root {r}, which no file system in the layout has as its UUID or label; the restored initrd couldn't find its root"));
+                miss(format!(
+                    "{cfg} boots with root {r}, which no file system in the layout has as its UUID or label; the restored initrd couldn't find its root"
+                ));
             }
         }
-        for g in store.get("generations").and_then(Value::as_array).into_iter().flatten() {
+        for g in store
+            .get("generations")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let n = g.get("number").and_then(Value::as_u64).unwrap_or(0);
-            for a in g.get("kernel_arguments").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+            for a in g
+                .get("kernel_arguments")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
                 if let Some(r) = crate::store::root_arg(a).filter(|r| !root_ok(r)) {
-                    miss(format!("generation {n} boots with root {r}, which no file system in the layout has as its UUID or label; its initrd couldn't find its root"));
+                    miss(format!(
+                        "generation {n} boots with root {r}, which no file system in the layout has as its UUID or label; its initrd couldn't find its root"
+                    ));
                 }
             }
             // Its root device (1.5.0's only word on the root: grub.cfg's
             // root= is made from it).
-            let (k, v) = (g.at(&["root_device", "kind"]).and_then(Value::as_str), g.at(&["root_device", "value"]).and_then(Value::as_str));
+            let (k, v) = (
+                g.at(&["root_device", "kind"]).and_then(Value::as_str),
+                g.at(&["root_device", "value"]).and_then(Value::as_str),
+            );
             if let (Some(k), Some(v)) = (k, v) {
                 let ok = match k {
                     "uuid" => uuids.contains(&v.to_ascii_lowercase()),
@@ -5689,7 +8320,9 @@ impl Builder<'_> {
                         "uuid" => format!("UUID {v}"),
                         _ => v.to_string(),
                     };
-                    miss(format!("generation {n}'s root device is {what}, which no file system in the layout has; its initrd couldn't find its root"));
+                    miss(format!(
+                        "generation {n}'s root device is {what}, which no file system in the layout has; its initrd couldn't find its root"
+                    ));
                 }
             }
         }
@@ -5703,7 +8336,9 @@ impl Builder<'_> {
             return self.other_close(fam);
         }
         let t = &self.opts.target;
-        let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
+        let exe = std::env::current_exe()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "bko-holt".into());
         // Where the mount stage mounts nothing at the target itself (Ubuntu
         // Core: the four partitions under run/mnt), `umount --recursive`
         // of it fails, "not mounted": umount-tree (umounttree.rs) takes
@@ -5736,9 +8371,13 @@ impl Builder<'_> {
         let qt = shell_quote(t);
         let ns_script = if qt == *t && !t.bytes().any(|b| matches!(b, b'.' | b'^')) {
             let at = if rooted {
-                format!("awk -v t={t} '{{ m = $5; if (m == t || length(m) > length(t) && substr(m, length(m) - length(t) + 1) == t) print m }}'")
+                format!(
+                    "awk -v t={t} '{{ m = $5; if (m == t || length(m) > length(t) && substr(m, length(m) - length(t) + 1) == t) print m }}'"
+                )
             } else {
-                format!("awk -v t={t} '{{ m = $5; i = index(m, t); if (i > 0 && (i + length(t) - 1 == length(m) || substr(m, i + length(t), 1) == \"/\")) print m }}' | LC_ALL=C sort -r")
+                format!(
+                    "awk -v t={t} '{{ m = $5; i = index(m, t); if (i > 0 && (i + length(t) - 1 == length(m) || substr(m, i + length(t), 1) == \"/\")) print m }}' | LC_ALL=C sort -r"
+                )
             };
             format!(
                 "me=$(readlink /proc/self/ns/mnt); seen=\" $me \"; \
@@ -5775,21 +8414,45 @@ impl Builder<'_> {
                  printf '%s\\n' \"$ms\" | while IFS= read -r m; do nsenter --mount=\"$b\" umount --recursive \"$m\" || true; done; done"
             )
         };
-        out.push(Cmd::new(&["sh", "-c", &ns_script]).why("other mount namespaces' copies of the target's mounts"));
+        out.push(
+            Cmd::new(&["sh", "-c", &ns_script])
+                .why("other mount namespaces' copies of the target's mounts"),
+        );
         out.extend(self.closers.iter().rev().cloned());
         // Stopped, each md member gets back the source's logical block size
         // field: the rescue system's kernel may have written one the
         // source's kernel takes for non-zero padding, and refuses.
         for md in self.layout.arr(&["storage", "md_arrays"]).to_vec() {
-            for m in md.at(&["md", "members"]).and_then(Value::as_array).into_iter().flatten() {
+            for m in md
+                .at(&["md", "members"])
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 let Some(src) = s(m, "device") else { continue };
-                let Some(c) = self.layout.content(&src).cloned() else { continue };
+                let Some(c) = self.layout.content(&src).cloned() else {
+                    continue;
+                };
                 if !s(&c, "metadata").is_some_and(|v| v.starts_with('1')) {
                     continue;
                 }
-                let (Some(dev), Some(off)) = (self.names.dev(&src), num(&c, "super_offset_bytes")) else { continue };
+                let (Some(dev), Some(off)) = (self.names.dev(&src), num(&c, "super_offset_bytes"))
+                else {
+                    continue;
+                };
                 let lbs = num(&c, "logical_block_size").unwrap_or(0);
-                out.push(Cmd::new(&[exe.as_str(), "md-lbs", dev.as_str(), &off.to_string(), &lbs.to_string()]).why(format!("{src}: the md superblock as the source's kernel reads it")));
+                out.push(
+                    Cmd::new(&[
+                        exe.as_str(),
+                        "md-lbs",
+                        dev.as_str(),
+                        &off.to_string(),
+                        &lbs.to_string(),
+                    ])
+                    .why(format!(
+                        "{src}: the md superblock as the source's kernel reads it"
+                    )),
+                );
             }
         }
         out
@@ -5801,8 +8464,12 @@ impl Builder<'_> {
 /// partition and loader, which an earlier restore onto this machine made,
 /// deleted, so that each restore doesn't add another copy.
 pub(crate) fn efi_dedupe(dev: &str, part: u32, loader: &str) -> Cmd {
-    let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
-    Cmd::new(&[exe.as_str(), "efi-dedupe", dev, &part.to_string(), loader]).why("NVRAM's entries for this partition and loader, from an earlier restore here, deleted").warns()
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "bko-holt".into());
+    Cmd::new(&[exe.as_str(), "efi-dedupe", dev, &part.to_string(), loader])
+        .why("NVRAM's entries for this partition and loader, from an earlier restore here, deleted")
+        .warns()
 }
 
 /// A UEFI entry's optional data (the bytes after its device path).
@@ -5821,10 +8488,25 @@ pub(crate) fn luks_passphrase_keyslot(c: &Value) -> Value {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .flat_map(|t| t.get("keyslots").and_then(Value::as_array).cloned().unwrap_or_default())
-        .filter_map(|k| k.as_str().map(str::to_string).or_else(|| k.as_u64().map(|n| n.to_string())))
+        .flat_map(|t| {
+            t.get("keyslots")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+        })
+        .filter_map(|k| {
+            k.as_str()
+                .map(str::to_string)
+                .or_else(|| k.as_u64().map(|n| n.to_string()))
+        })
         .collect();
-    c.get("keyslots").and_then(Value::as_array).into_iter().flatten().find(|k| s(k, "id").is_none_or(|id| !bound.contains(&id))).cloned().unwrap_or(Value::Null)
+    c.get("keyslots")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|k| s(k, "id").is_none_or(|id| !bound.contains(&id)))
+        .cloned()
+        .unwrap_or(Value::Null)
 }
 
 /// The dumped entry E's optional data, from the tail of its load option
@@ -5832,10 +8514,15 @@ pub(crate) fn luks_passphrase_keyslot(c: &Value) -> Value {
 pub(crate) fn efi_optional_data(e: &Value) -> Option<OptionalData> {
     let n = num(e, "optional_data_bytes").filter(|&n| n > 0)? as usize;
     let hex = s(e, "load_option_hex")?;
-    let raw: Vec<u8> = (0..hex.len() / 2).filter_map(|i| u8::from_str_radix(hex.get(2 * i..2 * i + 2)?, 16).ok()).collect();
+    let raw: Vec<u8> = (0..hex.len() / 2)
+        .filter_map(|i| u8::from_str_radix(hex.get(2 * i..2 * i + 2)?, 16).ok())
+        .collect();
     let b = raw.get(raw.len().checked_sub(n)?..)?.to_vec();
     if b.len() % 2 == 0 {
-        let mut units: Vec<u16> = b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let mut units: Vec<u16> = b
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
         while units.last() == Some(&0) {
             units.pop();
         }
@@ -5855,7 +8542,8 @@ pub(crate) fn efi_optional_data(e: &Value) -> Option<OptionalData> {
 /// the hardware.  Not /dev/mapper/, /dev/disk/by-*/ or /dev/VG/LV.
 fn kernel_dev_path(p: &str) -> bool {
     let p = md_name(p);
-    p.strip_prefix("/dev/").is_some_and(|t| !t.is_empty() && !t.contains('/'))
+    p.strip_prefix("/dev/")
+        .is_some_and(|t| !t.is_empty() && !t.contains('/'))
 }
 
 /// /dev/md/N as /dev/mdN: the same array, by mdadm's name or the
@@ -5888,10 +8576,16 @@ fn disk_class(name: &str) -> Option<(&'static str, u32, String)> {
         return Some(("mmcblk", n.parse().ok()?, String::new()));
     }
     for class in ["xvd", "vd", "sd", "hd"] {
-        if let Some(l) = name.strip_prefix(class).filter(|l| !l.is_empty() && l.len() <= 4 && l.bytes().all(|b| b.is_ascii_lowercase())) {
+        if let Some(l) = name
+            .strip_prefix(class)
+            .filter(|l| !l.is_empty() && l.len() <= 4 && l.bytes().all(|b| b.is_ascii_lowercase()))
+        {
             // The kernel's letters count a, ..., z, aa, ...: base 26 with
             // no zero digit.
-            let place = l.bytes().fold(0u32, |n, b| n * 26 + u32::from(b - b'a') + 1) - 1;
+            let place = l
+                .bytes()
+                .fold(0u32, |n, b| n * 26 + u32::from(b - b'a') + 1)
+                - 1;
             return Some((class, place, String::new()));
         }
     }
@@ -5916,8 +8610,11 @@ fn class_disk(class: &str, place: u32, rest: &str) -> String {
 
 /// "first", "second", ... for a place among a class's disks (0 the first).
 fn place_word(place: u32) -> String {
-    const W: [&str; 8] = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth"];
-    W.get(place as usize).map_or_else(|| format!("{}th", place + 1), |w| w.to_string())
+    const W: [&str; 8] = [
+        "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth",
+    ];
+    W.get(place as usize)
+        .map_or_else(|| format!("{}th", place + 1), |w| w.to_string())
 }
 
 /// Whether the kernel names a class's disks by where they are attached
@@ -5942,7 +8639,12 @@ fn boot_name_of(target: &str, targets: &[&str]) -> Option<String> {
     if fixed_class(class) {
         return Some(target.to_string());
     }
-    let mut before: Vec<u32> = targets.iter().filter_map(|t| disk_class(t)).filter(|(c, p, _)| *c == class && *p < place).map(|(_, p, _)| p).collect();
+    let mut before: Vec<u32> = targets
+        .iter()
+        .filter_map(|t| disk_class(t))
+        .filter(|(c, p, _)| *c == class && *p < place)
+        .map(|(_, p, _)| p)
+        .collect();
     before.sort_unstable();
     before.dedup();
     Some(class_disk(class, before.len() as u32, &rest))
@@ -6014,27 +8716,50 @@ fn lilo_dump_items(v: &Value) -> Option<Vec<crate::boot::LiloItem>> {
 /// Ok(None) when the copy would change nothing, else the copy; Err when
 /// the copy couldn't say what the user's file says, or lilo would refuse
 /// it.
-fn lilo_root_copy(lilo: &Value, rescue: &dyn Fn(&str) -> Option<String>, number: &dyn Fn(&str) -> Option<String>) -> Result<Option<LiloCopy>, String> {
+fn lilo_root_copy(
+    lilo: &Value,
+    rescue: &dyn Fn(&str) -> Option<String>,
+    number: &dyn Fn(&str) -> Option<String>,
+) -> Result<Option<LiloCopy>, String> {
     use crate::boot::lilo_get;
     let conf = s(lilo, "conf").unwrap_or_else(|| crate::boot::LILO_CONF.into());
     let Some(mut global) = lilo_dump_items(lilo) else {
-        return Err(format!("the dump's boot.lilo doesn't keep {conf}'s items (options), so bko-holt can't write the copy of it lilo runs on"));
+        return Err(format!(
+            "the dump's boot.lilo doesn't keep {conf}'s items (options), so bko-holt can't write the copy of it lilo runs on"
+        ));
     };
     let g = |k: &str| lilo_get(&global, k).map(str::to_string);
-    let flag = |its: &[crate::boot::LiloItem], k: &str| its.iter().chain(global.iter()).any(|(x, _)| x == k);
+    let flag = |its: &[crate::boot::LiloItem], k: &str| {
+        its.iter().chain(global.iter()).any(|(x, _)| x == k)
+    };
     let mut sections: Vec<(String, String, Vec<crate::boot::LiloItem>)> = Vec::new();
     let mut added: Vec<String> = Vec::new();
     let mut renamed: Vec<String> = Vec::new();
     let mut numbered: Vec<String> = Vec::new();
-    for img in lilo.get("images").and_then(Value::as_array).into_iter().flatten() {
+    for img in lilo
+        .get("images")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         let kind = s(img, "kind").unwrap_or_else(|| "image".into());
         let path = s(img, "path").unwrap_or_default();
         let Some(mut its) = lilo_dump_items(img) else {
-            return Err(format!("the dump's boot.lilo doesn't keep the items of {conf}'s {kind}={path} (options), so bko-holt can't write the copy of it lilo runs on"));
+            return Err(format!(
+                "the dump's boot.lilo doesn't keep the items of {conf}'s {kind}={path} (options), so bko-holt can't write the copy of it lilo runs on"
+            ));
         };
-        let root = lilo_get(&its, "root").map(str::to_string).or_else(|| g("root"));
-        let has_root = |t: Option<&str>| t.unwrap_or("").split_whitespace().any(|w| w.starts_with("root="));
-        if let Some(root) = root.clone().filter(|r| kind == "image" && lilo_numbers_root(r) && lilo_get(&its, "literal").is_none()) {
+        let root = lilo_get(&its, "root")
+            .map(str::to_string)
+            .or_else(|| g("root"));
+        let has_root = |t: Option<&str>| {
+            t.unwrap_or("")
+                .split_whitespace()
+                .any(|w| w.starts_with("root="))
+        };
+        if let Some(root) = root.clone().filter(|r| {
+            kind == "image" && lilo_numbers_root(r) && lilo_get(&its, "literal").is_none()
+        }) {
             let own = its.iter().rposition(|(k, _)| k == "append");
             let append = match own {
                 Some(i) => its[i].1.clone(),
@@ -6057,7 +8782,10 @@ fn lilo_root_copy(lilo: &Value, rescue: &dyn Fn(&str) -> Option<String>, number:
                     line += "rw ";
                 }
                 line += "root=ffffffff ";
-                if let Some(r) = lilo_get(&its, "ramdisk").map(str::to_string).or_else(|| g("ramdisk")) {
+                if let Some(r) = lilo_get(&its, "ramdisk")
+                    .map(str::to_string)
+                    .or_else(|| g("ramdisk"))
+                {
                     line += &format!("ramdisk={r} ");
                 }
                 line += &new;
@@ -6081,8 +8809,16 @@ fn lilo_root_copy(lilo: &Value, rescue: &dyn Fn(&str) -> Option<String>, number:
         // kernel takes the device number lilo writes for root=, which lilo
         // would take from the rescue's device of the target's name here, a
         // number the restored kernel needn't give it.
-        if let (Some(lit), Some(root)) = (lilo_get(&its, "literal").filter(|_| kind == "image"), root.as_deref()) {
-            if !has_root(Some(lit)) && lilo_numbers_root(root) && kernel_dev_path(root) && rescue(root).is_some() && number(root).is_none() {
+        if let (Some(lit), Some(root)) = (
+            lilo_get(&its, "literal").filter(|_| kind == "image"),
+            root.as_deref(),
+        ) {
+            if !has_root(Some(lit))
+                && lilo_numbers_root(root)
+                && kernel_dev_path(root)
+                && rescue(root).is_some()
+                && number(root).is_none()
+            {
                 let label = lilo_get(&its, "label").unwrap_or(&path);
                 return Err(format!(
                     "{conf}'s image {label} has literal= with no root= in it, so its kernel finds / by the device number lilo writes for root={root}, which lilo would take here from the rescue's name for the target's disk (a number the restored kernel needn't give it); bko-holt can't give that image root= by name"
@@ -6098,46 +8834,66 @@ fn lilo_root_copy(lilo: &Value, rescue: &dyn Fn(&str) -> Option<String>, number:
     // table= (an other= section's partition table), raid-extra-boot='s
     // disks, and each other= section's device (whose boot sector it
     // chain-loads).  PREFIX names a section's item.
-    let mut rename = |prefix: &str, its: &mut Vec<crate::boot::LiloItem>, other: Option<&mut String>| {
-        if let Some(path) = other.filter(|p| kernel_dev_path(p)) {
-            if let Some(r) = rescue(path) {
-                let line = format!("{prefix}other={path} as {r}");
+    let mut rename =
+        |prefix: &str, its: &mut Vec<crate::boot::LiloItem>, other: Option<&mut String>| {
+            if let Some(path) = other.filter(|p| kernel_dev_path(p)) {
+                if let Some(r) = rescue(path) {
+                    let line = format!("{prefix}other={path} as {r}");
+                    if !renamed.contains(&line) {
+                        renamed.push(line);
+                    }
+                    *path = r;
+                }
+            }
+            for (k, v) in its.iter_mut().filter(|(k, _)| {
+                matches!(
+                    k.as_str(),
+                    "root" | "boot" | "disk" | "table" | "raid-extra-boot"
+                )
+            }) {
+                let Some(old) = v.clone() else { continue };
+                let key: &str = k;
+                // root=: the source's number, which lilo writes as it is.
+                if let Some(n) = Some(old.trim())
+                    .filter(|t| key == "root" && kernel_dev_path(t) && lilo_numbers_root(t))
+                    .and_then(number)
+                {
+                    let line = format!("{prefix}root={old} as {n}");
+                    if !numbered.contains(&line) {
+                        numbered.push(line);
+                    }
+                    *v = Some(n);
+                    continue;
+                }
+                let one = |d: &str| {
+                    let t = d.trim();
+                    (kernel_dev_path(t) && (key != "root" || lilo_numbers_root(t)))
+                        .then(|| rescue(t))
+                        .flatten()
+                        .unwrap_or_else(|| d.to_string())
+                };
+                let new = if key == "raid-extra-boot" {
+                    old.split(',').map(one).collect::<Vec<_>>().join(",")
+                } else {
+                    one(&old)
+                };
+                if new == old {
+                    continue;
+                }
+                let line = format!("{prefix}{k}={old} as {new}");
                 if !renamed.contains(&line) {
                     renamed.push(line);
                 }
-                *path = r;
+                *v = Some(new);
             }
-        }
-        for (k, v) in its.iter_mut().filter(|(k, _)| matches!(k.as_str(), "root" | "boot" | "disk" | "table" | "raid-extra-boot")) {
-            let Some(old) = v.clone() else { continue };
-            let key: &str = k;
-            // root=: the source's number, which lilo writes as it is.
-            if let Some(n) = Some(old.trim()).filter(|t| key == "root" && kernel_dev_path(t) && lilo_numbers_root(t)).and_then(number) {
-                let line = format!("{prefix}root={old} as {n}");
-                if !numbered.contains(&line) {
-                    numbered.push(line);
-                }
-                *v = Some(n);
-                continue;
-            }
-            let one = |d: &str| {
-                let t = d.trim();
-                (kernel_dev_path(t) && (key != "root" || lilo_numbers_root(t))).then(|| rescue(t)).flatten().unwrap_or_else(|| d.to_string())
-            };
-            let new = if key == "raid-extra-boot" { old.split(',').map(one).collect::<Vec<_>>().join(",") } else { one(&old) };
-            if new == old {
-                continue;
-            }
-            let line = format!("{prefix}{k}={old} as {new}");
-            if !renamed.contains(&line) {
-                renamed.push(line);
-            }
-            *v = Some(new);
-        }
-    };
+        };
     for (kind, path, its) in sections.iter_mut() {
         let label = lilo_get(its, "label").unwrap_or(path.as_str()).to_string();
-        rename(&format!("{label}'s "), its, (kind == "other").then_some(path));
+        rename(
+            &format!("{label}'s "),
+            its,
+            (kind == "other").then_some(path),
+        );
     }
     rename("", &mut global, None);
     if added.is_empty() && renamed.is_empty() && numbered.is_empty() {
@@ -6147,14 +8903,26 @@ fn lilo_root_copy(lilo: &Value, rescue: &dyn Fn(&str) -> Option<String>, number:
     // backslash or a $ (lilo expands $VAR) may not be what lilo read; and
     // password="" keeps the passwords in CONF.shs, named after the config
     // lilo runs on, which the copy's name would miss.
-    let all = global.iter().chain(sections.iter().flat_map(|(_, _, its)| its.iter()));
+    let all = global
+        .iter()
+        .chain(sections.iter().flat_map(|(_, _, its)| its.iter()));
     for (k, v) in all {
         if k == "password" && v.as_deref() == Some("") {
-            return Err(format!("{conf} has password=\"\", whose passwords lilo keeps in {conf}.shs, beside the config it runs on; bko-holt runs lilo on a copy of {conf} (to give the kernel root= by name) and doesn't support that"));
+            return Err(format!(
+                "{conf} has password=\"\", whose passwords lilo keeps in {conf}.shs, beside the config it runs on; bko-holt runs lilo on a copy of {conf} (to give the kernel root= by name) and doesn't support that"
+            ));
         }
     }
     let odd = |t: &str| t.contains(['"', '\\', '$']);
-    let mut bad = global.iter().chain(sections.iter().flat_map(|(_, _, its)| its.iter())).map(|(k, v)| (k.as_str(), v.as_deref())).chain(sections.iter().map(|(k, p, _)| (k.as_str(), Some(p.as_str()))));
+    let mut bad = global
+        .iter()
+        .chain(sections.iter().flat_map(|(_, _, its)| its.iter()))
+        .map(|(k, v)| (k.as_str(), v.as_deref()))
+        .chain(
+            sections
+                .iter()
+                .map(|(k, p, _)| (k.as_str(), Some(p.as_str()))),
+        );
     if let Some((k, v)) = bad.find(|(k, v)| odd(k) || v.is_some_and(odd)) {
         return Err(format!(
             "{conf}'s {k}{} has a quote, backslash or $, which bko-holt can't write into the copy of {conf} it runs lilo on (to give the kernel root= by name, and lilo the target's disks by the rescue's names) as lilo reads it",
@@ -6165,8 +8933,16 @@ fn lilo_root_copy(lilo: &Value, rescue: &dyn Fn(&str) -> Option<String>, number:
         Some(v) => format!("{k}=\"{v}\"\n"),
         None => format!("{k}\n"),
     };
-    let copy = LiloCopy { text: String::new(), added, renamed, numbered };
-    let mut text = format!("# bko-holt load: {conf} {}; lilo is run on this copy, then it is removed\n", copy.what());
+    let copy = LiloCopy {
+        text: String::new(),
+        added,
+        renamed,
+        numbered,
+    };
+    let mut text = format!(
+        "# bko-holt load: {conf} {}; lilo is run on this copy, then it is removed\n",
+        copy.what()
+    );
     text.extend(global.iter().map(item));
     for (kind, path, its) in &sections {
         text += &format!("{kind}=\"{path}\"\n");
@@ -6192,13 +8968,22 @@ impl LiloCopy {
     fn what(&self) -> String {
         let mut w = Vec::new();
         if !self.added.is_empty() {
-            w.push(format!("with root= by name added to append= ({})", self.added.join(", ")));
+            w.push(format!(
+                "with root= by name added to append= ({})",
+                self.added.join(", ")
+            ));
         }
         if !self.renamed.is_empty() {
-            w.push(format!("with the devices lilo opens named as the rescue names the target's ({})", self.renamed.join(", ")));
+            w.push(format!(
+                "with the devices lilo opens named as the rescue names the target's ({})",
+                self.renamed.join(", ")
+            ));
         }
         if !self.numbered.is_empty() {
-            w.push(format!("with root= as the device number the source's map has ({})", self.numbered.join(", ")));
+            w.push(format!(
+                "with root= as the device number the source's map has ({})",
+                self.numbered.join(", ")
+            ));
         }
         w.join(" and ")
     }
@@ -6214,7 +8999,10 @@ impl Builder<'_> {
     /// the rescue (lilo, mkinitrd_command_generator.sh) must open for the
     /// device the restored system calls P at boot.
     fn rescue_name(&self, p: &str) -> Option<String> {
-        let src = self.names.src_of_path(&md_name(p)).or_else(|| self.names.src_of_path(p))?;
+        let src = self
+            .names
+            .src_of_path(&md_name(p))
+            .or_else(|| self.names.src_of_path(p))?;
         self.names.dev(&src).filter(|t| md_name(t) != md_name(p))
     }
 
@@ -6229,29 +9017,68 @@ impl Builder<'_> {
     /// the source's kernel gave it (the dump's devno), what the source's
     /// lilo would write when run there.  None when the dump has neither.
     fn lilo_root_number(&self, p: &str) -> Option<String> {
-        let words: Vec<&str> = self.layout.arr(&["boot", "cmdline", "words"]).iter().filter_map(Value::as_str).map(str::trim).collect();
+        let words: Vec<&str> = self
+            .layout
+            .arr(&["boot", "cmdline", "words"])
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .collect();
         let lilo = self.layout.v.at(&["boot", "lilo"])?;
-        let booted = words.iter().find_map(|w| w.strip_prefix("BOOT_IMAGE=")).filter(|_| self.layout.str_at(&["boot", "loader", "name"]) == Some("lilo"));
+        let booted = words
+            .iter()
+            .find_map(|w| w.strip_prefix("BOOT_IMAGE="))
+            .filter(|_| self.layout.str_at(&["boot", "loader", "name"]) == Some("lilo"));
         let image = booted.and_then(|b| {
-            lilo.get("images").and_then(Value::as_array).into_iter().flatten().find(|i| {
-                s(i, "kind").as_deref() != Some("other") && s(i, "label").or_else(|| s(i, "path").and_then(|p| p.rsplit('/').next().map(str::to_string))).as_deref() == Some(b)
-            })
+            lilo.get("images")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find(|i| {
+                    s(i, "kind").as_deref() != Some("other")
+                        && s(i, "label")
+                            .or_else(|| {
+                                s(i, "path").and_then(|p| p.rsplit('/').next().map(str::to_string))
+                            })
+                            .as_deref()
+                            == Some(b)
+                })
         });
         let root = image.and_then(|i| s(i, "root").or_else(|| s(lilo, "root")));
         // bsect_common's `root=%x`, the first root= on the line: after it
         // only the append= the user gave.
-        let hex = words.iter().find_map(|w| w.strip_prefix("root=")).filter(|h| (1..=8).contains(&h.len()) && h.bytes().all(|b| b.is_ascii_hexdigit()));
+        let hex = words
+            .iter()
+            .find_map(|w| w.strip_prefix("root="))
+            .filter(|h| (1..=8).contains(&h.len()) && h.bytes().all(|b| b.is_ascii_hexdigit()));
         if let (Some(r), Some(h)) = (root, hex) {
             if md_name(&r) == md_name(p) {
                 return Some(format!("0x{}", h.to_ascii_lowercase()));
             }
         }
-        let src = self.names.src_of_path(&md_name(p)).or_else(|| self.names.src_of_path(p))?;
-        let devno = self.layout.arr(&["storage", "disks"]).iter().flat_map(|d| std::iter::once(d).chain(d.get("partitions").and_then(Value::as_array).into_iter().flatten())).find(|d| s(d, "name").as_deref() == Some(src.as_str())).and_then(|d| s(d, "devno"))?;
+        let src = self
+            .names
+            .src_of_path(&md_name(p))
+            .or_else(|| self.names.src_of_path(p))?;
+        let devno = self
+            .layout
+            .arr(&["storage", "disks"])
+            .iter()
+            .flat_map(|d| {
+                std::iter::once(d).chain(
+                    d.get("partitions")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten(),
+                )
+            })
+            .find(|d| s(d, "name").as_deref() == Some(src.as_str()))
+            .and_then(|d| s(d, "devno"))?;
         let (ma, mi) = devno.split_once(':')?;
         let (ma, mi): (u64, u64) = (ma.parse().ok()?, mi.parse().ok()?);
         // glibc's makedev, as lilo's int st_rdev holds it.
-        (ma <= 0xfff && mi <= 0xf_ffff).then(|| format!("0x{:x}", ((mi & 0xf_ff00) << 12) | (ma << 8) | (mi & 0xff)))
+        (ma <= 0xfff && mi <= 0xf_ffff)
+            .then(|| format!("0x{:x}", ((mi & 0xf_ff00) << 12) | (ma << 8) | (mi & 0xff)))
     }
 
     /// Whether source device P (a kernel name) is the name its target has
@@ -6259,10 +9086,26 @@ impl Builder<'_> {
     /// same class, in the same place among the target's disks of that
     /// class; a device on no such disk by its name here).
     fn boot_name_holds(&self, p: &str) -> bool {
-        let src = self.names.src_of_path(&md_name(p)).or_else(|| self.names.src_of_path(p));
-        let Some(here) = src.as_deref().and_then(|x| self.names.dev(x)) else { return false };
-        let targets: Vec<&str> = self.names.mapping.pairs.iter().map(|(_, t)| t.as_str()).collect();
-        let disk = src.as_deref().and_then(|x| self.layout.disks.iter().find(|d| d.name == x || d.parts.iter().any(|q| q.name == x)));
+        let src = self
+            .names
+            .src_of_path(&md_name(p))
+            .or_else(|| self.names.src_of_path(p));
+        let Some(here) = src.as_deref().and_then(|x| self.names.dev(x)) else {
+            return false;
+        };
+        let targets: Vec<&str> = self
+            .names
+            .mapping
+            .pairs
+            .iter()
+            .map(|(_, t)| t.as_str())
+            .collect();
+        let disk = src.as_deref().and_then(|x| {
+            self.layout
+                .disks
+                .iter()
+                .find(|d| d.name == x || d.parts.iter().any(|q| q.name == x))
+        });
         let boot = disk.and_then(|d| {
             let t = self.names.mapping.target_of(&d.name)?;
             disk_class(&d.name)?;
@@ -6282,9 +9125,15 @@ impl Builder<'_> {
         if !self.opts.reformats.iter().any(|(m, _)| m == "/") {
             return None;
         }
-        let e = self.layout.arr(&["storage", "fstab"]).iter().find(|e| s(e, "file").as_deref() == Some("/"))?;
+        let e = self
+            .layout
+            .arr(&["storage", "fstab"])
+            .iter()
+            .find(|e| s(e, "file").as_deref() == Some("/"))?;
         let d = crate::load::layout::find_device(&self.layout.v, &s(e, "resolves_to")?)?;
-        let from = d.at(&["content", "reformatted_from"]).and_then(Value::as_str)?;
+        let from = d
+            .at(&["content", "reformatted_from"])
+            .and_then(Value::as_str)?;
         let to = d.at(&["content", "type"]).and_then(Value::as_str)?;
         Some((from.to_string(), to.to_string()))
     }
@@ -6294,25 +9143,72 @@ impl Builder<'_> {
     /// (/boot/initrd-tree/command_line) with -k for its kernels, else
     /// `mkinitrd -F` from /etc/mkinitrd.conf; Err with why neither can run.
     fn mkinitrd_cmd(&self, t: &str) -> Result<Cmd, String> {
-        let m = self.layout.v.at(&["boot", "initramfs", "mkinitrd"]).cloned().unwrap_or(Value::Null);
-        let kernels: Vec<String> = m.get("kernels").and_then(Value::as_array).into_iter().flatten().filter_map(|k| k.as_str().map(str::to_string)).collect();
+        let m = self
+            .layout
+            .v
+            .at(&["boot", "initramfs", "mkinitrd"])
+            .cloned()
+            .unwrap_or(Value::Null);
+        let kernels: Vec<String> = m
+            .get("kernels")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|k| k.as_str().map(str::to_string))
+            .collect();
         let output = s(&m, "output").unwrap_or_else(|| crate::boot::MKINITRD_OUTPUT.into());
         if kernels.is_empty() {
-            return Err(format!("no kernel in /lib/modules to make it for, so the restored {output} stays"));
+            return Err(format!(
+                "no kernel in /lib/modules to make it for, so the restored {output} stays"
+            ));
         }
         let k = kernels.join(", ");
         let mut argv = vec!["chroot".to_string(), t.to_string()];
         let root = self.root_reformat();
-        if let Some(r) = s(&m, "command_line").and_then(|c| crate::boot::mkinitrd_replay(&c, &kernels, &output, root.as_ref().map(|(f, t)| (f.as_str(), t.as_str())))) {
+        if let Some(r) = s(&m, "command_line").and_then(|c| {
+            crate::boot::mkinitrd_replay(
+                &c,
+                &kernels,
+                &output,
+                root.as_ref().map(|(f, t)| (f.as_str(), t.as_str())),
+            )
+        }) {
             argv.extend(r);
-            let fs = root.map(|(f, t)| format!(", with --reformat's / as {t}: -f {t}, and {t} for {f} in -m")).unwrap_or_default();
-            return Ok(Cmd { argv, ..Cmd::default() }.why(format!("the initrd, by the source's own mkinitrd command ({}), for kernel {k}{fs}", crate::boot::MKINITRD_COMMAND_LINE)));
+            let fs = root
+                .map(|(f, t)| {
+                    format!(", with --reformat's / as {t}: -f {t}, and {t} for {f} in -m")
+                })
+                .unwrap_or_default();
+            return Ok(Cmd {
+                argv,
+                ..Cmd::default()
+            }
+            .why(format!(
+                "the initrd, by the source's own mkinitrd command ({}), for kernel {k}{fs}",
+                crate::boot::MKINITRD_COMMAND_LINE
+            )));
         }
         if s(&m, "conf").is_some() {
-            argv.extend(["mkinitrd".to_string(), "-F".into(), "-k".into(), kernels.join(":")]);
-            return Ok(Cmd { argv, ..Cmd::default() }.why(format!("the initrd, as {} says (mkinitrd -F), for kernel {k}", crate::boot::MKINITRD_CONF)));
+            argv.extend([
+                "mkinitrd".to_string(),
+                "-F".into(),
+                "-k".into(),
+                kernels.join(":"),
+            ]);
+            return Ok(Cmd {
+                argv,
+                ..Cmd::default()
+            }
+            .why(format!(
+                "the initrd, as {} says (mkinitrd -F), for kernel {k}",
+                crate::boot::MKINITRD_CONF
+            )));
         }
-        Err(format!("mkinitrd's command can't be found (no {} or {}), so the restored {output} stays", crate::boot::MKINITRD_COMMAND_LINE, crate::boot::MKINITRD_CONF))
+        Err(format!(
+            "mkinitrd's command can't be found (no {} or {}), so the restored {output} stays",
+            crate::boot::MKINITRD_COMMAND_LINE,
+            crate::boot::MKINITRD_CONF
+        ))
     }
 
     /// -current's geninitrd step, as the dump read it
@@ -6332,7 +9228,12 @@ impl Builder<'_> {
     /// for each remade, notes on the images that stay), or Err(why) when
     /// every restored image stays.
     fn geninitrd_steps(&self, t: &str) -> Result<GeninitrdSteps, String> {
-        let g = self.layout.v.at(&["boot", "initramfs", "geninitrd"]).cloned().unwrap_or(Value::Null);
+        let g = self
+            .layout
+            .v
+            .at(&["boot", "initramfs", "geninitrd"])
+            .cloned()
+            .unwrap_or(Value::Null);
         let runs = s(&g, "runs").unwrap_or_default();
         let setup = crate::boot::GENINITRD_SETUP;
         match runs.as_str() {
@@ -6341,13 +9242,19 @@ impl Builder<'_> {
                 return Err(format!(
                     "geninitrd runs GENINITRD_OVERRIDE_SCRIPT={} in place of {setup}, which bko-holt load doesn't run, so the restored initrd images stay",
                     s(&g, "override_script").unwrap_or_default()
-                ))
+                ));
             }
-            other => return Err(format!("geninitrd's GENERATOR={} ({setup} runs {other}) isn't one bko-holt load runs (only mkinitrd), so the restored initrd images stay", s(&g, "generator").unwrap_or_default())),
+            other => {
+                return Err(format!(
+                    "geninitrd's GENERATOR={} ({setup} runs {other}) isn't one bko-holt load runs (only mkinitrd), so the restored initrd images stay",
+                    s(&g, "generator").unwrap_or_default()
+                ));
+            }
         }
         // A dump before these were read: setup.01.mkinitrd's default, and
         // no tree on the source (geninitrd's default leaves none).
-        let remove_tree = g.get("auto_remove_initrd_tree").and_then(Value::as_bool) != Some(false) && g.get("initrd_tree").and_then(Value::as_bool) != Some(true);
+        let remove_tree = g.get("auto_remove_initrd_tree").and_then(Value::as_bool) != Some(false)
+            && g.get("initrd_tree").and_then(Value::as_bool) != Some(true);
         // The command generator takes / from fstab (the source's name, the
         // one it has at boot) and probes that device here in the rescue
         // (blkid for -f, lvdisplay and cryptsetup for -L and -C), where it
@@ -6355,16 +9262,36 @@ impl Builder<'_> {
         // the target's root otherwise, the generator is given it
         // (--rootdev), and its command mkinitrd's -r given back as fstab's,
         // or it fails.
-        let fstab_root = self.layout.arr(&["storage", "fstab"]).iter().find(|e| s(e, "file").as_deref() == Some("/")).and_then(|e| s(e, "spec"));
-        let probe = fstab_root.filter(|r| runs != "mkinitrd" && kernel_dev_path(r)).and_then(|r| self.rescue_name(&r).map(|h| (r, h)));
-        let plain = |d: &str| d.bytes().all(|b| b.is_ascii_alphanumeric() || b"/_-".contains(&b));
+        let fstab_root = self
+            .layout
+            .arr(&["storage", "fstab"])
+            .iter()
+            .find(|e| s(e, "file").as_deref() == Some("/"))
+            .and_then(|e| s(e, "spec"));
+        let probe = fstab_root
+            .filter(|r| runs != "mkinitrd" && kernel_dev_path(r))
+            .and_then(|r| self.rescue_name(&r).map(|h| (r, h)));
+        let plain = |d: &str| {
+            d.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"/_-".contains(&b))
+        };
         if let Some((r, h)) = probe.as_ref().filter(|(r, h)| !plain(r) || !plain(h)) {
-            return Err(format!("fstab's / is {r}, which the rescue names {h}, a name bko-holt doesn't pass to {} and back (letters, digits, /, _ and - only), so the restored initrd images stay", crate::boot::MKINITRD_GENERATOR));
+            return Err(format!(
+                "fstab's / is {r}, which the rescue names {h}, a name bko-holt doesn't pass to {} and back (letters, digits, /, _ and - only), so the restored initrd images stay",
+                crate::boot::MKINITRD_GENERATOR
+            ));
         }
         let mut steps = Vec::new();
         let mut notes = Vec::new();
-        for img in g.get("images").and_then(Value::as_array).into_iter().flatten() {
-            let (Some(file), Some(v)) = (s(img, "file"), s(img, "version")) else { continue };
+        for img in g
+            .get("images")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let (Some(file), Some(v)) = (s(img, "file"), s(img, "version")) else {
+                continue;
+            };
             if !crate::boot::kernel_version_word(&v) || file != format!("/boot/initrd-{v}.img") {
                 notes.push(format!("{file} isn't named as geninitrd names its images (/boot/initrd-VERSION.img), so it stays as restored"));
                 continue;
@@ -6385,12 +9312,19 @@ impl Builder<'_> {
                 // `file` is /boot/initrd-V.img with V a kernel_version_word: no
                 // quote or $ to escape.
                 let (line, probed) = match &probe {
-                    None => (format!("set -o pipefail; {generator} -k {v} -a \"-L -R -o {file}\" | bash"), String::new()),
+                    None => (
+                        format!(
+                            "set -o pipefail; {generator} -k {v} -a \"-L -R -o {file}\" | bash"
+                        ),
+                        String::new(),
+                    ),
                     Some((r, h)) => (
                         format!(
                             "set -o pipefail; c=$({generator} -k {v} --rootdev {h} -a \"-L -R -o {file}\") || exit; grep -Eq -- ' -r {h}( |$)' <<<\"$c\" || {{ echo '{generator} printed no mkinitrd -r {h}' >&2; exit 1; }}; sed -E 's# -r {h}( |$)# -r {r}\\1#' <<<\"$c\" | bash"
                         ),
-                        format!("; given --rootdev {h}, the target's / as the rescue names it, so it probes that device and not what {r} is here, and mkinitrd's -r given back as {r}, the name fstab and the restored kernel have"),
+                        format!(
+                            "; given --rootdev {h}, the target's / as the rescue names it, so it probes that device and not what {r} is here, and mkinitrd's -r given back as {r}, the name fstab and the restored kernel have"
+                        ),
                     ),
                 };
                 Cmd::new(&["chroot", t, "/bin/bash", "-c", &line]).why(format!(
@@ -6417,27 +9351,56 @@ impl Builder<'_> {
     /// (Slackware's README_CRYPT LVM on LUKS, /dev/cryptvg/root, among
     /// them); or, when neither names a device, fstab's / on /dev/mapper.
     fn slackware_root_crypt(&self) -> Option<String> {
-        let fstab = self.layout.arr(&["storage", "fstab"]).iter().find(|e| s(e, "file").as_deref() == Some("/"));
+        let fstab = self
+            .layout
+            .arr(&["storage", "fstab"])
+            .iter()
+            .find(|e| s(e, "file").as_deref() == Some("/"));
         let spec = fstab.and_then(|e| s(e, "spec")).unwrap_or_default();
-        let dev = fstab
-            .and_then(|e| s(e, "resolves_to"))
-            .or_else(|| self.layout.arr(&["storage", "mounts"]).iter().find(|m| s(m, "target").as_deref() == Some("/")).and_then(|m| s(m, "device")));
+        let dev = fstab.and_then(|e| s(e, "resolves_to")).or_else(|| {
+            self.layout
+                .arr(&["storage", "mounts"])
+                .iter()
+                .find(|m| s(m, "target").as_deref() == Some("/"))
+                .and_then(|m| s(m, "device"))
+        });
         let Some(dev) = dev else {
-            return spec.starts_with("/dev/mapper/").then(|| format!("fstab's / is {spec}, on /dev/mapper"));
+            return spec
+                .starts_with("/dev/mapper/")
+                .then(|| format!("fstab's / is {spec}, on /dev/mapper"));
         };
-        let stack: Vec<&Value> = self.layout.arr(&["storage", "dm_devices"]).iter().chain(self.layout.arr(&["storage", "md_arrays"])).collect();
+        let stack: Vec<&Value> = self
+            .layout
+            .arr(&["storage", "dm_devices"])
+            .iter()
+            .chain(self.layout.arr(&["storage", "md_arrays"]))
+            .collect();
         let (mut todo, mut seen) = (vec![dev.clone()], Vec::new());
         while let Some(n) = todo.pop() {
             if seen.contains(&n) {
                 continue;
             }
             seen.push(n.clone());
-            let Some(d) = stack.iter().find(|d| s(d, "name").as_deref() == Some(n.as_str())) else { continue };
+            let Some(d) = stack
+                .iter()
+                .find(|d| s(d, "name").as_deref() == Some(n.as_str()))
+            else {
+                continue;
+            };
             if d.at(&["dm", "target"]).and_then(Value::as_str) == Some("crypt") {
-                let name = d.at(&["dm", "dm_name"]).and_then(Value::as_str).unwrap_or(&n);
+                let name = d
+                    .at(&["dm", "dm_name"])
+                    .and_then(Value::as_str)
+                    .unwrap_or(&n);
                 return Some(format!("fstab's / ({spec}) is on dm-crypt {name}"));
             }
-            todo.extend(d.get("slaves").and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)));
+            todo.extend(
+                d.get("slaves")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|x| x.as_str().map(str::to_string)),
+            );
         }
         None
     }
@@ -6457,31 +9420,67 @@ impl Builder<'_> {
     /// rescue's /dev nodes in its tree and rewrite the system's
     /// ld.so.cache, and its image could be no closer to the source's.
     fn mkinitrd_kept(&self) -> Result<String, String> {
-        let m = |k: &str| self.layout.str_at(&["boot", "initramfs", "mkinitrd", k]).map(str::to_string);
+        let m = |k: &str| {
+            self.layout
+                .str_at(&["boot", "initramfs", "mkinitrd", k])
+                .map(str::to_string)
+        };
         let output = m("output").unwrap_or_else(|| crate::boot::MKINITRD_OUTPUT.into());
         // Only / is the initrd's (its init mounts nothing else): another
         // mount --reformat makes again leaves it as it was.
         if self.opts.reformats.iter().any(|(m, _)| m == "/") {
             return Err(match self.root_reformat() {
-                Some((from, to)) => format!("--reformat makes / {to}, and the initrd mounts it as {from} (its -f) with {from}'s module"),
+                Some((from, to)) => format!(
+                    "--reformat makes / {to}, and the initrd mounts it as {from} (its -f) with {from}'s module"
+                ),
                 None => "--reformat makes / again, of another type than the initrd mounts".into(),
             });
         }
         let Some(cmd) = m("command_line") else {
-            return Err(format!("the dump has no {} to say what it was made with", crate::boot::MKINITRD_COMMAND_LINE));
+            return Err(format!(
+                "the dump has no {} to say what it was made with",
+                crate::boot::MKINITRD_COMMAND_LINE
+            ));
         };
         let there = format!("{output} exists");
-        if !self.layout.arr(&["boot", "initramfs", "evidence"]).iter().any(|e| e.as_str() == Some(there.as_str())) {
-            return Err(format!("the dump doesn't say {output} was there on the source"));
+        if !self
+            .layout
+            .arr(&["boot", "initramfs", "evidence"])
+            .iter()
+            .any(|e| e.as_str() == Some(there.as_str()))
+        {
+            return Err(format!(
+                "the dump doesn't say {output} was there on the source"
+            ));
         }
         let words: Vec<&str> = cmd.split_whitespace().collect();
-        let word = |f: &str| words.iter().position(|w| *w == f).and_then(|i| words.get(i + 1)).copied();
-        let mut was: Vec<&str> = word("-k").unwrap_or_default().split(':').filter(|k| !k.is_empty()).collect();
-        let mut now: Vec<String> = self.layout.arr(&["boot", "initramfs", "mkinitrd", "kernels"]).iter().filter_map(Value::as_str).map(str::to_string).collect();
+        let word = |f: &str| {
+            words
+                .iter()
+                .position(|w| *w == f)
+                .and_then(|i| words.get(i + 1))
+                .copied()
+        };
+        let mut was: Vec<&str> = word("-k")
+            .unwrap_or_default()
+            .split(':')
+            .filter(|k| !k.is_empty())
+            .collect();
+        let mut now: Vec<String> = self
+            .layout
+            .arr(&["boot", "initramfs", "mkinitrd", "kernels"])
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect();
         was.sort_unstable();
         now.sort_unstable();
         if was.is_empty() || was != now {
-            return Err(format!("its command's -k ({}) isn't the kernels the dump found with modules ({})", word("-k").unwrap_or("none"), now.join(":")));
+            return Err(format!(
+                "its command's -k ({}) isn't the kernels the dump found with modules ({})",
+                word("-k").unwrap_or("none"),
+                now.join(":")
+            ));
         }
         if m("luksdev").is_some() {
             return Err("it unlocks LUKS (-C)".into());
@@ -6517,7 +9516,12 @@ impl Builder<'_> {
     fn mkinitrd_wrap(&self, t: &str, inner: Vec<Cmd>, tree: Option<&str>) -> Vec<Cmd> {
         let d = format!("{RUN_DIR}/slackware-initrd");
         let q = |p: &str| shell_quote(&format!("{t}{p}"));
-        let (cache, aux, etc, ldc) = (q("/etc/ld.so.cache"), q("/var/cache/ldconfig/aux-cache"), q("/etc"), q("/var/cache/ldconfig"));
+        let (cache, aux, etc, ldc) = (
+            q("/etc/ld.so.cache"),
+            q("/var/cache/ldconfig/aux-cache"),
+            q("/etc"),
+            q("/var/cache/ldconfig"),
+        );
         let tdev = q(&format!("{}/dev", crate::boot::INITRD_TREE));
         let mut keep = format!(
             "rm -rf {d} && mkdir -p {d} && {{ [ ! -e {cache} ] || cp -a {cache} {d}/ld.so.cache; }} && {{ [ ! -e {aux} ] || cp -a {aux} {d}/aux-cache; }} && touch -r {etc} {d}/etc.time && {{ [ ! -d {ldc} ] || touch -r {ldc} {d}/ldconfig.time; }}"
@@ -6525,13 +9529,20 @@ impl Builder<'_> {
         let mut what = "the restored /etc/ld.so.cache and /var/cache/ldconfig/aux-cache, and their directories' times, kept: mkinitrd's ldconfig rewrites them".to_string();
         if tree.is_some() {
             keep += &format!(" && {{ [ ! -d {tdev} ] || cp -a {tdev} {d}/dev; }}");
-            what += &format!(", and its tree's /dev ({}/dev), which mkinitrd fills from the rescue's disks", crate::boot::INITRD_TREE);
+            what += &format!(
+                ", and its tree's /dev ({}/dev), which mkinitrd fills from the rescue's disks",
+                crate::boot::INITRD_TREE
+            );
         }
         let mut out = vec![Cmd::new(&["sh", "-c", &keep]).why(what)];
         out.extend(inner);
         if let Some(image) = tree {
             let tree = crate::boot::INITRD_TREE;
-            let pack = format!("cd {tree} && rm -f {} && find . | cpio -o -H newc | gzip -9c > {}", shell_quote(image), shell_quote(image));
+            let pack = format!(
+                "cd {tree} && rm -f {} && find . | cpio -o -H newc | gzip -9c > {}",
+                shell_quote(image),
+                shell_quote(image)
+            );
             out.push(Cmd::new(&["sh", "-c", &format!("[ ! -d {d}/dev ] || {{ rm -rf {tdev} && cp -a {d}/dev {tdev} && chroot {} /bin/sh -c {}; }}", shell_quote(t), shell_quote(&pack))]).why(format!(
                 "{tree}/dev as the source's tree had it (the source's devices by the source's numbers, not the rescue's), and {image} packed from the tree again, as mkinitrd packs it"
             )));
@@ -6553,8 +9564,18 @@ impl Builder<'_> {
     /// output, or geninitrd's images), for ELILO's copies on the ESP.
     fn slackware_remade(&self, t: &str) -> Vec<String> {
         match self.layout.str_at(&["boot", "initramfs", "generator"]) {
-            Some("mkinitrd") if self.mkinitrd_cmd(t).is_ok() && self.mkinitrd_kept().is_err() => vec![self.layout.str_at(&["boot", "initramfs", "mkinitrd", "output"]).unwrap_or(crate::boot::MKINITRD_OUTPUT).to_string()],
-            Some("geninitrd") => self.geninitrd_steps(t).map(|(st, _)| st.into_iter().map(|(f, _)| f).collect()).unwrap_or_default(),
+            Some("mkinitrd") if self.mkinitrd_cmd(t).is_ok() && self.mkinitrd_kept().is_err() => {
+                vec![
+                    self.layout
+                        .str_at(&["boot", "initramfs", "mkinitrd", "output"])
+                        .unwrap_or(crate::boot::MKINITRD_OUTPUT)
+                        .to_string(),
+                ]
+            }
+            Some("geninitrd") => self
+                .geninitrd_steps(t)
+                .map(|(st, _)| st.into_iter().map(|(f, _)| f).collect())
+                .unwrap_or_default(),
             _ => Vec::new(),
         }
     }
@@ -6564,9 +9585,18 @@ impl Builder<'_> {
     /// (geninitrd_steps), or nothing when there is none (the huge kernel);
     /// any other generator is refused.
     fn slackware_initramfs(&mut self, t: &str) -> Vec<Cmd> {
-        let generator = self.layout.str_at(&["boot", "initramfs", "generator"]).unwrap_or("unknown").to_string();
+        let generator = self
+            .layout
+            .str_at(&["boot", "initramfs", "generator"])
+            .unwrap_or("unknown")
+            .to_string();
         let root_crypt = self.slackware_root_crypt();
-        let root_new = self.opts.reformats.iter().find(|(m, _)| m == "/").map(|(_, t)| t.clone());
+        let root_new = self
+            .opts
+            .reformats
+            .iter()
+            .find(|(m, _)| m == "/")
+            .map(|(_, t)| t.clone());
         match generator.as_str() {
             "none" => self.notes.push("Slackware: no initrd (no loader configuration names one, and there is no /boot/initrd.gz): nothing is made, and the kernel boots without one, as on the source".into()),
             // LUKS (mkinitrd -C, or a root on /dev/mapper) is out of
@@ -6650,7 +9680,10 @@ impl Builder<'_> {
         };
         let mut confs: Vec<(String, Value)> = Vec::new();
         if let Some(l) = self.layout.v.at(&["boot", "lilo"]).filter(|v| !v.is_null()) {
-            confs.push((s(l, "conf").unwrap_or_else(|| crate::boot::LILO_CONF.into()), l.clone()));
+            confs.push((
+                s(l, "conf").unwrap_or_else(|| crate::boot::LILO_CONF.into()),
+                l.clone(),
+            ));
         }
         for c in self.layout.arr(&["boot", "elilo", "configs"]) {
             confs.push((s(c, "conf").unwrap_or_default(), c.clone()));
@@ -6676,36 +9709,80 @@ impl Builder<'_> {
                 }
             };
             words(c);
-            for img in c.get("images").and_then(Value::as_array).into_iter().flatten() {
+            for img in c
+                .get("images")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 words(img);
             }
-            let sections = c.get("images").and_then(Value::as_array).into_iter().flatten();
-            for o in c.get("options").and_then(Value::as_array).into_iter().chain(sections.filter_map(|i| i.get("options").and_then(Value::as_array))).flatten().filter_map(Value::as_str) {
+            let sections = c
+                .get("images")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten();
+            for o in c
+                .get("options")
+                .and_then(Value::as_array)
+                .into_iter()
+                .chain(sections.filter_map(|i| i.get("options").and_then(Value::as_array)))
+                .flatten()
+                .filter_map(Value::as_str)
+            {
                 if let Some(p) = o.strip_prefix("disk=") {
                     push(format!("{conf}'s disk="), p);
                 }
                 if let Some(p) = o.strip_prefix("table=") {
                     push(format!("{conf}'s table="), p);
                 }
-                for p in o.strip_prefix("raid-extra-boot=").into_iter().flat_map(|l| l.split(',')) {
+                for p in o
+                    .strip_prefix("raid-extra-boot=")
+                    .into_iter()
+                    .flat_map(|l| l.split(','))
+                {
                     push(format!("{conf}'s raid-extra-boot="), p.trim());
                 }
             }
         }
         // The root the initrd mounts (mkinitrd's -r) and the swap it
         // resumes from (-h): made again with them.
-        if let Some(p) = self.layout.str_at(&["boot", "initramfs", "mkinitrd", "rootdev"]) {
+        if let Some(p) = self
+            .layout
+            .str_at(&["boot", "initramfs", "mkinitrd", "rootdev"])
+        {
             push("mkinitrd's -r (the initrd's root)".into(), p);
         }
-        if let Some(p) = self.layout.str_at(&["boot", "initramfs", "mkinitrd", "resumedev"]) {
+        if let Some(p) = self
+            .layout
+            .str_at(&["boot", "initramfs", "mkinitrd", "resumedev"])
+        {
             push("mkinitrd's -h (the initrd's resume device)".into(), p);
         }
         // -current's mkinitrd.conf, when geninitrd runs mkinitrd -F with it.
-        if let Some(p) = self.layout.str_at(&["boot", "initramfs", "geninitrd", "rootdev"]) {
-            push(format!("{}'s ROOTDEV (the initrd's root)", crate::boot::MKINITRD_CONF), p);
+        if let Some(p) = self
+            .layout
+            .str_at(&["boot", "initramfs", "geninitrd", "rootdev"])
+        {
+            push(
+                format!(
+                    "{}'s ROOTDEV (the initrd's root)",
+                    crate::boot::MKINITRD_CONF
+                ),
+                p,
+            );
         }
-        if let Some(p) = self.layout.str_at(&["boot", "initramfs", "geninitrd", "resumedev"]) {
-            push(format!("{}'s RESUMEDEV (the initrd's resume device)", crate::boot::MKINITRD_CONF), p);
+        if let Some(p) = self
+            .layout
+            .str_at(&["boot", "initramfs", "geninitrd", "resumedev"])
+        {
+            push(
+                format!(
+                    "{}'s RESUMEDEV (the initrd's resume device)",
+                    crate::boot::MKINITRD_CONF
+                ),
+                p,
+            );
         }
         // A noauto line on a device that isn't one of the source's disks
         // or partitions (Slackware's stock /dev/fd0 /mnt/floppy, a CD
@@ -6714,25 +9791,52 @@ impl Builder<'_> {
         // mounts at boot, so it is checked like any other.
         for e in self.layout.arr(&["storage", "fstab"]) {
             if let (Some(spec), Some(_)) = (s(e, "spec"), s(e, "resolves_to")) {
-                let noauto = s(e, "options").unwrap_or_default().split(',').any(|o| o == "noauto");
-                if noauto && self.names.src_of_path(&md_name(&spec)).or_else(|| self.names.src_of_path(&spec)).is_none() {
+                let noauto = s(e, "options")
+                    .unwrap_or_default()
+                    .split(',')
+                    .any(|o| o == "noauto");
+                if noauto
+                    && self
+                        .names
+                        .src_of_path(&md_name(&spec))
+                        .or_else(|| self.names.src_of_path(&spec))
+                        .is_none()
+                {
                     continue;
                 }
-                push(format!("fstab's {}", s(e, "file").unwrap_or_default()), &spec);
+                push(
+                    format!("fstab's {}", s(e, "file").unwrap_or_default()),
+                    &spec,
+                );
             }
         }
         // How the restored system finds / by a name: the huge kernel by
         // root= alone; mkinitrd's initrd (15.0's or geninitrd's) mounts the
         // root it was made with (-r, ROOTDEV) unless root= says another.
         let finds = match self.layout.str_at(&["boot", "initramfs", "generator"]) {
-            Some("mkinitrd" | "geninitrd") => "the restored initrd mounts / by the name it was made with (mkinitrd's -r, or the kernel's root=)",
-            _ => "the restored kernel finds / by the name root= gives it (it has no initrd to find a UUID)",
+            Some("mkinitrd" | "geninitrd") => {
+                "the restored initrd mounts / by the name it was made with (mkinitrd's -r, or the kernel's root=)"
+            }
+            _ => {
+                "the restored kernel finds / by the name root= gives it (it has no initrd to find a UUID)"
+            }
         };
-        let tail = format!("{finds} and fstab mounts by device names, which bko-holt load restores as the source had them");
-        let targets: Vec<&str> = self.names.mapping.pairs.iter().map(|(_, t)| t.as_str()).collect();
+        let tail = format!(
+            "{finds} and fstab mounts by device names, which bko-holt load restores as the source had them"
+        );
+        let targets: Vec<&str> = self
+            .names
+            .mapping
+            .pairs
+            .iter()
+            .map(|(_, t)| t.as_str())
+            .collect();
         let mut same: Vec<String> = Vec::new();
         for (what, p) in refs {
-            let src = self.names.src_of_path(&md_name(&p)).or_else(|| self.names.src_of_path(&p));
+            let src = self
+                .names
+                .src_of_path(&md_name(&p))
+                .or_else(|| self.names.src_of_path(&p));
             let Some(here) = src.as_deref().and_then(|x| self.names.dev(x)) else {
                 self.problems.push(format!("Slackware: {what} names {p}, which isn't on the layout's disks, so the restored system couldn't find it at boot"));
                 continue;
@@ -6740,11 +9844,26 @@ impl Builder<'_> {
             // The source disk it is on (and its partition's number), and
             // the target disk that disk goes to.
             let on_disk = src.as_deref().and_then(|x| {
-                self.layout.disks.iter().find_map(|d| if d.name == x { Some((d.name.as_str(), None)) } else { d.parts.iter().find(|q| q.name == x).map(|q| (d.name.as_str(), Some(q.number))) })
+                self.layout.disks.iter().find_map(|d| {
+                    if d.name == x {
+                        Some((d.name.as_str(), None))
+                    } else {
+                        d.parts
+                            .iter()
+                            .find(|q| q.name == x)
+                            .map(|q| (d.name.as_str(), Some(q.number)))
+                    }
+                })
             });
             let by_place = on_disk.and_then(|(d, n)| {
                 let t = self.names.mapping.target_of(d)?;
-                Some((disk_class(d)?, disk_class(t)?, boot_name_of(t, &targets)?, n, d))
+                Some((
+                    disk_class(d)?,
+                    disk_class(t)?,
+                    boot_name_of(t, &targets)?,
+                    n,
+                    d,
+                ))
             });
             let Some(((sc, sp, _), (tc, _, _), boot, n, disk)) = by_place else {
                 // Not on a disk the kernel names by place: its name here.
@@ -6767,10 +9886,16 @@ impl Builder<'_> {
             let why = if sc != tc {
                 format!("on a disk of the {tc} class, where the source's was of the {sc} class")
             } else if fixed_class(tc) {
-                format!("and the kernel names {tc} disks by where they are attached (the controller's number, the slot), not by the order it finds them")
+                format!(
+                    "and the kernel names {tc} disks by where they are attached (the controller's number, the slot), not by the order it finds them"
+                )
             } else {
                 let tp = disk_class(&boot).map_or(0, |(_, p, _)| p);
-                format!("on the {} of the target's {tc} disks (the rescue's own disk and any that isn't a target left out), where the source's was the {}", place_word(tp), place_word(sp))
+                format!(
+                    "on the {} of the target's {tc} disks (the rescue's own disk and any that isn't a target left out), where the source's was the {}",
+                    place_word(tp),
+                    place_word(sp)
+                )
             };
             self.problems.push(format!(
                 "Slackware: {what} names {p}, which is {here} here, {why}, so the restored kernel will call it {at_boot}, not {p}; {tail}: restore onto {sc} disks in the source's order (a future opt-in to rewrite them, --rename-devices, isn't built)"
@@ -6794,8 +9919,17 @@ impl Builder<'_> {
     /// that gives the kernel root= by name too and lilo the rescue's names,
     /// removed after; the user's lilo.conf stays as restored.
     fn lilo_cmds(&mut self, t: &str) -> Vec<Cmd> {
-        let Some(lilo) = self.layout.v.at(&["boot", "lilo"]).filter(|v| !v.is_null()).cloned() else {
-            self.problems.push(format!("LILO: the dump has no {} (boot.lilo), so lilo has nothing to install from", crate::boot::LILO_CONF));
+        let Some(lilo) = self
+            .layout
+            .v
+            .at(&["boot", "lilo"])
+            .filter(|v| !v.is_null())
+            .cloned()
+        else {
+            self.problems.push(format!(
+                "LILO: the dump has no {} (boot.lilo), so lilo has nothing to install from",
+                crate::boot::LILO_CONF
+            ));
             return Vec::new();
         };
         let conf = s(&lilo, "conf").unwrap_or_else(|| crate::boot::LILO_CONF.into());
@@ -6813,8 +9947,19 @@ impl Builder<'_> {
         // (/dev/disk/by-id/...) could name the source's disk, still
         // attached, and lilo would write its MBR.  Only kernel names, which
         // slackware_device_names checks against the target.
-        let mut named: Vec<String> = s(&lilo, "boot").into_iter().map(|b| format!("boot={b}")).collect();
-        named.extend(lilo.get("options").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).filter(|o| o.starts_with("disk=")).map(str::to_string));
+        let mut named: Vec<String> = s(&lilo, "boot")
+            .into_iter()
+            .map(|b| format!("boot={b}"))
+            .collect();
+        named.extend(
+            lilo.get("options")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter(|o| o.starts_with("disk="))
+                .map(str::to_string),
+        );
         for n in named {
             let p = n.split_once('=').map_or("", |(_, p)| p);
             if !kernel_dev_path(p) {
@@ -6889,9 +10034,16 @@ impl Builder<'_> {
         let remade = self.slackware_remade(t);
         let mut out = Vec::new();
         for c in &confs {
-            let mnt = s(c, "mounted_at").filter(|m| safe_target_subpath(m)).unwrap_or_else(|| "/boot/efi".into());
+            let mnt = s(c, "mounted_at")
+                .filter(|m| safe_target_subpath(m))
+                .unwrap_or_else(|| "/boot/efi".into());
             let conf = s(c, "conf").unwrap_or_default();
-            for img in c.get("images").and_then(Value::as_array).into_iter().flatten() {
+            for img in c
+                .get("images")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 let file = s(img, "file").unwrap_or_default();
                 let kernel = s(img, "same_as");
                 if kernel.is_none() {
@@ -6900,7 +10052,9 @@ impl Builder<'_> {
                     ));
                     continue;
                 }
-                let Some(ifile) = s(img, "initrd_file") else { continue };
+                let Some(ifile) = s(img, "initrd_file") else {
+                    continue;
+                };
                 if remade.is_empty() {
                     continue;
                 }
@@ -6908,28 +10062,43 @@ impl Builder<'_> {
                     self.notes.push(format!("ELILO: {ifile} on the ESP wasn't a copy of {} on the source; it stays as restored", remade.join(" or ")));
                     continue;
                 };
-                let (src, dst) = (format!("{t}{new}"), format!("{t}{}/{ifile}", mnt.trim_end_matches('/')));
-                out.push(Cmd::new(&["cp", &src, &dst]).why(format!("ELILO: the remade {new} over the ESP's {ifile}, as eliloconfig copies it")));
+                let (src, dst) = (
+                    format!("{t}{new}"),
+                    format!("{t}{}/{ifile}", mnt.trim_end_matches('/')),
+                );
+                out.push(Cmd::new(&["cp", &src, &dst]).why(format!(
+                    "ELILO: the remade {new} over the ESP's {ifile}, as eliloconfig copies it"
+                )));
                 out.push(Cmd::new(&["touch", "-r", &src, &dst]));
             }
         }
         if self.opts.removable {
-            let main = confs.iter().find(|c| s(c, "dir").is_some_and(|d| !d.eq_ignore_ascii_case("EFI/BOOT")) && s(c, "loader").is_some());
+            let main = confs.iter().find(|c| {
+                s(c, "dir").is_some_and(|d| !d.eq_ignore_ascii_case("EFI/BOOT"))
+                    && s(c, "loader").is_some()
+            });
             match main {
                 Some(c) => {
-                    let mnt = s(c, "mounted_at").filter(|m| safe_target_subpath(m)).unwrap_or_else(|| "/boot/efi".into());
+                    let mnt = s(c, "mounted_at")
+                        .filter(|m| safe_target_subpath(m))
+                        .unwrap_or_else(|| "/boot/efi".into());
                     let esp = format!("{t}{}", mnt.trim_end_matches('/'));
                     let dir = s(c, "dir").unwrap_or_default();
                     let loader = s(c, "loader").unwrap_or_default();
                     let name = loader.rsplit('/').next().unwrap_or("elilo.efi").to_string();
-                    let (from, to) = (shell_quote(&format!("{esp}/{dir}")), shell_quote(&format!("{esp}/EFI/BOOT")));
+                    let (from, to) = (
+                        shell_quote(&format!("{esp}/{dir}")),
+                        shell_quote(&format!("{esp}/EFI/BOOT")),
+                    );
                     let fb = self.boot_names().fallback_file;
                     out.push(
                         Cmd::new(&["sh", "-c", &format!("[ -e {to}/{fb} ] || {{ mkdir -p {to} && cp -r {from}/. {to}/ && mv {to}/{} {to}/{fb}; }}", shell_quote(&name))])
                             .why(format!("--removable: {dir} at the fallback path too, {name} as {fb} (ELILO reads the elilo.conf beside itself)")),
                     );
                 }
-                None => self.notes.push("--removable: ELILO is at the fallback path (EFI/BOOT) only already".into()),
+                None => self.notes.push(
+                    "--removable: ELILO is at the fallback path (EFI/BOOT) only already".into(),
+                ),
             }
         }
         out
@@ -6940,32 +10109,82 @@ impl Builder<'_> {
     /// elilo.efi: the test guests' NVRAM is blank, and they boot the
     /// fallback path.  Last, so that it comes first in BootOrder.
     fn elilo_entry(&mut self) -> Vec<Cmd> {
-        let order: Vec<String> = self.layout.v.at(&["boot", "efi", "boot_order"]).and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
-        let on_layout = |part: &str| self.layout.disks.iter().any(|d| d.parts.iter().any(|p| p.name == part));
-        let made = self.layout.arr(&["boot", "efi", "entries"]).iter().any(|e| {
-            s(e, "number").is_some_and(|n| order.contains(&n))
-                && s(e, "file").is_some_and(|f| f.replace('/', "\\").to_ascii_lowercase().ends_with("\\elilo.efi"))
-                && e.at(&["partition", "device"]).and_then(Value::as_str).is_some_and(on_layout)
-        });
+        let order: Vec<String> = self
+            .layout
+            .v
+            .at(&["boot", "efi", "boot_order"])
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect();
+        let on_layout = |part: &str| {
+            self.layout
+                .disks
+                .iter()
+                .any(|d| d.parts.iter().any(|p| p.name == part))
+        };
+        let made = self
+            .layout
+            .arr(&["boot", "efi", "entries"])
+            .iter()
+            .any(|e| {
+                s(e, "number").is_some_and(|n| order.contains(&n))
+                    && s(e, "file").is_some_and(|f| {
+                        f.replace('/', "\\")
+                            .to_ascii_lowercase()
+                            .ends_with("\\elilo.efi")
+                    })
+                    && e.at(&["partition", "device"])
+                        .and_then(Value::as_str)
+                        .is_some_and(on_layout)
+            });
         if made {
             return Vec::new();
         }
         let confs = self.layout.arr(&["boot", "elilo", "configs"]).to_vec();
-        let Some(c) = confs.iter().find(|c| s(c, "dir").is_some_and(|d| !d.eq_ignore_ascii_case("EFI/BOOT")) && s(c, "loader").is_some()) else {
+        let Some(c) = confs.iter().find(|c| {
+            s(c, "dir").is_some_and(|d| !d.eq_ignore_ascii_case("EFI/BOOT"))
+                && s(c, "loader").is_some()
+        }) else {
             self.notes.push("ELILO: only at the fallback path (EFI/BOOT), so no boot entry is made: the firmware boots it as removable media".into());
             return Vec::new();
         };
         let part = s(c, "device").unwrap_or_default();
-        let Some((disk, num)) = self.layout.disks.iter().find_map(|d| d.parts.iter().find(|p| p.name == part).map(|p| (d.name.clone(), p.number))) else {
-            self.notes.push(format!("ELILO: its ESP {part} isn't on the layout's disks; no boot entry made"));
+        let Some((disk, num)) = self.layout.disks.iter().find_map(|d| {
+            d.parts
+                .iter()
+                .find(|p| p.name == part)
+                .map(|p| (d.name.clone(), p.number))
+        }) else {
+            self.notes.push(format!(
+                "ELILO: its ESP {part} isn't on the layout's disks; no boot entry made"
+            ));
             return Vec::new();
         };
-        let Some(tgt) = self.names.mapping.target_of(&disk) else { return Vec::new() };
-        let loader = format!("\\{}", s(c, "loader").unwrap_or_default().replace('/', "\\"));
+        let Some(tgt) = self.names.mapping.target_of(&disk) else {
+            return Vec::new();
+        };
+        let loader = format!(
+            "\\{}",
+            s(c, "loader").unwrap_or_default().replace('/', "\\")
+        );
         vec![
             efi_dedupe(&format!("/dev/{tgt}"), num, &loader),
-            Cmd::new(&["efibootmgr", "--quiet", "--create", "--disk", &format!("/dev/{tgt}"), "--part", &num.to_string(), "--label", "Slackware", "--loader", &loader])
-                .why("ELILO: the boot entry eliloconfig makes (the source's NVRAM had none for it)"),
+            Cmd::new(&[
+                "efibootmgr",
+                "--quiet",
+                "--create",
+                "--disk",
+                &format!("/dev/{tgt}"),
+                "--part",
+                &num.to_string(),
+                "--label",
+                "Slackware",
+                "--loader",
+                &loader,
+            ])
+            .why("ELILO: the boot entry eliloconfig makes (the source's NVRAM had none for it)"),
         ]
     }
 }
@@ -6973,7 +10192,7 @@ impl Builder<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::load::layout::{sample, Layout};
+    use crate::load::layout::{Layout, sample};
 
     /// Fake programs for the boot stage's scripts run by sh: a directory of
     /// sh scripts under DIR, for PATH.  Each file is written by a child
@@ -6982,7 +10201,10 @@ mod tests {
     fn fakes(dir: &std::path::Path, fakes: &[(&str, String)]) -> String {
         use std::io::Write;
         static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let bin = dir.join(format!("bin{}", N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
+        let bin = dir.join(format!(
+            "bin{}",
+            N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        ));
         std::fs::create_dir_all(&bin).unwrap();
         for (name, body) in fakes {
             let mut c = std::process::Command::new("/bin/sh")
@@ -6991,7 +10213,11 @@ mod tests {
                 .stdin(std::process::Stdio::piped())
                 .spawn()
                 .unwrap();
-            c.stdin.take().unwrap().write_all(format!("#!/bin/sh\n{body}\n").as_bytes()).unwrap();
+            c.stdin
+                .take()
+                .unwrap()
+                .write_all(format!("#!/bin/sh\n{body}\n").as_bytes())
+                .unwrap();
             assert!(c.wait().unwrap().success());
         }
         bin.display().to_string()
@@ -6999,13 +10225,22 @@ mod tests {
 
     /// SCRIPT run by sh with BIN first on PATH (or PATH alone, when
     /// given), $R for the chroot's / and TMPDIR for mktemp.
-    fn run_script(script: &str, bin: &str, root: &std::path::Path, tmp: &std::path::Path, path: Option<&str>) -> std::process::Output {
+    fn run_script(
+        script: &str,
+        bin: &str,
+        root: &std::path::Path,
+        tmp: &std::path::Path,
+        path: Option<&str>,
+    ) -> std::process::Output {
         std::fs::create_dir_all(tmp).unwrap();
         std::process::Command::new("/bin/sh")
             .args(["-c", script])
             .env("R", root)
             .env("TMPDIR", tmp)
-            .env("PATH", path.map_or_else(|| format!("{bin}:/usr/bin:/bin"), str::to_string))
+            .env(
+                "PATH",
+                path.map_or_else(|| format!("{bin}:/usr/bin:/bin"), str::to_string),
+            )
             .output()
             .unwrap()
     }
@@ -7021,7 +10256,11 @@ mod tests {
     /// Sets DIR's mtime to a fixed old one (as a restored tree's
     /// directories have the source's), and returns it.
     fn age(dir: &std::path::Path) -> std::time::SystemTime {
-        let st = std::process::Command::new("touch").args(["-t", "202001020304.05"]).arg(dir).status().unwrap();
+        let st = std::process::Command::new("touch")
+            .args(["-t", "202001020304.05"])
+            .arg(dir)
+            .status()
+            .unwrap();
         assert!(st.success());
         mtime(dir)
     }
@@ -7037,9 +10276,20 @@ mod tests {
     #[test]
     fn dracut_keeps_the_restored_images_modules() {
         let t = crate::testutil::TempDir::new("dracut-mods");
-        let (r, k, k2) = (t.path().join("root"), "6.12.0-160100.8-default", "7.0.1-1-default");
-        touch(&r, &[format!("usr/lib/modules/{k}/kernel/fs/efivarfs/efivarfs.ko.zst"), format!("lib/modules/{k}/kernel/drivers/block/loop.ko"),
-                    format!("lib/modules/{k2}/kernel/fs/btrfs/btrfs.ko.zst"), "lib/modules/6.11.0-gone/modules.dep".into()]);
+        let (r, k, k2) = (
+            t.path().join("root"),
+            "6.12.0-160100.8-default",
+            "7.0.1-1-default",
+        );
+        touch(
+            &r,
+            &[
+                format!("usr/lib/modules/{k}/kernel/fs/efivarfs/efivarfs.ko.zst"),
+                format!("lib/modules/{k}/kernel/drivers/block/loop.ko"),
+                format!("lib/modules/{k2}/kernel/fs/btrfs/btrfs.ko.zst"),
+                "lib/modules/6.11.0-gone/modules.dep".into(),
+            ],
+        );
         let listing = format!(
             "Image: /boot/initrd-{k}: 24M\n\
              ========================================================================\n\
@@ -7059,7 +10309,8 @@ mod tests {
              -rw-r--r--   1 root     root        25282 Oct 19 06:31 usr/lib/modules/{k}/kernel/drivers/scsi/gone.ko.xz\n\
              -rw-r--r--   1 root     root          512 Oct 19 06:31 usr/lib/dracut/hooks/resume\n\
              -rw-r--r--   1 root     root         9001 Oct 19 06:31 usr/lib/modules/{k}/modules.dep\n\
-             ========================================================================\n");
+             ========================================================================\n"
+        );
         // k2's image had no resume module: its listing names only files
         // with "resume" in them.
         let listing2 = format!(
@@ -7069,17 +10320,24 @@ mod tests {
              btrfs\n\
              ========================================================================\n\
              -rw-r--r--   1 root     root          512 Oct 19 06:31 resume\n\
-             ========================================================================\n");
+             ========================================================================\n"
+        );
         let lsinitrd = format!(
             "[ \"$1\" = -k ] || exit 2\n\
              case \"$2 $3 $4\" in\n\
              '{k} -f etc/cmdline.d/95resume.conf') echo ' resume=UUID=eee0e84a-5975-4d26-b706-4145f8ebd5db' ;;\n\
              '{k}  ') cat <<'EOF'\n{listing}EOF\n;;\n\
              '{k2}  ') cat <<'EOF'\n{listing2}EOF\n;;\n\
-             *) echo \"no initramfs for $2\" >&2; exit 1 ;;\nesac\n");
+             *) echo \"no initramfs for $2\" >&2; exit 1 ;;\nesac\n"
+        );
         let dracut = "printf '[%s]' \"$@\"; echo\nwhile [ $# -gt 0 ]; do [ \"$1\" = --include ] && echo \"$3: $(cat \"$2\")\"; shift; done\n".to_string();
-        let bin = fakes(t.path(), &[("lsinitrd", lsinitrd.clone()), ("dracut", dracut)]);
-        let script = DRACUT_EACH_KERNEL.replace("/lib/modules/*", "$R/lib/modules/*").replace("\"/$p\"", "\"$R/$p\"");
+        let bin = fakes(
+            t.path(),
+            &[("lsinitrd", lsinitrd.clone()), ("dracut", dracut)],
+        );
+        let script = DRACUT_EACH_KERNEL
+            .replace("/lib/modules/*", "$R/lib/modules/*")
+            .replace("\"/$p\"", "\"$R/$p\"");
         assert_eq!(script.matches("$R/").count(), 2, "{script}");
         let tmp = t.path().join("tmp");
         let o = run_script(&script, &bin, &r, &tmp, None);
@@ -7089,22 +10347,47 @@ mod tests {
         // The modules the image had and the tree still has, in its order;
         // the resume module, and the resume= its command line had.
         let first = lines.next().unwrap();
-        let inc = first.find("[--include][").map(|i| &first[i + 12..]).and_then(|r| r.split(']').next()).unwrap_or_else(|| panic!("{first}"));
-        assert_eq!(first, format!("[--force][--kver][{k}][--add-drivers][ efivarfs loop][--add][resume][--include][{inc}][/etc/cmdline.d/95resume.conf]"));
-        assert_eq!(lines.next(), Some("/etc/cmdline.d/95resume.conf:  resume=UUID=eee0e84a-5975-4d26-b706-4145f8ebd5db"));
+        let inc = first
+            .find("[--include][")
+            .map(|i| &first[i + 12..])
+            .and_then(|r| r.split(']').next())
+            .unwrap_or_else(|| panic!("{first}"));
+        assert_eq!(
+            first,
+            format!(
+                "[--force][--kver][{k}][--add-drivers][ efivarfs loop][--add][resume][--include][{inc}][/etc/cmdline.d/95resume.conf]"
+            )
+        );
+        assert_eq!(
+            lines.next(),
+            Some("/etc/cmdline.d/95resume.conf:  resume=UUID=eee0e84a-5975-4d26-b706-4145f8ebd5db")
+        );
         // A kernel whose image had no resume module: none added; a
         // directory with no kernel/ (6.11.0-gone) is no kernel.
-        assert_eq!(lines.next(), Some(format!("[--force][--kver][{k2}]").as_str()));
+        assert_eq!(
+            lines.next(),
+            Some(format!("[--force][--kver][{k2}]").as_str())
+        );
         assert_eq!(lines.next(), None);
         // The --include file is removed.
         assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
         // No kernel at all: it fails, as before.
         let empty = t.path().join("empty");
         std::fs::create_dir_all(empty.join("lib/modules")).unwrap();
-        assert!(!run_script(&script, &bin, &empty, &tmp, None).status.success());
+        assert!(
+            !run_script(&script, &bin, &empty, &tmp, None)
+                .status
+                .success()
+        );
         // dracut's failure is the script's, and the file is removed.
-        let failing = fakes(t.path(), &[("dracut", "exit 3".into()), ("lsinitrd", lsinitrd)]);
-        assert_eq!(run_script(&script, &failing, &r, &tmp, None).status.code(), Some(3));
+        let failing = fakes(
+            t.path(),
+            &[("dracut", "exit 3".into()), ("lsinitrd", lsinitrd)],
+        );
+        assert_eq!(
+            run_script(&script, &failing, &r, &tmp, None).status.code(),
+            Some(3)
+        );
         assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
     }
 
@@ -7117,8 +10400,17 @@ mod tests {
     fn dracut_one_image_keeps_modules_and_resume() {
         let t = crate::testutil::TempDir::new("dracut-one");
         let (r, k) = (t.path().join("root"), "6.18.63-gentoo-dist-bin");
-        let (img, img2) = (format!("/boot/initramfs-{k}.img"), "/boot/initramfs-6.18.9-gentoo-dist-bin.img");
-        touch(&r, &[format!("lib/modules/{k}/kernel/fs/efivarfs/efivarfs.ko.xz"), format!("lib/modules/{k}/kernel/drivers/md/dm-mod.ko.xz")]);
+        let (img, img2) = (
+            format!("/boot/initramfs-{k}.img"),
+            "/boot/initramfs-6.18.9-gentoo-dist-bin.img",
+        );
+        touch(
+            &r,
+            &[
+                format!("lib/modules/{k}/kernel/fs/efivarfs/efivarfs.ko.xz"),
+                format!("lib/modules/{k}/kernel/drivers/md/dm-mod.ko.xz"),
+            ],
+        );
         let listing = format!(
             "Image: {img}: 18M\n\
              ========================================================================\n\
@@ -7134,7 +10426,8 @@ mod tests {
              -rw-r--r--   1 root     root        11204 Nov 12 18:02 lib/modules/{k}/kernel/fs/efivarfs/efivarfs.ko.xz\n\
              -rw-r--r--   1 root     root        81116 Nov 12 18:02 lib/modules/{k}/kernel/drivers/md/dm-mod.ko.xz\n\
              -rw-r--r--   1 root     root        30020 Nov 12 18:02 lib/modules/{k}/kernel/drivers/nvme/gone.ko.xz\n\
-             ========================================================================\n");
+             ========================================================================\n"
+        );
         // The other image's resume is only a file's name; it has no module.
         let listing2 = "Image: x: 9M\ndracut modules:\nbash\nlvm\n====\n-rw-r--r-- 1 root root 1 Nov 12 18:02 usr/lib/dracut/hooks/resume\n====\n";
         let lsinitrd = format!(
@@ -7142,9 +10435,13 @@ mod tests {
              '-f etc/cmdline.d/95resume.conf {img}') echo ' resume=UUID=bc000000-0000-4000-8000-000000000004' ;;\n\
              '{img}') cat <<'EOF'\n{listing}EOF\n;;\n\
              '{img2}') cat <<'EOF'\n{listing2}EOF\n;;\n\
-             *) echo \"no such image $*\" >&2; exit 1 ;;\nesac\n");
+             *) echo \"no such image $*\" >&2; exit 1 ;;\nesac\n"
+        );
         let dracut = "printf '[%s]' \"$@\"; echo\nwhile [ $# -gt 0 ]; do [ \"$1\" = --include ] && echo \"$3: $(cat \"$2\")\"; shift; done\n".to_string();
-        let bin = fakes(t.path(), &[("lsinitrd", lsinitrd.clone()), ("dracut", dracut)]);
+        let bin = fakes(
+            t.path(),
+            &[("lsinitrd", lsinitrd.clone()), ("dracut", dracut)],
+        );
         let script = DRACUT_ONE_IMAGE.replace("\"/$p\"", "\"$R/$p\"");
         assert_eq!(script.matches("$R/").count(), 1, "{script}");
         let with = |k: &str, i: &str| format!("set -- {k} {i}; {script}");
@@ -7154,22 +10451,48 @@ mod tests {
         let out = String::from_utf8_lossy(&o.stdout).into_owned();
         let mut lines = out.lines();
         let first = lines.next().unwrap();
-        let inc = first.find("[--include][").map(|i| &first[i + 12..]).and_then(|r| r.split(']').next()).unwrap_or_else(|| panic!("{first}"));
-        assert_eq!(first, format!("[--force][--add-drivers][ efivarfs dm-mod][--add][resume][--include][{inc}][/etc/cmdline.d/95resume.conf][{img}][{k}]"));
-        assert_eq!(lines.next(), Some("/etc/cmdline.d/95resume.conf:  resume=UUID=bc000000-0000-4000-8000-000000000004"));
+        let inc = first
+            .find("[--include][")
+            .map(|i| &first[i + 12..])
+            .and_then(|r| r.split(']').next())
+            .unwrap_or_else(|| panic!("{first}"));
+        assert_eq!(
+            first,
+            format!(
+                "[--force][--add-drivers][ efivarfs dm-mod][--add][resume][--include][{inc}][/etc/cmdline.d/95resume.conf][{img}][{k}]"
+            )
+        );
+        assert_eq!(
+            lines.next(),
+            Some("/etc/cmdline.d/95resume.conf:  resume=UUID=bc000000-0000-4000-8000-000000000004")
+        );
         assert_eq!(lines.next(), None);
         assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
         // An image with no resume module (and no module still in the
         // tree): plain dracut.
         let o = run_script(&with("6.18.9-gentoo-dist-bin", img2), &bin, &r, &tmp, None);
-        assert_eq!(String::from_utf8_lossy(&o.stdout), format!("[--force][{img2}][6.18.9-gentoo-dist-bin]\n"));
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            format!("[--force][{img2}][6.18.9-gentoo-dist-bin]\n")
+        );
         // No image lsinitrd can read: plain dracut, as before.
         let o = run_script(&with(k, "/boot/missing.img"), &bin, &r, &tmp, None);
         assert!(o.status.success());
-        assert_eq!(String::from_utf8_lossy(&o.stdout), format!("[--force][/boot/missing.img][{k}]\n"));
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            format!("[--force][/boot/missing.img][{k}]\n")
+        );
         // dracut's failure is the script's, and the file is removed.
-        let failing = fakes(t.path(), &[("dracut", "exit 3".into()), ("lsinitrd", lsinitrd)]);
-        assert_eq!(run_script(&with(k, &img), &failing, &r, &tmp, None).status.code(), Some(3));
+        let failing = fakes(
+            t.path(),
+            &[("dracut", "exit 3".into()), ("lsinitrd", lsinitrd)],
+        );
+        assert_eq!(
+            run_script(&with(k, &img), &failing, &r, &tmp, None)
+                .status
+                .code(),
+            Some(3)
+        );
         assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
     }
 
@@ -7180,37 +10503,76 @@ mod tests {
     fn dracut_rebuild_keeps_resume() {
         let t = crate::testutil::TempDir::new("dracut-rebuild");
         let r = t.path().join("root");
-        touch(&r, &["boot/initramfs-linux.img".into(), "boot/initramfs-linux-fallback.img".into(), "etc/dracut.conf.d/.keep".into()]);
+        touch(
+            &r,
+            &[
+                "boot/initramfs-linux.img".into(),
+                "boot/initramfs-linux-fallback.img".into(),
+                "etc/dracut.conf.d/.keep".into(),
+            ],
+        );
         let lsinitrd = "case $1 in *-fallback.img) printf 'dracut modules:\\nresume\\n====\\n' ;; *) cat \"$1.list\" ;; esac\n".to_string();
         let rebuild = "cat \"$R\"/etc/dracut.conf.d/*.conf 2>/dev/null; echo rebuilt\n".to_string();
-        let bin = fakes(t.path(), &[("lsinitrd", lsinitrd.clone()), ("dracut-rebuild", rebuild)]);
-        let script = DRACUT_REBUILD_RESUME.replace("/boot/", "$R/boot/").replace("c=/etc/", "c=$R/etc/");
+        let bin = fakes(
+            t.path(),
+            &[("lsinitrd", lsinitrd.clone()), ("dracut-rebuild", rebuild)],
+        );
+        let script = DRACUT_REBUILD_RESUME
+            .replace("/boot/", "$R/boot/")
+            .replace("c=/etc/", "c=$R/etc/");
         let tmp = t.path().join("tmp");
         let conf = r.join("etc/dracut.conf.d/zz-bko-holt-resume.conf");
-        std::fs::write(r.join("boot/initramfs-linux.img.list"), "dracut modules:\nsystemd\nresume\n=====\n").unwrap();
+        std::fs::write(
+            r.join("boot/initramfs-linux.img.list"),
+            "dracut modules:\nsystemd\nresume\n=====\n",
+        )
+        .unwrap();
         let confd = r.join("etc/dracut.conf.d");
         let was = age(&confd);
         let o = run_script(&script, &bin, &r, &tmp, None);
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-        assert_eq!(String::from_utf8_lossy(&o.stdout), "add_dracutmodules+=\" resume \"\nrebuilt\n");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "add_dracutmodules+=\" resume \"\nrebuilt\n"
+        );
         assert!(!conf.exists());
         // dracut.conf.d's mtime is the one it had, and the reference file
         // is gone.
         assert_eq!(mtime(&confd), was);
         assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
         // Only the fallback had it: nothing added.
-        std::fs::write(r.join("boot/initramfs-linux.img.list"), "dracut modules:\nsystemd\n=====\n-rw-r--r-- 1 root root 1 Oct 19 06:31 resume\n").unwrap();
-        assert_eq!(String::from_utf8_lossy(&run_script(&script, &bin, &r, &tmp, None).stdout), "rebuilt\n");
+        std::fs::write(
+            r.join("boot/initramfs-linux.img.list"),
+            "dracut modules:\nsystemd\n=====\n-rw-r--r-- 1 root root 1 Oct 19 06:31 resume\n",
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&run_script(&script, &bin, &r, &tmp, None).stdout),
+            "rebuilt\n"
+        );
         // A drop-in of that name already there is the system's: kept.
-        std::fs::write(r.join("boot/initramfs-linux.img.list"), "dracut modules:\nresume\n=====\n").unwrap();
+        std::fs::write(
+            r.join("boot/initramfs-linux.img.list"),
+            "dracut modules:\nresume\n=====\n",
+        )
+        .unwrap();
         std::fs::write(&conf, "# mine\n").unwrap();
-        assert_eq!(String::from_utf8_lossy(&run_script(&script, &bin, &r, &tmp, None).stdout), "# mine\nrebuilt\n");
+        assert_eq!(
+            String::from_utf8_lossy(&run_script(&script, &bin, &r, &tmp, None).stdout),
+            "# mine\nrebuilt\n"
+        );
         assert!(conf.exists());
         // dracut-rebuild's failure is the script's.
         std::fs::remove_file(&conf).unwrap();
-        let failing = fakes(t.path(), &[("dracut-rebuild", "exit 4".into()), ("lsinitrd", lsinitrd)]);
+        let failing = fakes(
+            t.path(),
+            &[("dracut-rebuild", "exit 4".into()), ("lsinitrd", lsinitrd)],
+        );
         let was = age(&confd);
-        assert_eq!(run_script(&script, &failing, &r, &tmp, None).status.code(), Some(4));
+        assert_eq!(
+            run_script(&script, &failing, &r, &tmp, None).status.code(),
+            Some(4)
+        );
         assert!(!conf.exists());
         assert_eq!(mtime(&confd), was);
     }
@@ -7223,31 +10585,59 @@ mod tests {
     fn update_initramfs_keeps_the_auto_resume_device() {
         let t = crate::testutil::TempDir::new("initramfs-resume");
         let r = t.path().join("root");
-        touch(&r, &["boot/initrd.img-6.12.48+deb13-amd64".into(), "boot/initrd.img-6.12.57+deb13-amd64".into(), "etc/initramfs-tools/conf.d/.keep".into()]);
+        touch(
+            &r,
+            &[
+                "boot/initrd.img-6.12.48+deb13-amd64".into(),
+                "boot/initrd.img-6.12.57+deb13-amd64".into(),
+                "etc/initramfs-tools/conf.d/.keep".into(),
+            ],
+        );
         // The older image's resume hook found no swap; the newer's did.
         // By the image's own name: the temporary directory's can hold "48".
         let unmk = "case ${1##*/} in *48*) x=$2/conf/conf.d; mkdir -p $x; echo 'RESUME=' > $x/zz-resume-auto ;; \
                     *57*) x=$2/main/conf/conf.d; mkdir -p $x $2/early; echo 'RESUME=UUID=bc000000-0000-4000-8000-000000000003' > $x/zz-resume-auto ;; esac\n".to_string();
         let update = "echo \"update-initramfs $*\"; cat \"$R\"/etc/initramfs-tools/conf.d/* 2>/dev/null; :\n".to_string();
-        let bin = fakes(t.path(), &[("unmkinitramfs", unmk.clone()), ("update-initramfs", update.clone())]);
-        let script = UPDATE_INITRAMFS_RESUME.replace("/boot/", "$R/boot/").replace("c=/etc/", "c=$R/etc/");
+        let bin = fakes(
+            t.path(),
+            &[
+                ("unmkinitramfs", unmk.clone()),
+                ("update-initramfs", update.clone()),
+            ],
+        );
+        let script = UPDATE_INITRAMFS_RESUME
+            .replace("/boot/", "$R/boot/")
+            .replace("c=/etc/", "c=$R/etc/");
         let tmp = t.path().join("tmp");
         let conf = r.join("etc/initramfs-tools/conf.d/zz-resume-auto");
         let confd = r.join("etc/initramfs-tools/conf.d");
         let was = age(&confd);
         let o = run_script(&script, &bin, &r, &tmp, None);
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-        assert_eq!(String::from_utf8_lossy(&o.stdout), "update-initramfs -u -k all\nRESUME=UUID=bc000000-0000-4000-8000-000000000003\n");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "update-initramfs -u -k all\nRESUME=UUID=bc000000-0000-4000-8000-000000000003\n"
+        );
         assert!(!conf.exists());
         // conf.d's mtime is the one it had (t2h-20261118T2305-edbb).
         assert_eq!(mtime(&confd), was);
-        assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0, "unmkinitramfs's directories and the reference file are removed");
+        assert_eq!(
+            std::fs::read_dir(&tmp).unwrap().count(),
+            0,
+            "unmkinitramfs's directories and the reference file are removed"
+        );
         // No image picked one: update-initramfs as it is.
         std::fs::remove_file(r.join("boot/initrd.img-6.12.57+deb13-amd64")).unwrap();
-        assert_eq!(String::from_utf8_lossy(&run_script(&script, &bin, &r, &tmp, None).stdout), "update-initramfs -u -k all\n");
+        assert_eq!(
+            String::from_utf8_lossy(&run_script(&script, &bin, &r, &tmp, None).stdout),
+            "update-initramfs -u -k all\n"
+        );
         // The system's own zz-resume-auto: kept, and not read again.
         std::fs::write(&conf, "RESUME=/dev/vda5\n").unwrap();
-        assert_eq!(String::from_utf8_lossy(&run_script(&script, &bin, &r, &tmp, None).stdout), "update-initramfs -u -k all\nRESUME=/dev/vda5\n");
+        assert_eq!(
+            String::from_utf8_lossy(&run_script(&script, &bin, &r, &tmp, None).stdout),
+            "update-initramfs -u -k all\nRESUME=/dev/vda5\n"
+        );
         assert!(conf.exists());
         std::fs::remove_file(&conf).unwrap();
         // No unmkinitramfs (Chimera's initramfs-tools, say): as it is.
@@ -7256,9 +10646,18 @@ mod tests {
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
         // update-initramfs's failure is the script's, the file removed.
         touch(&r, &["boot/initrd.img-6.12.57+deb13-amd64".into()]);
-        let failing = fakes(t.path(), &[("update-initramfs", "exit 5".into()), ("unmkinitramfs", unmk)]);
+        let failing = fakes(
+            t.path(),
+            &[
+                ("update-initramfs", "exit 5".into()),
+                ("unmkinitramfs", unmk),
+            ],
+        );
         let was = age(&confd);
-        assert_eq!(run_script(&script, &failing, &r, &tmp, None).status.code(), Some(5));
+        assert_eq!(
+            run_script(&script, &failing, &r, &tmp, None).status.code(),
+            Some(5)
+        );
         assert!(!conf.exists());
         assert_eq!(mtime(&confd), was);
     }
@@ -7271,13 +10670,32 @@ mod tests {
     /// rest, which are `other`; their texts are the problems' own.
     #[test]
     fn coded_problems_keep_their_places() {
-        let b = built_from(&sample::bios_mbr().replacen(r#""content": {"type": "ext4""#, r#""content": {"type": "minix""#, 1), &["--new-uuids"]);
+        let b = built_from(
+            &sample::bios_mbr().replacen(
+                r#""content": {"type": "ext4""#,
+                r#""content": {"type": "minix""#,
+                1,
+            ),
+            &["--new-uuids"],
+        );
         let p = b.coded_problems();
         assert_eq!(p.texts(), b.problems);
-        let what: Vec<&str> = p.iter().filter(|x| x.code == ProblemCode::Unsupported).filter_map(|x| x.str_field("what")).collect();
+        let what: Vec<&str> = p
+            .iter()
+            .filter(|x| x.code == ProblemCode::Unsupported)
+            .filter_map(|x| x.str_field("what"))
+            .collect();
         assert_eq!(what, ["--new-uuids", "minix"], "{p:?}");
-        assert!(p.iter().any(|x| x.text == "vda1: minix isn't a filesystem bko-holt load can make"), "{p:?}");
-        assert!(p.iter().all(|x| x.code == ProblemCode::Unsupported || x.code == ProblemCode::Other), "{p:?}");
+        assert!(
+            p.iter()
+                .any(|x| x.text == "vda1: minix isn't a filesystem bko-holt load can make"),
+            "{p:?}"
+        );
+        assert!(
+            p.iter()
+                .all(|x| x.code == ProblemCode::Unsupported || x.code == ProblemCode::Other),
+            "{p:?}"
+        );
         let n = b.coded_notes();
         assert_eq!(n.texts(), b.notes);
     }
@@ -7290,7 +10708,10 @@ mod tests {
             crate::load::Parsed::Run(o) => o,
             _ => unreachable!(),
         };
-        let m = Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() };
+        let m = Mapping {
+            pairs: vec![("vda".into(), "vdb".into())],
+            ..Mapping::default()
+        };
         build(&l, &o, &m)
     }
 
@@ -7315,13 +10736,21 @@ mod tests {
             (2048, 500001, 16384, true, 50, 26738688),
         ];
         for (bs, n, bpg, b64, r, want) in cases {
-            let (feats, desc) = if b64 { (r#""resize_inode", "64bit""#, r#", "descriptor_size": 64"#) } else { (r#""resize_inode""#, "") };
+            let (feats, desc) = if b64 {
+                (r#""resize_inode", "64bit""#, r#", "descriptor_size": 64"#)
+            } else {
+                (r#""resize_inode""#, "")
+            };
             let c = crate::json::parse(&format!(
                 r#"{{"type": "ext4", "block_size": {bs}, "blocks": {n}, "blocks_per_group": {bpg}, "reserved_gdt_blocks": {r}, "features": [{feats}]{desc}}}"#
             ))
             .unwrap();
             assert_eq!(resize_for(&c), Some(want), "{bs} {n} {bpg} {b64} {r}");
-            assert!(mke2fs("/dev/x", &c).iter().any(|a| a.ends_with(&format!("resize={want}"))));
+            assert!(
+                mke2fs("/dev/x", &c)
+                    .iter()
+                    .any(|a| a.ends_with(&format!("resize={want}")))
+            );
         }
         // None reserved, or no resize_inode: no resize= (mke2fs would take
         // the one as no request, or refuse it).
@@ -7335,25 +10764,52 @@ mod tests {
     fn mke2fs_reads_numbers_the_lenient_way() {
         // A number, decimal text and 0x-hex text all read; a sign after
         // "0x" doesn't (RustAudit1 H7-09: get_u64_lenient's rule).
-        for (x, want) in [("31", Some("stride=31")), ("\"31\"", Some("stride=31")), ("\"0x1f\"", Some("stride=31")), ("\"0x+1f\"", None), ("\"0X1f\"", None)] {
-            let c = crate::json::parse(&format!(r#"{{"type": "ext4", "raid_stride": {x}}}"#)).unwrap();
+        for (x, want) in [
+            ("31", Some("stride=31")),
+            ("\"31\"", Some("stride=31")),
+            ("\"0x1f\"", Some("stride=31")),
+            ("\"0x+1f\"", None),
+            ("\"0X1f\"", None),
+        ] {
+            let c =
+                crate::json::parse(&format!(r#"{{"type": "ext4", "raid_stride": {x}}}"#)).unwrap();
             let a = mke2fs("/dev/x", &c);
-            assert_eq!(a.iter().position(|e| e == "-E").map(|i| a[i + 1].as_str()), want, "{x}: {a:?}");
+            assert_eq!(
+                a.iter().position(|e| e == "-E").map(|i| a[i + 1].as_str()),
+                want,
+                "{x}: {a:?}"
+            );
         }
     }
 
     #[test]
     fn snapshot_paths() {
-        assert_eq!(snapshot_path("latest", "/.snapshots/2/snapshot"), ("latest".into(), "/.snapshots/2/snapshot".into()));
-        assert_eq!(snapshot_path("latest:/mnt/src", "/.snapshots/2/snapshot"), ("latest".into(), "/mnt/src/.snapshots/2/snapshot".into()));
-        assert_eq!(snapshot_path("1a2b:/mnt/src/", "/"), ("1a2b".into(), "/mnt/src".into()));
-        assert_eq!(snapshot_path("1a2b:/", "/home"), ("1a2b".into(), "/home".into()));
+        assert_eq!(
+            snapshot_path("latest", "/.snapshots/2/snapshot"),
+            ("latest".into(), "/.snapshots/2/snapshot".into())
+        );
+        assert_eq!(
+            snapshot_path("latest:/mnt/src", "/.snapshots/2/snapshot"),
+            ("latest".into(), "/mnt/src/.snapshots/2/snapshot".into())
+        );
+        assert_eq!(
+            snapshot_path("1a2b:/mnt/src/", "/"),
+            ("1a2b".into(), "/mnt/src".into())
+        );
+        assert_eq!(
+            snapshot_path("1a2b:/", "/home"),
+            ("1a2b".into(), "/home".into())
+        );
     }
 
     #[test]
     fn shared_snapshots_whatever_the_stage() {
         // format without --repo plans what restore with it does.
-        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/tumbleweed/src.json")).unwrap();
+        let j = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/corpus/tumbleweed/src.json"
+        ))
+        .unwrap();
         let fmt = |extra: &[&str]| {
             let b = built_from(&j, extra);
             text(b.stage(Stage::Format))
@@ -7361,10 +10817,18 @@ mod tests {
         let a = fmt(&[]);
         assert_eq!(a, fmt(&["--repo", "/r", "--snapshot", "latest:/mnt/src"]));
         assert!(!a.contains(".snapshots/2/snapshot"), "{a}");
-        assert!(fmt(&["--repo", "/r", "--btrfs-snapshots", "copy"]).contains("@/.snapshots/2/snapshot"));
-        let r = text(built_from(&j, &["--repo", "/r", "--snapshot", "latest:/mnt/src"]).stage(Stage::Restore));
+        assert!(
+            fmt(&["--repo", "/r", "--btrfs-snapshots", "copy"]).contains("@/.snapshots/2/snapshot")
+        );
+        let r = text(
+            built_from(&j, &["--repo", "/r", "--snapshot", "latest:/mnt/src"])
+                .stage(Stage::Restore),
+        );
         assert!(r.contains("latest:/mnt/src/.snapshots/2/snapshot "), "{r}");
-        assert!(r.contains(&format!("--clone-from /mnt/src={RUN_DIR}/btrfs/")), "{r}");
+        assert!(
+            r.contains(&format!("--clone-from /mnt/src={RUN_DIR}/btrfs/")),
+            "{r}"
+        );
     }
 
     #[test]
@@ -7372,11 +10836,18 @@ mod tests {
         // rocky10-raid5's root: Anaconda's mkfs left it 3 MiB short of its LV.
         let c = crate::json::parse(r#"{"block_size":4096,"blocks":7333888,"ag_blocks":458368,"ag_count":16,"stripe_unit":128,"stripe_width":256}"#).unwrap();
         let a = mkfs_xfs("/dev/x", &c, None).join(" ");
-        assert!(a.contains("-d size=30039605248,agsize=1877475328,sunit=1024,swidth=2048"), "{a}");
+        assert!(
+            a.contains("-d size=30039605248,agsize=1877475328,sunit=1024,swidth=2048"),
+            "{a}"
+        );
         assert!(!a.contains("agcount"), "{a}");
         // Without the sizes, the AG count as before.
         let c = crate::json::parse(r#"{"block_size":4096,"ag_count":8}"#).unwrap();
-        assert!(mkfs_xfs("/dev/x", &c, None).join(" ").contains("-d agcount=8"));
+        assert!(
+            mkfs_xfs("/dev/x", &c, None)
+                .join(" ")
+                .contains("-d agcount=8")
+        );
     }
 
     /// Every feature xfsprogs 6.18 knows is named, on or off: Rocky 10's XFS
@@ -7394,7 +10865,10 @@ mod tests {
         // Fedora 44's has both; a metadir one, and no imaxpct recorded.
         let fedora = r#"{"features":["crc","ftype","exchange","parent","metadir"]}"#;
         let a = mkfs_xfs("/dev/x", &crate::json::parse(fedora).unwrap(), None).join(" ");
-        assert!(a.contains("bigtime=0,metadir=1 -i sparse=0,nrext64=0,exchange=1 -n ftype=1,parent=1 "), "{a}");
+        assert!(
+            a.contains("bigtime=0,metadir=1 -i sparse=0,nrext64=0,exchange=1 -n ftype=1,parent=1 "),
+            "{a}"
+        );
         assert!(!a.contains("maxpct"), "{a}");
     }
 
@@ -7420,28 +10894,49 @@ mod tests {
                 _ => panic!("no {k}"),
             }
         }
-        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/debian13-zfs/src.json")).unwrap();
+        let j = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/corpus/debian13-zfs/src.json"
+        ))
+        .unwrap();
         let create = |v: &Value| {
             let t = text(built_from(&v.compact(), &[]).stage(Stage::Assemble));
-            t.lines().find(|l| l.starts_with("zpool create ")).unwrap_or_else(|| panic!("no zpool create in\n{t}")).to_string()
+            t.lines()
+                .find(|l| l.starts_with("zpool create "))
+                .unwrap_or_else(|| panic!("no zpool create in\n{t}"))
+                .to_string()
         };
         let src = crate::json::parse(&j).unwrap();
         let pool = ["storage", "zfs", "tools", "imported_pools", "0"];
-        let at = |k: &[&'static str]| -> Vec<&'static str> { pool.iter().chain(k).copied().collect() };
+        let at =
+            |k: &[&'static str]| -> Vec<&'static str> { pool.iter().chain(k).copied().collect() };
         let before = create(&src);
-        assert!(before.contains("-o feature@async_destroy=enabled ") && !before.contains("version="), "{before}");
+        assert!(
+            before.contains("-o feature@async_destroy=enabled ") && !before.contains("version="),
+            "{before}"
+        );
         let mut v5000 = src.clone();
         set(&mut v5000, &at(&["properties", "version"]), "5000".into());
         assert_eq!(create(&v5000), before);
         // v28, its features listed (as zpool get lists them) and the version
         // set locally too: named once.
-        for path in [&["properties", "version"][..], &["local_properties", "version"]] {
+        for path in [
+            &["properties", "version"][..],
+            &["local_properties", "version"],
+        ] {
             let mut v28 = src.clone();
             set(&mut v28, &at(path), "28".into());
             let a = create(&v28);
             assert_eq!(a.matches("version=").count(), 1, "{a}");
-            assert!(a.contains(" -o version=28 ") && !a.contains("feature@"), "{a}");
-            assert_eq!(a.replace(" -o version=28", ""), before.split(" -o feature@").next().unwrap().to_string() + &before[before.find(" -O ").unwrap()..]);
+            assert!(
+                a.contains(" -o version=28 ") && !a.contains("feature@"),
+                "{a}"
+            );
+            assert_eq!(
+                a.replace(" -o version=28", ""),
+                before.split(" -o feature@").next().unwrap().to_string()
+                    + &before[before.find(" -O ").unwrap()..]
+            );
         }
         let mut v28 = src.clone();
         set(&mut v28, &at(&["properties", "version"]), 28u64.into());
@@ -7452,9 +10947,15 @@ mod tests {
     fn bootloader_id_comes_from_the_layouts_own_disks() {
         let id_of = |efi: &str, esps: &str| {
             let j = sample::bios_mbr()
-                .replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
+                .replace(
+                    r#""firmware": {"mode": "bios"}"#,
+                    r#""firmware": {"mode": "uefi"}"#,
+                )
                 .replace(r#""firmware": "bios""#, r#""firmware": "uefi""#)
-                .replace(r#""efi": null,"#, &format!(r#""efi": {efi}, "esps": {esps},"#));
+                .replace(
+                    r#""efi": null,"#,
+                    &format!(r#""efi": {efi}, "esps": {esps},"#),
+                );
             let t = text(built_from(&j, &[]).stage(Stage::Boot));
             let at = t.find("--bootloader-id=").expect(&t) + "--bootloader-id=".len();
             t[at..].split_whitespace().next().unwrap().to_string()
@@ -7463,26 +10964,78 @@ mod tests {
         let zorin = r#"{"number": "0002", "description": "Zorin", "file": "\\EFI\\zorin\\shimx64.efi", "partition": {"device": "vda1"}}"#;
         let ubuntu = r#"{"number": "0003", "description": "Ubuntu", "file": "\\EFI\\ubuntu\\shimx64.efi", "partition": {"device": "vda1"}}"#;
         // A stale entry listed first, on no disk of the layout.
-        assert_eq!(id_of(&format!(r#"{{"entries": [{win}, {ubuntu}], "boot_order": ["0000", "0003"]}}"#), "[]"), "ubuntu");
+        assert_eq!(
+            id_of(
+                &format!(r#"{{"entries": [{win}, {ubuntu}], "boot_order": ["0000", "0003"]}}"#),
+                "[]"
+            ),
+            "ubuntu"
+        );
         // The entry that booted beats BootOrder and the listing.
-        assert_eq!(id_of(&format!(r#"{{"entries": [{zorin}, {ubuntu}], "boot_current": "0003", "boot_order": ["0002", "0003"]}}"#), "[]"), "ubuntu");
+        assert_eq!(
+            id_of(
+                &format!(
+                    r#"{{"entries": [{zorin}, {ubuntu}], "boot_current": "0003", "boot_order": ["0002", "0003"]}}"#
+                ),
+                "[]"
+            ),
+            "ubuntu"
+        );
         // Then BootOrder.
-        assert_eq!(id_of(&format!(r#"{{"entries": [{zorin}, {ubuntu}], "boot_order": ["0003", "0002"]}}"#), "[]"), "ubuntu");
+        assert_eq!(
+            id_of(
+                &format!(r#"{{"entries": [{zorin}, {ubuntu}], "boot_order": ["0003", "0002"]}}"#),
+                "[]"
+            ),
+            "ubuntu"
+        );
         // Nothing on the layout's disks: what's on the ESP.
         let esps = r#"[{"contents": {"files": [{"path": "EFI/BOOT/BOOTX64.EFI"}, {"path": "EFI/ubuntu/shimx64.efi"}]}}]"#;
-        assert_eq!(id_of(&format!(r#"{{"entries": [{win}], "boot_order": ["0000"]}}"#), esps), "ubuntu");
-        assert_eq!(id_of(&format!(r#"{{"entries": [{win}], "boot_order": ["0000"]}}"#), "[]"), "debian");
+        assert_eq!(
+            id_of(
+                &format!(r#"{{"entries": [{win}], "boot_order": ["0000"]}}"#),
+                esps
+            ),
+            "ubuntu"
+        );
+        assert_eq!(
+            id_of(
+                &format!(r#"{{"entries": [{win}], "boot_order": ["0000"]}}"#),
+                "[]"
+            ),
+            "debian"
+        );
         // The source's spelling, from the entry or the ESP (BigLinux's);
         // EFI and BOOT still matched without case.
         let big = r#"{"number": "0004", "description": "BigLinux", "file": "\\EFI\\BigLinux\\grubx64.efi", "partition": {"device": "vda1"}}"#;
-        assert_eq!(id_of(&format!(r#"{{"entries": [{big}], "boot_order": ["0004"]}}"#), "[]"), "BigLinux");
+        assert_eq!(
+            id_of(
+                &format!(r#"{{"entries": [{big}], "boot_order": ["0004"]}}"#),
+                "[]"
+            ),
+            "BigLinux"
+        );
         let esps = r#"[{"contents": {"files": [{"path": "efi/Boot/bootx64.efi"}, {"path": "efi/BigLinux/grubx64.efi"}]}}]"#;
-        assert_eq!(id_of(&format!(r#"{{"entries": [{win}], "boot_order": ["0000"]}}"#), esps), "BigLinux");
+        assert_eq!(
+            id_of(
+                &format!(r#"{{"entries": [{win}], "boot_order": ["0000"]}}"#),
+                esps
+            ),
+            "BigLinux"
+        );
         // elementary OS (docs/design/elementary.md): distinst maps "elementary
         // OS" to ubuntu, so the entry it labels "elementary OS 8" is shim in
         // EFI/ubuntu.
         let elementary = r#"{"number": "0001", "description": "elementary OS 8", "file": "\\EFI\\ubuntu\\shimx64.efi", "partition": {"device": "vda1"}}"#;
-        assert_eq!(id_of(&format!(r#"{{"entries": [{win}, {elementary}], "boot_current": "0001", "boot_order": ["0000", "0001"]}}"#), "[]"), "ubuntu");
+        assert_eq!(
+            id_of(
+                &format!(
+                    r#"{{"entries": [{win}, {elementary}], "boot_current": "0001", "boot_order": ["0000", "0001"]}}"#
+                ),
+                "[]"
+            ),
+            "ubuntu"
+        );
     }
 
     #[test]
@@ -7498,7 +11051,10 @@ mod tests {
         assert!(!t.contains("bootctl"), "{t}");
         assert!(n.contains("systemd-boot through shim"), "{n}");
         let (t, _) = boot(false);
-        assert!(t.contains("chroot /mnt/bko-target bootctl install --no-variables\n"), "{t}");
+        assert!(
+            t.contains("chroot /mnt/bko-target bootctl install --no-variables\n"),
+            "{t}"
+        );
         // bootctl writes /etc/kernel/entry-token: relabelled, when it's there.
         assert!(t.contains(r#"[ ! -d /etc/kernel ] || set -- /etc/kernel; setfiles "$f" /boot /var/log/bko-holt "$@";"#), "{t}");
     }
@@ -7512,15 +11068,39 @@ mod tests {
     #[test]
     fn mount_points_under_mounts_are_labelled() {
         let script = |boot_ty: &str| {
-            let sub = |file: &str, vol: &str| format!(r#"{{"spec": "UUID=b7b7b7b7-0000-4000-8000-000000000003", "file": "{file}", "type": "btrfs", "options": "subvol={vol}", "freq": 0, "passno": 0, "resolves_to": "vda3"}},"#);
-            let extra = [sub("/var/lib/x", "@x"), sub("/usr/local", "@usr_local"), sub("/var", "@var"), sub("/boot/grub", "@grub"), sub("/run/x", "@run_x")].concat();
+            let sub = |file: &str, vol: &str| {
+                format!(
+                    r#"{{"spec": "UUID=b7b7b7b7-0000-4000-8000-000000000003", "file": "{file}", "type": "btrfs", "options": "subvol={vol}", "freq": 0, "passno": 0, "resolves_to": "vda3"}},"#
+                )
+            };
+            let extra = [
+                sub("/var/lib/x", "@x"),
+                sub("/usr/local", "@usr_local"),
+                sub("/var", "@var"),
+                sub("/boot/grub", "@grub"),
+                sub("/run/x", "@run_x"),
+            ]
+            .concat();
             let j = sample::bios_mbr()
-                .replace(r#""file": "/boot", "type": "ext4""#, &format!(r#""file": "/boot", "type": "{boot_ty}""#))
+                .replace(
+                    r#""file": "/boot", "type": "ext4""#,
+                    &format!(r#""file": "/boot", "type": "{boot_ty}""#),
+                )
                 .replace(r#""fstab": ["#, &format!(r#""fstab": [{extra}"#));
             let b = built_from(&j, &[]);
-            let c = b.stage(Stage::Boot).iter().find(|c| c.argv.last().is_some_and(|a| a.contains("/mount-points"))).cloned();
-            let umount = b.stage(Stage::Boot).iter().position(|c| c.argv.starts_with(&["umount".to_string(), "--recursive".to_string()]));
-            let at = b.stage(Stage::Boot).iter().position(|c| c.argv.last().is_some_and(|a| a.contains("/mount-points")));
+            let c = b
+                .stage(Stage::Boot)
+                .iter()
+                .find(|c| c.argv.last().is_some_and(|a| a.contains("/mount-points")))
+                .cloned();
+            let umount = b.stage(Stage::Boot).iter().position(|c| {
+                c.argv
+                    .starts_with(&["umount".to_string(), "--recursive".to_string()])
+            });
+            let at = b
+                .stage(Stage::Boot)
+                .iter()
+                .position(|c| c.argv.last().is_some_and(|a| a.contains("/mount-points")));
             assert!(at < umount, "labelled while /proc and /run are still bound");
             let c = c.expect("a mount point label command");
             assert_eq!(c.argv[..4], ["chroot", "/mnt/bko-target", "sh", "-c"]);
@@ -7537,10 +11117,18 @@ mod tests {
             )
         );
         assert!(s.ends_with(&want), "{s}");
-        assert!(!s.contains("--rbind") && !s.contains(" -R") && !s.contains("/run/x"), "{s}");
+        assert!(
+            !s.contains("--rbind") && !s.contains(" -R") && !s.contains("/run/x"),
+            "{s}"
+        );
         // /boot an ESP (vfat): /boot itself is labelled on /, nothing under it.
         let s = script("vfat");
-        assert!(s.contains(r#"setfiles -r "$r" "$f" "$r"/boot "$r"/usr/local "$r"/var;"#) && !s.contains("/boot/grub") && !s.contains("mount --bind /boot"), "{s}");
+        assert!(
+            s.contains(r#"setfiles -r "$r" "$f" "$r"/boot "$r"/usr/local "$r"/var;"#)
+                && !s.contains("/boot/grub")
+                && !s.contains("mount --bind /boot"),
+            "{s}"
+        );
     }
 
     /// FAT's local-time stamps (BackShot1 artix-20261123-102328: Artix's
@@ -7550,12 +11138,45 @@ mod tests {
     #[test]
     fn fat_time_options() {
         assert_eq!(fat_time_option("defaults", None, None), None);
-        assert_eq!(fat_time_option("defaults", None, Some(0)).as_deref(), Some("tz=UTC"));
-        assert_eq!(fat_time_option("umask=0077", None, Some(-60)).as_deref(), Some("time_offset=60"));
-        assert_eq!(fat_time_option("defaults", Some("rw,relatime,rw,fmask=0022,dmask=0022,codepage=437"), Some(300)).as_deref(), Some("time_offset=-300"));
-        assert_eq!(fat_time_option("defaults", Some("rw,relatime,rw,fmask=0022,tz=UTC,errors=remount-ro"), Some(-60)).as_deref(), Some("tz=UTC"));
-        assert_eq!(fat_time_option("defaults", Some("rw,relatime,rw,time_offset=-120,errors=remount-ro"), None).as_deref(), Some("time_offset=-120"));
-        assert_eq!(fat_time_option("umask=0077,tz=UTC", Some("rw,tz=UTC"), Some(-60)), None);
+        assert_eq!(
+            fat_time_option("defaults", None, Some(0)).as_deref(),
+            Some("tz=UTC")
+        );
+        assert_eq!(
+            fat_time_option("umask=0077", None, Some(-60)).as_deref(),
+            Some("time_offset=60")
+        );
+        assert_eq!(
+            fat_time_option(
+                "defaults",
+                Some("rw,relatime,rw,fmask=0022,dmask=0022,codepage=437"),
+                Some(300)
+            )
+            .as_deref(),
+            Some("time_offset=-300")
+        );
+        assert_eq!(
+            fat_time_option(
+                "defaults",
+                Some("rw,relatime,rw,fmask=0022,tz=UTC,errors=remount-ro"),
+                Some(-60)
+            )
+            .as_deref(),
+            Some("tz=UTC")
+        );
+        assert_eq!(
+            fat_time_option(
+                "defaults",
+                Some("rw,relatime,rw,time_offset=-120,errors=remount-ro"),
+                None
+            )
+            .as_deref(),
+            Some("time_offset=-120")
+        );
+        assert_eq!(
+            fat_time_option("umask=0077,tz=UTC", Some("rw,tz=UTC"), Some(-60)),
+            None
+        );
         assert_eq!(fat_time_option("time_offset=30", None, Some(-60)), None);
         // More than a day: vfat would refuse the mount.
         assert_eq!(fat_time_option("defaults", None, Some(-1500)), None);
@@ -7566,10 +11187,21 @@ mod tests {
                 .replace(r#""file": "/boot", "type": "ext4", "options": "defaults""#, &format!(r#""file": "/boot", "type": "{ty}", "options": "umask=0077""#))
                 .replace(r#""mounts": [],"#, &format!(r#""mounts": [{{"target": "/boot", "source": "/dev/vda1", "fstype": "{live_ty}", "root": "/", "options": "rw,relatime", "super_options": "{live}"}}],"#));
             if let Some(m) = sys_tz {
-                j = j.replace(r#""crypttab": null,"#, &format!(r#""crypttab": null, "sys_tz_minuteswest": {m},"#));
+                j = j.replace(
+                    r#""crypttab": null,"#,
+                    &format!(r#""crypttab": null, "sys_tz_minuteswest": {m},"#),
+                );
             }
             let b = built_from(&j, &[]);
-            let c = b.stage(Stage::Mount).iter().find(|c| c.argv.first().map(String::as_str) == Some("mount") && c.argv.last().map(String::as_str) == Some("/mnt/bko-target/boot")).cloned().expect("the /boot mount");
+            let c = b
+                .stage(Stage::Mount)
+                .iter()
+                .find(|c| {
+                    c.argv.first().map(String::as_str) == Some("mount")
+                        && c.argv.last().map(String::as_str) == Some("/mnt/bko-target/boot")
+                })
+                .cloned()
+                .expect("the /boot mount");
             (c.argv[2..5].join(" "), c.why.unwrap_or_default())
         };
         let plan = |sys_tz: Option<i64>, live: &str| plan_ty("vfat", "vfat", sys_tz, live);
@@ -7577,19 +11209,37 @@ mod tests {
         assert_eq!(plan(None, plain).0, "vfat -o umask=0077");
         let (o, why) = plan(Some(0), plain);
         assert_eq!(o, "vfat -o umask=0077,tz=UTC");
-        assert!(why.contains("whatever the rescue's kernel time zone"), "{why}");
+        assert!(
+            why.contains("whatever the rescue's kernel time zone"),
+            "{why}"
+        );
         let (o, why) = plan(Some(-60), plain);
         assert_eq!(o, "vfat -o umask=0077,time_offset=60");
         assert!(why.contains("sys_tz tz_minuteswest -60"), "{why}");
-        assert_eq!(plan(Some(300), plain).0, "vfat -o umask=0077,time_offset=-300");
+        assert_eq!(
+            plan(Some(300), plain).0,
+            "vfat -o umask=0077,time_offset=-300"
+        );
         let (o, why) = plan(Some(-60), "rw,fmask=0022,tz=UTC");
         assert_eq!(o, "vfat -o umask=0077,tz=UTC");
         assert!(why.contains("as the source's /boot was mounted"), "{why}");
-        assert_eq!(plan(None, "rw,time_offset=120").0, "vfat -o umask=0077,time_offset=120");
+        assert_eq!(
+            plan(None, "rw,time_offset=120").0,
+            "vfat -o umask=0077,time_offset=120"
+        );
         // fstab's auto: by what the source had mounted there.
-        assert_eq!(plan_ty("auto", "vfat", Some(-60), plain).0, "auto -o umask=0077,time_offset=60");
-        assert_eq!(plan_ty("auto", "ext4", Some(-60), "rw").0, "auto -o umask=0077");
-        assert_eq!(plan_ty("ext4", "ext4", Some(-60), "rw").0, "ext4 -o umask=0077");
+        assert_eq!(
+            plan_ty("auto", "vfat", Some(-60), plain).0,
+            "auto -o umask=0077,time_offset=60"
+        );
+        assert_eq!(
+            plan_ty("auto", "ext4", Some(-60), "rw").0,
+            "auto -o umask=0077"
+        );
+        assert_eq!(
+            plan_ty("ext4", "ext4", Some(-60), "rw").0,
+            "ext4 -o umask=0077"
+        );
     }
 
     /// PikaOS (docs/design/pikaos.md): booster's image remade for each
@@ -7612,18 +11262,28 @@ mod tests {
                     ),
                 );
             let b = built_from(&j, &[]);
-            (text(b.stage(Stage::Boot)), b.notes.join("\n"), b.problems.clone())
+            (
+                text(b.stage(Stage::Boot)),
+                b.notes.join("\n"),
+                b.problems.clone(),
+            )
         };
         let good = "nowatchdog rootflags=rw,relatime root=UUID=b7b7b7b7-0000-4000-8000-000000000003 quiet splash ---";
         let (t, n, p) = plan(false, good);
         assert!(p.is_empty(), "{p:?}");
         assert_eq!(t.matches("booster build").count(), 1, "{t}");
         assert!(t.contains(r#"chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d "$k/kernel" ] || continue; k=${k##*/}; booster build --force --kernel-version "$k" "/boot/booster.img-$k" || exit; n=$((n + 1)); done; [ "$n" -gt 0 ]'"#), "{t}");
-        assert!(!t.contains("update-initramfs") && !t.contains("refind-install") && !t.contains("grub"), "{t}");
+        assert!(
+            !t.contains("update-initramfs") && !t.contains("refind-install") && !t.contains("grub"),
+            "{t}"
+        );
         assert!(t.contains("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'rEFInd Boot Manager' --loader '\\EFI\\refind\\refind_x64.efi'\n"), "{t}");
         assert!(n.contains("rEFInd: its EFI files, drivers, theme and refind.conf came back with the ESP, and refind_linux.conf with /boot; nothing to install"), "{n}");
         // A UUID the layout doesn't make, as root= and as the LUKS one.
-        let (_, _, p) = plan(false, "rd.luks.name=1111aaaa-2222-4333-8444-555566667777=crypt_root rd.luks.options=discard root=UUID=DEADBEEF-0000-4000-8000-000000000009 quiet");
+        let (_, _, p) = plan(
+            false,
+            "rd.luks.name=1111aaaa-2222-4333-8444-555566667777=crypt_root rd.luks.options=discard root=UUID=DEADBEEF-0000-4000-8000-000000000009 quiet",
+        );
         assert_eq!(
             p,
             vec![
@@ -7632,11 +11292,19 @@ mod tests {
             ]
         );
         // The same UUID in another case is the same UUID; LUKS's by UUID= too.
-        let (_, _, p) = plan(false, "rd.luks.name=UUID=5E5E5E5E-0000-4000-8000-000000000002=crypt_root root=UUID=B7B7B7B7-0000-4000-8000-000000000003");
+        let (_, _, p) = plan(
+            false,
+            "rd.luks.name=UUID=5E5E5E5E-0000-4000-8000-000000000002=crypt_root root=UUID=B7B7B7B7-0000-4000-8000-000000000003",
+        );
         assert!(p.is_empty(), "{p:?}");
         // Through shim: refused by name, nothing kept quietly.
         let (_, n, p) = plan(true, good);
-        assert_eq!(p, vec!["rEFInd through shim (Secure Boot): bko-holt load keeps only an unsigned rEFInd's files, and doesn't support it"]);
+        assert_eq!(
+            p,
+            vec![
+                "rEFInd through shim (Secure Boot): bko-holt load keeps only an unsigned rEFInd's files, and doesn't support it"
+            ]
+        );
         assert!(!n.contains("rEFInd: its EFI files"), "{n}");
     }
 
@@ -7661,32 +11329,80 @@ mod tests {
                     ),
                 );
             let b = built_from(&j, extra);
-            (text(b.stage(Stage::Boot)), b.notes.join("\n"), b.problems.clone())
+            (
+                text(b.stage(Stage::Boot)),
+                b.notes.join("\n"),
+                b.problems.clone(),
+            )
         };
         let sd_files = r#"{"path": "EFI/systemd/systemd-bootx64.efi"}, {"path": "EFI/BOOT/BOOTX64.EFI"}, {"path": "loader/loader.conf"}, {"path": "loader/entries/nixos-generation-1.conf"}"#;
-        let (t, n, p) = plan("systemd-boot", r"\EFI\systemd\systemd-bootx64.efi", sd_files, &[]);
+        let (t, n, p) = plan(
+            "systemd-boot",
+            r"\EFI\systemd\systemd-bootx64.efi",
+            sd_files,
+            &[],
+        );
         assert!(p.is_empty(), "{p:?}");
-        assert!(!t.contains("bootctl") && !t.contains("gen-systemd-boot") && !t.contains("kernel-install"), "{t}");
-        assert!(!t.lines().any(|l| l.starts_with("chroot ") || l.contains("; chroot ")), "{t}");
+        assert!(
+            !t.contains("bootctl")
+                && !t.contains("gen-systemd-boot")
+                && !t.contains("kernel-install"),
+            "{t}"
+        );
+        assert!(
+            !t.lines()
+                .any(|l| l.starts_with("chroot ") || l.contains("; chroot ")),
+            "{t}"
+        );
         assert!(t.contains("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'Linux Boot Manager' --loader '\\EFI\\systemd\\systemd-bootx64.efi'\n"), "{t}");
         assert!(n.contains("NixOS: systemd-boot, its loader entries and every generation's kernel and initrd came back with the ESP; only the boot entry is made"), "{n}");
         assert!(!n.contains("/boot/kernels"), "{n}");
         assert!(!t.contains("BOOTX64"), "{t}");
         // --removable: the fallback copy, made outside the chroot unless there.
-        let (t, _, _) = plan("systemd-boot", r"\EFI\systemd\systemd-bootx64.efi", sd_files, &["--removable"]);
+        let (t, _, _) = plan(
+            "systemd-boot",
+            r"\EFI\systemd\systemd-bootx64.efi",
+            sd_files,
+            &["--removable"],
+        );
         assert!(t.contains("[ -e /mnt/bko-target/boot/EFI/BOOT/BOOTX64.EFI ] || { mkdir -p /mnt/bko-target/boot/EFI/BOOT && cp /mnt/bko-target/boot/EFI/systemd/systemd-bootx64.efi /mnt/bko-target/boot/EFI/BOOT/BOOTX64.EFI; }"), "{t}");
         // --no-nvram: no entry either.
-        let (t, _, _) = plan("systemd-boot", r"\EFI\systemd\systemd-bootx64.efi", sd_files, &["--no-nvram"]);
+        let (t, _, _) = plan(
+            "systemd-boot",
+            r"\EFI\systemd\systemd-bootx64.efi",
+            sd_files,
+            &["--no-nvram"],
+        );
         assert!(!t.contains("efibootmgr"), "{t}");
         // UEFI GRUB: neither grub-install nor grub-mkconfig.
         let grub_files = r#"{"path": "EFI/NixOS-boot/grubx64.efi"}"#;
-        let (t, n, p) = plan("grub", r"\EFI\NixOS-boot\grubx64.efi", grub_files, &["--removable"]);
+        let (t, n, p) = plan(
+            "grub",
+            r"\EFI\NixOS-boot\grubx64.efi",
+            grub_files,
+            &["--removable"],
+        );
         assert!(p.is_empty(), "{p:?}");
-        assert!(!t.contains("grub-install") && !t.contains("grub-mkconfig") && !t.contains("update-grub"), "{t}");
-        assert!(!t.lines().any(|l| l.starts_with("chroot ") || l.contains("; chroot ")), "{t}");
-        assert!(t.contains("--label 'Linux Boot Manager' --loader '\\EFI\\NixOS-boot\\grubx64.efi'\n"), "{t}");
+        assert!(
+            !t.contains("grub-install")
+                && !t.contains("grub-mkconfig")
+                && !t.contains("update-grub"),
+            "{t}"
+        );
+        assert!(
+            !t.lines()
+                .any(|l| l.starts_with("chroot ") || l.contains("; chroot ")),
+            "{t}"
+        );
+        assert!(
+            t.contains("--label 'Linux Boot Manager' --loader '\\EFI\\NixOS-boot\\grubx64.efi'\n"),
+            "{t}"
+        );
         assert!(t.contains("cp /mnt/bko-target/boot/EFI/NixOS-boot/grubx64.efi /mnt/bko-target/boot/EFI/BOOT/BOOTX64.EFI"), "{t}");
-        assert!(n.contains("NixOS: UEFI GRUB's EFI image and grub.cfg came back"), "{n}");
+        assert!(
+            n.contains("NixOS: UEFI GRUB's EFI image and grub.cfg came back"),
+            "{n}"
+        );
     }
 
     /// GRUB's environment block in btrfs's reserved area (openSUSE's
@@ -7700,19 +11416,41 @@ mod tests {
         let b = built_from(&j, &[]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let f = text(b.stage(Stage::Format));
-        let block = format!("# GRUB Environment Block\nnext_entry=1\n{}", "#".repeat(512 - 38));
-        let dd = format!("# GRUB's environment block in btrfs's reserved area (grubenv's env_block=512+1), as the source's: mkfs.btrfs zeroed it\n\
-                          dd of=/dev/vdb3 bs=512 seek=512 count=1 iflag=fullblock conv=notrunc,fsync status=none <<'EOF'\n{block}\nEOF\n");
+        let block = format!(
+            "# GRUB Environment Block\nnext_entry=1\n{}",
+            "#".repeat(512 - 38)
+        );
+        let dd = format!(
+            "# GRUB's environment block in btrfs's reserved area (grubenv's env_block=512+1), as the source's: mkfs.btrfs zeroed it\n\
+                          dd of=/dev/vdb3 bs=512 seek=512 count=1 iflag=fullblock conv=notrunc,fsync status=none <<'EOF'\n{block}\nEOF\n"
+        );
         let at = f.find(&dd).unwrap_or_else(|| panic!("{f}"));
-        assert!(f.find("mkfs.btrfs").unwrap() < at && at < f.find("subvolume create").unwrap_or(usize::MAX), "{f}");
-        let c = b.stage(Stage::Format).iter().find(|c| c.argv.first().is_some_and(|a| a == "dd") && c.argv.iter().any(|a| a == "seek=512")).unwrap();
+        assert!(
+            f.find("mkfs.btrfs").unwrap() < at
+                && at < f.find("subvolume create").unwrap_or(usize::MAX),
+            "{f}"
+        );
+        let c = b
+            .stage(Stage::Format)
+            .iter()
+            .find(|c| {
+                c.argv.first().is_some_and(|a| a == "dd") && c.argv.iter().any(|a| a == "seek=512")
+            })
+            .unwrap();
         assert_eq!(c.stdin.as_deref().map(str::len), Some(512));
         // An empty one: the signature and padding.
         let e = grub_env_block("/dev/vdb3", &crate::json::parse("{}").unwrap()).unwrap();
-        assert_eq!(e.stdin.unwrap(), format!("# GRUB Environment Block\n{}", "#".repeat(512 - 25)));
+        assert_eq!(
+            e.stdin.unwrap(),
+            format!("# GRUB Environment Block\n{}", "#".repeat(512 - 25))
+        );
         // More than a sector: refused by name.
         let big = crate::json::parse(&format!(r#"{{"x": "{}"}}"#, "y".repeat(600))).unwrap();
-        assert!(grub_env_block("/dev/vdb3", &big).unwrap_err().contains("more than its 512"));
+        assert!(
+            grub_env_block("/dev/vdb3", &big)
+                .unwrap_err()
+                .contains("more than its 512")
+        );
         // None in the dump: nothing written.
         assert!(!text(built(&[]).stage(Stage::Format)).contains("seek=512"));
     }
@@ -7723,22 +11461,53 @@ mod tests {
     /// and EndeavourOS's dracut-rebuild with one.
     #[test]
     fn initramfs_resume_kept() {
-        let it = |extra: &str| sample::bios_mbr().replace(r#""efi": null,"#, &format!(r#""efi": null, "initramfs": {{"generator": "initramfs-tools"{extra}}},"#));
-        let wrapped = format!("chroot /mnt/bko-target sh -c {}\n", shell_quote(UPDATE_INITRAMFS_RESUME));
+        let it = |extra: &str| {
+            sample::bios_mbr().replace(
+                r#""efi": null,"#,
+                &format!(r#""efi": null, "initramfs": {{"generator": "initramfs-tools"{extra}}},"#),
+            )
+        };
+        let wrapped = format!(
+            "chroot /mnt/bko-target sh -c {}\n",
+            shell_quote(UPDATE_INITRAMFS_RESUME)
+        );
         let plain = "chroot /mnt/bko-target update-initramfs -u -k all\n";
-        for (extra, want) in [("", &wrapped), (r#", "resume": null"#, &wrapped), (r#", "resume": "auto""#, &wrapped), (r#", "resume": "UUID=5e5e5e5e-0000-4000-8000-000000000002""#, &plain.to_string()), (r#", "resume": "none""#, &plain.to_string())] {
+        for (extra, want) in [
+            ("", &wrapped),
+            (r#", "resume": null"#, &wrapped),
+            (r#", "resume": "auto""#, &wrapped),
+            (
+                r#", "resume": "UUID=5e5e5e5e-0000-4000-8000-000000000002""#,
+                &plain.to_string(),
+            ),
+            (r#", "resume": "none""#, &plain.to_string()),
+        ] {
             let bt = text(built_from(&it(extra), &[]).stage(Stage::Boot));
             assert!(bt.contains(want.as_str()), "{extra}: {bt}");
         }
         // A swap file, or no swap: nothing for the hook to pick.
-        let file = it("").replace(r#""spec": "UUID=5e5e5e5e-0000-4000-8000-000000000002", "file": "none""#, r#""spec": "/swap.img", "file": "none""#);
+        let file = it("").replace(
+            r#""spec": "UUID=5e5e5e5e-0000-4000-8000-000000000002", "file": "none""#,
+            r#""spec": "/swap.img", "file": "none""#,
+        );
         assert!(text(built_from(&file, &[]).stage(Stage::Boot)).contains(plain));
         let eos = sample::bios_mbr()
             .replace(r#""id": "debian", "version_id": "13""#, r#""id": "endeavouros""#)
             .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "dracut"}, "packages": {"eos-dracut": "1.7-1"},"#);
-        assert!(text(built_from(&eos, &[]).stage(Stage::Boot)).contains(&format!("chroot /mnt/bko-target sh -c {}\n", shell_quote(DRACUT_REBUILD_RESUME))));
-        let eos = eos.replace(r#""spec": "UUID=5e5e5e5e-0000-4000-8000-000000000002", "file": "none""#, r#""spec": "/swap/swapfile", "file": "none""#);
-        assert!(text(built_from(&eos, &[]).stage(Stage::Boot)).contains("chroot /mnt/bko-target dracut-rebuild\n"));
+        assert!(
+            text(built_from(&eos, &[]).stage(Stage::Boot)).contains(&format!(
+                "chroot /mnt/bko-target sh -c {}\n",
+                shell_quote(DRACUT_REBUILD_RESUME)
+            ))
+        );
+        let eos = eos.replace(
+            r#""spec": "UUID=5e5e5e5e-0000-4000-8000-000000000002", "file": "none""#,
+            r#""spec": "/swap/swapfile", "file": "none""#,
+        );
+        assert!(
+            text(built_from(&eos, &[]).stage(Stage::Boot))
+                .contains("chroot /mnt/bko-target dracut-rebuild\n")
+        );
     }
 
     #[test]
@@ -7747,15 +11516,32 @@ mod tests {
         let t = text(b.stage(Stage::Partition));
         assert!(t.contains("wipefs --all /dev/vdb\n"), "{t}");
         assert!(t.contains("label: dos\nlabel-id: 0x1f2e3d4c\n"), "{t}");
-        assert!(t.contains("/dev/vdb1 : start=2048, size=1953792, type=83, bootable\n"), "{t}");
-        assert!(t.contains("/dev/vdb3 : start=5861376, size=27693056, type=83\n"), "{t}");
+        assert!(
+            t.contains("/dev/vdb1 : start=2048, size=1953792, type=83, bootable\n"),
+            "{t}"
+        );
+        assert!(
+            t.contains("/dev/vdb3 : start=5861376, size=27693056, type=83\n"),
+            "{t}"
+        );
         assert!(t.ends_with("udevadm settle\n"));
     }
 
     /// The (seek, count) in sectors of each dd of `dev` the commands make.
     fn dds(cmds: &[Cmd], dev: &str) -> Vec<(u64, u64)> {
-        let arg = |c: &Cmd, k: &str| c.argv.iter().find_map(|a| a.strip_prefix(k)).map(|v| v.parse::<u64>().unwrap());
-        cmds.iter().filter(|c| c.argv.first().map(String::as_str) == Some("dd") && c.argv.contains(&format!("of={dev}"))).map(|c| (arg(c, "seek=").unwrap_or(0), arg(c, "count=").unwrap())).collect()
+        let arg = |c: &Cmd, k: &str| {
+            c.argv
+                .iter()
+                .find_map(|a| a.strip_prefix(k))
+                .map(|v| v.parse::<u64>().unwrap())
+        };
+        cmds.iter()
+            .filter(|c| {
+                c.argv.first().map(String::as_str) == Some("dd")
+                    && c.argv.contains(&format!("of={dev}"))
+            })
+            .map(|c| (arg(c, "seek=").unwrap_or(0), arg(c, "count=").unwrap()))
+            .collect()
     }
 
     /// The disk's first 4 MiB and last 1 MiB, then each new partition's,
@@ -7767,7 +11553,10 @@ mod tests {
         let b = built(&[]);
         let cmds = b.stage(Stage::Partition);
         let t = text(cmds);
-        let at = |needle: &str| t.find(needle).unwrap_or_else(|| panic!("{needle:?} not in:\n{t}"));
+        let at = |needle: &str| {
+            t.find(needle)
+                .unwrap_or_else(|| panic!("{needle:?} not in:\n{t}"))
+        };
         let order = [
             "wipefs --all /dev/vdb\n",
             "dd if=/dev/zero of=/dev/vdb bs=1M count=4 conv=fsync\n",
@@ -7790,12 +11579,27 @@ mod tests {
         let zs = dds(cmds, "/dev/vdb");
         assert_eq!(zs.len(), 1 + 2 * parts.len(), "{zs:?}");
         for &(seek, count) in &zs[1..] {
-            assert!(parts.iter().any(|p| seek >= p.start_lba && seek + count <= p.start_lba + p.sectors), "{seek}+{count} isn't inside a partition");
+            assert!(
+                parts
+                    .iter()
+                    .any(|p| seek >= p.start_lba && seek + count <= p.start_lba + p.sectors),
+                "{seek}+{count} isn't inside a partition"
+            );
         }
-        assert!(!cmds.iter().any(|c| c.argv.iter().any(|a| a.starts_with("of=/dev/vdb") && a != "of=/dev/vdb")), "{t}");
+        assert!(
+            !cmds.iter().any(|c| c
+                .argv
+                .iter()
+                .any(|a| a.starts_with("of=/dev/vdb") && a != "of=/dev/vdb")),
+            "{t}"
+        );
         // Nothing later zeroes: assemble and format write to what's clean.
         for s in [Stage::Assemble, Stage::Format, Stage::Mount, Stage::Boot] {
-            assert!(!text(b.stage(s)).contains("if=/dev/zero"), "{}", text(b.stage(s)));
+            assert!(
+                !text(b.stage(s)).contains("if=/dev/zero"),
+                "{}",
+                text(b.stage(s))
+            );
         }
     }
 
@@ -7804,7 +11608,11 @@ mod tests {
     /// 4096-byte sectors the counts are the disk's sectors.
     #[test]
     fn partition_zeroes_small_partitions_whole() {
-        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/rocky10-lvm/src.json")).unwrap();
+        let j = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/corpus/rocky10-lvm/src.json"
+        ))
+        .unwrap();
         let b = built_from(&j, &[]);
         let zs = dds(b.stage(Stage::Partition), "/dev/vdb");
         // vda1 is sectors 2048-4095: no dd of its own.
@@ -7814,7 +11622,18 @@ mod tests {
         let d = l.disk("vda").unwrap();
         let mut d4 = d.clone();
         d4.sector_size = 4096;
-        d4.parts = vec![Part { start_lba: 256, sectors: 1024, ..d.parts[1].clone() }, Part { start_lba: 2048, sectors: 1280, ..d.parts[1].clone() }];
+        d4.parts = vec![
+            Part {
+                start_lba: 256,
+                sectors: 1024,
+                ..d.parts[1].clone()
+            },
+            Part {
+                start_lba: 2048,
+                sectors: 1280,
+                ..d.parts[1].clone()
+            },
+        ];
         let z4 = dds(&zero_parts(&d4, "/dev/vdb"), "/dev/vdb");
         // The first is 4 MiB (from 1 MiB in): all of it.  The second is 5 MiB:
         // its first 4 and its last 1.
@@ -7825,11 +11644,22 @@ mod tests {
     /// mapped nowhere, is touched by nothing.
     #[test]
     fn partition_zeroes_only_mapped_disks() {
-        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/debian13-stack/src.json")).unwrap();
+        let j = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/corpus/debian13-stack/src.json"
+        ))
+        .unwrap();
         let b = built_from(&j, &[]);
         let cmds = b.stage(Stage::Partition);
-        let zeroed: Vec<&String> = cmds.iter().filter(|c| c.argv.first().map(String::as_str) == Some("dd")).flat_map(|c| c.argv.iter().filter(|a| a.starts_with("of="))).collect();
-        assert!(!zeroed.is_empty() && zeroed.iter().all(|a| *a == "of=/dev/vdb"), "{zeroed:?}");
+        let zeroed: Vec<&String> = cmds
+            .iter()
+            .filter(|c| c.argv.first().map(String::as_str) == Some("dd"))
+            .flat_map(|c| c.argv.iter().filter(|a| a.starts_with("of=")))
+            .collect();
+        assert!(
+            !zeroed.is_empty() && zeroed.iter().all(|a| *a == "of=/dev/vdb"),
+            "{zeroed:?}"
+        );
         let t = text(cmds);
         assert_eq!(t.matches("blockdev --getsz").count(), 1, "{t}");
     }
@@ -7840,10 +11670,16 @@ mod tests {
         let t = text(b.stage(Stage::Format));
         assert!(t.contains("mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,filetype,extent,64bit,flex_bg,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U 0b0e2c6e-1111-4222-8333-444455556666"), "{t}");
         assert!(!t.contains("needs_recovery"));
-        assert!(t.contains("-E hash_seed=9a6c1c0e-aaaa-4bbb-8ccc-dddddddddddd /dev/vdb1"), "{t}");
+        assert!(
+            t.contains("-E hash_seed=9a6c1c0e-aaaa-4bbb-8ccc-dddddddddddd /dev/vdb1"),
+            "{t}"
+        );
         assert!(t.contains("tune2fs -r 12211 /dev/vdb1\n"), "{t}");
         assert!(!t.contains(" -m 5"), "{t}");
-        assert!(t.contains("mkswap -U 5e5e5e5e-0000-4000-8000-000000000002 --pagesize 4096 /dev/vdb2"), "{t}");
+        assert!(
+            t.contains("mkswap -U 5e5e5e5e-0000-4000-8000-000000000002 --pagesize 4096 /dev/vdb2"),
+            "{t}"
+        );
         assert!(t.contains("mkfs.btrfs -f -O extref,skinny-metadata,no-holes,^raid56,^raid1c34,^zoned,^squota,free-space-tree,block-group-tree -U b7b7b7b7-0000-4000-8000-000000000003 --csum crc32c -n 16384 -s 4096 -d single -m dup /dev/vdb3"), "{t}");
         assert!(t.contains(&format!("btrfs subvolume create {RUN_DIR}/btrfs/b7b7b7b7-0000-4000-8000-000000000003/@rootfs")), "{t}");
         assert!(t.contains(&format!("btrfs property set {RUN_DIR}/btrfs/b7b7b7b7-0000-4000-8000-000000000003/@rootfs compression zstd")), "{t}");
@@ -7883,20 +11719,36 @@ mod tests {
                 )
         };
         let j = layout("/dev/urandom", "PLAIN");
-        assert!(j.contains("CRYPT-PLAIN") && j.contains("\"resolves_to\": \"dm-0\"") && j.contains("\"content\": null"));
+        assert!(
+            j.contains("CRYPT-PLAIN")
+                && j.contains("\"resolves_to\": \"dm-0\"")
+                && j.contains("\"content\": null")
+        );
         let b = built_from(&j, &[]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let all: String = b.stages.iter().map(|(_, c)| text(c)).collect();
-        assert!(!all.contains("cryptsetup") && !all.contains("dm_crypt-0") && !all.contains("mkswap"), "{all}");
+        assert!(
+            !all.contains("cryptsetup") && !all.contains("dm_crypt-0") && !all.contains("mkswap"),
+            "{all}"
+        );
         assert!(b.notes.iter().any(|n| n
             == "dm-0 (dm_crypt-0): plain dm-crypt that crypttab makes at every boot with a random key from /dev/urandom (swap): nothing is made on vda2 but the partition (its ends zeroed, as every new partition's); the restored system's crypttab makes it at its first boot"), "{:?}", b.notes);
         let part = text(b.stage(Stage::Partition));
-        assert!(part.contains("vda2: its first 4 MiB and its last 1 MiB"), "{part}");
+        assert!(
+            part.contains("vda2: its first 4 MiB and its last 1 MiB"),
+            "{part}"
+        );
         // A real key: plain dm-crypt load can't make.
         let b = built_from(&layout("/etc/keys/swap.key", "PLAIN"), &[]);
         assert!(b.problems.iter().any(|p| p == "dm-0: vda2 doesn't hold a LUKS header in the dump (plain dm-crypt isn't supported)"), "{:?}", b.problems);
         let b = built_from(&layout("/dev/urandom", "LUKS2"), &[]);
-        assert!(b.problems.iter().any(|p| p.contains("doesn't hold a LUKS header")), "{:?}", b.problems);
+        assert!(
+            b.problems
+                .iter()
+                .any(|p| p.contains("doesn't hold a LUKS header")),
+            "{:?}",
+            b.problems
+        );
     }
 
     /// LUKS1, as Guix's installer makes it (Guix's cryptsetup is built
@@ -7929,7 +11781,12 @@ mod tests {
                 )
         };
         let j = layout(r#", "keyslot_iterations": 6297752"#);
-        assert!(j.contains("crypto_LUKS") && j.contains("CRYPT-LUKS1") && j.contains("\"resolves_to\": \"dm-0\""), "the sample changed: {j}");
+        assert!(
+            j.contains("crypto_LUKS")
+                && j.contains("CRYPT-LUKS1")
+                && j.contains("\"resolves_to\": \"dm-0\""),
+            "the sample changed: {j}"
+        );
         let b = built_from(&j, &["--key-file", "cryptswap=/root/k"]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let asm = text(b.stage(Stage::Assemble));
@@ -7938,12 +11795,20 @@ mod tests {
             asm.contains(&format!("cryptsetup luksFormat --batch-mode --type=luks1 --volume-key-file={vk} --cipher=aes-xts-plain64 --key-size=512 --hash=sha256 --offset=4096 --pbkdf-force-iterations=6297752 --uuid=a8aa9f20-5064-4dfd-b286-07e35e0767b0 --key-file=/root/k /dev/vdb2\n")),
             "{asm}"
         );
-        assert!(asm.contains("cryptsetup open --key-file=/root/k /dev/vdb2 cryptswap\n"), "{asm}");
+        assert!(
+            asm.contains("cryptsetup open --key-file=/root/k /dev/vdb2 cryptswap\n"),
+            "{asm}"
+        );
         // The volume key digest's iterations, the source's: a volume key of
         // load's (64 bytes, the key's 512 bits), luksFormat, the digest made
         // again, the key removed, then open.
-        let at = |needle: &str| asm.find(needle).unwrap_or_else(|| panic!("{needle} not in {asm}"));
-        let dd = at(&format!("dd if=/dev/urandom of={vk} bs=64 count=1 status=none\n"));
+        let at = |needle: &str| {
+            asm.find(needle)
+                .unwrap_or_else(|| panic!("{needle} not in {asm}"))
+        };
+        let dd = at(&format!(
+            "dd if=/dev/urandom of={vk} bs=64 count=1 status=none\n"
+        ));
         let fmt = at("cryptsetup luksFormat ");
         let dig = at(&format!(" luks1-digest /dev/vdb2 {vk} 394795\n"));
         let rm = at(&format!("rm -f {vk}\n"));
@@ -7954,23 +11819,45 @@ mod tests {
             let b = built_from(&layout(none), &["--key-file", "cryptswap=/root/k"]);
             assert!(b.problems.is_empty(), "{:?}", b.problems);
             let asm = text(b.stage(Stage::Assemble));
-            assert!(asm.contains("--type=luks1 ") && !asm.contains("--pbkdf-force-iterations"), "{asm}");
+            assert!(
+                asm.contains("--type=luks1 ") && !asm.contains("--pbkdf-force-iterations"),
+                "{asm}"
+            );
             assert!(asm.contains(" luks1-digest /dev/vdb2 "), "{asm}");
         }
         // Another hash: cryptsetup's digest count, and a note says so; no
         // mk_iterations (or under cryptsetup's least): nothing to set.
-        let sha1 = layout(r#", "keyslot_iterations": 6297752"#).replace(r#""hash": "sha256""#, r#""hash": "sha1""#);
+        let sha1 = layout(r#", "keyslot_iterations": 6297752"#)
+            .replace(r#""hash": "sha256""#, r#""hash": "sha1""#);
         let b = built_from(&sha1, &["--key-file", "cryptswap=/root/k"]);
         let asm = text(b.stage(Stage::Assemble));
-        assert!(!asm.contains("luks1-digest") && !asm.contains("--volume-key-file"), "{asm}");
-        assert!(b.notes.iter().any(|n| n.contains("volume key digest gets cryptsetup's iterations, not the source's 394795") && n.contains("hash is sha1")), "{:?}", b.notes);
+        assert!(
+            !asm.contains("luks1-digest") && !asm.contains("--volume-key-file"),
+            "{asm}"
+        );
+        assert!(
+            b.notes.iter().any(|n| n.contains(
+                "volume key digest gets cryptsetup's iterations, not the source's 394795"
+            ) && n.contains("hash is sha1")),
+            "{:?}",
+            b.notes
+        );
         for mk in [r#", "mk_iterations": 394795"#] {
             for to in ["", r#", "mk_iterations": 999"#] {
                 let j = layout(r#", "keyslot_iterations": 6297752"#).replace(mk, to);
                 let b = built_from(&j, &["--key-file", "cryptswap=/root/k"]);
                 let asm = text(b.stage(Stage::Assemble));
-                assert!(!asm.contains("luks1-digest") && !asm.contains("--volume-key-file") && !asm.contains("dd if="), "{asm}");
-                assert!(!b.notes.iter().any(|n| n.contains("volume key digest")), "{:?}", b.notes);
+                assert!(
+                    !asm.contains("luks1-digest")
+                        && !asm.contains("--volume-key-file")
+                        && !asm.contains("dd if="),
+                    "{asm}"
+                );
+                assert!(
+                    !b.notes.iter().any(|n| n.contains("volume key digest")),
+                    "{:?}",
+                    b.notes
+                );
             }
         }
     }
@@ -7999,22 +11886,45 @@ mod tests {
 
     #[test]
     fn btrfs_top_level_root_makes_its_subvolumes() {
-        let subs = [(256, "home"), (257, "nix"), (258, "srv"), (259, "var/lib/portables"), (260, "var/lib/machines"), (261, "tmp"), (262, "var/tmp")];
+        let subs = [
+            (256, "home"),
+            (257, "nix"),
+            (258, "srv"),
+            (259, "var/lib/portables"),
+            (260, "var/lib/machines"),
+            (261, "tmp"),
+            (262, "var/tmp"),
+        ];
         let list: Vec<String> = subs
             .iter()
             .map(|(id, p)| format!(r#"{{"id": {id}, "gen": 9, "top_level": 5, "path": "{p}", "parent_uuid": null, "uuid": "u{id}", "readonly": false, "properties": {{"ro": "false"}}}}"#))
             .collect();
-        let b = built_from(&nixos_top_level(&format!("[{}]", list.join(", "))), &["--repo", "/srv/repo", "--password-file", "/run/pw"]);
+        let b = built_from(
+            &nixos_top_level(&format!("[{}]", list.join(", "))),
+            &["--repo", "/srv/repo", "--password-file", "/run/pw"],
+        );
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let f = text(b.stage(Stage::Format));
         let top = format!("{RUN_DIR}/btrfs/b7b7b7b7-0000-4000-8000-000000000003");
-        let at = |l: &str| f.find(&format!("{l}\n")).unwrap_or_else(|| panic!("{l} not in\n{f}"));
+        let at = |l: &str| {
+            f.find(&format!("{l}\n"))
+                .unwrap_or_else(|| panic!("{l} not in\n{f}"))
+        };
         let mut prev = at(&format!("mount -t btrfs -o subvolid=5 /dev/vdb3 {top}"));
-        assert!(at("mkfs.btrfs -f -O extref,skinny-metadata,no-holes,^raid56,^raid1c34,^zoned,^squota,free-space-tree,block-group-tree -U b7b7b7b7-0000-4000-8000-000000000003 --csum crc32c -n 16384 -s 4096 -d single -m dup /dev/vdb3") < prev);
+        assert!(
+            at(
+                "mkfs.btrfs -f -O extref,skinny-metadata,no-holes,^raid56,^raid1c34,^zoned,^squota,free-space-tree,block-group-tree -U b7b7b7b7-0000-4000-8000-000000000003 --csum crc32c -n 16384 -s 4096 -d single -m dup /dev/vdb3"
+            ) < prev
+        );
         // Each after the one before, in ID order, its parent directory made
         // just before it.
         for (_, p) in subs {
-            let after = |l: &str, from: usize| f[from..].find(&format!("{l}\n")).map(|i| i + from).unwrap_or_else(|| panic!("{l} not after {from} in\n{f}"));
+            let after = |l: &str, from: usize| {
+                f[from..]
+                    .find(&format!("{l}\n"))
+                    .map(|i| i + from)
+                    .unwrap_or_else(|| panic!("{l} not after {from} in\n{f}"))
+            };
             if let Some((parent, _)) = p.rsplit_once('/') {
                 prev = after(&format!("mkdir -p {top}/{parent}"), prev);
             }
@@ -8024,15 +11934,27 @@ mod tests {
         assert!(!f.contains("property set"), "{f}");
         // The mount stage: the top level, then /boot, /home and /nix.
         let m = text(b.stage(Stage::Mount));
-        let root = m.find("mount -t btrfs -o defaults /dev/vdb3 /mnt/bko-target\n").expect(&m);
-        let home = m.find("mount -t btrfs -o subvol=home /dev/vdb3 /mnt/bko-target/home\n").expect(&m);
-        let nix = m.find("mount -t btrfs -o subvol=nix,noatime /dev/vdb3 /mnt/bko-target/nix\n").expect(&m);
+        let root = m
+            .find("mount -t btrfs -o defaults /dev/vdb3 /mnt/bko-target\n")
+            .expect(&m);
+        let home = m
+            .find("mount -t btrfs -o subvol=home /dev/vdb3 /mnt/bko-target/home\n")
+            .expect(&m);
+        let nix = m
+            .find("mount -t btrfs -o subvol=nix,noatime /dev/vdb3 /mnt/bko-target/nix\n")
+            .expect(&m);
         assert!(root < home && root < nix, "{m}");
         // The restore fills the top level and both mounts, leaving nothing
         // out: /home and /nix are covered by their own mounts, not aliases.
         let r = text(b.stage(Stage::Restore));
-        assert!(r.contains("restore --numeric-id latest /mnt/bko-target\n"), "{r}");
-        assert!(!r.contains("--glob-file") && !r.contains("--target-metadata"), "{r}");
+        assert!(
+            r.contains("restore --numeric-id latest /mnt/bko-target\n"),
+            "{r}"
+        );
+        assert!(
+            !r.contains("--glob-file") && !r.contains("--target-metadata"),
+            "{r}"
+        );
     }
 
     /// The Thinkpad's layout as dumped before NixOS's tools were on the
@@ -8044,10 +11966,19 @@ mod tests {
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let f = text(b.stage(Stage::Format));
         let top = format!("{RUN_DIR}/btrfs/b7b7b7b7-0000-4000-8000-000000000003");
-        let mnt = f.find(&format!("mount -t btrfs -o subvolid=5 /dev/vdb3 {top}\n")).expect(&f);
-        let home = f.find(&format!("btrfs subvolume create {top}/home\n")).expect(&f);
-        let nix = f.find(&format!("btrfs subvolume create {top}/nix\n")).expect(&f);
-        assert!(mnt < home && home < nix && nix < f.find(&format!("umount {top}\n")).unwrap(), "{f}");
+        let mnt = f
+            .find(&format!("mount -t btrfs -o subvolid=5 /dev/vdb3 {top}\n"))
+            .expect(&f);
+        let home = f
+            .find(&format!("btrfs subvolume create {top}/home\n"))
+            .expect(&f);
+        let nix = f
+            .find(&format!("btrfs subvolume create {top}/nix\n"))
+            .expect(&f);
+        assert!(
+            mnt < home && home < nix && nix < f.find(&format!("umount {top}\n")).unwrap(),
+            "{f}"
+        );
         assert_eq!(f.matches("btrfs subvolume create").count(), 2, "{f}");
         let n = b.notes.join("\n");
         assert!(n.contains("doesn't list its subvolumes (its dump couldn't run btrfs); made are those its mounts name, home, nix"), "{n}");
@@ -8058,28 +11989,64 @@ mod tests {
 
     #[test]
     fn named_subvolumes_parents_first() {
-        let j = nixos_top_level("null").replace(r#""options": "subvol=home""#, r#""options": "subvol=/@/home""#).replace(r#""options": "subvol=nix,noatime""#, r#""options": "subvol=<FS_TREE>/@,noatime""#);
+        let j = nixos_top_level("null")
+            .replace(
+                r#""options": "subvol=home""#,
+                r#""options": "subvol=/@/home""#,
+            )
+            .replace(
+                r#""options": "subvol=nix,noatime""#,
+                r#""options": "subvol=<FS_TREE>/@,noatime""#,
+            );
         let f = text(built_from(&j, &[]).stage(Stage::Format));
         let top = format!("{RUN_DIR}/btrfs/b7b7b7b7-0000-4000-8000-000000000003");
         // fstab's and those mounted at the dump: a parent before what's in it.
-        let order: Vec<usize> = ["@", "@/home", "home", "nix"].iter().map(|p| f.find(&format!("btrfs subvolume create {top}/{p}\n")).expect(&f)).collect();
+        let order: Vec<usize> = ["@", "@/home", "home", "nix"]
+            .iter()
+            .map(|p| {
+                f.find(&format!("btrfs subvolume create {top}/{p}\n"))
+                    .expect(&f)
+            })
+            .collect();
         assert!(order.windows(2).all(|w| w[0] < w[1]), "{f}");
     }
 
     #[test]
     fn timeshift_snapshots_are_told_apart() {
         use crate::load::shared::Mount;
-        let m = |t: &str, s: &str| Mount { target: t.into(), subvol: s.into() };
+        let m = |t: &str, s: &str| Mount {
+            target: t.into(),
+            subvol: s.into(),
+        };
         let ms = [m("/", "@"), m("/home", "@home")];
-        assert_eq!(timeshift_snapshot("timeshift-btrfs/snapshots/2026-11-14_10-00-01/@", &ms), Some("2026-11-14_10-00-01"));
-        assert_eq!(timeshift_snapshot("timeshift-btrfs/snapshots/2026-11-14_10-00-01/@home", &ms), Some("2026-11-14_10-00-01"));
-        for p in ["timeshift-btrfs/snapshots/X/home", "timeshift-btrfs/snapshots/X/@/var", "timeshift-btrfs/snapshots//@", "timeshift-btrfs/X/@", "@/timeshift-btrfs/snapshots/X/@", "@snapshots/1/snapshot"] {
+        assert_eq!(
+            timeshift_snapshot("timeshift-btrfs/snapshots/2026-11-14_10-00-01/@", &ms),
+            Some("2026-11-14_10-00-01")
+        );
+        assert_eq!(
+            timeshift_snapshot("timeshift-btrfs/snapshots/2026-11-14_10-00-01/@home", &ms),
+            Some("2026-11-14_10-00-01")
+        );
+        for p in [
+            "timeshift-btrfs/snapshots/X/home",
+            "timeshift-btrfs/snapshots/X/@/var",
+            "timeshift-btrfs/snapshots//@",
+            "timeshift-btrfs/X/@",
+            "@/timeshift-btrfs/snapshots/X/@",
+            "@snapshots/1/snapshot",
+        ] {
             assert_eq!(timeshift_snapshot(p, &ms), None, "{p}");
         }
         // Mounted, or in the backup through a mount of the top level: not left out.
         let p = "timeshift-btrfs/snapshots/X/@";
-        assert_eq!(timeshift_snapshot(p, &[m("/", "@"), m("/mnt/old", p)]), None);
-        assert_eq!(timeshift_snapshot(p, &[m("/", "@"), m("/mnt/top", "")]), None);
+        assert_eq!(
+            timeshift_snapshot(p, &[m("/", "@"), m("/mnt/old", p)]),
+            None
+        );
+        assert_eq!(
+            timeshift_snapshot(p, &[m("/", "@"), m("/mnt/top", "")]),
+            None
+        );
     }
 
     /// BigLinux's btrfs with two Timeshift snapshots of / (one read-only,
@@ -8087,13 +12054,32 @@ mod tests {
     /// subvolume mounted at /mnt/old, and @var made after them all.
     fn timeshift_layout(default_id: u64) -> String {
         let fs = "b7b7b7b7-0000-4000-8000-000000000003";
-        let sub = |id: u64, p: &str, parent: &str, ro: bool| format!(r#"{{"id": {id}, "gen": {id}, "top_level": 5, "path": "<FS_TREE>/{p}", "uuid": "u{id}", "parent_uuid": {parent}, "readonly": {ro}, "properties": null}}"#);
+        let sub = |id: u64, p: &str, parent: &str, ro: bool| {
+            format!(
+                r#"{{"id": {id}, "gen": {id}, "top_level": 5, "path": "<FS_TREE>/{p}", "uuid": "u{id}", "parent_uuid": {parent}, "readonly": {ro}, "properties": null}}"#
+            )
+        };
         let subs = [
             sub(256, "@rootfs", "null", false),
             sub(257, "@snapshots", "null", false),
-            sub(258, "timeshift-btrfs/snapshots/2026-11-14_10-00-01/@rootfs", "\"u256\"", true),
-            sub(260, "timeshift-btrfs/snapshots/2026-11-15_10-00-01/@rootfs", "\"u256\"", false),
-            sub(261, "timeshift-btrfs/snapshots/2026-11-01_00-00-01/@", "null", false),
+            sub(
+                258,
+                "timeshift-btrfs/snapshots/2026-11-14_10-00-01/@rootfs",
+                "\"u256\"",
+                true,
+            ),
+            sub(
+                260,
+                "timeshift-btrfs/snapshots/2026-11-15_10-00-01/@rootfs",
+                "\"u256\"",
+                false,
+            ),
+            sub(
+                261,
+                "timeshift-btrfs/snapshots/2026-11-01_00-00-01/@",
+                "null",
+                false,
+            ),
             sub(262, "@var", "null", false),
         ];
         sample::bios_mbr()
@@ -8126,21 +12112,56 @@ mod tests {
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let f = text(b.stage(Stage::Format));
         let top = format!("{RUN_DIR}/btrfs/b7b7b7b7-0000-4000-8000-000000000003");
-        for p in ["@rootfs", "@snapshots", "timeshift-btrfs/snapshots/2026-11-01_00-00-01/@", "@var"] {
-            assert!(f.contains(&format!("btrfs subvolume create {top}/{p}\n")), "{p} not made in\n{f}");
+        for p in [
+            "@rootfs",
+            "@snapshots",
+            "timeshift-btrfs/snapshots/2026-11-01_00-00-01/@",
+            "@var",
+        ] {
+            assert!(
+                f.contains(&format!("btrfs subvolume create {top}/{p}\n")),
+                "{p} not made in\n{f}"
+            );
         }
-        assert!(f.contains(&format!("mkdir -p {top}/timeshift-btrfs/snapshots/2026-11-01_00-00-01\n")), "{f}");
-        assert!(!f.contains("2026-11-14") && !f.contains("2026-11-15") && !f.contains("subvolume snapshot"), "{f}");
+        assert!(
+            f.contains(&format!(
+                "mkdir -p {top}/timeshift-btrfs/snapshots/2026-11-01_00-00-01\n"
+            )),
+            "{f}"
+        );
+        assert!(
+            !f.contains("2026-11-14")
+                && !f.contains("2026-11-15")
+                && !f.contains("subvolume snapshot"),
+            "{f}"
+        );
         // Their IDs burnt, so that the mounted one and @var keep theirs.
         for n in 258..=260 {
-            assert!(f.contains(&format!("btrfs subvolume create {top}/.bko-holt-placeholder-{n}\n")), "{n} in\n{f}");
+            assert!(
+                f.contains(&format!(
+                    "btrfs subvolume create {top}/.bko-holt-placeholder-{n}\n"
+                )),
+                "{n} in\n{f}"
+            );
         }
-        assert!(!f.contains("placeholder-261") && !f.contains("placeholder-262"), "{f}");
+        assert!(
+            !f.contains("placeholder-261") && !f.contains("placeholder-262"),
+            "{f}"
+        );
         // Quotas: / 's qgroup in 1/0; the left-out snapshot's not at all.
-        assert!(f.contains(&format!("btrfs qgroup assign --no-rescan 0/256 1/0 {top}\n")) && !f.contains("0/258"), "{f}");
+        assert!(
+            f.contains(&format!(
+                "btrfs qgroup assign --no-rescan 0/256 1/0 {top}\n"
+            )) && !f.contains("0/258"),
+            "{f}"
+        );
         let n = b.notes.join("\n");
         assert!(n.contains("btrfs b7b7b7b7-0000-4000-8000-000000000003: 2 Timeshift snapshots (2026-11-14_10-00-01, 2026-11-15_10-00-01) are not in the backup; not made"), "{n}");
-        assert_eq!(b.notes.iter().filter(|x| x.contains("Timeshift")).count(), 1, "{n}");
+        assert_eq!(
+            b.notes.iter().filter(|x| x.contains("Timeshift")).count(),
+            1,
+            "{n}"
+        );
         assert!(!n.contains("snapshot of a subvolume that's gone"), "{n}");
         // No shared snapshot for them, and no read-only flag.
         let r = text(b.stage(Stage::Restore));
@@ -8157,7 +12178,10 @@ mod tests {
     /// ext4 /boot, nor on another system.
     #[test]
     fn biglinux_boot_uncompressed() {
-        let big = sample::bios_mbr().replace(r#""id": "debian", "version_id": "13""#, r#""id": "biglinux""#);
+        let big = sample::bios_mbr().replace(
+            r#""id": "debian", "version_id": "13""#,
+            r#""id": "biglinux""#,
+        );
         let defrag = "btrfs filesystem defragment --nocomp -r /mnt/bko-target";
         let bt = text(built_from(&big, &[]).stage(Stage::Boot));
         assert!(!bt.contains("defragment"), "{bt}");
@@ -8165,11 +12189,14 @@ mod tests {
         assert!(big.contains(boot_line));
         let b = built_from(&big.replace(boot_line, ""), &[]);
         let bt = text(b.stage(Stage::Boot));
-        let cfg = bt.find("grub-mkconfig -o /boot/grub/grub.cfg\n").expect(&bt);
+        let cfg = bt
+            .find("grub-mkconfig -o /boot/grub/grub.cfg\n")
+            .expect(&bt);
         let boot = bt.find(&format!("{defrag}/boot\n")).expect(&bt);
         let grub = bt.find(&format!("{defrag}/usr/share/grub\n")).expect(&bt);
         assert!(cfg < boot && boot < grub, "{bt}");
-        assert!(b.stage(Stage::Boot).iter().any(|c| c.why.as_deref() == Some("/boot uncompressed, as BigLinux's installer leaves it (its btrfs-fix)")));
+        assert!(b.stage(Stage::Boot).iter().any(|c| c.why.as_deref()
+            == Some("/boot uncompressed, as BigLinux's installer leaves it (its btrfs-fix)")));
         let deb = sample::bios_mbr().replace(boot_line, "");
         assert!(!text(built_from(&deb, &[]).stage(Stage::Boot)).contains("defragment"));
     }
@@ -8182,38 +12209,70 @@ mod tests {
     fn default_subvol_flag_kept() {
         let top = format!("{RUN_DIR}/btrfs/b7b7b7b7-0000-4000-8000-000000000003");
         let plain = r#""default_subvolume": {"id": 5}, "quota_enabled": false"#;
-        let flagged = sample::bios_mbr().replace(plain, &format!(r#""features": ["mixed_backref", "default_subvol", "extended_iref"], {plain}"#));
+        let flagged = sample::bios_mbr().replace(
+            plain,
+            &format!(
+                r#""features": ["mixed_backref", "default_subvol", "extended_iref"], {plain}"#
+            ),
+        );
         assert_ne!(flagged, sample::bios_mbr());
         let b = built_from(&flagged, &[]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let f = text(b.stage(Stage::Format));
         assert_eq!(f.matches("btrfs subvolume set-default").count(), 1, "{f}");
-        let set = f.find(&format!("btrfs subvolume set-default {top}\n")).expect(&f);
-        assert!(f.find(&format!("btrfs subvolume create {top}/@rootfs\n")).expect(&f) < set && set < f.find(&format!("umount {top}\n")).expect(&f), "{f}");
-        assert!(!text(built_from(&sample::bios_mbr(), &[]).stage(Stage::Format)).contains("set-default"));
-        let other = flagged.replace(r#""default_subvolume": {"id": 5}"#, r#""default_subvolume": {"id": 256}"#);
+        let set = f
+            .find(&format!("btrfs subvolume set-default {top}\n"))
+            .expect(&f);
+        assert!(
+            f.find(&format!("btrfs subvolume create {top}/@rootfs\n"))
+                .expect(&f)
+                < set
+                && set < f.find(&format!("umount {top}\n")).expect(&f),
+            "{f}"
+        );
+        assert!(
+            !text(built_from(&sample::bios_mbr(), &[]).stage(Stage::Format))
+                .contains("set-default")
+        );
+        let other = flagged.replace(
+            r#""default_subvolume": {"id": 5}"#,
+            r#""default_subvolume": {"id": 256}"#,
+        );
         let f = text(built_from(&other, &[]).stage(Stage::Format));
         assert_eq!(f.matches("btrfs subvolume set-default").count(), 1, "{f}");
-        assert!(f.contains(&format!("btrfs subvolume set-default {top}/@rootfs\n")), "{f}");
+        assert!(
+            f.contains(&format!("btrfs subvolume set-default {top}/@rootfs\n")),
+            "{f}"
+        );
     }
 
     #[test]
     fn mount_restore_boot_close() {
         let b = built(&["--repo", "/srv/repo", "--password-file", "/run/pw"]);
         let m = text(b.stage(Stage::Mount));
-        let root = m.find("mount -t btrfs -o subvol=@rootfs /dev/vdb3 /mnt/bko-target\n").expect(&m);
-        let boot = m.find("mount -t ext4 -o defaults /dev/vdb1 /mnt/bko-target/boot\n").expect(&m);
+        let root = m
+            .find("mount -t btrfs -o subvol=@rootfs /dev/vdb3 /mnt/bko-target\n")
+            .expect(&m);
+        let boot = m
+            .find("mount -t ext4 -o defaults /dev/vdb1 /mnt/bko-target/boot\n")
+            .expect(&m);
         assert!(root < boot);
         assert!(!m.contains("swap"));
         let r = text(b.stage(Stage::Restore));
         assert!(r.contains("RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/repo --password-file /run/pw --no-progress restore --numeric-id latest /mnt/bko-target\n"), "{r}");
         let bt = text(b.stage(Stage::Boot));
-        assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
+        assert!(
+            bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"),
+            "{bt}"
+        );
         assert!(bt.contains("chroot /mnt/bko-target update-initramfs -u -k all\n"));
         let before = bt.find("atimes.before").expect(&bt);
         assert!(before < bt.find("update-initramfs").unwrap());
         assert!(bt.contains("touch -a -h -d"), "{bt}");
-        assert!(bt.contains("chroot /mnt/bko-target env LANG=C update-grub\n"), "{bt}");
+        assert!(
+            bt.contains("chroot /mnt/bko-target env LANG=C update-grub\n"),
+            "{bt}"
+        );
         assert!(text(b.stage(Stage::Close)).starts_with("umount --recursive /mnt/bko-target\n"));
         let none = built(&[]);
         assert!(text(none.stage(Stage::Restore)).contains("no --repo"));
@@ -8224,11 +12283,25 @@ mod tests {
     /// --recursive` of the target (which fails, "not mounted").
     #[test]
     fn close_without_a_root_mount() {
-        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/uc24/src.json")).unwrap();
+        let j = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/corpus/uc24/src.json"
+        ))
+        .unwrap();
         let b = built_from(&j, &[]);
-        assert!(!b.mount_points.iter().any(|p| p == "/mnt/bko-target") && b.mount_points.iter().any(|p| p == "/mnt/bko-target/run/mnt/data"), "{:?}", b.mount_points);
+        assert!(
+            !b.mount_points.iter().any(|p| p == "/mnt/bko-target")
+                && b.mount_points
+                    .iter()
+                    .any(|p| p == "/mnt/bko-target/run/mnt/data"),
+            "{:?}",
+            b.mount_points
+        );
         let c = text(b.stage(Stage::Close));
-        let first = c.lines().find(|l| !l.starts_with('#') && !l.is_empty()).unwrap();
+        let first = c
+            .lines()
+            .find(|l| !l.starts_with('#') && !l.is_empty())
+            .unwrap();
         assert!(first.ends_with(" umount-tree /mnt/bko-target"), "{c}");
         assert!(!c.contains("umount --recursive /mnt/bko-target\n"), "{c}");
     }
@@ -8237,10 +12310,16 @@ mod tests {
     fn bios_grub_device_from_the_mbr() {
         // Mint leaves grub-pc/install_devices empty: the disk whose MBR holds
         // GRUB's boot code is the one.
-        let j = sample::bios_mbr().replace(r#""grub-pc/install_devices": "/dev/disk/by-id/virtio-x""#, r#""grub-pc/install_devices": """#);
+        let j = sample::bios_mbr().replace(
+            r#""grub-pc/install_devices": "/dev/disk/by-id/virtio-x""#,
+            r#""grub-pc/install_devices": """#,
+        );
         let b = built_from(&j, &[]);
         let bt = text(b.stage(Stage::Boot));
-        assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
+        assert!(
+            bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"),
+            "{bt}"
+        );
         assert!(b.problems.is_empty(), "{:?}", b.problems);
     }
 
@@ -8249,15 +12328,38 @@ mod tests {
     /// (t2h-20261119T1959-f82c).  A layout without NILFS2 runs it plain.
     #[test]
     fn bios_grub_install_with_nilfs2_at_the_disk_end() {
-        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/zorin18/src.json")).unwrap();
+        let j = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/corpus/zorin18/src.json"
+        ))
+        .unwrap();
         let b = built_from(&j, &[]);
-        let c = b.stage(Stage::Boot).iter().find(|c| c.argv.iter().any(|a| a == "grub-install")).expect("no grub-install").clone();
+        let c = b
+            .stage(Stage::Boot)
+            .iter()
+            .find(|c| c.argv.iter().any(|a| a == "grub-install"))
+            .expect("no grub-install")
+            .clone();
         assert_eq!(c.argv[..2], ["sh", "-c"]);
         assert_eq!(c.argv[2], GRUB_BIOS_NILFS2);
-        assert_eq!(c.argv[3..], ["sh", "/dev/vdb", "chroot", "/mnt/bko-target", "grub-install", "--target=i386-pc", "/dev/vdb"]);
+        assert_eq!(
+            c.argv[3..],
+            [
+                "sh",
+                "/dev/vdb",
+                "chroot",
+                "/mnt/bko-target",
+                "grub-install",
+                "--target=i386-pc",
+                "/dev/vdb"
+            ]
+        );
         let bt = text(b.stage(Stage::Boot));
         assert_eq!(bt.matches(" grub-install --target=").count(), 1, "{bt}");
-        assert!(bt.contains("# /dev/vdb: GRUB would take a NILFS2 partition's secondary superblock"), "{bt}");
+        assert!(
+            bt.contains("# /dev/vdb: GRUB would take a NILFS2 partition's secondary superblock"),
+            "{bt}"
+        );
         assert!(!text(built(&[]).stage(Stage::Boot)).contains("GRUB would take a NILFS2"));
     }
 
@@ -8269,8 +12371,16 @@ mod tests {
     fn grub_bios_nilfs2_hides_the_superblock_while_grub_runs() {
         let t = crate::testutil::Tree::new("grub-nilfs2");
         t.file("/bin/blockdev", "#!/bin/sh\ncase $1 in --flushbufs) echo \"flush $2\" >> \"${2%/*}/log\" ;; --getsize64) wc -c < \"$2\" | tr -d ' ' ;; *) exit 1 ;; esac\n");
-        std::process::Command::new("chmod").arg("755").arg(t.p("/bin/blockdev")).status().unwrap();
-        let path = format!("{}:{}", t.p("/bin").display(), std::env::var("PATH").unwrap_or_default());
+        std::process::Command::new("chmod")
+            .arg("755")
+            .arg(t.p("/bin/blockdev"))
+            .status()
+            .unwrap();
+        let path = format!(
+            "{}:{}",
+            t.p("/bin").display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
         // 64 KiB and 1 KiB more: the superblock is at the last whole 4 KiB.
         let size = 65 * 1024;
         let at = (size / 4096 - 1) * 4096;
@@ -8280,7 +12390,13 @@ mod tests {
         let disk = t.p("/d/disk");
         let log = t.p("/d/log");
         // What GRUB sees: bytes 6 and 7 of the last 4 KiB, then exit RC.
-        let grub = format!("dd if={} bs=1 skip={} count=2 status=none | od -An -tx1 | tr -d ' \\n' >> {}; echo >> {}; exit \"$1\"", disk.display(), at + 6, log.display(), log.display());
+        let grub = format!(
+            "dd if={} bs=1 skip={} count=2 status=none | od -An -tx1 | tr -d ' \\n' >> {}; echo >> {}; exit \"$1\"",
+            disk.display(),
+            at + 6,
+            log.display(),
+            log.display()
+        );
         for (magic, rc) in [(true, 0), (true, 1), (false, 0), (false, 3)] {
             let mut img = vec![0u8; size];
             img[size - 1] = 0xaa;
@@ -8291,37 +12407,94 @@ mod tests {
             }
             t.file("/d/disk", &img);
             let _ = std::fs::remove_file(&log);
-            let o = std::process::Command::new("sh").args(["-c", GRUB_BIOS_NILFS2, "sh", disk.to_str().unwrap(), "sh", "-c", &grub, "grub", &rc.to_string()]).env("PATH", &path).output().unwrap();
-            assert_eq!(o.status.code(), Some(rc), "{magic} {rc}: {}", String::from_utf8_lossy(&o.stderr));
+            let o = std::process::Command::new("sh")
+                .args([
+                    "-c",
+                    GRUB_BIOS_NILFS2,
+                    "sh",
+                    disk.to_str().unwrap(),
+                    "sh",
+                    "-c",
+                    &grub,
+                    "grub",
+                    &rc.to_string(),
+                ])
+                .env("PATH", &path)
+                .output()
+                .unwrap();
+            assert_eq!(
+                o.status.code(),
+                Some(rc),
+                "{magic} {rc}: {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
             let seen = std::fs::read_to_string(&log).unwrap();
-            assert_eq!(seen, format!("flush {}\n{}\n", disk.display(), if magic { "0000" } else { "1234" }), "{magic} {rc}");
-            assert_eq!(std::fs::read(&disk).unwrap(), img, "{magic} {rc}: the disk changed");
-            assert_eq!(String::from_utf8_lossy(&o.stdout).contains("NILFS2 superblock"), magic, "{magic} {rc}");
+            assert_eq!(
+                seen,
+                format!(
+                    "flush {}\n{}\n",
+                    disk.display(),
+                    if magic { "0000" } else { "1234" }
+                ),
+                "{magic} {rc}"
+            );
+            assert_eq!(
+                std::fs::read(&disk).unwrap(),
+                img,
+                "{magic} {rc}: the disk changed"
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&o.stdout).contains("NILFS2 superblock"),
+                magic,
+                "{magic} {rc}"
+            );
         }
     }
 
     #[test]
     fn update_grub_lang() {
-        let j = sample::bios_mbr().replace(r#""grub": {"debconf""#, r#""grub": {"grub_cfg": {"lang": "en_US"}, "debconf""#);
+        let j = sample::bios_mbr().replace(
+            r#""grub": {"debconf""#,
+            r#""grub": {"grub_cfg": {"lang": "en_US"}, "debconf""#,
+        );
         let bt = text(built_from(&j, &[]).stage(Stage::Boot));
-        assert!(bt.contains("chroot /mnt/bko-target env LANG=en_US.UTF-8 update-grub\n"), "{bt}");
+        assert!(
+            bt.contains("chroot /mnt/bko-target env LANG=en_US.UTF-8 update-grub\n"),
+            "{bt}"
+        );
     }
 
     /// KDE neon: Ubuntu's update-grub, and its GRUB through shim in EFI/neon.
     #[test]
     fn kde_neon_boot_tools() {
-        let neon = sample::bios_mbr().replace(r#""id": "debian", "version_id": "13""#, r#""id": "neon", "version_id": "24.04""#);
+        let neon = sample::bios_mbr().replace(
+            r#""id": "debian", "version_id": "13""#,
+            r#""id": "neon", "version_id": "24.04""#,
+        );
         let bt = text(built_from(&neon, &[]).stage(Stage::Boot));
-        assert!(bt.contains("chroot /mnt/bko-target env LANG=C update-grub\n") && !bt.contains("grub-mkconfig"), "{bt}");
+        assert!(
+            bt.contains("chroot /mnt/bko-target env LANG=C update-grub\n")
+                && !bt.contains("grub-mkconfig"),
+            "{bt}"
+        );
         let entry = r#"{"number": "0001", "description": "neon", "file": "\\EFI\\neon\\shimx64.efi", "partition": {"device": "vda1"}}"#;
         let uefi = neon
-            .replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
+            .replace(
+                r#""firmware": {"mode": "bios"}"#,
+                r#""firmware": {"mode": "uefi"}"#,
+            )
             .replace(r#""firmware": "bios""#, r#""firmware": "uefi""#)
-            .replace(r#""efi": null,"#, &format!(r#""efi": {{"entries": [{entry}], "boot_order": ["0001"]}}, "esps": [],"#));
+            .replace(
+                r#""efi": null,"#,
+                &format!(r#""efi": {{"entries": [{entry}], "boot_order": ["0001"]}}, "esps": [],"#),
+            );
         let bt = text(built_from(&uefi, &[]).stage(Stage::Boot));
         let at = bt.find("--bootloader-id=").expect(&bt) + "--bootloader-id=".len();
         assert_eq!(bt[at..].split_whitespace().next(), Some("neon"), "{bt}");
-        assert!(bt.contains("update-grub\n") && !bt.contains("grub-mkconfig"), "{bt}");
+        assert!(
+            bt.contains("update-grub\n") && !bt.contains("grub-mkconfig"),
+            "{bt}"
+        );
     }
 
     /// openSUSE Leap 16 on UEFI (docs/design/leap16.md, L2): GRUB 2
@@ -8337,30 +12510,63 @@ mod tests {
             .replace(r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#, r#""loader": {"name": "grub", "firmware": "uefi", "via_shim": true}"#)
             .replace(r#""efi": null,"#, &format!(r#""efi": {{"entries": [{entry}], "boot_current": "0001", "boot_order": ["0001"]}}, "esps": [],"#))
             .replace(r#""grub": {"debconf": {"grub-pc/install_devices": "/dev/disk/by-id/virtio-x"}}"#, r#""grub": {"dir": "/boot/grub2"}, "initramfs": {"generator": "dracut"}"#);
-        assert!(j.contains("opensuse-leap") && j.contains("/boot/grub2") && j.contains("shim.efi") && j.contains(r#""via_shim": true"#));
+        assert!(
+            j.contains("opensuse-leap")
+                && j.contains("/boot/grub2")
+                && j.contains("shim.efi")
+                && j.contains(r#""via_shim": true"#)
+        );
         let b = built_from(&j, &[]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let bt = text(b.stage(Stage::Boot));
-        for no in ["grub2-install", "grub-install", "shim-install", "update-grub", "grub-mkconfig"] {
+        for no in [
+            "grub2-install",
+            "grub-install",
+            "shim-install",
+            "update-grub",
+            "grub-mkconfig",
+        ] {
             assert!(!bt.contains(no), "{no}: {bt}");
         }
         let cfg = "chroot /mnt/bko-target env LANG=C grub2-mkconfig -o /boot/grub2/grub.cfg\n";
         let nvram = "efibootmgr --quiet --create --disk /dev/vdb --part 1 --label opensuse-secureboot --loader '\\EFI\\opensuse\\shim.efi'\n";
-        let (d, c, e) = (bt.find("dracut --force").expect(&bt), bt.find(cfg).expect(&bt), bt.find(nvram).expect(&bt));
+        let (d, c, e) = (
+            bt.find("dracut --force").expect(&bt),
+            bt.find(cfg).expect(&bt),
+            bt.find(nvram).expect(&bt),
+        );
         assert!(d < c && c < e, "{bt}");
-        assert!(bt.contains("mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober"), "{bt}");
-        assert!(b.notes.iter().any(|n| n.starts_with("UEFI GRUB 2 through shim (Fedora, Rocky, openSUSE)")), "{:?}", b.notes);
+        assert!(
+            bt.contains(
+                "mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober"
+            ),
+            "{bt}"
+        );
+        assert!(
+            b.notes
+                .iter()
+                .any(|n| n.starts_with("UEFI GRUB 2 through shim (Fedora, Rocky, openSUSE)")),
+            "{:?}",
+            b.notes
+        );
         // The loader's directory is the entry's, EFI/opensuse.
         let l = Layout::from_json(crate::json::parse(&j).unwrap()).unwrap();
         let o = match crate::load::parse_args(&["l.json".to_string()]).unwrap() {
             crate::load::Parsed::Run(o) => o,
             _ => unreachable!(),
         };
-        let m = Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() };
+        let m = Mapping {
+            pairs: vec![("vda".into(), "vdb".into())],
+            ..Mapping::default()
+        };
         let b = Builder {
             layout: &l,
             opts: &o,
-            names: Names { layout: &l, mapping: &m, made: BTreeMap::new() },
+            names: Names {
+                layout: &l,
+                mapping: &m,
+                made: BTreeMap::new(),
+            },
             problems: vec![],
             notes: vec![],
             codes: vec![],
@@ -8380,7 +12586,10 @@ mod tests {
             under: BTreeMap::new(),
         };
         assert_eq!(b.bootloader_id(), "opensuse");
-        assert_eq!((b.grub_tool("install"), b.grub_tool("mkconfig")), ("grub2-install", "grub2-mkconfig"));
+        assert_eq!(
+            (b.grub_tool("install"), b.grub_tool("mkconfig")),
+            ("grub2-install", "grub2-mkconfig")
+        );
     }
 
     /// openSUSE Leap 16 on BIOS (no guest: docs/design/leap16.md):
@@ -8389,26 +12598,55 @@ mod tests {
     /// stage.
     #[test]
     fn leap16_bios_is_tumbleweeds() {
-        let tw = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/tumbleweed/src.json")).unwrap();
+        let tw = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/corpus/tumbleweed/src.json"
+        ))
+        .unwrap();
         let leap = tw
-            .replace("\"id\": \"opensuse-tumbleweed\",\n    \"version_id\": \"20261103\"", "\"id\": \"opensuse-leap\",\n    \"version_id\": \"16.1\"")
-            .replace(r#""pretty_name": "openSUSE Tumbleweed""#, r#""pretty_name": "openSUSE Leap 16.1""#);
-        assert!(leap.contains(r#""id": "opensuse-leap""#) && !leap.contains(r#""id": "opensuse-tumbleweed""#));
+            .replace(
+                "\"id\": \"opensuse-tumbleweed\",\n    \"version_id\": \"20261103\"",
+                "\"id\": \"opensuse-leap\",\n    \"version_id\": \"16.1\"",
+            )
+            .replace(
+                r#""pretty_name": "openSUSE Tumbleweed""#,
+                r#""pretty_name": "openSUSE Leap 16.1""#,
+            );
+        assert!(
+            leap.contains(r#""id": "opensuse-leap""#)
+                && !leap.contains(r#""id": "opensuse-tumbleweed""#)
+        );
         let (a, b) = (built_from(&tw, &[]), built_from(&leap, &[]));
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let bt = text(b.stage(Stage::Boot));
         assert_eq!(bt, text(a.stage(Stage::Boot)));
-        assert!(bt.contains("grub2-install --target=i386-pc /dev/vdb\n") && bt.contains("grub2-mkconfig -o /boot/grub2/grub.cfg\n"), "{bt}");
-        assert!(bt.contains("dracut --force") && !bt.contains("grub-install") && !bt.contains("update-grub"), "{bt}");
+        assert!(
+            bt.contains("grub2-install --target=i386-pc /dev/vdb\n")
+                && bt.contains("grub2-mkconfig -o /boot/grub2/grub.cfg\n"),
+            "{bt}"
+        );
+        assert!(
+            bt.contains("dracut --force")
+                && !bt.contains("grub-install")
+                && !bt.contains("update-grub"),
+            "{bt}"
+        );
     }
 
     /// elementary OS (docs/design/elementary.md, decision 5): Ubuntu's
     /// update-grub by its ID, not grub-mkconfig.
     #[test]
     fn elementary_boot_tools() {
-        let e = sample::bios_mbr().replace(r#""id": "debian", "version_id": "13""#, r#""id": "elementary", "version_id": "8""#);
+        let e = sample::bios_mbr().replace(
+            r#""id": "debian", "version_id": "13""#,
+            r#""id": "elementary", "version_id": "8""#,
+        );
         let bt = text(built_from(&e, &[]).stage(Stage::Boot));
-        assert!(bt.contains("chroot /mnt/bko-target env LANG=C update-grub\n") && !bt.contains("grub-mkconfig"), "{bt}");
+        assert!(
+            bt.contains("chroot /mnt/bko-target env LANG=C update-grub\n")
+                && !bt.contains("grub-mkconfig"),
+            "{bt}"
+        );
     }
 
     /// --removable on elementary 8 (elementary8-luks's dump, the corpus's):
@@ -8421,31 +12659,68 @@ mod tests {
     /// fallback must be EFI/ubuntu's shim or GRUB, or load fails.
     #[test]
     fn elementary_removable_by_its_grub_installs_help() {
-        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/elementary8-luks/src.json")).unwrap();
+        let j = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/corpus/elementary8-luks/src.json"
+        ))
+        .unwrap();
         let install = "chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=ubuntu --no-nvram";
         let b = built_from(&j, &["--removable"]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let bt = text(b.stage(Stage::Boot));
-        assert_eq!(bt.matches("sh -c 'h=$(chroot /mnt/bko-target grub-install --help 2>&1); case \"$h\" in ").count(), 1, "{bt}");
-        assert!(bt.contains(&format!("*--force-extra-removable*) {install} --force-extra-removable ;; ")), "{bt}");
-        assert!(bt.contains(&format!("*--no-extra-removable*) {install} ;; ")), "{bt}");
+        assert_eq!(
+            bt.matches(
+                "sh -c 'h=$(chroot /mnt/bko-target grub-install --help 2>&1); case \"$h\" in "
+            )
+            .count(),
+            1,
+            "{bt}"
+        );
+        assert!(
+            bt.contains(&format!(
+                "*--force-extra-removable*) {install} --force-extra-removable ;; "
+            )),
+            "{bt}"
+        );
+        assert!(
+            bt.contains(&format!("*--no-extra-removable*) {install} ;; ")),
+            "{bt}"
+        );
         let copy = "mkdir -p /mnt/bko-target/boot/efi/EFI/BOOT && cp /mnt/bko-target/boot/efi/EFI/ubuntu/shimx64.efi /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI && cp /mnt/bko-target/boot/efi/EFI/ubuntu/grubx64.efi /mnt/bko-target/boot/efi/EFI/BOOT/grubx64.efi";
-        assert!(bt.contains(&format!("*) {install} && {copy} ;; esac && ")), "{bt}");
+        assert!(
+            bt.contains(&format!("*) {install} && {copy} ;; esac && ")),
+            "{bt}"
+        );
         assert!(bt.contains("{ cmp -s /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI /mnt/bko-target/boot/efi/EFI/ubuntu/shimx64.efi || cmp -s /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI /mnt/bko-target/boot/efi/EFI/ubuntu/grubx64.efi || { echo \"--removable: EFI/BOOT/BOOTX64.EFI is not a copy of EFI/ubuntu/shimx64.efi or grubx64.efi after grub-install\" >&2; exit 1; }; }'\n"), "{bt}");
         // grub-install runs once, in the script: no other step of its own.
         assert!(!bt.contains(&format!("\n{install}")), "{bt}");
         // Without --removable: grub-install as ever, no probe.
         let bt = text(built_from(&j, &[]).stage(Stage::Boot));
-        assert!(bt.contains(&format!("\n{install}\n")) && !bt.contains("grub-install --help") && !bt.contains("extra-removable"), "{bt}");
+        assert!(
+            bt.contains(&format!("\n{install}\n"))
+                && !bt.contains("grub-install --help")
+                && !bt.contains("extra-removable"),
+            "{bt}"
+        );
     }
 
     /// debian_grub_removable()'s script, run by sh on fake grub-installs: each
     /// --help picks its arm, and a fallback that isn't the loader fails.
     #[test]
     fn debian_grub_removable_script_runs() {
-        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/elementary8-luks/src.json")).unwrap();
+        let j = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/corpus/elementary8-luks/src.json"
+        ))
+        .unwrap();
         let b = built_from(&j, &["--removable"]);
-        let cmd = b.stage(Stage::Boot).iter().find(|c| c.argv.len() == 3 && c.argv[2].starts_with("h=$(chroot")).expect("the script").argv[2].clone();
+        let cmd = b
+            .stage(Stage::Boot)
+            .iter()
+            .find(|c| c.argv.len() == 3 && c.argv[2].starts_with("h=$(chroot"))
+            .expect("the script")
+            .argv[2]
+            .clone();
         let dir = crate::testutil::TempDir::new("debrm");
         let root = dir.path().to_str().unwrap().to_string();
         // chroot T grub-install ARGS: a fake chroot that runs T's fake
@@ -8458,32 +12733,73 @@ mod tests {
             let t = format!("{root}/t");
             let _ = std::fs::remove_dir_all(&t);
             std::fs::create_dir_all(format!("{t}/boot/efi/EFI/ubuntu")).unwrap();
-            let fb = if writes_fallback { "mkdir -p \"$T/boot/efi/EFI/BOOT\"; cp \"$T/boot/efi/EFI/ubuntu/shimx64.efi\" \"$T/boot/efi/EFI/BOOT/BOOTX64.EFI\"" } else { ":" };
-            let gi = format!("#!/bin/sh\nT={t}\nif [ \"$1\" = --help ]; then echo '{help}'; exit 0; fi\necho \"$@\" > {root}/args\necho shim > $T/boot/efi/EFI/ubuntu/shimx64.efi\necho grub > $T/boot/efi/EFI/ubuntu/grubx64.efi\ncase \"$*\" in *--force-extra-removable*) mkdir -p $T/boot/efi/EFI/BOOT; cp $T/boot/efi/EFI/ubuntu/shimx64.efi $T/boot/efi/EFI/BOOT/BOOTX64.EFI;; *) {fb};; esac\n");
+            let fb = if writes_fallback {
+                "mkdir -p \"$T/boot/efi/EFI/BOOT\"; cp \"$T/boot/efi/EFI/ubuntu/shimx64.efi\" \"$T/boot/efi/EFI/BOOT/BOOTX64.EFI\""
+            } else {
+                ":"
+            };
+            let gi = format!(
+                "#!/bin/sh\nT={t}\nif [ \"$1\" = --help ]; then echo '{help}'; exit 0; fi\necho \"$@\" > {root}/args\necho shim > $T/boot/efi/EFI/ubuntu/shimx64.efi\necho grub > $T/boot/efi/EFI/ubuntu/grubx64.efi\ncase \"$*\" in *--force-extra-removable*) mkdir -p $T/boot/efi/EFI/BOOT; cp $T/boot/efi/EFI/ubuntu/shimx64.efi $T/boot/efi/EFI/BOOT/BOOTX64.EFI;; *) {fb};; esac\n"
+            );
             let p = format!("{root}/grub-install");
             std::fs::write(&p, gi).unwrap();
             for f in [&p, &format!("{bin}/chroot")] {
-                std::process::Command::new("chmod").args(["+x", f]).status().unwrap();
+                std::process::Command::new("chmod")
+                    .args(["+x", f])
+                    .status()
+                    .unwrap();
             }
             let script = cmd.replace("/mnt/bko-target", &t);
-            let ok = std::process::Command::new("sh").arg("-c").arg(&script).env("PATH", format!("{bin}:/usr/bin:/bin")).status().unwrap().success();
-            (ok, std::fs::read_to_string(format!("{root}/args")).unwrap_or_default())
+            let ok = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&script)
+                .env("PATH", format!("{bin}:/usr/bin:/bin"))
+                .status()
+                .unwrap()
+                .success();
+            (
+                ok,
+                std::fs::read_to_string(format!("{root}/args")).unwrap_or_default(),
+            )
         };
         // Debian's: its option given, it writes the fallback.
-        let (ok, args) = run("      --force-extra-removable  force installation to the removable media path also", false);
-        assert!(ok && args.trim_end().ends_with("--no-nvram --force-extra-removable"), "{args}");
+        let (ok, args) = run(
+            "      --force-extra-removable  force installation to the removable media path also",
+            false,
+        );
+        assert!(
+            ok && args
+                .trim_end()
+                .ends_with("--no-nvram --force-extra-removable"),
+            "{args}"
+        );
         // Ubuntu's 2.12: no option, its default writes it.
-        let (ok, args) = run("      --no-extra-removable   Do not install bootloader code to the removable", true);
+        let (ok, args) = run(
+            "      --no-extra-removable   Do not install bootloader code to the removable",
+            true,
+        );
         assert!(ok && args.trim_end().ends_with("--no-nvram"), "{args}");
         // Ubuntu's, had its default not written it: load fails, not silently.
-        let (ok, _) = run("      --no-extra-removable   Do not install bootloader code to the removable", false);
+        let (ok, _) = run(
+            "      --no-extra-removable   Do not install bootloader code to the removable",
+            false,
+        );
         assert!(!ok);
         // Neither option: upstream's copy (shim and GRUB), then checked.
-        let (ok, args) = run("      --removable            the installation device is removable.", false);
+        let (ok, args) = run(
+            "      --removable            the installation device is removable.",
+            false,
+        );
         assert!(ok && args.trim_end().ends_with("--no-nvram"), "{args}");
         let t = format!("{root}/t/boot/efi/EFI/BOOT");
-        assert_eq!(std::fs::read_to_string(format!("{t}/BOOTX64.EFI")).unwrap(), "shim\n");
-        assert_eq!(std::fs::read_to_string(format!("{t}/grubx64.efi")).unwrap(), "grub\n");
+        assert_eq!(
+            std::fs::read_to_string(format!("{t}/BOOTX64.EFI")).unwrap(),
+            "shim\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(format!("{t}/grubx64.efi")).unwrap(),
+            "grub\n"
+        );
     }
 
     /// Kali (docs/design/kali.md): Debian's arms as they are, named EFI/kali.
@@ -8496,16 +12812,30 @@ mod tests {
     /// as on Debian; BIOS, Debian's i386-pc arm.
     #[test]
     fn kali_boot_tools() {
-        let kali = sample::bios_mbr().replace(r#""id": "debian", "version_id": "13""#, r#""id": "kali", "version_id": "2026.3""#).replace(r#""hostname": "deb13""#, r#""hostname": "kali""#);
+        let kali = sample::bios_mbr()
+            .replace(
+                r#""id": "debian", "version_id": "13""#,
+                r#""id": "kali", "version_id": "2026.3""#,
+            )
+            .replace(r#""hostname": "deb13""#, r#""hostname": "kali""#);
         let id_of = |bt: &str| {
             let at = bt.find("--bootloader-id=").expect(bt) + "--bootloader-id=".len();
             bt[at..].split_whitespace().next().unwrap().to_string()
         };
         let esp = r#"[{"device": "vda1", "mounted_at": "/boot/efi", "contents": {"files": [{"path": "EFI/BOOT/BOOTX64.EFI"}, {"path": "EFI/BOOT/grubx64.efi"}, {"path": "EFI/kali/grubx64.efi"}, {"path": "EFI/kali/grub.cfg"}]}}]"#;
         let uefi = |loader: &str, efi: &str| {
-            kali.replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
-                .replace(r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#, &format!(r#""loader": {loader}"#))
-                .replace(r#""efi": null,"#, &format!(r#""efi": {efi}, "esps": {esp},"#))
+            kali.replace(
+                r#""firmware": {"mode": "bios"}"#,
+                r#""firmware": {"mode": "uefi"}"#,
+            )
+            .replace(
+                r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#,
+                &format!(r#""loader": {loader}"#),
+            )
+            .replace(
+                r#""efi": null,"#,
+                &format!(r#""efi": {efi}, "esps": {esp},"#),
+            )
         };
         let plain = r#"{"name": "grub", "firmware": "uefi", "via_shim": false, "package": "grub-efi-amd64"}"#;
         let install = "chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=kali --no-nvram\n";
@@ -8518,20 +12848,36 @@ mod tests {
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let bt = text(b.stage(Stage::Boot));
         assert_eq!(id_of(&bt), "kali");
-        let (i, g, c) = (bt.find(initramfs).expect(&bt), bt.find(install).expect(&bt), bt.find(cfg).expect(&bt));
-        let off = bt.find("mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober").expect(&bt);
+        let (i, g, c) = (
+            bt.find(initramfs).expect(&bt),
+            bt.find(install).expect(&bt),
+            bt.find(cfg).expect(&bt),
+        );
+        let off = bt
+            .find("mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober")
+            .expect(&bt);
         assert!(i < g && g < off && off < c, "{bt}");
         assert_eq!(bt.matches("grub-install").count(), 1, "{bt}");
-        assert!(!bt.contains("grub-mkconfig") && !bt.contains("--removable") && !bt.contains("efibootmgr") && !bt.contains("--target=i386-pc"), "{bt}");
+        assert!(
+            !bt.contains("grub-mkconfig")
+                && !bt.contains("--removable")
+                && !bt.contains("efibootmgr")
+                && !bt.contains("--target=i386-pc"),
+            "{bt}"
+        );
 
         // A real PC's install: NVRAM's entry for EFI/kali, made again after
         // update-grub.
         let entry = r#"{"number": "0001", "description": "kali", "file": "\\EFI\\kali\\grubx64.efi", "partition": {"device": "vda1"}}"#;
-        let efi = format!(r#"{{"entries": [{entry}], "boot_current": "0001", "boot_order": ["0001"]}}"#);
+        let efi =
+            format!(r#"{{"entries": [{entry}], "boot_current": "0001", "boot_order": ["0001"]}}"#);
         let bt = text(built_from(&uefi(plain, &efi), &[]).stage(Stage::Boot));
         assert_eq!(id_of(&bt), "kali");
         let nvram = bt.find("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label kali --loader '\\EFI\\kali\\grubx64.efi'\n").expect(&bt);
-        assert!(bt.find(install).expect(&bt) < bt.find(cfg).unwrap() && bt.find(cfg).unwrap() < nvram, "{bt}");
+        assert!(
+            bt.find(install).expect(&bt) < bt.find(cfg).unwrap() && bt.find(cfg).unwrap() < nvram,
+            "{bt}"
+        );
         // --removable: the fallback copy too; --no-nvram: no entry.
         let bt = text(built_from(&uefi(plain, &efi), &["--removable"]).stage(Stage::Boot));
         assert!(bt.contains("*--force-extra-removable*) chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=kali --no-nvram --force-extra-removable ;; "), "{bt}");
@@ -8541,19 +12887,48 @@ mod tests {
         // Through shim: Debian's arm still, shim's entry made again.
         let shim = r#"{"name": "grub", "firmware": "uefi", "via_shim": true, "package": "grub-efi-amd64-signed", "shim_package": "shim-signed"}"#;
         let entry = r#"{"number": "0001", "description": "kali", "file": "\\EFI\\kali\\shimx64.efi", "partition": {"device": "vda1"}}"#;
-        let b = built_from(&uefi(shim, &format!(r#"{{"entries": [{entry}], "boot_current": "0001", "boot_order": ["0001"]}}"#)), &[]);
+        let b = built_from(
+            &uefi(
+                shim,
+                &format!(
+                    r#"{{"entries": [{entry}], "boot_current": "0001", "boot_order": ["0001"]}}"#
+                ),
+            ),
+            &[],
+        );
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let bt = text(b.stage(Stage::Boot));
-        assert!(bt.contains(install) && bt.contains(cfg) && bt.contains("--loader '\\EFI\\kali\\shimx64.efi'\n") && !bt.contains("grub-mkconfig"), "{bt}");
+        assert!(
+            bt.contains(install)
+                && bt.contains(cfg)
+                && bt.contains("--loader '\\EFI\\kali\\shimx64.efi'\n")
+                && !bt.contains("grub-mkconfig"),
+            "{bt}"
+        );
 
         // BIOS: Debian's i386-pc arm, with debconf's note.
         let b = built_from(&kali, &[]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let bt = text(b.stage(Stage::Boot));
-        let g = bt.find("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n").expect(&bt);
-        assert!(bt.find(initramfs).expect(&bt) < g && g < bt.find(cfg).expect(&bt), "{bt}");
-        assert!(!bt.contains("x86_64-efi") && !bt.contains("grub-mkconfig") && !bt.contains("efibootmgr"), "{bt}");
-        assert!(b.notes.iter().any(|n| n.starts_with("debconf's grub-pc/install_devices still names the source's disks")), "{:?}", b.notes);
+        let g = bt
+            .find("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n")
+            .expect(&bt);
+        assert!(
+            bt.find(initramfs).expect(&bt) < g && g < bt.find(cfg).expect(&bt),
+            "{bt}"
+        );
+        assert!(
+            !bt.contains("x86_64-efi")
+                && !bt.contains("grub-mkconfig")
+                && !bt.contains("efibootmgr"),
+            "{bt}"
+        );
+        assert!(
+            b.notes.iter().any(|n| n
+                .starts_with("debconf's grub-pc/install_devices still names the source's disks")),
+            "{:?}",
+            b.notes
+        );
     }
 
     /// Upstream GRUB on UEFI, as Alpine's setup-disk installs it: EFI/alpine
@@ -8565,22 +12940,43 @@ mod tests {
     /// which upstream GRUB refuses; the image is copied there instead.
     #[test]
     fn upstream_uefi_grub_fallback_copy_and_removable() {
-        let alpine = sample::bios_mbr().replace(r#""id": "debian", "version_id": "13""#, r#""id": "alpine", "version_id": "3.24.3""#);
-        let esp = |same: &str| format!(r#"[{{"device": "vda1", "mounted_at": "/boot/efi", "contents": {{"files": [{{"path": "EFI/alpine/grubx64.efi"}}, {{"path": "EFI/boot/bootx64.efi"{same}}}]}}}}]"#);
+        let alpine = sample::bios_mbr().replace(
+            r#""id": "debian", "version_id": "13""#,
+            r#""id": "alpine", "version_id": "3.24.3""#,
+        );
+        let esp = |same: &str| {
+            format!(
+                r#"[{{"device": "vda1", "mounted_at": "/boot/efi", "contents": {{"files": [{{"path": "EFI/alpine/grubx64.efi"}}, {{"path": "EFI/boot/bootx64.efi"{same}}}]}}}}]"#
+            )
+        };
         let uefi = |loader: &str, esp: &str| {
             alpine
-                .replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
-                .replace(r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#, &format!(r#""loader": {loader}"#))
-                .replace(r#""efi": null,"#, &format!(r#""efi": {{"entries": [], "boot_order": []}}, "esps": {esp},"#))
+                .replace(
+                    r#""firmware": {"mode": "bios"}"#,
+                    r#""firmware": {"mode": "uefi"}"#,
+                )
+                .replace(
+                    r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#,
+                    &format!(r#""loader": {loader}"#),
+                )
+                .replace(
+                    r#""efi": null,"#,
+                    &format!(r#""efi": {{"entries": [], "boot_order": []}}, "esps": {esp},"#),
+                )
         };
-        let plain = r#"{"name": "grub", "firmware": "uefi", "via_shim": false, "package": "grub-efi"}"#;
+        let plain =
+            r#"{"name": "grub", "firmware": "uefi", "via_shim": false, "package": "grub-efi"}"#;
         let copy = esp(r#", "same_as": "EFI/alpine/grubx64.efi""#);
         let install = "chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=alpine --no-nvram\n";
         let renew = "cp /mnt/bko-target/boot/efi/EFI/alpine/grubx64.efi /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI\n";
 
         // fail-002: the copy renewed after grub-install, before grub.cfg.
         let bt = text(built_from(&uefi(plain, &copy), &[]).stage(Stage::Boot));
-        let (i, r, c) = (bt.find(install).expect(&bt), bt.find(renew).expect(&bt), bt.find("grub-mkconfig -o /boot/grub/grub.cfg").expect(&bt));
+        let (i, r, c) = (
+            bt.find(install).expect(&bt),
+            bt.find(renew).expect(&bt),
+            bt.find("grub-mkconfig -o /boot/grub/grub.cfg").expect(&bt),
+        );
         assert!(i < r && r < c, "{bt}");
         assert!(!bt.contains("fallback-is-grub"), "{bt}");
         // Named either way round by same_as, or both naming a third.
@@ -8590,27 +12986,52 @@ mod tests {
         assert!(text(built_from(&uefi(plain, third), &[]).stage(Stage::Boot)).contains(renew));
         // A fallback that isn't GRUB's copy (another loader) is left.
         let bt = text(built_from(&uefi(plain, &esp("")), &[]).stage(Stage::Boot));
-        assert!(bt.contains(install) && !bt.contains(renew) && !bt.contains("BOOTX64"), "{bt}");
+        assert!(
+            bt.contains(install) && !bt.contains(renew) && !bt.contains("BOOTX64"),
+            "{bt}"
+        );
         // With --reformat, the dump's word for it is enough.
         let bt = text(built_from(&uefi(plain, &copy), &["--reformat", "/=xfs"]).stage(Stage::Boot));
-        assert!(bt.contains(renew) && !bt.contains("fallback-is-grub"), "{bt}");
+        assert!(
+            bt.contains(renew) && !bt.contains("fallback-is-grub"),
+            "{bt}"
+        );
 
         // fail-003: --removable copies the image; no Debian option.
         for files in [copy.as_str(), &esp("")] {
             let bt = text(built_from(&uefi(plain, files), &["--removable"]).stage(Stage::Boot));
-            assert!(!bt.contains("--no-nvram --force-extra-removable") && bt.contains(install), "{bt}");
+            assert!(
+                !bt.contains("--no-nvram --force-extra-removable") && bt.contains(install),
+                "{bt}"
+            );
             let cp = bt.find("mkdir -p /mnt/bko-target/boot/efi/EFI/BOOT && cp /mnt/bko-target/boot/efi/EFI/alpine/grubx64.efi /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI").expect(&bt);
-            assert!(bt.find(install).unwrap() < cp && !bt.contains(renew), "{bt}");
+            assert!(
+                bt.find(install).unwrap() < cp && !bt.contains(renew),
+                "{bt}"
+            );
         }
         // Through shim: shim at the fallback path, GRUB beside it.
-        let shim = r#"{"name": "grub", "firmware": "uefi", "via_shim": true, "package": "grub-efi"}"#;
+        let shim =
+            r#"{"name": "grub", "firmware": "uefi", "via_shim": true, "package": "grub-efi"}"#;
         let bt = text(built_from(&uefi(shim, &esp("")), &["--removable"]).stage(Stage::Boot));
         assert!(bt.contains("cp /mnt/bko-target/boot/efi/EFI/alpine/shimx64.efi /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI && cp /mnt/bko-target/boot/efi/EFI/alpine/grubx64.efi /mnt/bko-target/boot/efi/EFI/BOOT/grubx64.efi"), "{bt}");
         // Debian's GRUB (grub-common, or its family's ids) keeps its option.
-        let deb = uefi(plain, &esp("")).replace(r#""id": "alpine", "version_id": "3.24.3""#, r#""id": "devuan", "version_id": "6""#).replace(r#""kernels":"#, r#""packages": {"grub-common": "2.12-9"}, "kernels":"#);
+        let deb = uefi(plain, &esp(""))
+            .replace(
+                r#""id": "alpine", "version_id": "3.24.3""#,
+                r#""id": "devuan", "version_id": "6""#,
+            )
+            .replace(
+                r#""kernels":"#,
+                r#""packages": {"grub-common": "2.12-9"}, "kernels":"#,
+            );
         let bt = text(built_from(&deb, &["--removable"]).stage(Stage::Boot));
         // (Chosen by its --help at load time: elementary_removable_by_its_grub_installs_help.)
-        assert!(bt.contains("--bootloader-id=alpine --no-nvram --force-extra-removable ;; ") && !bt.contains("\nsh -c 'mkdir -p"), "{bt}");
+        assert!(
+            bt.contains("--bootloader-id=alpine --no-nvram --force-extra-removable ;; ")
+                && !bt.contains("\nsh -c 'mkdir -p"),
+            "{bt}"
+        );
     }
 
     /// AnduinOS (docs/design/anduinos.md): Ubuntu's update-grub and the
@@ -8621,8 +13042,14 @@ mod tests {
     fn anduinos_boot_tools() {
         const FP: &str = "5d41402abc4b2a76b9719d911017c592aaaabbbbccccddddeeeeffff00001111";
         let base = sample::bios_mbr()
-            .replace(r#""id": "debian", "version_id": "13""#, r#""id": "anduinos", "version_id": "2.0.5""#)
-            .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "dracut"}, "packages": {PKGS},"#);
+            .replace(
+                r#""id": "debian", "version_id": "13""#,
+                r#""id": "anduinos", "version_id": "2.0.5""#,
+            )
+            .replace(
+                r#""efi": null,"#,
+                r#""efi": null, "initramfs": {"generator": "dracut"}, "packages": {PKGS},"#,
+            );
         let uefi = |loader: &str, pkgs: &str| {
             let entry = r#"{"number": "0001", "description": "AnduinOS", "file": "\\EFI\\AnduinOS\\shimx64.efi", "partition": {"device": "vda1"}}"#;
             base.replace("{PKGS}", pkgs)
@@ -8631,66 +13058,154 @@ mod tests {
                 .replace(r#""efi": null,"#, &format!(r#""efi": {{"entries": [{entry}], "boot_current": "0001", "boot_order": ["0001"]}}, "esps": [{{"device": "vda1", "mounted_at": "/boot/efi", "contents": {{"files": [{{"path": "EFI/AnduinOS/shimx64.efi"}}, {{"path": "EFI/AnduinOS/grubx64.efi"}}]}}}}],"#))
         };
         let ours = r#"{"anduinos-grub": "2.0.5+repack1-2", "anduinos-shim-signed": "15.8-1", "anduinos-btrfs-snapshots-manager": "2.0.5-3", "dracut": "110-11ubuntu0.1"}"#;
-        let mok = format!(r#""mok": {{"cert": "/var/lib/shim-signed/mok/MOK.der", "sha256": "{FP}"}}"#);
-        let shim = format!(r#"{{"name": "grub", "firmware": "uefi", "via_shim": true, "package": "anduinos-grub", {mok}}}"#);
-        let dracut = &format!("chroot /mnt/bko-target sh -c {}\n", shell_quote(DRACUT_EACH_KERNEL));
-        let snap_note = |n: &[String]| n.iter().any(|n| n.starts_with("AnduinOS: the Disk Snapshots Manager's records name each snapshot by its Btrfs subvolume UUID"));
-        let mok_note = |n: &[String]| n.iter().find(|n| n.starts_with("AnduinOS: shim, MokManager and AnduinOS's GRUB")).cloned();
+        let mok =
+            format!(r#""mok": {{"cert": "/var/lib/shim-signed/mok/MOK.der", "sha256": "{FP}"}}"#);
+        let shim = format!(
+            r#"{{"name": "grub", "firmware": "uefi", "via_shim": true, "package": "anduinos-grub", {mok}}}"#
+        );
+        let dracut = &format!(
+            "chroot /mnt/bko-target sh -c {}\n",
+            shell_quote(DRACUT_EACH_KERNEL)
+        );
+        let snap_note = |n: &[String]| {
+            n.iter().any(|n| n.starts_with("AnduinOS: the Disk Snapshots Manager's records name each snapshot by its Btrfs subvolume UUID"))
+        };
+        let mok_note = |n: &[String]| {
+            n.iter()
+                .find(|n| n.starts_with("AnduinOS: shim, MokManager and AnduinOS's GRUB"))
+                .cloned()
+        };
 
         // Through shim, its MOK in the dump.
         let b = built_from(&uefi(&shim, ours), &[]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let bt = text(b.stage(Stage::Boot));
-        assert!(!bt.contains("grub-install") && !bt.contains("grub-mkconfig") && !bt.contains("update-initramfs"), "{bt}");
+        assert!(
+            !bt.contains("grub-install")
+                && !bt.contains("grub-mkconfig")
+                && !bt.contains("update-initramfs"),
+            "{bt}"
+        );
         let d = bt.find(dracut).expect(&bt);
-        let off = bt.find("mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober").expect(&bt);
-        let cfg = bt.find("chroot /mnt/bko-target env LANG=C update-grub\n").expect(&bt);
+        let off = bt
+            .find("mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober")
+            .expect(&bt);
+        let cfg = bt
+            .find("chroot /mnt/bko-target env LANG=C update-grub\n")
+            .expect(&bt);
         let nvram = bt.find("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label AnduinOS --loader '\\EFI\\AnduinOS\\shimx64.efi'\n").expect(&bt);
         assert!(d < off && off < cfg && cfg < nvram, "{bt}");
         let n = mok_note(&b.notes).expect(&b.notes.join("\n"));
-        assert!(n.contains(&format!("signed with the MOK /var/lib/shim-signed/mok/MOK.der (SHA-256 {FP})")), "{n}");
+        assert!(
+            n.contains(&format!(
+                "signed with the MOK /var/lib/shim-signed/mok/MOK.der (SHA-256 {FP})"
+            )),
+            "{n}"
+        );
         assert!(n.contains("grub-install --target=x86_64-efi isn't run") && n.contains("`mokutil --import /var/lib/shim-signed/mok/MOK.der`, then confirm it at MokManager") && n.contains("or turn Secure Boot off"), "{n}");
         assert!(snap_note(&b.notes), "{:?}", b.notes);
         // --no-nvram: still no grub-install, and no entry.
         let bt = text(built_from(&uefi(&shim, ours), &["--no-nvram"]).stage(Stage::Boot));
-        assert!(!bt.contains("grub-install") && !bt.contains("efibootmgr") && bt.contains("update-grub\n"), "{bt}");
+        assert!(
+            !bt.contains("grub-install")
+                && !bt.contains("efibootmgr")
+                && bt.contains("update-grub\n"),
+            "{bt}"
+        );
         // The MOK alone (booted at the fallback path, shim not told), or
         // shim with anduinos-grub but no MOK in the dump: kept too.
-        for loader in [format!(r#"{{"name": "grub", "firmware": "uefi", "via_shim": false, {mok}}}"#), r#"{"name": "grub", "firmware": "uefi", "via_shim": true, "mok": null}"#.to_string()] {
+        for loader in [
+            format!(r#"{{"name": "grub", "firmware": "uefi", "via_shim": false, {mok}}}"#),
+            r#"{"name": "grub", "firmware": "uefi", "via_shim": true, "mok": null}"#.to_string(),
+        ] {
             let b = built_from(&uefi(&loader, ours), &[]);
             let bt = text(b.stage(Stage::Boot));
-            assert!(!bt.contains("grub-install") && bt.contains("update-grub\n"), "{loader}: {bt}");
+            assert!(
+                !bt.contains("grub-install") && bt.contains("update-grub\n"),
+                "{loader}: {bt}"
+            );
             assert!(mok_note(&b.notes).is_some(), "{loader}: {:?}", b.notes);
         }
-        let b = built_from(&uefi(r#"{"name": "grub", "firmware": "uefi", "via_shim": true}"#, ours), &[]);
+        let b = built_from(
+            &uefi(
+                r#"{"name": "grub", "firmware": "uefi", "via_shim": true}"#,
+                ours,
+            ),
+            &[],
+        );
         assert!(mok_note(&b.notes).unwrap().contains("signed with the MOK /var/lib/shim-signed/mok/MOK.der (its fingerprint not in the dump)"), "{:?}", b.notes);
 
         // UEFI GRUB without shim or a MOK: Ubuntu's arm, as EFI/AnduinOS.
-        let b = built_from(&uefi(r#"{"name": "grub", "firmware": "uefi", "via_shim": false}"#, ours), &[]);
+        let b = built_from(
+            &uefi(
+                r#"{"name": "grub", "firmware": "uefi", "via_shim": false}"#,
+                ours,
+            ),
+            &[],
+        );
         let bt = text(b.stage(Stage::Boot));
         let install = bt.find("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=AnduinOS --no-nvram\n").expect(&bt);
-        assert!(bt.find(dracut).unwrap() < install && install < bt.find("env LANG=C update-grub\n").unwrap(), "{bt}");
+        assert!(
+            bt.find(dracut).unwrap() < install
+                && install < bt.find("env LANG=C update-grub\n").unwrap(),
+            "{bt}"
+        );
         assert!(mok_note(&b.notes).is_none(), "{:?}", b.notes);
         // Before 2.0.5: Ubuntu's signed GRUB through shim, no anduinos-grub.
         let ubuntu = r#"{"grub-efi-amd64-signed": "1.218+2.14-2ubuntu1", "shim-signed": "1.61+15.8-0ubuntu1", "dracut": "110-11ubuntu0.1"}"#;
-        let b = built_from(&uefi(r#"{"name": "grub", "firmware": "uefi", "via_shim": true, "package": "grub-efi-amd64-signed"}"#, ubuntu), &[]);
+        let b = built_from(
+            &uefi(
+                r#"{"name": "grub", "firmware": "uefi", "via_shim": true, "package": "grub-efi-amd64-signed"}"#,
+                ubuntu,
+            ),
+            &[],
+        );
         let bt = text(b.stage(Stage::Boot));
         assert!(bt.contains("grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=AnduinOS --no-nvram\n") && bt.contains("update-grub\n"), "{bt}");
-        assert!(mok_note(&b.notes).is_none() && !snap_note(&b.notes), "{:?}", b.notes);
+        assert!(
+            mok_note(&b.notes).is_none() && !snap_note(&b.notes),
+            "{:?}",
+            b.notes
+        );
 
         // BIOS: Ubuntu's arm, with dracut's loop; the snapshot note on btrfs.
         let b = built_from(&base.replace("{PKGS}", ours), &[]);
         let bt = text(b.stage(Stage::Boot));
         let d = bt.find(dracut).expect(&bt);
-        let install = bt.find("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n").expect(&bt);
-        assert!(d < install && install < bt.find("env LANG=C update-grub\n").unwrap(), "{bt}");
-        assert!(!bt.contains("update-initramfs") && !bt.contains("grub-mkconfig") && !bt.contains("efibootmgr"), "{bt}");
-        assert!(mok_note(&b.notes).is_none() && snap_note(&b.notes), "{:?}", b.notes);
+        let install = bt
+            .find("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n")
+            .expect(&bt);
+        assert!(
+            d < install && install < bt.find("env LANG=C update-grub\n").unwrap(),
+            "{bt}"
+        );
+        assert!(
+            !bt.contains("update-initramfs")
+                && !bt.contains("grub-mkconfig")
+                && !bt.contains("efibootmgr"),
+            "{bt}"
+        );
+        assert!(
+            mok_note(&b.notes).is_none() && snap_note(&b.notes),
+            "{:?}",
+            b.notes
+        );
         // Not AnduinOS: a MOK in the dump changes nothing on Ubuntu.
-        let u = uefi(&shim, ours).replace(r#""id": "anduinos", "version_id": "2.0.5""#, r#""id": "ubuntu", "version_id": "26.04""#);
+        let u = uefi(&shim, ours).replace(
+            r#""id": "anduinos", "version_id": "2.0.5""#,
+            r#""id": "ubuntu", "version_id": "26.04""#,
+        );
         let b = built_from(&u, &[]);
-        assert!(text(b.stage(Stage::Boot)).contains("grub-install --target=x86_64-efi"), "{:?}", b.notes);
-        assert!(mok_note(&b.notes).is_none() && !snap_note(&b.notes), "{:?}", b.notes);
+        assert!(
+            text(b.stage(Stage::Boot)).contains("grub-install --target=x86_64-efi"),
+            "{:?}",
+            b.notes
+        );
+        assert!(
+            mok_note(&b.notes).is_none() && !snap_note(&b.notes),
+            "{:?}",
+            b.notes
+        );
     }
 
     /// AnduinOS's erase-disk UEFI install is a BIOS install too (its
@@ -8699,20 +13214,47 @@ mod tests {
     /// without GRUB's core recorded: neither, and a note.
     #[test]
     fn anduinos_bios_install_too() {
-        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/anduinos2/src.json")).unwrap();
-        let note = |n: &[String]| n.iter().any(|n| n.starts_with("vda has a BIOS boot partition, but the dump records no GRUB core in it"));
+        let j = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/corpus/anduinos2/src.json"
+        ))
+        .unwrap();
+        let note = |n: &[String]| {
+            n.iter().any(|n| {
+                n.starts_with(
+                    "vda has a BIOS boot partition, but the dump records no GRUB core in it",
+                )
+            })
+        };
         let b = built_from(&j, &[]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let bt = text(b.stage(Stage::Boot));
-        let bios = bt.find("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n").expect(&bt);
-        assert!(bios < bt.find("chroot /mnt/bko-target env LANG=C update-grub\n").expect(&bt), "{bt}");
+        let bios = bt
+            .find("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n")
+            .expect(&bt);
+        assert!(
+            bios < bt
+                .find("chroot /mnt/bko-target env LANG=C update-grub\n")
+                .expect(&bt),
+            "{bt}"
+        );
         assert_eq!(bt.matches("grub-install").count(), 1, "{bt}");
-        assert!(!bt.contains("--target=x86_64-efi") && !note(&b.notes), "{bt}\n{:?}", b.notes);
-        let none = j.replace(r#""grub_core_present": true"#, r#""grub_core_present": false"#);
+        assert!(
+            !bt.contains("--target=x86_64-efi") && !note(&b.notes),
+            "{bt}\n{:?}",
+            b.notes
+        );
+        let none = j.replace(
+            r#""grub_core_present": true"#,
+            r#""grub_core_present": false"#,
+        );
         assert_ne!(none, j);
         let b = built_from(&none, &[]);
         let bt = text(b.stage(Stage::Boot));
-        assert!(!bt.contains("grub-install") && bt.contains("update-grub\n"), "{bt}");
+        assert!(
+            !bt.contains("grub-install") && bt.contains("update-grub\n"),
+            "{bt}"
+        );
         assert!(note(&b.notes), "{:?}", b.notes);
     }
 
@@ -8721,49 +13263,113 @@ mod tests {
         let c = crate::json::parse(r#"{"type": "btrfs", "uuid": "b7b7b7b7-0000-4000-8000-000000000003", "device": {"uuid": "94a415d0-e252-4362-aa38-8b6d9bb369c8"}}"#).unwrap();
         let fs = crate::json::parse("{}").unwrap();
         let one = mkfs_btrfs(&["/dev/vdb3".into()], &c, &fs).join(" ");
-        assert!(one.ends_with("--device-uuid 94a415d0-e252-4362-aa38-8b6d9bb369c8 /dev/vdb3"), "{one}");
+        assert!(
+            one.ends_with("--device-uuid 94a415d0-e252-4362-aa38-8b6d9bb369c8 /dev/vdb3"),
+            "{one}"
+        );
         let two = mkfs_btrfs(&["/dev/vdb3".into(), "/dev/vdc3".into()], &c, &fs).join(" ");
         assert!(!two.contains("--device-uuid"), "{two}");
     }
 
     #[test]
     fn arch_and_fedora_boot_tools() {
-        let arch = sample::bios_mbr().replace(r#""id": "debian", "version_id": "13""#, r#""id": "arch""#).replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "mkinitcpio"},"#);
+        let arch = sample::bios_mbr()
+            .replace(r#""id": "debian", "version_id": "13""#, r#""id": "arch""#)
+            .replace(
+                r#""efi": null,"#,
+                r#""efi": null, "initramfs": {"generator": "mkinitcpio"},"#,
+            );
         let bt = text(built_from(&arch, &[]).stage(Stage::Boot));
-        assert!(bt.contains("chroot /mnt/bko-target mkinitcpio -P\n"), "{bt}");
-        assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
-        assert!(bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{bt}");
+        assert!(
+            bt.contains("chroot /mnt/bko-target mkinitcpio -P\n"),
+            "{bt}"
+        );
+        assert!(
+            bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"),
+            "{bt}"
+        );
+        assert!(
+            bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"),
+            "{bt}"
+        );
         let fedora = sample::bios_mbr()
-            .replace(r#""id": "debian", "version_id": "13""#, r#""id": "fedora", "version_id": "44""#)
-            .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "dracut"},"#)
-            .replace(r#""grub": {"debconf""#, r#""grub": {"dir": "/boot/grub2", "debconf""#);
+            .replace(
+                r#""id": "debian", "version_id": "13""#,
+                r#""id": "fedora", "version_id": "44""#,
+            )
+            .replace(
+                r#""efi": null,"#,
+                r#""efi": null, "initramfs": {"generator": "dracut"},"#,
+            )
+            .replace(
+                r#""grub": {"debconf""#,
+                r#""grub": {"dir": "/boot/grub2", "debconf""#,
+            );
         let bt = text(built_from(&fedora, &[]).stage(Stage::Boot));
         assert!(bt.contains("dracut --force --kver"), "{bt}");
         assert!(!bt.contains("--regenerate-all"), "{bt}");
         assert!(bt.contains("[ -d \"$k/kernel\" ] || continue"), "{bt}");
-        assert!(bt.contains("chroot /mnt/bko-target grub2-install --target=i386-pc /dev/vdb\n"), "{bt}");
-        assert!(bt.contains("chroot /mnt/bko-target env LANG=C grub2-mkconfig -o /boot/grub2/grub.cfg\n"), "{bt}");
+        assert!(
+            bt.contains("chroot /mnt/bko-target grub2-install --target=i386-pc /dev/vdb\n"),
+            "{bt}"
+        );
+        assert!(
+            bt.contains(
+                "chroot /mnt/bko-target env LANG=C grub2-mkconfig -o /boot/grub2/grub.cfg\n"
+            ),
+            "{bt}"
+        );
         assert!(bt.contains("setfiles \"$f\" /boot"), "{bt}");
-        assert!(bt.contains("mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober"), "{bt}");
+        assert!(
+            bt.contains(
+                "mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober"
+            ),
+            "{bt}"
+        );
         let eos = sample::bios_mbr()
             .replace(r#""id": "debian", "version_id": "13""#, r#""id": "endeavouros""#)
             .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "dracut"}, "packages": {"eos-dracut": "1.7-1"},"#);
         let bt = text(built_from(&eos, &[]).stage(Stage::Boot));
-        assert!(bt.contains(&format!("chroot /mnt/bko-target sh -c {}\n", shell_quote(DRACUT_REBUILD_RESUME))) && !bt.contains("--regenerate-all"), "{bt}");
+        assert!(
+            bt.contains(&format!(
+                "chroot /mnt/bko-target sh -c {}\n",
+                shell_quote(DRACUT_REBUILD_RESUME)
+            )) && !bt.contains("--regenerate-all"),
+            "{bt}"
+        );
         let garuda = sample::bios_mbr()
             .replace(r#""id": "debian", "version_id": "13""#, r#""id": "garuda""#)
             .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "dracut"}, "packages": {"garuda-dracut-support": "1.6.0-2"},"#);
         let bt = text(built_from(&garuda, &[]).stage(Stage::Boot));
-        assert!(bt.contains(&format!("chroot /mnt/bko-target sh -c {}\n", shell_quote(DRACUT_REBUILD_RESUME))) && !bt.contains("--regenerate-all") && !bt.contains("--kver"), "{bt}");
+        assert!(
+            bt.contains(&format!(
+                "chroot /mnt/bko-target sh -c {}\n",
+                shell_quote(DRACUT_REBUILD_RESUME)
+            )) && !bt.contains("--regenerate-all")
+                && !bt.contains("--kver"),
+            "{bt}"
+        );
         let alpine = sample::bios_mbr()
-            .replace(r#""id": "debian", "version_id": "13""#, r#""id": "alpine", "version_id": "3.24.3""#)
-            .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "mkinitfs"},"#);
+            .replace(
+                r#""id": "debian", "version_id": "13""#,
+                r#""id": "alpine", "version_id": "3.24.3""#,
+            )
+            .replace(
+                r#""efi": null,"#,
+                r#""efi": null, "initramfs": {"generator": "mkinitfs"},"#,
+            );
         let bt = text(built_from(&alpine, &[]).stage(Stage::Boot));
         assert!(bt.contains("mkinitfs"), "{bt}");
-        assert!(bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{bt}");
+        assert!(
+            bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"),
+            "{bt}"
+        );
         let prebuilt = arch.replace(r#""generator": "mkinitcpio""#, r#""generator": "prebuilt""#);
         let bt = text(built_from(&prebuilt, &[]).stage(Stage::Boot));
-        assert!(!bt.contains("mkinitcpio") && !bt.contains("update-initramfs"), "{bt}");
+        assert!(
+            !bt.contains("mkinitcpio") && !bt.contains("update-initramfs"),
+            "{bt}"
+        );
     }
 
     /// Host-only dracut records the root's mount options (rootflags=), so
@@ -8784,17 +13390,31 @@ mod tests {
             ("rw,nodev,relatime", "remount,atime,relatime"),
             ("rw,noatime", "remount,noatime"),
             ("rw", "remount,atime,strictatime"),
-            ("rw,relatime,nodiratime", "remount,atime,relatime,nodiratime"),
+            (
+                "rw,relatime,nodiratime",
+                "remount,atime,relatime,nodiratime",
+            ),
         ] {
             let bt = text(built_from(&with(opts, "dracut"), &[]).stage(Stage::Boot));
-            let remount = bt.find(&format!("mount -o {want} /mnt/bko-target\n")).unwrap_or_else(|| panic!("{opts}: {bt}"));
+            let remount = bt
+                .find(&format!("mount -o {want} /mnt/bko-target\n"))
+                .unwrap_or_else(|| panic!("{opts}: {bt}"));
             let dracut = bt.find("dracut --force --kver").expect(&bt);
             let rbind = bt.find("mount --rbind").expect(&bt);
             assert!(remount < rbind && rbind < dracut, "{bt}");
         }
         let bt = text(built_from(&with("rw,noatime", "mkinitcpio"), &[]).stage(Stage::Boot));
         assert!(!bt.contains("remount"), "{bt}");
-        let bt = text(built_from(&sample::bios_mbr().replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "dracut"},"#), &[]).stage(Stage::Boot));
+        let bt = text(
+            built_from(
+                &sample::bios_mbr().replace(
+                    r#""efi": null,"#,
+                    r#""efi": null, "initramfs": {"generator": "dracut"},"#,
+                ),
+                &[],
+            )
+            .stage(Stage::Boot),
+        );
         assert!(!bt.contains("remount"), "{bt}");
     }
 
@@ -8803,7 +13423,10 @@ mod tests {
     /// runs in the chroot runs on FreeBSD's userland (chimerautils).
     #[test]
     fn chimera_boot_tools() {
-        let initramfs = &format!("chroot /mnt/bko-target sh -c {}\n", shell_quote(UPDATE_INITRAMFS_RESUME));
+        let initramfs = &format!(
+            "chroot /mnt/bko-target sh -c {}\n",
+            shell_quote(UPDATE_INITRAMFS_RESUME)
+        );
         let bios = sample::bios_mbr()
             .replace(r#""id": "debian", "version_id": "13""#, r#""id": "chimera""#)
             .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "initramfs-tools"}, "packages": {"grub": "2.14-r1", "grub-i386-pc": "2.14-r1", "initramfs-tools": "0.148.3-r2"},"#)
@@ -8813,11 +13436,23 @@ mod tests {
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         assert!(bt.contains(initramfs.as_str()), "{bt}");
         // The disk whose MBR holds GRUB, with no debconf to name it.
-        assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
-        assert!(bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{bt}");
+        assert!(
+            bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"),
+            "{bt}"
+        );
+        assert!(
+            bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"),
+            "{bt}"
+        );
         assert!(!bt.contains("update-grub") && !bt.contains("dpkg"), "{bt}");
         // No debconf, so no note sends the user to dpkg-reconfigure.
-        assert!(!b.notes.iter().any(|n| n.contains("debconf") || n.contains("dpkg")), "{:?}", b.notes);
+        assert!(
+            !b.notes
+                .iter()
+                .any(|n| n.contains("debconf") || n.contains("dpkg")),
+            "{:?}",
+            b.notes
+        );
         let uefi = bios
             .replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
             .replace(r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#, r#""loader": {"name": "grub", "firmware": "uefi", "via_shim": false, "package": "grub-x86_64-efi"}"#)
@@ -8825,7 +13460,10 @@ mod tests {
         let b = built_from(&uefi, &[]);
         let ut = text(b.stage(Stage::Boot));
         assert!(ut.contains("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=chimera --no-nvram\n"), "{ut}");
-        assert!(ut.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{ut}");
+        assert!(
+            ut.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"),
+            "{ut}"
+        );
         assert!(ut.contains(initramfs.as_str()), "{ut}");
         assert!(!ut.contains("gen-systemd-boot"), "{ut}");
         // UEFI with systemd-boot (chimera-uefi): the ESP as /boot; bootctl
@@ -8841,32 +13479,68 @@ mod tests {
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let gen_sd = "chroot /mnt/bko-target sh -c 'gen-systemd-boot; r=$?; [ \"$r\" -ne 1 ] || { echo '\\''gen-systemd-boot: warning: it made no entries (disabled, or bootctl says systemd-boot is not installed); the restored ones stay'\\'' >&2; r=0; }; exit \"$r\"'\n";
         let initramfs = st.find(initramfs.as_str()).expect(&st);
-        let bootctl = st.find("chroot /mnt/bko-target bootctl install --no-variables\n").expect(&st);
+        let bootctl = st
+            .find("chroot /mnt/bko-target bootctl install --no-variables\n")
+            .expect(&st);
         let made = st.find(gen_sd).expect(&st);
         assert!(initramfs < made && bootctl < made, "{st}");
         assert_eq!(st.matches("gen-systemd-boot;").count(), 1, "{st}");
         assert!(!st.contains("grub"), "{st}");
         // gen-systemd-boot's exit status: 0 and 1 (made nothing) succeed,
         // with a warning for 1; the rest fail, with their own status.
-        let c = b.stage(Stage::Boot).iter().find(|c| c.argv.iter().any(|a| a.starts_with("gen-systemd-boot;"))).unwrap().clone();
+        let c = b
+            .stage(Stage::Boot)
+            .iter()
+            .find(|c| c.argv.iter().any(|a| a.starts_with("gen-systemd-boot;")))
+            .unwrap()
+            .clone();
         assert!(c.warns);
         let script = c.argv[4].replace("gen-systemd-boot;", "f() { return \"$1\"; }; f \"$0\";");
         for (rc, want) in [(0, 0), (1, 0), (2, 2), (69, 69), (127, 127)] {
-            let o = std::process::Command::new("sh").args(["-c", &script, &rc.to_string()]).output().unwrap();
+            let o = std::process::Command::new("sh")
+                .args(["-c", &script, &rc.to_string()])
+                .output()
+                .unwrap();
             assert_eq!(o.status.code(), Some(want), "{rc}");
-            assert_eq!(String::from_utf8_lossy(&o.stderr).contains("warning: it made no entries"), rc == 1, "{rc}");
+            assert_eq!(
+                String::from_utf8_lossy(&o.stderr).contains("warning: it made no entries"),
+                rc == 1,
+                "{rc}"
+            );
         }
         // Only Chimera's: not without its systemd-boot package, and not on
         // another system whose systemd-boot package has no gen-systemd-boot
         // (Pop!_OS's, Debian's).
         let no_pkg = sd.replace(r#""systemd-boot": "256.11-r5", "#, "");
         assert!(!text(built_from(&no_pkg, &[]).stage(Stage::Boot)).contains("gen-systemd-boot"));
-        let pop = sd.replace(r#""id": "chimera""#, r#""id": "pop", "version_id": "24.04""#);
+        let pop = sd.replace(
+            r#""id": "chimera""#,
+            r#""id": "pop", "version_id": "24.04""#,
+        );
         let pt = text(built_from(&pop, &[]).stage(Stage::Boot));
-        assert!(pt.contains("chroot /mnt/bko-target bootctl install --no-variables\n") && !pt.contains("gen-systemd-boot"), "{pt}");
+        assert!(
+            pt.contains("chroot /mnt/bko-target bootctl install --no-variables\n")
+                && !pt.contains("gen-systemd-boot"),
+            "{pt}"
+        );
         // No GNU-only option in what runs on the target's own tools.
-        for l in bt.lines().chain(ut.lines()).chain(st.lines()).filter(|l| l.starts_with("chroot ")) {
-            for gnu in ["stat -c", "sed -i", "df --output", "df -B", "date -d", "cp --", "sort -V", "readlink -e", "tac "] {
+        for l in bt
+            .lines()
+            .chain(ut.lines())
+            .chain(st.lines())
+            .filter(|l| l.starts_with("chroot "))
+        {
+            for gnu in [
+                "stat -c",
+                "sed -i",
+                "df --output",
+                "df -B",
+                "date -d",
+                "cp --",
+                "sort -V",
+                "readlink -e",
+                "tac ",
+            ] {
                 assert!(!l.contains(gnu), "{gnu} in {l}");
             }
         }
@@ -8890,7 +13564,11 @@ mod tests {
         let mut b = Builder {
             layout: &l,
             opts: &o,
-            names: Names { layout: &l, mapping: &m, made: BTreeMap::new() },
+            names: Names {
+                layout: &l,
+                mapping: &m,
+                made: BTreeMap::new(),
+            },
             problems: vec![],
             notes: vec![],
             codes: vec![],
@@ -8910,19 +13588,40 @@ mod tests {
             under: BTreeMap::new(),
         };
         let props = b.ds_props(&ds, false);
-        assert!(props.contains(&("normalization".into(), "formD".into())), "{props:?}");
-        assert!(props.contains(&("utf8only".into(), "on".into())), "{props:?}");
-        assert!(!props.iter().any(|(k, _)| k == "casesensitivity"), "{props:?}");
+        assert!(
+            props.contains(&("normalization".into(), "formD".into())),
+            "{props:?}"
+        );
+        assert!(
+            props.contains(&("utf8only".into(), "on".into())),
+            "{props:?}"
+        );
+        assert!(
+            !props.iter().any(|(k, _)| k == "casesensitivity"),
+            "{props:?}"
+        );
         let root = crate::json::parse(r#"{"name": "rpool", "type": "filesystem", "encryption": "aes-256-gcm", "encryptionroot": "rpool", "keyformat": "raw",
             "keylocation": "file:///run/keystore/rpool/system.key", "properties": {}}"#).unwrap();
         let props = b.ds_props(&root, true);
-        assert!(props.contains(&("encryption".into(), "aes-256-gcm".into())), "{props:?}");
-        assert!(props.contains(&("keyformat".into(), "raw".into())), "{props:?}");
-        assert!(props.contains(&("keylocation".into(), format!("file://{RUN_DIR}/keys/rpool"))), "{props:?}");
+        assert!(
+            props.contains(&("encryption".into(), "aes-256-gcm".into())),
+            "{props:?}"
+        );
+        assert!(
+            props.contains(&("keyformat".into(), "raw".into())),
+            "{props:?}"
+        );
+        assert!(
+            props.contains(&("keylocation".into(), format!("file://{RUN_DIR}/keys/rpool"))),
+            "{props:?}"
+        );
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let keystore = crate::json::parse(r#"{"name": "rpool/keystore", "type": "volume", "encryption": "off", "volsize": 20971520, "properties": {}}"#).unwrap();
         let props = b.ds_props(&keystore, false);
-        assert!(props.contains(&("encryption".into(), "off".into())), "{props:?}");
+        assert!(
+            props.contains(&("encryption".into(), "off".into())),
+            "{props:?}"
+        );
     }
 
     /// keystores() writes a random raw key only into a mount the dump left
@@ -8933,26 +13632,61 @@ mod tests {
     /// --key-file, and given one writes nothing there.
     #[test]
     fn keystore_only_where_the_backup_leaves_it_out() {
-        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/bs1-ubuntu2610-zfsenc/src.json")).unwrap();
+        let j = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/corpus/bs1-ubuntu2610-zfsenc/src.json"
+        ))
+        .unwrap();
         let plan = |json: &str, extra: &[&str]| {
             let l = Layout::from_json(crate::json::parse(json).unwrap()).unwrap();
             let mut a = vec!["l.json".to_string()];
             a.extend(extra.iter().map(|s| s.to_string()));
-            let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
-            build(&l, &o, &Mapping { pairs: vec![("nvme0n1".into(), "sdq".into())], ..Mapping::default() })
+            let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&a) else {
+                unreachable!()
+            };
+            build(
+                &l,
+                &o,
+                &Mapping {
+                    pairs: vec![("nvme0n1".into(), "sdq".into())],
+                    ..Mapping::default()
+                },
+            )
         };
-        let need = "ZFS encryption root rpool: give its new key with --key-file rpool=FILE".to_string();
+        let need =
+            "ZFS encryption root rpool: give its new key with --key-file rpool=FILE".to_string();
         let b = plan(&j, &[]);
         let fmt = text(b.stage(Stage::Format));
-        assert!(fmt.contains("mount /dev/mapper/keystore-rpool /run/bko-holt/keystore\n"), "{fmt}");
-        assert!(fmt.contains("install -m 400 /run/bko-holt/keys/rpool /run/bko-holt/keystore/system.key\n"), "{fmt}");
+        assert!(
+            fmt.contains("mount /dev/mapper/keystore-rpool /run/bko-holt/keystore\n"),
+            "{fmt}"
+        );
+        assert!(
+            fmt.contains(
+                "install -m 400 /run/bko-holt/keys/rpool /run/bko-holt/keystore/system.key\n"
+            ),
+            "{fmt}"
+        );
         assert!(!b.problems.contains(&need), "{:?}", b.problems);
         let keys = j.replace("/run/keystore/rpool", "/keys");
         let k = plan(&keys, &[]);
         assert!(k.problems.contains(&need), "{:?}", k.problems);
         let kc = k.coded_problems();
         let p = kc.iter().find(|p| p.text == need).unwrap();
-        assert_eq!((p.code, p.str_field("name"), p.str_field("group"), p.str_field("kind")), (ProblemCode::KeyNeeded, Some("rpool"), Some("rpool"), Some("zfs")));
+        assert_eq!(
+            (
+                p.code,
+                p.str_field("name"),
+                p.str_field("group"),
+                p.str_field("kind")
+            ),
+            (
+                ProblemCode::KeyNeeded,
+                Some("rpool"),
+                Some("rpool"),
+                Some("zfs")
+            )
+        );
         assert!(!text(k.stage(Stage::Format)).contains("/run/bko-holt/keystore"));
         let k = plan(&keys, &["--key-file", "rpool=/root/rpool.key"]);
         assert!(!text(k.stage(Stage::Format)).contains("/run/bko-holt/keystore"));
@@ -8963,30 +13697,53 @@ mod tests {
     fn nilfs2() {
         let c = crate::json::parse(r#"{"type": "nilfs2", "uuid": "64962903-fd78-434b-9633-b73fd5eba5e8", "label": null,
             "block_size": 4096, "blocks_per_segment": 2048, "reserved_segments_percentage": 5, "features": []}"#).unwrap();
-        assert_eq!(mkfs_nilfs2("/dev/vdb3", &c).join(" "), "mkfs.nilfs2 -f -q -b 4096 -B 2048 -m 5 -O ^block_count /dev/vdb3");
-        assert_eq!(nilfs_tune("/dev/vdb3", &c).unwrap().join(" "), "nilfs-tune -U 64962903-fd78-434b-9633-b73fd5eba5e8 /dev/vdb3");
+        assert_eq!(
+            mkfs_nilfs2("/dev/vdb3", &c).join(" "),
+            "mkfs.nilfs2 -f -q -b 4096 -B 2048 -m 5 -O ^block_count /dev/vdb3"
+        );
+        assert_eq!(
+            nilfs_tune("/dev/vdb3", &c).unwrap().join(" "),
+            "nilfs-tune -U 64962903-fd78-434b-9633-b73fd5eba5e8 /dev/vdb3"
+        );
     }
 
     #[test]
     fn jfs() {
         let c = crate::json::parse(r#"{"type": "jfs", "uuid": "d12ea338-ce14-4c47-90c8-7e72c24a87c6", "label": "root", "block_size": 4096}"#).unwrap();
-        assert_eq!(mkfs_jfs("/dev/vdb3", &c).join(" "), "mkfs.jfs -q -L root /dev/vdb3");
+        assert_eq!(
+            mkfs_jfs("/dev/vdb3", &c).join(" "),
+            "mkfs.jfs -q -L root /dev/vdb3"
+        );
         let b = crate::json::parse(r#"{"type": "bcachefs", "uuid": "c9cbba71-4054-4849-a19c-e7d40fb5b1e4", "label": null, "version": "1.13", "block_size": 4096, "btree_node_size": 262144, "metadata_checksum": "crc32c", "data_checksum": "crc32c", "compression": "none", "str_hash": "siphash", "metadata_replicas": 1, "data_replicas": 1}"#).unwrap();
         assert_eq!(
             mkfs_bcachefs("/dev/vdb3", &b).join(" "),
             "bcachefs format --force --no_initialize --version=1037 --uuid=c9cbba71-4054-4849-a19c-e7d40fb5b1e4 --block_size=4096 --btree_node_size=262144 --metadata_checksum=crc32c --data_checksum=crc32c --str_hash=siphash /dev/vdb3"
         );
         // version_min, not the version a newer kernel raised it to (nixos2605's).
-        let b2 = crate::json::parse(r#"{"type": "bcachefs", "version": "1.39", "version_min": "1.13"}"#).unwrap();
-        assert_eq!(mkfs_bcachefs("/dev/vdb3", &b2).join(" "), "bcachefs format --force --no_initialize --version=1037 /dev/vdb3");
+        let b2 =
+            crate::json::parse(r#"{"type": "bcachefs", "version": "1.39", "version_min": "1.13"}"#)
+                .unwrap();
+        assert_eq!(
+            mkfs_bcachefs("/dev/vdb3", &b2).join(" "),
+            "bcachefs format --force --no_initialize --version=1037 /dev/vdb3"
+        );
         // No version, or one that doesn't parse: no flag.
-        for v in [r#"{"type": "bcachefs"}"#, r#"{"type": "bcachefs", "version": "1.x", "version_min": "junk"}"#] {
+        for v in [
+            r#"{"type": "bcachefs"}"#,
+            r#"{"type": "bcachefs", "version": "1.x", "version_min": "junk"}"#,
+        ] {
             let x = crate::json::parse(v).unwrap();
-            assert_eq!(mkfs_bcachefs("/dev/vdb3", &x).join(" "), "bcachefs format --force --no_initialize /dev/vdb3");
+            assert_eq!(
+                mkfs_bcachefs("/dev/vdb3", &x).join(" "),
+                "bcachefs format --force --no_initialize /dev/vdb3"
+            );
         }
         assert_eq!(bcachefs_version("1.39"), Some(1063));
         assert_eq!(bcachefs_version("0.24"), Some(24));
-        assert_eq!(jfs_tune("/dev/vdb3", &c).unwrap().join(" "), "jfs_tune -U d12ea338-ce14-4c47-90c8-7e72c24a87c6 /dev/vdb3");
+        assert_eq!(
+            jfs_tune("/dev/vdb3", &c).unwrap().join(" "),
+            "jfs_tune -U d12ea338-ce14-4c47-90c8-7e72c24a87c6 /dev/vdb3"
+        );
         assert_eq!(
             jfs_version1("/dev/vdb3")[2],
             "printf '\\001' | dd of=/dev/vdb3 bs=1 seek=32772 count=1 conv=notrunc status=none && printf '\\001' | dd of=/dev/vdb3 bs=1 seek=61444 count=1 conv=notrunc status=none"
@@ -9008,16 +13765,28 @@ mod tests {
         assert_eq!(part_path("vda", 3), "/dev/vda3");
         assert_eq!(part_path("nvme0n1", 2), "/dev/nvme0n1p2");
         assert_eq!(gpt_attrs(0), Ok(String::new()));
-        assert_eq!(gpt_attrs(1 | 4 | (1 << 60)), Ok("RequiredPartition LegacyBIOSBootable GUID:60".into()));
+        assert_eq!(
+            gpt_attrs(1 | 4 | (1 << 60)),
+            Ok("RequiredPartition LegacyBIOSBootable GUID:60".into())
+        );
         assert_eq!(gpt_attrs(1 << 10), Err(10));
-        assert_eq!(md_layout_name("raid5", 2).as_deref(), Some("left-symmetric"));
+        assert_eq!(
+            md_layout_name("raid5", 2).as_deref(),
+            Some("left-symmetric")
+        );
         assert_eq!(md_layout_name("raid10", 0x102).as_deref(), Some("n2"));
         assert_eq!(md_layout_name("raid10", 0x201).as_deref(), Some("f2"));
         assert_eq!(md_layout_name("raid1", 0), None);
-        assert_eq!(mount_options("defaults,noatime,x-systemd.device-timeout=5,nofail"), "noatime");
+        assert_eq!(
+            mount_options("defaults,noatime,x-systemd.device-timeout=5,nofail"),
+            "noatime"
+        );
         assert_eq!(mount_options("defaults"), "defaults");
         // The stage writes into every mount, ostree's ro `/` too.
-        assert_eq!(mount_options("subvol=root,compress=zstd:1,ro"), "subvol=root,compress=zstd:1");
+        assert_eq!(
+            mount_options("subvol=root,compress=zstd:1,ro"),
+            "subvol=root,compress=zstd:1"
+        );
         assert_eq!(mount_options("ro,noatime"), "noatime");
         assert_eq!(mount_options("ro"), "defaults");
         assert_eq!(mount_options("errors=remount-ro"), "errors=remount-ro");
@@ -9036,21 +13805,49 @@ mod tests {
         )
         .unwrap();
         let t = vg_metadata(&vg).unwrap();
-        assert!(t.starts_with("vg0 {\n\tid = \"AAAA\"\n\tseqno = 3\n"), "{t}");
+        assert!(
+            t.starts_with("vg0 {\n\tid = \"AAAA\"\n\tseqno = 3\n"),
+            "{t}"
+        );
         assert!(t.contains("\textent_size = 8192\n"), "{t}");
-        assert!(t.contains("\t\tpv0 {\n\t\t\tid = \"PPPP\"\n\t\t\tdevice = \"/dev/md0\"\n"), "{t}");
-        assert!(t.contains("\t\t\tsegment_count = 1\n\t\t\tsegment1 {\n\t\t\t\tstart_extent = 0\n"), "{t}");
+        assert!(
+            t.contains("\t\tpv0 {\n\t\t\tid = \"PPPP\"\n\t\t\tdevice = \"/dev/md0\"\n"),
+            "{t}"
+        );
+        assert!(
+            t.contains("\t\t\tsegment_count = 1\n\t\t\tsegment1 {\n\t\t\t\tstart_extent = 0\n"),
+            "{t}"
+        );
         assert!(t.contains("stripes = [\"pv0\", 0]"), "{t}");
-        assert!(t.contains("contents = \"Text Format Volume Group\"\nversion = 1\n"), "{t}");
+        assert!(
+            t.contains("contents = \"Text Format Volume Group\"\nversion = 1\n"),
+            "{t}"
+        );
         // A read-only LV with ACTIVATION_SKIP (the LV's own status and
         // flags only, not the group's "flags": []): vgcfgrestore makes it
         // writable and active, for format and restore ...
         let c = vg.compact();
         let lv_from = "\"status\":[\"READ\",\"WRITE\",\"VISIBLE\"],\"flags\":[]";
-        let changed = c.replacen(lv_from, "\"status\":[\"READ\",\"VISIBLE\"],\"flags\":[\"ACTIVATION_SKIP\"]", 1);
+        let changed = c.replacen(
+            lv_from,
+            "\"status\":[\"READ\",\"VISIBLE\"],\"flags\":[\"ACTIVATION_SKIP\"]",
+            1,
+        );
         assert_ne!(changed, c, "{lv_from}");
         let ro_skip = crate::json::parse(&changed).unwrap();
-        assert_eq!(LvAttrs::of(&ro_skip.get("logical_volumes").and_then(Value::as_array).unwrap()[0]), LvAttrs { tags: vec![], activation_skip: true, read_only: true });
+        assert_eq!(
+            LvAttrs::of(
+                &ro_skip
+                    .get("logical_volumes")
+                    .and_then(Value::as_array)
+                    .unwrap()[0]
+            ),
+            LvAttrs {
+                tags: vec![],
+                activation_skip: true,
+                read_only: true
+            }
+        );
         let rt = vg_metadata(&ro_skip).unwrap();
         assert!(rt.contains("\t\troot {\n\t\t\tid = \"LLLL\"\n\t\t\tstatus = [\"READ\", \"WRITE\", \"VISIBLE\"]\n\t\t\tflags = []\n"), "{rt}");
         assert!(!rt.contains("ACTIVATION_SKIP"), "{rt}");
@@ -9067,7 +13864,11 @@ mod tests {
             let mut b = Builder {
                 layout: &l,
                 opts: &o,
-                names: Names { layout: &l, mapping: &m, made: BTreeMap::new() },
+                names: Names {
+                    layout: &l,
+                    mapping: &m,
+                    made: BTreeMap::new(),
+                },
                 problems: vec![],
                 notes: vec![],
                 codes: vec![],
@@ -9089,12 +13890,27 @@ mod tests {
             let mut out = vec![];
             b.vg(vg, &mut out);
             assert!(b.problems.is_empty(), "{:?}", b.problems);
-            b.closers.iter().map(|c| c.argv.join(" ")).collect::<Vec<_>>()
+            b.closers
+                .iter()
+                .map(|c| c.argv.join(" "))
+                .collect::<Vec<_>>()
         };
         let cl = closers(&ro_skip);
-        let at = |w: &str| cl.iter().position(|c| c.contains(w)).unwrap_or_else(|| panic!("{w}: {cl:?}"));
-        let (an, skip, ro) = (at("vgchange --devicesfile"), at(" --setactivationskip y vg0/root"), at(" --permission r vg0/root"));
-        assert!(cl[skip].starts_with("lvchange --devicesfile ") && cl[ro].starts_with("lvchange --devicesfile "), "{cl:?}");
+        let at = |w: &str| {
+            cl.iter()
+                .position(|c| c.contains(w))
+                .unwrap_or_else(|| panic!("{w}: {cl:?}"))
+        };
+        let (an, skip, ro) = (
+            at("vgchange --devicesfile"),
+            at(" --setactivationskip y vg0/root"),
+            at(" --permission r vg0/root"),
+        );
+        assert!(
+            cl[skip].starts_with("lvchange --devicesfile ")
+                && cl[ro].starts_with("lvchange --devicesfile "),
+            "{cl:?}"
+        );
         assert!(cl[an].contains(" --activate n vg0"), "{cl:?}");
         assert!(an < skip && an < ro, "{cl:?}");
         assert_eq!(cl.len(), 3, "{cl:?}");
@@ -9110,15 +13926,43 @@ mod tests {
     fn thin_pool_left_to_lvcreate() {
         let vg = crate::probe::lvm::sample::thin_vg();
         let t = vg_metadata(&vg).unwrap();
-        assert!(t.starts_with("vos-root {\n\tid = \"VoSr00-tAAA-BBBB-CCCC-DDDD-EEEE-FFFFFF\"\n"), "{t}");
-        assert!(t.contains("\t\tpv0 {\n\t\t\tid = \"Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff\"\n"), "{t}");
-        assert!(t.contains("\t\tinit {\n\t\t\tid = \"1n1t00-aaaa-bbbb-cccc-dddd-eeee-ffffff\"\n"), "{t}");
-        for gone in ["\troot {", "root-a", "root-b", "pmspare", "root_tmeta", "root_tdata", "thin", "p00l00"] {
+        assert!(
+            t.starts_with("vos-root {\n\tid = \"VoSr00-tAAA-BBBB-CCCC-DDDD-EEEE-FFFFFF\"\n"),
+            "{t}"
+        );
+        assert!(
+            t.contains("\t\tpv0 {\n\t\t\tid = \"Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff\"\n"),
+            "{t}"
+        );
+        assert!(
+            t.contains("\t\tinit {\n\t\t\tid = \"1n1t00-aaaa-bbbb-cccc-dddd-eeee-ffffff\"\n"),
+            "{t}"
+        );
+        for gone in [
+            "\troot {",
+            "root-a",
+            "root-b",
+            "pmspare",
+            "root_tmeta",
+            "root_tdata",
+            "thin",
+            "p00l00",
+        ] {
             assert!(!t.contains(gone), "{gone}: {t}");
         }
         let th = thin_of(&vg).unwrap();
         assert!(th.spare);
-        assert_eq!(th.dropped, vec!["root_tdata", "root_tmeta", "root", "root-a", "root-b", "lvol0_pmspare"]);
+        assert_eq!(
+            th.dropped,
+            vec![
+                "root_tdata",
+                "root_tmeta",
+                "root",
+                "root-a",
+                "root-b",
+                "lvol0_pmspare"
+            ]
+        );
         assert_eq!(
             th.pools,
             vec![ThinPool {
@@ -9132,8 +13976,20 @@ mod tests {
                 error_when_full: false,
                 attrs: LvAttrs::default(),
                 thins: vec![
-                    ThinLv { name: "root-a".into(), bytes: 19 << 30, device_id: 1, attrs: LvAttrs::default(), origin: None },
-                    ThinLv { name: "root-b".into(), bytes: 19 << 30, device_id: 2, attrs: LvAttrs::default(), origin: None }
+                    ThinLv {
+                        name: "root-a".into(),
+                        bytes: 19 << 30,
+                        device_id: 1,
+                        attrs: LvAttrs::default(),
+                        origin: None
+                    },
+                    ThinLv {
+                        name: "root-b".into(),
+                        bytes: 19 << 30,
+                        device_id: 2,
+                        attrs: LvAttrs::default(),
+                        origin: None
+                    }
                 ],
                 data_used: None,
                 meta_used: None,
@@ -9147,30 +14003,79 @@ mod tests {
             thin_of(&crate::json::parse(&changed).unwrap()).unwrap()
         };
         // device_id order, not the metadata's.
-        assert_eq!(with("\"device_id\":1", "\"device_id\":7").pools[0].thins.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), vec!["root-b", "root-a"]);
+        assert_eq!(
+            with("\"device_id\":1", "\"device_id\":7").pools[0]
+                .thins
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["root-b", "root-a"]
+        );
         // lvm2 writes zero_new_blocks only when it is on.
         assert!(!with(",\"zero_new_blocks\":1", "").pools[0].zero);
         // ERROR_WHEN_FULL is the pool LV's flag; ACTIVATION_SKIP, tags and
         // read-only (no WRITE) a thin LV's.
         assert!(with("\"name\":\"root\",\"id\":\"p00l00-aaaa-bbbb-cccc-dddd-eeee-ffffff\",\"status\":[\"READ\",\"WRITE\",\"VISIBLE\"]", "\"name\":\"root\",\"id\":\"p00l00-aaaa-bbbb-cccc-dddd-eeee-ffffff\",\"status\":[\"READ\",\"WRITE\",\"VISIBLE\",\"ERROR_WHEN_FULL\"]").pools[0].error_when_full);
-        let b = with("\"status\":[\"READ\",\"WRITE\",\"VISIBLE\"],\"flags\":[],\"size_bytes\":20401094656,\"creation_host\":\"vanilla\",\"creation_time\":1762300003", "\"status\":[\"READ\",\"VISIBLE\"],\"flags\":[\"ACTIVATION_SKIP\"],\"size_bytes\":20401094656,\"creation_host\":\"vanilla\",\"creation_time\":1762300003,\"tags\":[\"keep\"]");
-        assert_eq!(b.pools[0].thins[1].attrs, LvAttrs { tags: vec!["keep".into()], activation_skip: true, read_only: true });
+        let b = with(
+            "\"status\":[\"READ\",\"WRITE\",\"VISIBLE\"],\"flags\":[],\"size_bytes\":20401094656,\"creation_host\":\"vanilla\",\"creation_time\":1762300003",
+            "\"status\":[\"READ\",\"VISIBLE\"],\"flags\":[\"ACTIVATION_SKIP\"],\"size_bytes\":20401094656,\"creation_host\":\"vanilla\",\"creation_time\":1762300003,\"tags\":[\"keep\"]",
+        );
+        assert_eq!(
+            b.pools[0].thins[1].attrs,
+            LvAttrs {
+                tags: vec!["keep".into()],
+                activation_skip: true,
+                read_only: true
+            }
+        );
         assert_eq!(b.pools[0].thins[0].attrs, LvAttrs::default());
         // A data LV striped over two PVs keeps its stripes.
         let at = c.find("\"name\":\"root_tdata\"").unwrap();
-        let striped = format!("{}{}", &c[..at], c[at..].replacen("\"stripe_count\":1", "\"stripe_count\":2,\"stripe_size\":128", 1));
-        assert_eq!(thin_of(&crate::json::parse(&striped).unwrap()).unwrap().pools[0].data_stripes, Some((2, 64 << 10)));
+        let striped = format!(
+            "{}{}",
+            &c[..at],
+            c[at..].replacen(
+                "\"stripe_count\":1",
+                "\"stripe_count\":2,\"stripe_size\":128",
+                1
+            )
+        );
+        assert_eq!(
+            thin_of(&crate::json::parse(&striped).unwrap())
+                .unwrap()
+                .pools[0]
+                .data_stripes,
+            Some((2, 64 << 10))
+        );
         // A spare smaller than the metadata: made again where the free
         // extents cover the difference, else left out with a note.
         let at = c.find("\"name\":\"lvol0_pmspare\"").unwrap();
-        let small = format!("{}{}", &c[..at], c[at..].replacen("\"extent_count\":256", "\"extent_count\":128", 1));
+        let small = format!(
+            "{}{}",
+            &c[..at],
+            c[at..].replacen("\"extent_count\":256", "\"extent_count\":128", 1)
+        );
         let roomy = thin_of(&crate::json::parse(&small).unwrap()).unwrap();
         assert!(roomy.spare && roomy.spare_note.is_none(), "{roomy:?}");
-        let full = thin_of(&crate::json::parse(&small.replacen("\"pe_count\":5657", "\"pe_count\":5600", 1)).unwrap()).unwrap();
+        let full = thin_of(
+            &crate::json::parse(&small.replacen("\"pe_count\":5657", "\"pe_count\":5600", 1))
+                .unwrap(),
+        )
+        .unwrap();
         assert!(!full.spare);
-        assert_eq!(full.spare_note.as_deref(), Some("volume group vos-root: its pool metadata spare (512 MiB) is smaller than the largest pool's metadata (1 GiB), and the group's 384 MiB free can't make up the 512 MiB a new one takes: the pools are made without a spare (--poolmetadataspare n); `lvconvert --repair` needs one, which `lvconvert --poolmetadataspare y` makes once there is room"));
+        assert_eq!(
+            full.spare_note.as_deref(),
+            Some(
+                "volume group vos-root: its pool metadata spare (512 MiB) is smaller than the largest pool's metadata (1 GiB), and the group's 384 MiB free can't make up the 512 MiB a new one takes: the pools are made without a spare (--poolmetadataspare n); `lvconvert --repair` needs one, which `lvconvert --poolmetadataspare y` makes once there is room"
+            )
+        );
         // No thin pool: nothing dropped, the spare (a cache pool's) stays.
-        let plain = crate::json::parse(&vg.compact().replace("\"thin-pool\"", "\"striped\"").replace("\"thin\"", "\"striped\"")).unwrap();
+        let plain = crate::json::parse(
+            &vg.compact()
+                .replace("\"thin-pool\"", "\"striped\"")
+                .replace("\"thin\"", "\"striped\""),
+        )
+        .unwrap();
         assert_eq!(thin_of(&plain).unwrap(), Thin::default());
         assert_eq!(lvm_size(19 << 30), "19456m");
         assert_eq!(lvm_size(64 << 10), "64k");
@@ -9190,37 +14095,113 @@ mod tests {
         // A thin snapshot is made (in the restore stage, load/rawvol.rs):
         // after its origin, whatever their device ids; one of an LV not
         // in the pool, or a loop, is refused.
-        let snap = vg.replacen("\"device_id\":1", "\"device_id\":1,\"origin\":\"root-b\"", 1);
+        let snap = vg.replacen(
+            "\"device_id\":1",
+            "\"device_id\":1,\"origin\":\"root-b\"",
+            1,
+        );
         let th = thin_of(&crate::json::parse(&snap).unwrap()).unwrap();
-        assert_eq!(th.pools[0].thins.iter().map(|l| (l.name.as_str(), l.origin.as_deref())).collect::<Vec<_>>(), vec![("root-b", None), ("root-a", Some("root-b"))]);
+        assert_eq!(
+            th.pools[0]
+                .thins
+                .iter()
+                .map(|l| (l.name.as_str(), l.origin.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![("root-b", None), ("root-a", Some("root-b"))]
+        );
         let gone = err("\"device_id\":2", "\"device_id\":2,\"origin\":\"root-x\"");
-        assert_eq!(gone, "thin LV vos-root/root-b is a thin snapshot of root-x, which isn't a thin LV of pool root in the dump: bko-holt load can't make it without its origin");
-        let looped = vg.replacen("\"device_id\":1", "\"device_id\":1,\"origin\":\"root-b\"", 1).replacen("\"device_id\":2", "\"device_id\":2,\"origin\":\"root-a\"", 1);
-        assert!(vg_metadata(&crate::json::parse(&looped).unwrap()).unwrap_err().contains("are snapshots of each other in a loop"));
-        let ext = err("\"device_id\":2", "\"device_id\":2,\"external_origin\":\"init\"");
-        assert_eq!(ext, "thin LV vos-root/root-b has the external origin init; version 1 doesn't make thin LVs with one");
+        assert_eq!(
+            gone,
+            "thin LV vos-root/root-b is a thin snapshot of root-x, which isn't a thin LV of pool root in the dump: bko-holt load can't make it without its origin"
+        );
+        let looped = vg
+            .replacen(
+                "\"device_id\":1",
+                "\"device_id\":1,\"origin\":\"root-b\"",
+                1,
+            )
+            .replacen(
+                "\"device_id\":2",
+                "\"device_id\":2,\"origin\":\"root-a\"",
+                1,
+            );
+        assert!(
+            vg_metadata(&crate::json::parse(&looped).unwrap())
+                .unwrap_err()
+                .contains("are snapshots of each other in a loop")
+        );
+        let ext = err(
+            "\"device_id\":2",
+            "\"device_id\":2,\"external_origin\":\"init\"",
+        );
+        assert_eq!(
+            ext,
+            "thin LV vos-root/root-b has the external origin init; version 1 doesn't make thin LVs with one"
+        );
         // The pool's use, where the dump has it (crate::qubes::thin_usage).
-        let used = vg.replacen("\"zero_new_blocks\":1}]", "\"zero_new_blocks\":1}],\"data_used_bytes\":1048576,\"metadata_used_bytes\":4096", 1);
+        let used = vg.replacen(
+            "\"zero_new_blocks\":1}]",
+            "\"zero_new_blocks\":1}],\"data_used_bytes\":1048576,\"metadata_used_bytes\":4096",
+            1,
+        );
         let p = &thin_of(&crate::json::parse(&used).unwrap()).unwrap().pools[0];
         assert_eq!((p.data_used, p.meta_used), (Some(1 << 20), Some(4096)));
         // root_tdata as RAID1 (its one segment's type).
         let at = vg.find("\"name\":\"root_tdata\"").unwrap();
-        let raid = format!("{}{}", &vg[..at], vg[at..].replacen("\"type\":\"striped\"", "\"type\":\"raid1\"", 1));
+        let raid = format!(
+            "{}{}",
+            &vg[..at],
+            vg[at..].replacen("\"type\":\"striped\"", "\"type\":\"raid1\"", 1)
+        );
         let e = vg_metadata(&crate::json::parse(&raid).unwrap()).unwrap_err();
-        assert_eq!(e, "thin pool vos-root/root's data LV root_tdata has a raid1 segment; version 1 makes thin pools on linear and striped LVs only (not RAID or cache)");
+        assert_eq!(
+            e,
+            "thin pool vos-root/root's data LV root_tdata has a raid1 segment; version 1 makes thin pools on linear and striped LVs only (not RAID or cache)"
+        );
         let at = vg.find("\"name\":\"root_tmeta\"").unwrap();
-        let cached = format!("{}{}", &vg[..at], vg[at..].replacen("\"type\":\"striped\"", "\"type\":\"cache\"", 1));
-        assert!(vg_metadata(&crate::json::parse(&cached).unwrap()).unwrap_err().starts_with("thin pool vos-root/root's metadata LV root_tmeta has a cache segment"));
+        let cached = format!(
+            "{}{}",
+            &vg[..at],
+            vg[at..].replacen("\"type\":\"striped\"", "\"type\":\"cache\"", 1)
+        );
+        assert!(
+            vg_metadata(&crate::json::parse(&cached).unwrap())
+                .unwrap_err()
+                .starts_with(
+                    "thin pool vos-root/root's metadata LV root_tmeta has a cache segment"
+                )
+        );
         let orphan = err("\"thin_pool\":\"root\"", "\"thin_pool\":\"other\"");
-        assert_eq!(orphan, "thin LV vos-root/root-a's pool other isn't a thin pool in the group");
-        let meta_striped = format!("{}{}", &vg[..at], vg[at..].replacen("\"stripe_count\":1", "\"stripe_count\":2,\"stripe_size\":128", 1));
-        assert_eq!(vg_metadata(&crate::json::parse(&meta_striped).unwrap()).unwrap_err(), "thin pool vos-root/root's metadata LV is striped across 2 PVs; version 1 makes a pool's metadata LV linear only");
+        assert_eq!(
+            orphan,
+            "thin LV vos-root/root-a's pool other isn't a thin pool in the group"
+        );
+        let meta_striped = format!(
+            "{}{}",
+            &vg[..at],
+            vg[at..].replacen(
+                "\"stripe_count\":1",
+                "\"stripe_count\":2,\"stripe_size\":128",
+                1
+            )
+        );
+        assert_eq!(
+            vg_metadata(&crate::json::parse(&meta_striped).unwrap()).unwrap_err(),
+            "thin pool vos-root/root's metadata LV is striped across 2 PVs; version 1 makes a pool's metadata LV linear only"
+        );
         let at = vg.find("\"name\":\"root_tdata\"").unwrap();
         let mixed = vg[at..].replacen("\"segments\":[{", "\"segments\":[{\"start_extent\":0,\"extent_count\":1,\"type\":\"striped\",\"stripe_count\":2,\"stripe_size\":128,\"stripes\":[\"pv0\",0,\"pv0\",1]},{", 1);
-        let e = vg_metadata(&crate::json::parse(&format!("{}{mixed}", &vg[..at])).unwrap()).unwrap_err();
-        assert_eq!(e, "thin pool vos-root/root's data LV root_tdata has segments of different stripes; version 1 makes a pool's data LV with one stripe count and size");
+        let e = vg_metadata(&crate::json::parse(&format!("{}{mixed}", &vg[..at])).unwrap())
+            .unwrap_err();
+        assert_eq!(
+            e,
+            "thin pool vos-root/root's data LV root_tdata has segments of different stripes; version 1 makes a pool's data LV with one stripe count and size"
+        );
         let e = err("\"status\":[\"ALLOCATABLE\"]", "\"status\":[]");
-        assert_eq!(e, "thin pool vos-root/root's data LV root_tdata is on pv0, which isn't allocatable (pvchange -x n): lvcreate can't make it there again");
+        assert_eq!(
+            e,
+            "thin pool vos-root/root's data LV root_tdata is on pv0, which isn't allocatable (pvchange -x n): lvcreate can't make it there again"
+        );
     }
 
     /// Slackware's device names: /dev/md/N is /dev/mdN (load assembles
@@ -9231,8 +14212,17 @@ mod tests {
         assert_eq!(md_name("/dev/md/127"), "/dev/md127");
         assert_eq!(md_name("/dev/md/root"), "/dev/md/root");
         assert_eq!(md_name("/dev/md0"), "/dev/md0");
-        assert!(kernel_dev_path("/dev/md0") && kernel_dev_path("/dev/md/0") && kernel_dev_path("/dev/vda2"));
-        assert!(!kernel_dev_path("/dev/disk/by-id/virtio-x") && !kernel_dev_path("/dev/mapper/root") && !kernel_dev_path("/dev/md/root") && !kernel_dev_path("UUID=x"));
+        assert!(
+            kernel_dev_path("/dev/md0")
+                && kernel_dev_path("/dev/md/0")
+                && kernel_dev_path("/dev/vda2")
+        );
+        assert!(
+            !kernel_dev_path("/dev/disk/by-id/virtio-x")
+                && !kernel_dev_path("/dev/mapper/root")
+                && !kernel_dev_path("/dev/md/root")
+                && !kernel_dev_path("UUID=x")
+        );
     }
 
     /// boot.lilo as the dump keeps a lilo.conf's items (lilo_conf_json's
@@ -9240,9 +14230,27 @@ mod tests {
     fn lilo_dump(text: &str) -> Value {
         use crate::json::Obj;
         let c = crate::boot::LiloConf::parse(text);
-        let list = |its: &[crate::boot::LiloItem]| -> Vec<String> { its.iter().map(|(k, v)| v.as_ref().map_or_else(|| k.clone(), |v| format!("{k}={v}"))).collect() };
-        let images: Vec<Value> = c.sections.iter().map(|(k, p, its)| Obj::new().set("kind", k.as_str()).set("path", p.as_str()).set("options", list(its)).build()).collect();
-        Obj::new().set("conf", "/etc/lilo.conf").set("options", list(&c.global)).set("images", images).build()
+        let list = |its: &[crate::boot::LiloItem]| -> Vec<String> {
+            its.iter()
+                .map(|(k, v)| v.as_ref().map_or_else(|| k.clone(), |v| format!("{k}={v}")))
+                .collect()
+        };
+        let images: Vec<Value> = c
+            .sections
+            .iter()
+            .map(|(k, p, its)| {
+                Obj::new()
+                    .set("kind", k.as_str())
+                    .set("path", p.as_str())
+                    .set("options", list(its))
+                    .build()
+            })
+            .collect();
+        Obj::new()
+            .set("conf", "/etc/lilo.conf")
+            .set("options", list(&c.global))
+            .set("images", images)
+            .build()
     }
 
     /// lilo_root_copy where the rescue names every device as the source did.
@@ -9268,31 +14276,74 @@ mod tests {
         // second image on another root keeps the global one unchanged.
         let conf = "append=\" vt.default_utf8=0\"\nboot = /dev/vda\nprompt\ntimeout = 50\nchange-rules\n  reset\nvga = normal\nimage = /boot/vmlinuz\n  root = /dev/vda2\n  label = Linux\n  read-only\nimage = /boot/vmlinuz-old\n  root = UUID=1234\n  label = Old\nother = /dev/vda3\n  label = Other\n";
         let (copy, c) = lilo_copy(conf);
-        assert_eq!(lilo_get(&c.global, "append"), Some(" vt.default_utf8=0"), "{copy}");
-        assert_eq!(c.global, crate::boot::LiloConf::parse(conf).global, "{copy}");
-        assert_eq!(lilo_get(&c.sections[0].2, "append"), Some(" vt.default_utf8=0 root=/dev/vda2"), "{copy}");
+        assert_eq!(
+            lilo_get(&c.global, "append"),
+            Some(" vt.default_utf8=0"),
+            "{copy}"
+        );
+        assert_eq!(
+            c.global,
+            crate::boot::LiloConf::parse(conf).global,
+            "{copy}"
+        );
+        assert_eq!(
+            lilo_get(&c.sections[0].2, "append"),
+            Some(" vt.default_utf8=0 root=/dev/vda2"),
+            "{copy}"
+        );
         assert_eq!(lilo_get(&c.sections[0].2, "root"), Some("/dev/vda2"));
-        assert!(c.sections[0].2.iter().any(|(k, v)| k == "read-only" && v.is_none()));
+        assert!(
+            c.sections[0]
+                .2
+                .iter()
+                .any(|(k, v)| k == "read-only" && v.is_none())
+        );
         // root=UUID= goes through as text: left alone.
         assert_eq!(lilo_get(&c.sections[1].2, "append"), None, "{copy}");
-        assert_eq!((c.sections[2].0.as_str(), c.sections[2].1.as_str()), ("other", "/dev/vda3"));
+        assert_eq!(
+            (c.sections[2].0.as_str(), c.sections[2].1.as_str()),
+            ("other", "/dev/vda3")
+        );
         assert_eq!(c.sections.len(), 3);
 
         // The image's own append=: there.
-        let (copy, c) = lilo_copy("boot=/dev/vda\nappend=\"quiet\"\nimage=/boot/vmlinuz\n  root=/dev/vda2\n  append=\"vga=normal ro\"\n");
+        let (copy, c) = lilo_copy(
+            "boot=/dev/vda\nappend=\"quiet\"\nimage=/boot/vmlinuz\n  root=/dev/vda2\n  append=\"vga=normal ro\"\n",
+        );
         assert_eq!(lilo_get(&c.global, "append"), Some("quiet"), "{copy}");
-        assert_eq!(lilo_get(&c.sections[0].2, "append"), Some("vga=normal ro root=/dev/vda2"), "{copy}");
-        assert_eq!(c.sections[0].2.iter().filter(|(k, _)| k == "append").count(), 1);
+        assert_eq!(
+            lilo_get(&c.sections[0].2, "append"),
+            Some("vga=normal ro root=/dev/vda2"),
+            "{copy}"
+        );
+        assert_eq!(
+            c.sections[0]
+                .2
+                .iter()
+                .filter(|(k, _)| k == "append")
+                .count(),
+            1
+        );
 
         // No append= at all, the root= global: a new append= on the image.
-        let (copy, c) = lilo_copy("boot=/dev/vda\nroot=/dev/vda2\nimage=/boot/vmlinuz\n  label=Linux\n");
-        assert_eq!(lilo_get(&c.sections[0].2, "append"), Some("root=/dev/vda2"), "{copy}");
+        let (copy, c) =
+            lilo_copy("boot=/dev/vda\nroot=/dev/vda2\nimage=/boot/vmlinuz\n  label=Linux\n");
+        assert_eq!(
+            lilo_get(&c.sections[0].2, "append"),
+            Some("root=/dev/vda2"),
+            "{copy}"
+        );
         assert_eq!(lilo_get(&c.global, "append"), None);
         assert!(copy.starts_with("# bko-holt load: /etc/lilo.conf with root= by name added to append= (Linux: root=/dev/vda2)"), "{copy}");
 
         // A /dev/md/N root, by the kernel's name.
-        let (copy, c) = lilo_copy("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=/dev/md/0\n  label=Linux\n");
-        assert_eq!(lilo_get(&c.sections[0].2, "append"), Some("root=/dev/md0"), "{copy}");
+        let (copy, c) =
+            lilo_copy("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=/dev/md/0\n  label=Linux\n");
+        assert_eq!(
+            lilo_get(&c.sections[0].2, "append"),
+            Some("root=/dev/md0"),
+            "{copy}"
+        );
 
         // Nothing to add: root=UUID=, LABEL=, current, /dev/mapper/, no
         // root=, literal=, or a root= already in append= or addappend=.
@@ -9320,12 +14371,29 @@ mod tests {
         // Just under: ro (3) root=ffffffff (14) the append, less its space.
         let fits = "x".repeat(511 - 3 - 14 - " root=/dev/vda2".len());
         assert!(copy_of(&lilo_dump(&format!("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=/dev/vda2\n  read-only\n  append=\"{fits}\"\n"))).unwrap().is_some());
-        let e = copy_of(&lilo_dump("boot=/dev/vda\npassword=\"\"\nimage=/boot/vmlinuz\n  root=/dev/vda2\n")).unwrap_err();
+        let e = copy_of(&lilo_dump(
+            "boot=/dev/vda\npassword=\"\"\nimage=/boot/vmlinuz\n  root=/dev/vda2\n",
+        ))
+        .unwrap_err();
         assert!(e.starts_with("/etc/lilo.conf has password=\"\""), "{e}");
-        let e = copy_of(&lilo_dump("boot=/dev/vda\nmessage=$HOME/m\nimage=/boot/vmlinuz\n  root=/dev/vda2\n")).unwrap_err();
-        assert!(e.starts_with("/etc/lilo.conf's message=$HOME/m has a quote, backslash or $"), "{e}");
-        let e = copy_of(&crate::json::Obj::new().set("conf", "/etc/lilo.conf").build()).unwrap_err();
-        assert!(e.starts_with("the dump's boot.lilo doesn't keep /etc/lilo.conf's items"), "{e}");
+        let e = copy_of(&lilo_dump(
+            "boot=/dev/vda\nmessage=$HOME/m\nimage=/boot/vmlinuz\n  root=/dev/vda2\n",
+        ))
+        .unwrap_err();
+        assert!(
+            e.starts_with("/etc/lilo.conf's message=$HOME/m has a quote, backslash or $"),
+            "{e}"
+        );
+        let e = copy_of(
+            &crate::json::Obj::new()
+                .set("conf", "/etc/lilo.conf")
+                .build(),
+        )
+        .unwrap_err();
+        assert!(
+            e.starts_with("the dump's boot.lilo doesn't keep /etc/lilo.conf's items"),
+            "{e}"
+        );
     }
 
     /// The names disks have at boot (decision 5, option (d)): each class by
@@ -9337,7 +14405,15 @@ mod tests {
         assert_eq!(disk_class("xvdb"), Some(("xvd", 1, String::new())));
         assert_eq!(disk_class("nvme1n2"), Some(("nvme", 1, "n2".into())));
         assert_eq!(disk_class("mmcblk0"), Some(("mmcblk", 0, String::new())));
-        for n in ["md0", "dm-0", "loop0", "nvme0n1p2", "mmcblk0boot0", "sda1", "vd"] {
+        for n in [
+            "md0",
+            "dm-0",
+            "loop0",
+            "nvme0n1p2",
+            "mmcblk0boot0",
+            "sda1",
+            "vd",
+        ] {
             assert_eq!(disk_class(n), None, "{n}");
         }
         for n in ["vda", "vdz", "vdaa", "sdab", "nvme3n1", "mmcblk2"] {
@@ -9347,13 +14423,22 @@ mod tests {
         // The rescue's vda is no target: vdb is the first.
         assert_eq!(boot_name_of("vdb", &["vdb"]).as_deref(), Some("vda"));
         assert_eq!(boot_name_of("vdc", &["vdb", "vdc"]).as_deref(), Some("vdb"));
-        assert_eq!(boot_name_of("vdaa", &["vdz", "vdaa"]).as_deref(), Some("vdb"));
+        assert_eq!(
+            boot_name_of("vdaa", &["vdz", "vdaa"]).as_deref(),
+            Some("vdb")
+        );
         // Another class doesn't count.
         assert_eq!(boot_name_of("sdq", &["vdb", "sdq"]).as_deref(), Some("sda"));
-        assert_eq!(boot_name_of("nvme1n1", &["nvme1n1", "sda"]).as_deref(), Some("nvme0n1"));
+        assert_eq!(
+            boot_name_of("nvme1n1", &["nvme1n1", "sda"]).as_deref(),
+            Some("nvme0n1")
+        );
         assert_eq!(boot_name_of("md0", &["md0"]), None);
         // Named by where they are attached, not as found: kept.
-        assert_eq!(boot_name_of("mmcblk1", &["mmcblk1"]).as_deref(), Some("mmcblk1"));
+        assert_eq!(
+            boot_name_of("mmcblk1", &["mmcblk1"]).as_deref(),
+            Some("mmcblk1")
+        );
         assert_eq!(boot_name_of("xvdb", &["xvdb"]).as_deref(), Some("xvdb"));
         assert_eq!(boot_name_of("hdc", &["hdc"]).as_deref(), Some("hdc"));
     }
@@ -9363,13 +14448,33 @@ mod tests {
     /// another NVMe controller's disk, the target's only one, no problem.
     #[test]
     fn slackware_class_change_refused() {
-        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/bs1-slackware-current/src.json")).unwrap();
+        let j = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/corpus/bs1-slackware-current/src.json"
+        ))
+        .unwrap();
         let plan = |json: &str, from: &str, to: &str| {
             let l = Layout::from_json(crate::json::parse(json).unwrap()).unwrap();
-            let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".into()]) else { unreachable!() };
-            build(&l, &o, &Mapping { pairs: vec![(from.into(), to.into())], ..Mapping::default() })
+            let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".into()])
+            else {
+                unreachable!()
+            };
+            build(
+                &l,
+                &o,
+                &Mapping {
+                    pairs: vec![(from.into(), to.into())],
+                    ..Mapping::default()
+                },
+            )
         };
-        let names = |b: &Built| b.problems.iter().filter(|p| p.starts_with("Slackware: ") && p.contains(" names /dev/")).cloned().collect::<Vec<_>>();
+        let names = |b: &Built| {
+            b.problems
+                .iter()
+                .filter(|p| p.starts_with("Slackware: ") && p.contains(" names /dev/"))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
         let b = plan(&j, "nvme0n1", "nvme1n1");
         assert!(names(&b).is_empty(), "{:?}", b.problems);
         let sd = j.replace("nvme0n1p", "sda").replace("nvme0n1", "sda");
@@ -9388,30 +14493,78 @@ mod tests {
         use crate::boot::lilo_get;
         let rescue = |p: &str| p.strip_prefix("/dev/vda").map(|n| format!("/dev/vdb{n}"));
         let conf = "boot=/dev/vda\ndisk=/dev/vda\n  bios=0x80\nimage=/boot/vmlinuz\n  root=/dev/vda2\n  label=Linux\n  read-only\n";
-        let c = lilo_root_copy(&lilo_dump(conf), &rescue, &|_| None).unwrap().unwrap();
+        let c = lilo_root_copy(&lilo_dump(conf), &rescue, &|_| None)
+            .unwrap()
+            .unwrap();
         let p = crate::boot::LiloConf::parse(&c.text);
         assert_eq!(lilo_get(&p.global, "boot"), Some("/dev/vdb"), "{}", c.text);
         assert_eq!(lilo_get(&p.global, "disk"), Some("/dev/vdb"), "{}", c.text);
-        assert_eq!(lilo_get(&p.sections[0].2, "root"), Some("/dev/vdb2"), "{}", c.text);
-        assert_eq!(lilo_get(&p.sections[0].2, "append"), Some("root=/dev/vda2"), "{}", c.text);
+        assert_eq!(
+            lilo_get(&p.sections[0].2, "root"),
+            Some("/dev/vdb2"),
+            "{}",
+            c.text
+        );
+        assert_eq!(
+            lilo_get(&p.sections[0].2, "append"),
+            Some("root=/dev/vda2"),
+            "{}",
+            c.text
+        );
         assert_eq!(c.added, ["Linux: root=/dev/vda2"]);
-        assert_eq!(c.renamed, ["Linux's root=/dev/vda2 as /dev/vdb2", "boot=/dev/vda as /dev/vdb", "disk=/dev/vda as /dev/vdb"]);
+        assert_eq!(
+            c.renamed,
+            [
+                "Linux's root=/dev/vda2 as /dev/vdb2",
+                "boot=/dev/vda as /dev/vdb",
+                "disk=/dev/vda as /dev/vdb"
+            ]
+        );
         assert!(c.text.starts_with("# bko-holt load: /etc/lilo.conf with root= by name added to append= (Linux: root=/dev/vda2) and with the devices lilo opens named as the rescue names the target's (Linux's root=/dev/vda2 as /dev/vdb2, boot=/dev/vda as /dev/vdb, disk=/dev/vda as /dev/vdb);"), "{}", c.text);
         // root=UUID= needs no root= by name, but boot= is still the rescue's.
-        let c = lilo_root_copy(&lilo_dump("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=\"UUID=1234\"\n  label=Linux\n"), &rescue, &|_| None).unwrap().unwrap();
-        assert!(c.added.is_empty() && c.renamed == ["boot=/dev/vda as /dev/vdb"], "{c:?}");
-        assert_eq!(lilo_get(&crate::boot::LiloConf::parse(&c.text).sections[0].2, "root"), Some("UUID=1234"));
+        let c = lilo_root_copy(
+            &lilo_dump("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=\"UUID=1234\"\n  label=Linux\n"),
+            &rescue,
+            &|_| None,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            c.added.is_empty() && c.renamed == ["boot=/dev/vda as /dev/vdb"],
+            "{c:?}"
+        );
+        assert_eq!(
+            lilo_get(&crate::boot::LiloConf::parse(&c.text).sections[0].2, "root"),
+            Some("UUID=1234")
+        );
         // The refusals hold for a copy made for the names alone.
-        let e = lilo_root_copy(&lilo_dump("boot=/dev/vda\nmessage=$HOME/m\nimage=/boot/vmlinuz\n  root=UUID=1234\n"), &rescue, &|_| None).unwrap_err();
-        assert!(e.starts_with("/etc/lilo.conf's message=$HOME/m has a quote, backslash or $"), "{e}");
+        let e = lilo_root_copy(
+            &lilo_dump("boot=/dev/vda\nmessage=$HOME/m\nimage=/boot/vmlinuz\n  root=UUID=1234\n"),
+            &rescue,
+            &|_| None,
+        )
+        .unwrap_err();
+        assert!(
+            e.starts_with("/etc/lilo.conf's message=$HOME/m has a quote, backslash or $"),
+            "{e}"
+        );
         // The same names in the rescue: nothing to change.
-        assert_eq!(lilo_root_copy(&lilo_dump("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=UUID=1234\n"), &|_| None, &|_| None), Ok(None));
+        assert_eq!(
+            lilo_root_copy(
+                &lilo_dump("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=UUID=1234\n"),
+                &|_| None,
+                &|_| None
+            ),
+            Ok(None)
+        );
 
         // Every device lilo opens: the root= of an image whose append= has
         // root= already, the global root= an image inherits, an other=
         // section's device and its table=, raid-extra-boot='s disks.
         let conf = "boot=/dev/vda\nroot=/dev/vda2\nraid-extra-boot=/dev/vda,/dev/sdc\nimage=/boot/vmlinuz\n  label=Linux\n  append=\"root=/dev/vda5 ro\"\n  root=/dev/vda5\nimage=/boot/vmlinuz-old\n  label=Old\n  addappend=\"root=/dev/vda2\"\nother=/dev/vda1\n  label=Windows\n  table=/dev/vda\n";
-        let c = lilo_root_copy(&lilo_dump(conf), &rescue, &|_| None).unwrap().unwrap();
+        let c = lilo_root_copy(&lilo_dump(conf), &rescue, &|_| None)
+            .unwrap()
+            .unwrap();
         assert!(c.added.is_empty(), "{c:?}");
         assert_eq!(
             c.renamed,
@@ -9426,41 +14579,125 @@ mod tests {
         );
         let p = crate::boot::LiloConf::parse(&c.text);
         assert_eq!(lilo_get(&p.global, "root"), Some("/dev/vdb2"), "{}", c.text);
-        assert_eq!(lilo_get(&p.sections[0].2, "root"), Some("/dev/vdb5"), "{}", c.text);
-        assert_eq!(lilo_get(&p.sections[0].2, "append"), Some("root=/dev/vda5 ro"), "{}", c.text);
-        assert_eq!(lilo_get(&p.sections[1].2, "addappend"), Some("root=/dev/vda2"), "{}", c.text);
-        assert_eq!((p.sections[2].0.as_str(), p.sections[2].1.as_str()), ("other", "/dev/vdb1"), "{}", c.text);
-        assert_eq!(lilo_get(&p.sections[2].2, "table"), Some("/dev/vdb"), "{}", c.text);
+        assert_eq!(
+            lilo_get(&p.sections[0].2, "root"),
+            Some("/dev/vdb5"),
+            "{}",
+            c.text
+        );
+        assert_eq!(
+            lilo_get(&p.sections[0].2, "append"),
+            Some("root=/dev/vda5 ro"),
+            "{}",
+            c.text
+        );
+        assert_eq!(
+            lilo_get(&p.sections[1].2, "addappend"),
+            Some("root=/dev/vda2"),
+            "{}",
+            c.text
+        );
+        assert_eq!(
+            (p.sections[2].0.as_str(), p.sections[2].1.as_str()),
+            ("other", "/dev/vdb1"),
+            "{}",
+            c.text
+        );
+        assert_eq!(
+            lilo_get(&p.sections[2].2, "table"),
+            Some("/dev/vdb"),
+            "{}",
+            c.text
+        );
         // literal= with no root= in it: its kernel takes lilo's number for
         // root=, which a renamed root= would make the rescue's; refused.
         // With root= in it, the number doesn't matter: renamed.
-        let lit = |l: &str| lilo_dump(&format!("boot=/dev/vda\nimage=/boot/vmlinuz\n  label=Linux\n  root=/dev/vda2\n  literal=\"{l}\"\n"));
+        let lit = |l: &str| {
+            lilo_dump(&format!(
+                "boot=/dev/vda\nimage=/boot/vmlinuz\n  label=Linux\n  root=/dev/vda2\n  literal=\"{l}\"\n"
+            ))
+        };
         let e = lilo_root_copy(&lit("ro quiet"), &rescue, &|_| None).unwrap_err();
         assert!(e.starts_with("/etc/lilo.conf's image Linux has literal= with no root= in it, so its kernel finds / by the device number lilo writes for root=/dev/vda2"), "{e}");
         assert_eq!(copy_of(&lit("ro quiet")), Ok(None));
-        let c = lilo_root_copy(&lit("root=/dev/vda2 ro"), &rescue, &|_| None).unwrap().unwrap();
-        assert_eq!(c.renamed, ["Linux's root=/dev/vda2 as /dev/vdb2", "boot=/dev/vda as /dev/vdb"]);
+        let c = lilo_root_copy(&lit("root=/dev/vda2 ro"), &rescue, &|_| None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            c.renamed,
+            [
+                "Linux's root=/dev/vda2 as /dev/vdb2",
+                "boot=/dev/vda as /dev/vdb"
+            ]
+        );
 
         // With the source's number for a root= (lilo_root_number): root= is
         // that number, global or an image's, the root= by name in append=
         // still the source's name; boot= the rescue's.  A literal= image
         // then keeps the source's number, so it isn't refused.
         let number = |p: &str| (p == "/dev/vda2").then(|| "0xfe02".to_string());
-        let conf = "boot=/dev/vda\nimage=/boot/vmlinuz\n  root=/dev/vda2\n  label=Linux\n  read-only\n";
-        let c = lilo_root_copy(&lilo_dump(conf), &rescue, &number).unwrap().unwrap();
+        let conf =
+            "boot=/dev/vda\nimage=/boot/vmlinuz\n  root=/dev/vda2\n  label=Linux\n  read-only\n";
+        let c = lilo_root_copy(&lilo_dump(conf), &rescue, &number)
+            .unwrap()
+            .unwrap();
         let p = crate::boot::LiloConf::parse(&c.text);
-        assert_eq!(lilo_get(&p.sections[0].2, "root"), Some("0xfe02"), "{}", c.text);
-        assert_eq!(lilo_get(&p.sections[0].2, "append"), Some("root=/dev/vda2"), "{}", c.text);
-        assert_eq!((c.renamed.as_slice(), c.numbered.as_slice()), (&["boot=/dev/vda as /dev/vdb".to_string()][..], &["Linux's root=/dev/vda2 as 0xfe02".to_string()][..]));
+        assert_eq!(
+            lilo_get(&p.sections[0].2, "root"),
+            Some("0xfe02"),
+            "{}",
+            c.text
+        );
+        assert_eq!(
+            lilo_get(&p.sections[0].2, "append"),
+            Some("root=/dev/vda2"),
+            "{}",
+            c.text
+        );
+        assert_eq!(
+            (c.renamed.as_slice(), c.numbered.as_slice()),
+            (
+                &["boot=/dev/vda as /dev/vdb".to_string()][..],
+                &["Linux's root=/dev/vda2 as 0xfe02".to_string()][..]
+            )
+        );
         assert!(c.text.contains(" and with root= as the device number the source's map has (Linux's root=/dev/vda2 as 0xfe02);"), "{}", c.text);
         let c = lilo_root_copy(&lilo_dump("boot=/dev/vda\nroot=/dev/vda2\nimage=/boot/vmlinuz\n  label=Linux\n  append=\"root=/dev/vda2\"\n"), &|_| None, &number).unwrap().unwrap();
-        assert_eq!(lilo_get(&crate::boot::LiloConf::parse(&c.text).global, "root"), Some("0xfe02"), "{}", c.text);
-        assert!(c.added.is_empty() && c.renamed.is_empty() && c.numbered == ["root=/dev/vda2 as 0xfe02"], "{c:?}");
-        let c = lilo_root_copy(&lit("ro quiet"), &rescue, &number).unwrap().unwrap();
-        assert_eq!(lilo_get(&crate::boot::LiloConf::parse(&c.text).sections[0].2, "root"), Some("0xfe02"), "{}", c.text);
+        assert_eq!(
+            lilo_get(&crate::boot::LiloConf::parse(&c.text).global, "root"),
+            Some("0xfe02"),
+            "{}",
+            c.text
+        );
+        assert!(
+            c.added.is_empty()
+                && c.renamed.is_empty()
+                && c.numbered == ["root=/dev/vda2 as 0xfe02"],
+            "{c:?}"
+        );
+        let c = lilo_root_copy(&lit("ro quiet"), &rescue, &number)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            lilo_get(&crate::boot::LiloConf::parse(&c.text).sections[0].2, "root"),
+            Some("0xfe02"),
+            "{}",
+            c.text
+        );
         // Another device, with no number: renamed as before.
-        let c = lilo_root_copy(&lilo_dump("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=/dev/vda5\n  label=Linux\n"), &rescue, &number).unwrap().unwrap();
-        assert!(c.numbered.is_empty() && c.renamed.contains(&"Linux's root=/dev/vda5 as /dev/vdb5".to_string()), "{c:?}");
+        let c = lilo_root_copy(
+            &lilo_dump("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=/dev/vda5\n  label=Linux\n"),
+            &rescue,
+            &number,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            c.numbered.is_empty()
+                && c.renamed
+                    .contains(&"Linux's root=/dev/vda5 as /dev/vdb5".to_string()),
+            "{c:?}"
+        );
     }
 
     #[test]
@@ -9468,19 +14705,57 @@ mod tests {
         let mut c = Cmd::new(&["sfdisk", "/dev/vdb"]).input("label: gpt\nEOF\nEOF_1\n".into());
         c.env.push(("BAD;KEY".into(), "val".into()));
         let s = c.shell();
-        assert!(s.starts_with("env 'BAD;KEY=val' sfdisk /dev/vdb <<'EOF_2'\n"), "{s}");
+        assert!(
+            s.starts_with("env 'BAD;KEY=val' sfdisk /dev/vdb <<'EOF_2'\n"),
+            "{s}"
+        );
         assert!(s.ends_with("\nEOF_2\n"), "{s}");
-        assert!(std::process::Command::new("sh").args(["-n", "-c", &s]).status().unwrap().success(), "{s}");
+        assert!(
+            std::process::Command::new("sh")
+                .args(["-n", "-c", &s])
+                .status()
+                .unwrap()
+                .success(),
+            "{s}"
+        );
 
         let hostile = "/mnt/new d'isk\"$HOME`id`\nz";
-        let l = Layout::from_json(crate::json::parse(&crate::load::layout::sample::bios_mbr()).unwrap()).unwrap();
-        let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".into(), "--target".into(), hostile.into()]) else { unreachable!() };
-        let b = build(&l, &o, &crate::load::target::Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Default::default() });
+        let l = Layout::from_json(
+            crate::json::parse(&crate::load::layout::sample::bios_mbr()).unwrap(),
+        )
+        .unwrap();
+        let Ok(crate::load::Parsed::Run(o)) =
+            crate::load::parse_args(&["l.json".into(), "--target".into(), hostile.into()])
+        else {
+            unreachable!()
+        };
+        let b = build(
+            &l,
+            &o,
+            &crate::load::target::Mapping {
+                pairs: vec![("vda".into(), "vdb".into())],
+                ..Default::default()
+            },
+        );
         for st in Stage::ALL {
-            for cmd in b.stage(st).iter().filter(|c| c.argv.len() > 2 && matches!(c.argv[0].as_str(), "sh" | "bash") && c.argv[1] == "-c") {
+            for cmd in b.stage(st).iter().filter(|c| {
+                c.argv.len() > 2 && matches!(c.argv[0].as_str(), "sh" | "bash") && c.argv[1] == "-c"
+            }) {
                 let script = &cmd.argv[2];
-                assert!(!script.contains(hostile), "{} unquoted: {script}", st.name());
-                assert!(std::process::Command::new("sh").args(["-n", "-c", script]).status().unwrap().success(), "{} syntax: {script}", st.name());
+                assert!(
+                    !script.contains(hostile),
+                    "{} unquoted: {script}",
+                    st.name()
+                );
+                assert!(
+                    std::process::Command::new("sh")
+                        .args(["-n", "-c", script])
+                        .status()
+                        .unwrap()
+                        .success(),
+                    "{} syntax: {script}",
+                    st.name()
+                );
             }
         }
         assert!(!safe_target_subpath("/../../etc"));

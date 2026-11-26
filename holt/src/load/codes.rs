@@ -139,7 +139,14 @@ pub enum RefusalCode {
 }
 
 impl RefusalCode {
-    pub const ALL: [RefusalCode; 6] = [RefusalCode::BootDisk, RefusalCode::RunningRoot, RefusalCode::InUse, RefusalCode::BackupDrive, RefusalCode::ReadOnly, RefusalCode::SectorSize];
+    pub const ALL: [RefusalCode; 6] = [
+        RefusalCode::BootDisk,
+        RefusalCode::RunningRoot,
+        RefusalCode::InUse,
+        RefusalCode::BackupDrive,
+        RefusalCode::ReadOnly,
+        RefusalCode::SectorSize,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -262,7 +269,11 @@ pub type Note = Coded<NoteCode>;
 
 impl<C: Code> Coded<C> {
     pub fn new(code: C, text: impl Into<String>) -> Self {
-        Coded { code, text: text.into(), fields: Vec::new() }
+        Coded {
+            code,
+            text: text.into(),
+            fields: Vec::new(),
+        }
     }
 
     /// Adds the subject field KEY (replacing one given before).
@@ -285,7 +296,9 @@ impl<C: Code> Coded<C> {
 
     /// `{"code", "text", fields...}`, as the documents carry it.
     pub fn to_json(&self) -> Value {
-        let mut o = Obj::new().set("code", self.code.as_str()).set("text", self.text.as_str());
+        let mut o = Obj::new()
+            .set("code", self.code.as_str())
+            .set("text", self.text.as_str());
         for (k, v) in &self.fields {
             o.put(k, v.clone());
         }
@@ -300,7 +313,11 @@ impl<C: Code> Coded<C> {
         }
         let kv = v.as_object()?;
         let text = v.get("text")?.as_str()?;
-        let code = v.get("code").and_then(Value::as_str).and_then(C::parse).unwrap_or(C::OTHER);
+        let code = v
+            .get("code")
+            .and_then(Value::as_str)
+            .and_then(C::parse)
+            .unwrap_or(C::OTHER);
         let mut x = Coded::new(code, text);
         for (k, f) in kv.iter().filter(|(k, _)| k != "code" && k != "text") {
             x = x.with(k, f.clone());
@@ -493,22 +510,39 @@ mod tests {
             return;
         };
         let section = |from: &str, to: &str| -> String {
-            let a = spec.find(from).unwrap_or_else(|| panic!("no {from:?} in holt-json.md"));
-            let b = a + spec[a..].find(to).unwrap_or_else(|| panic!("no {to:?} after {from:?}"));
+            let a = spec
+                .find(from)
+                .unwrap_or_else(|| panic!("no {from:?} in holt-json.md"));
+            let b = a + spec[a..]
+                .find(to)
+                .unwrap_or_else(|| panic!("no {to:?} after {from:?}"));
             spec[a..b].to_string()
         };
         // The problems table: the first column of each row.
         let rows = section("### Plan problems (exit 4)", "### Notes");
-        let table: Vec<&str> = rows.lines().filter_map(|l| l.strip_prefix("| `")).filter_map(|l| l.split_once('`')).map(|(c, _)| c).collect();
+        let table: Vec<&str> = rows
+            .lines()
+            .filter_map(|l| l.strip_prefix("| `"))
+            .filter_map(|l| l.split_once('`'))
+            .map(|(c, _)| c)
+            .collect();
         let ours: Vec<&str> = ProblemCode::ALL.iter().map(|c| c.as_str()).collect();
         assert_eq!(table, ours);
         // The notes: each of ours is a `code` in the paragraph.
         let notes = section("### Notes", "### Failures");
         for c in NoteCode::ALL {
-            assert!(notes.contains(&format!("`{}`", c.as_str())), "{c:?} isn't in holt-json.md's notes");
+            assert!(
+                notes.contains(&format!("`{}`", c.as_str())),
+                "{c:?} isn't in holt-json.md's notes"
+            );
         }
         // The reasons, as fit_refused's and reformat_refused's rows give them.
-        let row = |code: &str| rows.lines().find(|l| l.starts_with(&format!("| `{code}`"))).unwrap_or_else(|| panic!("no {code} row")).to_string();
+        let row = |code: &str| {
+            rows.lines()
+                .find(|l| l.starts_with(&format!("| `{code}`")))
+                .unwrap_or_else(|| panic!("no {code} row"))
+                .to_string()
+        };
         let (fit_row, ref_row) = (row("fit_refused"), row("reformat_refused"));
         for r in FIT_REASONS {
             assert!(fit_row.contains(&format!("`{r}`")), "{r}");
@@ -518,13 +552,27 @@ mod tests {
         }
         // The candidates' refusals, as the plan document's field list
         // gives them.
-        let refused = section("`refused` is null, or a code and text:", "`sizes` has one verdict");
+        let refused = section(
+            "`refused` is null, or a code and text:",
+            "`sizes` has one verdict",
+        );
         for c in RefusalCode::ALL {
-            assert!(refused.contains(&format!("`{}`", c.as_str())), "{c:?} isn't in holt-json.md's candidates' refusals");
+            assert!(
+                refused.contains(&format!("`{}`", c.as_str())),
+                "{c:?} isn't in holt-json.md's candidates' refusals"
+            );
         }
         // The failures table: the first column of each row, in order.
-        let rows = section("### Failures (`failed.code`, exit 1)", "The program's help texts");
-        let table: Vec<&str> = rows.lines().filter_map(|l| l.strip_prefix("| `")).filter_map(|l| l.split_once('`')).map(|(c, _)| c).collect();
+        let rows = section(
+            "### Failures (`failed.code`, exit 1)",
+            "The program's help texts",
+        );
+        let table: Vec<&str> = rows
+            .lines()
+            .filter_map(|l| l.strip_prefix("| `"))
+            .filter_map(|l| l.split_once('`'))
+            .map(|(c, _)| c)
+            .collect();
         let ours: Vec<&str> = FailureCode::ALL.iter().map(|c| c.as_str()).collect();
         assert_eq!(table, ours);
     }
@@ -535,26 +583,47 @@ mod tests {
     fn every_reason_given_is_listed() {
         let given = |src: &str, call: &str| -> Vec<String> {
             src.match_indices(call)
-                .filter(|(i, _)| !src[..*i].ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == '.'))
-                .filter_map(|(i, _)| src[i + call.len()..].split_once('"').map(|(r, _)| r.to_string()))
+                .filter(|(i, _)| {
+                    !src[..*i].ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == '.')
+                })
+                // The literal may start on the next line (rustfmt wraps).
+                .filter_map(|(i, _)| {
+                    src[i + call.len()..]
+                        .trim_start()
+                        .strip_prefix('"')?
+                        .split_once('"')
+                        .map(|(r, _)| r.to_string())
+                })
                 .collect()
         };
-        let fit = given(include_str!("fit.rs"), "why(\"");
-        let reformat = given(include_str!("reformat.rs"), "refused(\"");
-        assert!(fit.len() > 20 && reformat.len() > 10, "{fit:?} {reformat:?}");
+        let fit = given(include_str!("fit.rs"), "why(");
+        let reformat = given(include_str!("reformat.rs"), "refused(");
+        assert!(
+            fit.len() > 20 && reformat.len() > 10,
+            "{fit:?} {reformat:?}"
+        );
         for r in &fit {
-            assert!(FIT_REASONS.contains(&r.as_str()), "fit.rs gives {r:?}, not in FIT_REASONS");
+            assert!(
+                FIT_REASONS.contains(&r.as_str()),
+                "fit.rs gives {r:?}, not in FIT_REASONS"
+            );
         }
         for r in &reformat {
-            assert!(REFORMAT_REASONS.contains(&r.as_str()), "reformat.rs gives {r:?}, not in REFORMAT_REASONS");
+            assert!(
+                REFORMAT_REASONS.contains(&r.as_str()),
+                "reformat.rs gives {r:?}, not in REFORMAT_REASONS"
+            );
         }
     }
 
     #[test]
     fn text_is_the_display() {
-        let p = Problem::new(ProblemCode::NotBlank, "vda -> /dev/vdb: the target isn't blank (ext4); give --erase /dev/vdb to wipe it")
-            .with("disk", "vda")
-            .with("target", "vdb");
+        let p = Problem::new(
+            ProblemCode::NotBlank,
+            "vda -> /dev/vdb: the target isn't blank (ext4); give --erase /dev/vdb to wipe it",
+        )
+        .with("disk", "vda")
+        .with("target", "vdb");
         assert_eq!(p.to_string(), p.text);
         assert_eq!(format!("{p:?}"), format!("{:?}", p.text));
         assert!(p.contains("isn't blank") && p.starts_with("vda ->"));
@@ -569,10 +638,18 @@ mod tests {
         assert_eq!(n.code, NoteCode::Other);
         // Through JSON and back, as --reformat's findings travel.
         assert_eq!(Problem::from_json(&p.to_json()), Some(p.clone()));
-        assert_eq!(Problem::from_json(&Value::from("plain")).map(|x| (x.code, x.text)), Some((ProblemCode::Other, "plain".to_string())));
-        let unknown = crate::json::parse(r#"{"code": "from_the_future", "text": "t", "disk": "vda"}"#).unwrap();
+        assert_eq!(
+            Problem::from_json(&Value::from("plain")).map(|x| (x.code, x.text)),
+            Some((ProblemCode::Other, "plain".to_string()))
+        );
+        let unknown =
+            crate::json::parse(r#"{"code": "from_the_future", "text": "t", "disk": "vda"}"#)
+                .unwrap();
         let u = Problem::from_json(&unknown).unwrap();
-        assert_eq!((u.code, u.str_field("disk")), (ProblemCode::Other, Some("vda")));
+        assert_eq!(
+            (u.code, u.str_field("disk")),
+            (ProblemCode::Other, Some("vda"))
+        );
         assert_eq!(ProblemCode::parse("not_blank"), Some(ProblemCode::NotBlank));
         assert_eq!(NoteCode::parse("nope"), None);
     }
@@ -588,7 +665,10 @@ mod tests {
         assert_eq!(l.len(), 4);
         assert_eq!(l.join("; "), "one; two; three; four");
         assert!(l.has_text("two") && !l.has_text("tw"));
-        assert_eq!(l.iter().map(|p| p.code.as_str()).collect::<Vec<_>>(), ["other", "not_root", "other", "other"]);
+        assert_eq!(
+            l.iter().map(|p| p.code.as_str()).collect::<Vec<_>>(),
+            ["other", "not_root", "other", "other"]
+        );
         assert_eq!(format!("{l:?}"), r#"["one", "two", "three", "four"]"#);
         l.retain(|p| p.code == ProblemCode::Other);
         assert_eq!(l.texts(), vec!["one", "three", "four"]);

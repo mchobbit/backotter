@@ -2,7 +2,7 @@
 //! chain of EBRs) and GPT (both headers, CRCs checked, and the protective or
 //! hybrid MBR in front of it).
 
-use crate::bytes::{crc32, guid, is_zero, le32, le64, sub, utf16le, ByteSource};
+use crate::bytes::{ByteSource, crc32, guid, is_zero, le32, le64, sub, utf16le};
 use crate::json::{Obj, Value};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -109,7 +109,12 @@ struct RawEntry {
 fn raw_entries(sector: &[u8]) -> [RawEntry; 4] {
     std::array::from_fn(|i| {
         let e = sub(sector, 446 + 16 * i, 16);
-        RawEntry { boot_flag: crate::bytes::u8_at(e, 0), ptype: crate::bytes::u8_at(e, 4), start: le32(e, 8), sectors: le32(e, 12) }
+        RawEntry {
+            boot_flag: crate::bytes::u8_at(e, 0),
+            ptype: crate::bytes::u8_at(e, 4),
+            start: le32(e, 8),
+            sectors: le32(e, 12),
+        }
     })
 }
 
@@ -129,7 +134,11 @@ pub fn parse_mbr(sector0: &[u8]) -> Option<Mbr> {
             continue;
         }
         if e.boot_flag != 0 && e.boot_flag != 0x80 {
-            problems.push(format!("entry {} has boot flag 0x{:02x}", i + 1, e.boot_flag));
+            problems.push(format!(
+                "entry {} has boot flag 0x{:02x}",
+                i + 1,
+                e.boot_flag
+            ));
         }
         parts.push(MbrPart {
             number: i as u32 + 1,
@@ -140,7 +149,12 @@ pub fn parse_mbr(sector0: &[u8]) -> Option<Mbr> {
             logical: false,
         });
     }
-    Some(Mbr { disk_signature: le32(sector0, 440), boot_code: sector0[..440].to_vec(), parts, problems })
+    Some(Mbr {
+        disk_signature: le32(sector0, 440),
+        boot_code: sector0[..440].to_vec(),
+        parts,
+        problems,
+    })
 }
 
 const MAX_LOGICAL: usize = 256;
@@ -149,26 +163,35 @@ const MAX_LOGICAL: usize = 256;
 /// partition's chain of EBRs.
 pub fn read_mbr(src: &dyn ByteSource, ss: u64) -> Option<Mbr> {
     let mut mbr = parse_mbr(&src.read_at(0, 512))?;
-    let extended: Vec<MbrPart> = mbr.parts.iter().filter(|p| p.is_extended()).cloned().collect();
+    let extended: Vec<MbrPart> = mbr
+        .parts
+        .iter()
+        .filter(|p| p.is_extended())
+        .cloned()
+        .collect();
     let mut next_number = 5;
     for ext in extended {
         let mut cur = ext.start;
         let mut seen = std::collections::HashSet::new();
         for _ in 0..MAX_LOGICAL {
             if !seen.insert(cur) {
-                mbr.problems.push(format!("EBR chain loops back to sector {cur}"));
+                mbr.problems
+                    .push(format!("EBR chain loops back to sector {cur}"));
                 break;
             }
             let ebr = src.read_at(cur * ss, 512);
             if !has_boot_signature(&ebr) {
-                mbr.problems.push(format!("no EBR signature at sector {cur}"));
+                mbr.problems
+                    .push(format!("no EBR signature at sector {cur}"));
                 break;
             }
             let e = raw_entries(&ebr);
             if e[0].ptype != 0 && e[0].sectors != 0 {
                 let start = cur + e[0].start as u64;
                 if start + e[0].sectors as u64 > ext.start + ext.sectors {
-                    mbr.problems.push(format!("logical partition {next_number} ends past its extended partition"));
+                    mbr.problems.push(format!(
+                        "logical partition {next_number} ends past its extended partition"
+                    ));
                 }
                 mbr.parts.push(MbrPart {
                     number: next_number,
@@ -185,7 +208,9 @@ pub fn read_mbr(src: &dyn ByteSource, ss: u64) -> Option<Mbr> {
             }
             let next = ext.start + e[1].start as u64;
             if next >= ext.start + ext.sectors {
-                mbr.problems.push(format!("EBR link at sector {cur} points outside its extended partition"));
+                mbr.problems.push(format!(
+                    "EBR link at sector {cur} points outside its extended partition"
+                ));
                 break;
             }
             cur = next;
@@ -242,7 +267,12 @@ fn parse_header(b: &[u8], ss: usize) -> Option<Header> {
 const MAX_ENTRIES: u32 = 4096;
 
 fn read_entries(src: &dyn ByteSource, ss: u64, h: &Header) -> Option<Vec<u8>> {
-    if h.entry_count == 0 || h.entry_count > MAX_ENTRIES || h.entry_size < 128 || h.entry_size > 4096 || h.entry_size % 8 != 0 {
+    if h.entry_count == 0
+        || h.entry_count > MAX_ENTRIES
+        || h.entry_size < 128
+        || h.entry_size > 4096
+        || h.entry_size % 8 != 0
+    {
         return None;
     }
     let len = h.entry_count as usize * h.entry_size as usize;
@@ -283,7 +313,11 @@ pub fn read_gpt(src: &dyn ByteSource, ss: u64) -> Option<Gpt> {
             (None, _) => GptBackup::Absent,
             (Some(_), None) => GptBackup::BadCrc,
             (Some(b), Some(_)) => match (&primary, &primary_entries) {
-                (Some(p), Some(_)) if p.disk_guid != b.disk_guid || p.entries_crc != b.entries_crc => GptBackup::Mismatch,
+                (Some(p), Some(_))
+                    if p.disk_guid != b.disk_guid || p.entries_crc != b.entries_crc =>
+                {
+                    GptBackup::Mismatch
+                }
                 _ => GptBackup::Ok,
             },
         }
@@ -297,7 +331,8 @@ pub fn read_gpt(src: &dyn ByteSource, ss: u64) -> Option<Gpt> {
     };
     let mut problems = Vec::new();
     if !primary_ok {
-        problems.push("primary GPT header or its entries are damaged; using the backup".to_string());
+        problems
+            .push("primary GPT header or its entries are damaged; using the backup".to_string());
     }
     let mut parts = Vec::new();
     for (i, e) in entries.chunks_exact(h.entry_size as usize).enumerate() {
@@ -316,7 +351,10 @@ pub fn read_gpt(src: &dyn ByteSource, ss: u64) -> Option<Gpt> {
         if p.last_lba < p.first_lba {
             problems.push(format!("partition {} ends before it starts", p.number));
         } else if p.first_lba < h.first_usable || p.last_lba > h.last_usable {
-            problems.push(format!("partition {} lies outside the usable area", p.number));
+            problems.push(format!(
+                "partition {} lies outside the usable area",
+                p.number
+            ));
         }
         parts.push(p);
     }
@@ -342,17 +380,25 @@ pub fn read_gpt(src: &dyn ByteSource, ss: u64) -> Option<Gpt> {
 /// The disk's partition table, if it has one.
 pub fn read_table(src: &dyn ByteSource, ss: u64) -> Option<Table> {
     let mbr = read_mbr(src, ss);
-    let protective = mbr.as_ref().is_some_and(|m| m.parts.iter().any(|p| p.ptype == 0xee));
+    let protective = mbr
+        .as_ref()
+        .is_some_and(|m| m.parts.iter().any(|p| p.ptype == 0xee));
     // A GPT whose protective MBR was overwritten is still a GPT to the kernel
     // only with gpt=1 on the command line; read it anyway when there's no
     // MBR at all, as blkid does not, so the report shows it.
     if protective || mbr.is_none() {
         if let Some(gpt) = read_gpt(src, ss) {
-            let pmbr = mbr.unwrap_or(Mbr { disk_signature: 0, boot_code: vec![0; 440], parts: vec![], problems: vec!["no protective MBR".into()] });
+            let pmbr = mbr.unwrap_or(Mbr {
+                disk_signature: 0,
+                boot_code: vec![0; 440],
+                parts: vec![],
+                problems: vec!["no protective MBR".into()],
+            });
             return Some(Table::Gpt { pmbr, gpt });
         }
     }
-    mbr.filter(|m| !m.parts.is_empty() || !is_zero(&m.boot_code)).map(Table::Mbr)
+    mbr.filter(|m| !m.parts.is_empty() || !is_zero(&m.boot_code))
+        .map(Table::Mbr)
 }
 
 impl Table {
@@ -366,8 +412,16 @@ impl Table {
     /// (number, start LBA, sectors) of each partition, in order.
     pub fn extents(&self) -> Vec<(u32, u64, u64)> {
         match self {
-            Table::Gpt { gpt, .. } => gpt.parts.iter().map(|p| (p.number, p.first_lba, gpt_sectors(p))).collect(),
-            Table::Mbr(m) => m.parts.iter().map(|p| (p.number, p.start, p.sectors)).collect(),
+            Table::Gpt { gpt, .. } => gpt
+                .parts
+                .iter()
+                .map(|p| (p.number, p.first_lba, gpt_sectors(p)))
+                .collect(),
+            Table::Mbr(m) => m
+                .parts
+                .iter()
+                .map(|p| (p.number, p.start, p.sectors))
+                .collect(),
         }
     }
 
@@ -383,7 +437,10 @@ impl Table {
                     .set("type", "gpt")
                     .set("sector_size", ss)
                     .set("disk_guid", &gpt.disk_guid)
-                    .set("revision", format!("{}.{}", gpt.revision >> 16, gpt.revision & 0xffff))
+                    .set(
+                        "revision",
+                        format!("{}.{}", gpt.revision >> 16, gpt.revision & 0xffff),
+                    )
                     .set("header_size", gpt.header_size)
                     .set("first_usable_lba", gpt.first_usable_lba)
                     .set("last_usable_lba", gpt.last_usable_lba)
@@ -401,7 +458,13 @@ impl Table {
                         Obj::new()
                             .set("present", pmbr.parts.iter().any(|p| p.ptype == 0xee))
                             .set("hybrid", !hybrid.is_empty())
-                            .set("entries", pmbr.parts.iter().map(|p| mbr_part_json(p, ss, pmbr.disk_signature)).collect::<Vec<_>>()),
+                            .set(
+                                "entries",
+                                pmbr.parts
+                                    .iter()
+                                    .map(|p| mbr_part_json(p, ss, pmbr.disk_signature))
+                                    .collect::<Vec<_>>(),
+                            ),
                     )
                     .set("problems", problems)
                     .build()
@@ -418,8 +481,16 @@ impl Table {
     /// JSON for partition `number` as the table has it.
     pub fn partition_json(&self, number: u32, ss: u64) -> Option<Obj> {
         match self {
-            Table::Gpt { gpt, .. } => gpt.parts.iter().find(|p| p.number == number).map(|p| gpt_part_json(p, ss)),
-            Table::Mbr(m) => m.parts.iter().find(|p| p.number == number).map(|p| mbr_part_obj(p, ss, m.disk_signature)),
+            Table::Gpt { gpt, .. } => gpt
+                .parts
+                .iter()
+                .find(|p| p.number == number)
+                .map(|p| gpt_part_json(p, ss)),
+            Table::Mbr(m) => m
+                .parts
+                .iter()
+                .find(|p| p.number == number)
+                .map(|p| mbr_part_obj(p, ss, m.disk_signature)),
         }
     }
 }
@@ -469,7 +540,10 @@ fn gpt_part_json(p: &GptPart, ss: u64) -> Obj {
         // call it, so it can't be taken for the device's name.
         .set("partlabel", &p.name)
         .set("attributes", format!("0x{:016x}", p.attributes))
-        .set("attribute_flags", gpt_attribute_flags(p.attributes, &p.type_guid))
+        .set(
+            "attribute_flags",
+            gpt_attribute_flags(p.attributes, &p.type_guid),
+        )
 }
 
 pub fn gpt_attribute_flags(a: u64, type_guid: &str) -> Vec<String> {
@@ -490,7 +564,8 @@ pub fn gpt_attribute_flags(a: u64, type_guid: &str) -> Vec<String> {
     }
     // Bits 48-63 belong to the partition type.  Microsoft basic data and the
     // Linux types of the Discoverable Partitions Specification share these.
-    let named = type_guid == MS_BASIC_DATA || gpt_type_name(type_guid).is_some_and(|n| n.starts_with("Linux"));
+    let named = type_guid == MS_BASIC_DATA
+        || gpt_type_name(type_guid).is_some_and(|n| n.starts_with("Linux"));
     for bit in 48..64 {
         if a & (1 << bit) == 0 {
             continue;
@@ -502,7 +577,11 @@ pub fn gpt_attribute_flags(a: u64, type_guid: &str) -> Vec<String> {
             63 if named => "no_automount",
             _ => "",
         };
-        v.push(if name.is_empty() { format!("bit{bit}") } else { name.to_string() });
+        v.push(if name.is_empty() {
+            format!("bit{bit}")
+        } else {
+            name.to_string()
+        });
     }
     v
 }
@@ -516,11 +595,23 @@ const GPT_TYPES: &[(&str, &str)] = &[
     (ESP, "EFI System"),
     (BIOS_BOOT, "BIOS boot"),
     ("0fc63daf-8483-4772-8e79-3d69d8477de4", "Linux filesystem"),
-    ("4f68bce3-e8cd-4db1-96e7-fbcaf984b709", "Linux root (x86-64)"),
+    (
+        "4f68bce3-e8cd-4db1-96e7-fbcaf984b709",
+        "Linux root (x86-64)",
+    ),
     ("44479540-f297-41b2-9af7-d131d5f0458a", "Linux root (x86)"),
-    ("b921b045-1df0-41c3-af44-4c6f280d3fae", "Linux root (ARM-64)"),
-    ("8484680c-9521-48c6-9c11-b0720656f69e", "Linux /usr (x86-64)"),
-    ("b0e01050-ee5f-4390-949a-9101b17104e9", "Linux /usr (ARM-64)"),
+    (
+        "b921b045-1df0-41c3-af44-4c6f280d3fae",
+        "Linux root (ARM-64)",
+    ),
+    (
+        "8484680c-9521-48c6-9c11-b0720656f69e",
+        "Linux /usr (x86-64)",
+    ),
+    (
+        "b0e01050-ee5f-4390-949a-9101b17104e9",
+        "Linux /usr (ARM-64)",
+    ),
     ("0657fd6d-a4ab-43c4-84e5-0933c84b4f4f", "Linux swap"),
     ("e6d6d379-f507-44c2-a23c-238f2a3df928", "Linux LVM"),
     ("a19d880f-05fc-4d3b-a006-743f0f84911e", "Linux RAID"),
@@ -533,15 +624,24 @@ const GPT_TYPES: &[(&str, &str)] = &[
     ("773f91ef-66d4-49b5-bd83-d683bf40ad16", "Linux user's home"),
     (XBOOTLDR, "Linux extended boot"),
     ("8da63339-0007-60c0-c436-083ac8230908", "Linux reserved"),
-    ("6a898cc3-1dd2-11b2-99a6-080020736631", "Solaris /usr & Apple ZFS"),
+    (
+        "6a898cc3-1dd2-11b2-99a6-080020736631",
+        "Solaris /usr & Apple ZFS",
+    ),
     ("6a82cb45-1dd2-11b2-99a6-080020736631", "Solaris boot"),
     ("6a85cf4d-1dd2-11b2-99a6-080020736631", "Solaris root"),
     ("6a87c46f-1dd2-11b2-99a6-080020736631", "Solaris swap"),
     ("6a945a3b-1dd2-11b2-99a6-080020736631", "Solaris reserved 1"),
     ("e3c9e316-0b5c-4db8-817d-f92df00215ae", "Microsoft reserved"),
     (MS_BASIC_DATA, "Microsoft basic data"),
-    ("de94bba4-06d1-4d40-a16a-bfd50179d6ac", "Windows recovery environment"),
-    ("5808c8aa-7e8f-42e0-85d2-e1e90434cfb3", "Microsoft LDM metadata"),
+    (
+        "de94bba4-06d1-4d40-a16a-bfd50179d6ac",
+        "Windows recovery environment",
+    ),
+    (
+        "5808c8aa-7e8f-42e0-85d2-e1e90434cfb3",
+        "Microsoft LDM metadata",
+    ),
     ("af9b60a0-1431-4f62-bc68-3311714a69ad", "Microsoft LDM data"),
     ("48465300-0000-11aa-aa11-00306543ecac", "Apple HFS/HFS+"),
     ("7c3457ef-0000-11aa-aa11-00306543ecac", "Apple APFS"),
@@ -553,7 +653,10 @@ const GPT_TYPES: &[(&str, &str)] = &[
     ("516e7cba-6ecf-11d6-8ff8-00022d09712b", "FreeBSD ZFS"),
     ("824cc7a0-36a8-11e3-890a-952519ad3f61", "OpenBSD data"),
     ("49f48d5a-b10e-11dc-b99b-0019d1879648", "NetBSD FFS"),
-    ("2db519c4-b10f-11dc-b99b-0019d1879648", "NetBSD concatenated"),
+    (
+        "2db519c4-b10f-11dc-b99b-0019d1879648",
+        "NetBSD concatenated",
+    ),
     ("cef5a9ad-73bc-4601-89f3-cdeeeee321a1", "QNX6 file system"),
     ("42465331-3ba3-10f1-802a-4861696b7521", "Haiku BFS"),
     ("9d275380-40ad-11db-bf97-000c2911d1b8", "VMware VMFS"),
@@ -622,7 +725,9 @@ pub mod build {
 
     pub fn guid_bytes(g: &str) -> [u8; 16] {
         let h: String = g.chars().filter(|c| *c != '-').collect();
-        let raw: Vec<u8> = (0..16).map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap()).collect();
+        let raw: Vec<u8> = (0..16)
+            .map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap())
+            .collect();
         let mut b = [0u8; 16];
         b[0..4].copy_from_slice(&[raw[3], raw[2], raw[1], raw[0]]);
         b[4..6].copy_from_slice(&[raw[5], raw[4]]);
@@ -631,7 +736,14 @@ pub mod build {
         b
     }
 
-    pub fn mbr_entry(sector: &mut [u8], slot: usize, boot: u8, ptype: u8, start: u32, sectors: u32) {
+    pub fn mbr_entry(
+        sector: &mut [u8],
+        slot: usize,
+        boot: u8,
+        ptype: u8,
+        start: u32,
+        sectors: u32,
+    ) {
         let o = 446 + 16 * slot;
         sector[o] = boot;
         sector[o + 4] = ptype;
@@ -652,7 +764,14 @@ pub mod build {
     pub fn write_gpt(img: &mut [u8], ss: usize, spec: &GptSpec) {
         let total = (img.len() / ss) as u64;
         let mut pm = vec![0u8; 512];
-        mbr_entry(&mut pm, 0, 0, 0xee, 1, (total - 1).min(u32::MAX as u64) as u32);
+        mbr_entry(
+            &mut pm,
+            0,
+            0,
+            0xee,
+            1,
+            (total - 1).min(u32::MAX as u64) as u32,
+        );
         img[..512].copy_from_slice(&pm);
         let entries_sectors = (128 * 128) / ss as u64;
         let mut entries = vec![0u8; 128 * 128];
@@ -717,9 +836,30 @@ mod tests {
             &GptSpec {
                 disk_guid: DG,
                 parts: vec![
-                    (BIOS_BOOT, "aaaaaaaa-0000-0000-0000-000000000001", 34, 2047, 0, "bios"),
-                    (ESP, "aaaaaaaa-0000-0000-0000-000000000002", 2048, 4095, 1, "EFI system partition"),
-                    (ROOT, "aaaaaaaa-0000-0000-0000-000000000003", 4096, (sectors - 40) as u64, (1 << 63) | (1 << 59) | 4, "root ☃"),
+                    (
+                        BIOS_BOOT,
+                        "aaaaaaaa-0000-0000-0000-000000000001",
+                        34,
+                        2047,
+                        0,
+                        "bios",
+                    ),
+                    (
+                        ESP,
+                        "aaaaaaaa-0000-0000-0000-000000000002",
+                        2048,
+                        4095,
+                        1,
+                        "EFI system partition",
+                    ),
+                    (
+                        ROOT,
+                        "aaaaaaaa-0000-0000-0000-000000000003",
+                        4096,
+                        (sectors - 40) as u64,
+                        (1 << 63) | (1 << 59) | 4,
+                        "root ☃",
+                    ),
                 ],
             },
         );
@@ -730,7 +870,9 @@ mod tests {
     fn gpt_round_trip() {
         let img = gpt_disk(512, 8192);
         let t = read_table(&MemSource(img), 512).unwrap();
-        let Table::Gpt { pmbr, gpt } = &t else { panic!("not gpt") };
+        let Table::Gpt { pmbr, gpt } = &t else {
+            panic!("not gpt")
+        };
         assert!(gpt.primary_ok);
         assert_eq!(gpt.backup, GptBackup::Ok);
         assert_eq!(gpt.backup_lba, 8191);
@@ -746,34 +888,61 @@ mod tests {
         let h = t.header_json(512, 8192);
         assert_eq!(h.get("type").and_then(Value::as_str), Some("gpt"));
         assert_eq!(h.get("backup_at_end"), Some(&Value::Bool(true)));
-        assert_eq!(h.at(&["protective_mbr", "hybrid"]), Some(&Value::Bool(false)));
+        assert_eq!(
+            h.at(&["protective_mbr", "hybrid"]),
+            Some(&Value::Bool(false))
+        );
         assert_eq!(h.get("revision").and_then(Value::as_str), Some("1.0"));
         let p = t.partition_json(3, 512).unwrap().build();
-        assert_eq!(p.get("type_name").and_then(Value::as_str), Some("Linux root (x86-64)"));
-        assert_eq!(p.get("start_bytes").and_then(Value::as_u64), Some(4096 * 512));
+        assert_eq!(
+            p.get("type_name").and_then(Value::as_str),
+            Some("Linux root (x86-64)")
+        );
+        assert_eq!(
+            p.get("start_bytes").and_then(Value::as_u64),
+            Some(4096 * 512)
+        );
         assert_eq!(
             p.get("attribute_flags"),
-            Some(&Value::from(vec!["legacy_bios_bootable", "grow_file_system", "no_automount"]))
+            Some(&Value::from(vec![
+                "legacy_bios_bootable",
+                "grow_file_system",
+                "no_automount"
+            ]))
         );
-        assert_eq!(t.extents(), vec![(1, 34, 2014), (2, 2048, 2048), (3, 4096, 8192 - 40 - 4096 + 1)]);
+        assert_eq!(
+            t.extents(),
+            vec![
+                (1, 34, 2014),
+                (2, 2048, 2048),
+                (3, 4096, 8192 - 40 - 4096 + 1)
+            ]
+        );
         assert!(t.partition_json(9, 512).is_none());
     }
 
     #[test]
     fn gpt_4k_sectors() {
         let img = gpt_disk(4096, 2048);
-        let Some(Table::Gpt { gpt, .. }) = read_table(&MemSource(img.clone()), 4096) else { panic!() };
+        let Some(Table::Gpt { gpt, .. }) = read_table(&MemSource(img.clone()), 4096) else {
+            panic!()
+        };
         assert_eq!(gpt.parts.len(), 3);
         assert_eq!(gpt.backup, GptBackup::Ok);
         // Read with the wrong sector size, the header isn't where we look.
-        assert!(matches!(read_table(&MemSource(img), 512), Some(Table::Mbr(_)) | None));
+        assert!(matches!(
+            read_table(&MemSource(img), 512),
+            Some(Table::Mbr(_)) | None
+        ));
     }
 
     #[test]
     fn gpt_damaged_primary_uses_backup() {
         let mut img = gpt_disk(512, 8192);
         img[512 + 60] ^= 0xff; // corrupt the primary header's disk GUID
-        let Some(Table::Gpt { gpt, .. }) = read_table(&MemSource(img.clone()), 512) else { panic!() };
+        let Some(Table::Gpt { gpt, .. }) = read_table(&MemSource(img.clone()), 512) else {
+            panic!()
+        };
         assert!(!gpt.primary_ok);
         assert_eq!(gpt.backup, GptBackup::Ok);
         assert_eq!(gpt.disk_guid, DG);
@@ -782,7 +951,9 @@ mod tests {
         // Damaged entries (not header) are caught by the entries CRC.
         let mut img2 = gpt_disk(512, 8192);
         img2[1024 + 200] ^= 1;
-        let Some(Table::Gpt { gpt, .. }) = read_table(&MemSource(img2), 512) else { panic!() };
+        let Some(Table::Gpt { gpt, .. }) = read_table(&MemSource(img2), 512) else {
+            panic!()
+        };
         assert!(!gpt.primary_ok);
         assert_eq!(gpt.parts.len(), 3);
     }
@@ -790,7 +961,13 @@ mod tests {
     #[test]
     fn gpt_backup_names() {
         // RustAudit1 H2-07: the names backup_header writes, unchanged.
-        let all = [GptBackup::Ok, GptBackup::BadCrc, GptBackup::Absent, GptBackup::Unreadable, GptBackup::Mismatch];
+        let all = [
+            GptBackup::Ok,
+            GptBackup::BadCrc,
+            GptBackup::Absent,
+            GptBackup::Unreadable,
+            GptBackup::Mismatch,
+        ];
         let names: Vec<&str> = all.iter().map(|b| b.as_str()).collect();
         assert_eq!(names, ["ok", "bad-crc", "absent", "unreadable", "mismatch"]);
     }
@@ -800,13 +977,17 @@ mod tests {
         // Bad backup header.
         let mut img = gpt_disk(512, 8192);
         img[8191 * 512 + 40] ^= 1;
-        let Some(Table::Gpt { gpt, .. }) = read_table(&MemSource(img), 512) else { panic!() };
+        let Some(Table::Gpt { gpt, .. }) = read_table(&MemSource(img), 512) else {
+            panic!()
+        };
         assert!(gpt.primary_ok);
         assert_eq!(gpt.backup, GptBackup::BadCrc);
         // Backup header missing altogether.
         let mut img = gpt_disk(512, 8192);
         img[8191 * 512..].fill(0);
-        let Some(Table::Gpt { gpt, .. }) = read_table(&MemSource(img), 512) else { panic!() };
+        let Some(Table::Gpt { gpt, .. }) = read_table(&MemSource(img), 512) else {
+            panic!()
+        };
         assert_eq!(gpt.backup, GptBackup::Absent);
         // The image written onto a bigger disk: the backup sits mid-disk.
         let mut img = gpt_disk(512, 8192);
@@ -815,7 +996,10 @@ mod tests {
         let Table::Gpt { gpt, .. } = &t else { panic!() };
         assert_eq!(gpt.backup, GptBackup::Ok);
         assert_eq!(gpt.backup_lba, 8191);
-        assert_eq!(t.header_json(512, 8192 + 4096).get("backup_at_end"), Some(&Value::Bool(false)));
+        assert_eq!(
+            t.header_json(512, 8192 + 4096).get("backup_at_end"),
+            Some(&Value::Bool(false))
+        );
         // A disk truncated below where the backup should be.
         let img = gpt_disk(512, 8192);
         let t = read_gpt(&MemSource(img[..512 * 6000].to_vec()), 512).unwrap();
@@ -826,7 +1010,14 @@ mod tests {
     fn gpt_mismatched_backup() {
         let mut a = gpt_disk(512, 8192);
         let mut other = vec![0u8; 512 * 8192];
-        write_gpt(&mut other, 512, &GptSpec { disk_guid: "99999999-2222-3333-4444-555555555555", parts: vec![] });
+        write_gpt(
+            &mut other,
+            512,
+            &GptSpec {
+                disk_guid: "99999999-2222-3333-4444-555555555555",
+                parts: vec![],
+            },
+        );
         let n = a.len();
         a[n - 512 * 33..].copy_from_slice(&other[n - 512 * 33..]);
         let g = read_gpt(&MemSource(a), 512).unwrap();
@@ -842,8 +1033,22 @@ mod tests {
             &GptSpec {
                 disk_guid: DG,
                 parts: vec![
-                    (ROOT, "aaaaaaaa-0000-0000-0000-000000000001", 100, 50, 0, "backwards"),
-                    (ROOT, "aaaaaaaa-0000-0000-0000-000000000002", 10, 50, 0, "early"),
+                    (
+                        ROOT,
+                        "aaaaaaaa-0000-0000-0000-000000000001",
+                        100,
+                        50,
+                        0,
+                        "backwards",
+                    ),
+                    (
+                        ROOT,
+                        "aaaaaaaa-0000-0000-0000-000000000002",
+                        10,
+                        50,
+                        0,
+                        "early",
+                    ),
                 ],
             },
         );
@@ -874,15 +1079,24 @@ mod tests {
         mbr_entry(&mut img[..512], 1, 0x80, 0x0c, 2048, 2048);
         let t = read_table(&MemSource(img), 512).unwrap();
         let h = t.header_json(512, 8192);
-        assert_eq!(h.at(&["protective_mbr", "hybrid"]), Some(&Value::Bool(true)));
-        assert_eq!(h.at(&["protective_mbr", "entries", "1", "type"]).and_then(Value::as_str), Some("0x0c"));
+        assert_eq!(
+            h.at(&["protective_mbr", "hybrid"]),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(
+            h.at(&["protective_mbr", "entries", "1", "type"])
+                .and_then(Value::as_str),
+            Some("0x0c")
+        );
     }
 
     #[test]
     fn gpt_without_pmbr() {
         let mut img = gpt_disk(512, 8192);
         img[..512].fill(0);
-        let Some(Table::Gpt { pmbr, gpt }) = read_table(&MemSource(img), 512) else { panic!() };
+        let Some(Table::Gpt { pmbr, gpt }) = read_table(&MemSource(img), 512) else {
+            panic!()
+        };
         assert_eq!(gpt.parts.len(), 3);
         assert_eq!(pmbr.problems, vec!["no protective MBR"]);
     }
@@ -909,14 +1123,26 @@ mod tests {
         let t = read_table(&MemSource(dos_disk()), 512).unwrap();
         let Table::Mbr(m) = &t else { panic!() };
         assert_eq!(m.disk_signature, 0x1234_abcd);
-        let got: Vec<(u32, u8, u64, u64, bool)> = m.parts.iter().map(|p| (p.number, p.ptype, p.start, p.sectors, p.logical)).collect();
+        let got: Vec<(u32, u8, u64, u64, bool)> = m
+            .parts
+            .iter()
+            .map(|p| (p.number, p.ptype, p.start, p.sectors, p.logical))
+            .collect();
         assert_eq!(
             got,
-            vec![(1, 0x83, 2048, 4096, false), (2, 0x05, 8190, 11810, false), (5, 0x82, 8192, 2048, true), (6, 0x83, 10242, 9758, true)]
+            vec![
+                (1, 0x83, 2048, 4096, false),
+                (2, 0x05, 8190, 11810, false),
+                (5, 0x82, 8192, 2048, true),
+                (6, 0x83, 10242, 9758, true)
+            ]
         );
         assert!(m.problems.is_empty(), "{:?}", m.problems);
         let h = t.header_json(512, 20000);
-        assert_eq!(h.get("disk_signature").and_then(Value::as_str), Some("1234abcd"));
+        assert_eq!(
+            h.get("disk_signature").and_then(Value::as_str),
+            Some("1234abcd")
+        );
         let p1 = t.partition_json(1, 512).unwrap().build();
         assert_eq!(p1.get("bootable"), Some(&Value::Bool(true)));
         assert_eq!(p1.get("uuid").and_then(Value::as_str), Some("1234abcd-01"));
@@ -935,7 +1161,11 @@ mod tests {
         let e2 = (8190 + 2050) * 512;
         mbr_entry(&mut img[e2..e2 + 512], 1, 0, 0x05, 2050, 100);
         let m = read_mbr(&MemSource(img), 512).unwrap();
-        assert!(m.problems.iter().any(|p| p.contains("loops")), "{:?}", m.problems);
+        assert!(
+            m.problems.iter().any(|p| p.contains("loops")),
+            "{:?}",
+            m.problems
+        );
         assert_eq!(m.parts.len(), 4);
         // A missing EBR signature.
         let mut img = dos_disk();
@@ -968,7 +1198,10 @@ mod tests {
         // Boot code but no partitions (e.g. GRUB left on a wiped disk) is
         // still reported, so its boot code shows.
         s[0] = 0xeb;
-        assert!(matches!(read_table(&MemSource(s.clone()), 512), Some(Table::Mbr(_))));
+        assert!(matches!(
+            read_table(&MemSource(s.clone()), 512),
+            Some(Table::Mbr(_))
+        ));
         // A strange boot flag is a problem; zero-size entries are skipped.
         mbr_entry(&mut s, 0, 0x7f, 0x83, 1, 10);
         mbr_entry(&mut s, 1, 0, 0x83, 20, 0);
@@ -981,7 +1214,10 @@ mod tests {
     #[test]
     fn type_names() {
         assert_eq!(gpt_type_name(ESP), Some("EFI System"));
-        assert_eq!(gpt_type_name("6a898cc3-1dd2-11b2-99a6-080020736631"), Some("Solaris /usr & Apple ZFS"));
+        assert_eq!(
+            gpt_type_name("6a898cc3-1dd2-11b2-99a6-080020736631"),
+            Some("Solaris /usr & Apple ZFS")
+        );
         assert_eq!(gpt_type_name("00000000-0000-0000-0000-000000000001"), None);
         assert_eq!(mbr_type_name(0x83), Some("Linux"));
         assert_eq!(mbr_type_name(0xfd), Some("Linux raid autodetect"));
@@ -990,7 +1226,11 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for (k, _) in GPT_TYPES {
             assert_eq!(k.len(), 36);
-            assert!(k.chars().all(|c| c == '-' || c.is_ascii_digit() || ('a'..='f').contains(&c)), "{k}");
+            assert!(
+                k.chars()
+                    .all(|c| c == '-' || c.is_ascii_digit() || ('a'..='f').contains(&c)),
+                "{k}"
+            );
             assert!(seen.insert(*k), "duplicate {k}");
             assert_eq!(guid(&guid_bytes(k)), *k);
         }
@@ -999,9 +1239,15 @@ mod tests {
     #[test]
     fn attribute_flags() {
         assert_eq!(gpt_attribute_flags(0, ROOT), Vec::<String>::new());
-        assert_eq!(gpt_attribute_flags(0b111, ESP), vec!["required", "no_block_io_protocol", "legacy_bios_bootable"]);
+        assert_eq!(
+            gpt_attribute_flags(0b111, ESP),
+            vec!["required", "no_block_io_protocol", "legacy_bios_bootable"]
+        );
         assert_eq!(gpt_attribute_flags(1 << 10, ESP), vec!["bit10"]);
-        assert_eq!(gpt_attribute_flags((1 << 60) | (1 << 62), MS_BASIC_DATA), vec!["read_only", "hidden"]);
+        assert_eq!(
+            gpt_attribute_flags((1 << 60) | (1 << 62), MS_BASIC_DATA),
+            vec!["read_only", "hidden"]
+        );
         // On a type that doesn't define them, high bits stay numbered.
         assert_eq!(gpt_attribute_flags(1 << 60, ESP), vec!["bit60"]);
         assert_eq!(gpt_attribute_flags(1 << 50, ROOT), vec!["bit50"]);

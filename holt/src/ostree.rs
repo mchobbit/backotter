@@ -23,13 +23,19 @@ pub const SYSROOT: &str = "/sysroot";
 /// on the kernel command line.
 pub fn detect(sys: &Sys, mounts: &[Mount]) -> bool {
     sys.exists("/run/ostree-booted")
-        || mounts.iter().any(|m| m.target == "/" && m.fstype == "overlay" && m.source == "composefs")
-        || sys.read("/proc/cmdline").is_some_and(|c| karg(&c).is_some())
+        || mounts
+            .iter()
+            .any(|m| m.target == "/" && m.fstype == "overlay" && m.source == "composefs")
+        || sys
+            .read("/proc/cmdline")
+            .is_some_and(|c| karg(&c).is_some())
 }
 
 /// The `ostree=` word of a kernel command line.
 pub fn karg(cmdline: &str) -> Option<String> {
-    crate::boot::shell_words(cmdline).into_iter().find_map(|w| w.strip_prefix("ostree=").map(str::to_string))
+    crate::boot::shell_words(cmdline)
+        .into_iter()
+        .find_map(|w| w.strip_prefix("ostree=").map(str::to_string))
 }
 
 /// A GLib key file (ostree's repository config, prepare-root.conf, an
@@ -54,7 +60,10 @@ pub fn parse_ini(text: &str) -> Vec<(String, String, String)> {
 }
 
 fn ini_get<'a>(ini: &'a [(String, String, String)], section: &str, key: &str) -> Option<&'a str> {
-    ini.iter().rev().find(|(s, k, _)| s == section && k == key).map(|(_, _, v)| v.as_str())
+    ini.iter()
+        .rev()
+        .find(|(s, k, _)| s == section && k == key)
+        .map(|(_, _, v)| v.as_str())
 }
 
 /// PATH (absolute, from the top of BASE) with every symlink in it followed,
@@ -63,7 +72,11 @@ fn ini_get<'a>(ini: &'a [(String, String, String)], section: &str, key: &str) ->
 /// it leads nowhere that exists, or loops.
 pub fn resolve(sys: &Sys, base: &str, path: &str) -> Option<String> {
     let base = base.trim_end_matches('/');
-    let mut todo: std::collections::VecDeque<String> = path.split('/').filter(|c| !c.is_empty()).map(str::to_string).collect();
+    let mut todo: std::collections::VecDeque<String> = path
+        .split('/')
+        .filter(|c| !c.is_empty())
+        .map(str::to_string)
+        .collect();
     let mut cur: Vec<String> = Vec::new();
     let mut links = 0;
     while let Some(c) = todo.pop_front() {
@@ -75,7 +88,14 @@ pub fn resolve(sys: &Sys, base: &str, path: &str) -> Option<String> {
             }
             _ => {}
         }
-        let here = format!("{base}/{}", cur.iter().chain(std::iter::once(&c)).cloned().collect::<Vec<_>>().join("/"));
+        let here = format!(
+            "{base}/{}",
+            cur.iter()
+                .chain(std::iter::once(&c))
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("/")
+        );
         match sys.readlink(&here) {
             Some(t) => {
                 links += 1;
@@ -93,7 +113,8 @@ pub fn resolve(sys: &Sys, base: &str, path: &str) -> Option<String> {
         }
     }
     let out = format!("/{}", cur.join("/"));
-    sys.exists(&format!("{base}{}", if out == "/" { "" } else { &out })).then_some(out)
+    sys.exists(&format!("{base}{}", if out == "/" { "" } else { &out }))
+        .then_some(out)
 }
 
 /// A deployment directory's name, CSUM.SERIAL.
@@ -108,7 +129,8 @@ fn deployment_of(path: &str) -> Option<(String, String)> {
     let rest = path.strip_prefix("/ostree/deploy/")?;
     let (stateroot, rest) = rest.split_once('/')?;
     let name = rest.strip_prefix("deploy/")?;
-    (!name.contains('/') && parse_deployment(name).is_some()).then(|| (stateroot.to_string(), name.to_string()))
+    (!name.contains('/') && parse_deployment(name).is_some())
+        .then(|| (stateroot.to_string(), name.to_string()))
 }
 
 /// A BLS entry: KEY VALUE lines.
@@ -136,13 +158,27 @@ pub fn json(sys: &Sys, phys: &str) -> Value {
     for stateroot in sys.list(&format!("{phys}/ostree/deploy")) {
         let dir = format!("{phys}/ostree/deploy/{stateroot}/deploy");
         for name in sys.list(&dir) {
-            let Some((csum, serial)) = parse_deployment(&name) else { continue };
-            if !sys.is_dir(&format!("{dir}/{name}")) || sys.readlink(&format!("{dir}/{name}")).is_some() {
+            let Some((csum, serial)) = parse_deployment(&name) else {
+                continue;
+            };
+            if !sys.is_dir(&format!("{dir}/{name}"))
+                || sys.readlink(&format!("{dir}/{name}")).is_some()
+            {
                 continue;
             }
-            let origin = sys.read(&format!("{dir}/{name}.origin")).map(|t| parse_ini(&t));
-            let origin = origin.as_deref().and_then(|o| ini_get(o, "origin", "container-image-reference").or_else(|| ini_get(o, "origin", "refspec"))).map(str::to_string);
-            let is_booted = booted.as_ref().is_some_and(|(s, n)| *s == stateroot && *n == name);
+            let origin = sys
+                .read(&format!("{dir}/{name}.origin"))
+                .map(|t| parse_ini(&t));
+            let origin = origin
+                .as_deref()
+                .and_then(|o| {
+                    ini_get(o, "origin", "container-image-reference")
+                        .or_else(|| ini_get(o, "origin", "refspec"))
+                })
+                .map(str::to_string);
+            let is_booted = booted
+                .as_ref()
+                .is_some_and(|(s, n)| *s == stateroot && *n == name);
             deployments.push(
                 Obj::new()
                     .set("stateroot", stateroot.as_str())
@@ -163,7 +199,10 @@ pub fn json(sys: &Sys, phys: &str) -> Value {
         .list(entries_dir)
         .into_iter()
         .filter(|f| f.ends_with(".conf"))
-        .filter_map(|f| sys.read(&format!("{entries_dir}/{f}")).map(|t| (f, bls_kv(&t))))
+        .filter_map(|f| {
+            sys.read(&format!("{entries_dir}/{f}"))
+                .map(|t| (f, bls_kv(&t)))
+        })
         .map(|(f, kv)| {
             let get = |k: &str| kv.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
             let options = get("options");
@@ -178,7 +217,10 @@ pub fn json(sys: &Sys, phys: &str) -> Value {
                 .set("initrd", get("initrd"))
                 .set("options", options)
                 .set("ostree", target)
-                .set("deployment", dep.map(|(s, n)| format!("/ostree/deploy/{s}/deploy/{n}")))
+                .set(
+                    "deployment",
+                    dep.map(|(s, n)| format!("/ostree/deploy/{s}/deploy/{n}")),
+                )
                 .build()
         })
         .collect();
@@ -201,7 +243,10 @@ pub fn json(sys: &Sys, phys: &str) -> Value {
     let mut prepare = Obj::new();
     let mut effective = Vec::new();
     let mut files = Vec::new();
-    for f in ["/usr/lib/ostree/prepare-root.conf", "/etc/ostree/prepare-root.conf"] {
+    for f in [
+        "/usr/lib/ostree/prepare-root.conf",
+        "/etc/ostree/prepare-root.conf",
+    ] {
         let Some(t) = sys.read(f) else { continue };
         effective = parse_ini(&t);
         files.push(f);
@@ -223,22 +268,35 @@ pub fn json(sys: &Sys, phys: &str) -> Value {
             .set("mode", ini_get(&ini, "core", "mode"))
             .set("sysroot_readonly", ini_get(&ini, "sysroot", "readonly"))
             .set("sysroot_bootloader", ini_get(&ini, "sysroot", "bootloader"))
-            .set("ex_fsverity", if has_fsv { fsv.build() } else { Value::Null })
+            .set(
+                "ex_fsverity",
+                if has_fsv { fsv.build() } else { Value::Null },
+            )
             .build()
     });
 
-    let grubenv = ["/boot/grub2/grubenv", "/boot/grub/grubenv"].iter().find_map(|f| sys.read(f)).map(|t| {
-        let env = crate::boot::parse_grubenv(&t);
-        let get = |k: &str| env.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
-        Obj::new().set("boot_success", get("boot_success")).set("boot_counter", get("boot_counter")).set("next_entry", get("next_entry")).build()
-    });
+    let grubenv = ["/boot/grub2/grubenv", "/boot/grub/grubenv"]
+        .iter()
+        .find_map(|f| sys.read(f))
+        .map(|t| {
+            let env = crate::boot::parse_grubenv(&t);
+            let get = |k: &str| env.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
+            Obj::new()
+                .set("boot_success", get("boot_success"))
+                .set("boot_counter", get("boot_counter"))
+                .set("next_entry", get("next_entry"))
+                .build()
+        });
 
     Obj::new()
         .set("booted", sys.exists("/run/ostree-booted"))
         .set("karg", cmdline_karg)
         .set("physical_root", phys)
         .set("stateroot", booted.as_ref().map(|(s, _)| s.clone()))
-        .set("booted_deployment", booted.map(|(s, n)| format!("/ostree/deploy/{s}/deploy/{n}")))
+        .set(
+            "booted_deployment",
+            booted.map(|(s, n)| format!("/ostree/deploy/{s}/deploy/{n}")),
+        )
         .set("deployments", deployments)
         .set("boot_loader", sys.readlink("/boot/loader"))
         .set("boot_links", boot_links)
@@ -253,10 +311,18 @@ pub fn json(sys: &Sys, phys: &str) -> Value {
 
 /// The booted image as `bootc status --json` names it, when bootc is there.
 fn bootc_image(sys: &Sys) -> Value {
-    let Some(out) = sys.run("bootc", &["status", "--json"]) else { return Value::Null };
-    let Ok(v) = crate::json::parse(&out) else { return Value::Null };
+    let Some(out) = sys.run("bootc", &["status", "--json"]) else {
+        return Value::Null;
+    };
+    let Ok(v) = crate::json::parse(&out) else {
+        return Value::Null;
+    };
     let img = v.at(&["status", "booted", "image"]);
-    let s = |p: &[&str]| img.and_then(|i| i.at(p)).and_then(Value::as_str).map(str::to_string);
+    let s = |p: &[&str]| {
+        img.and_then(|i| i.at(p))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    };
     if img.is_none() {
         return Value::Null;
     }
@@ -276,21 +342,39 @@ mod tests {
 
     #[test]
     fn kargs_and_ini() {
-        assert_eq!(karg("BOOT_IMAGE=(hd0,gpt2)/ostree/x/vmlinuz ostree=/ostree/boot.1/default/abc/0 rw\n").as_deref(), Some("/ostree/boot.1/default/abc/0"));
+        assert_eq!(
+            karg("BOOT_IMAGE=(hd0,gpt2)/ostree/x/vmlinuz ostree=/ostree/boot.1/default/abc/0 rw\n")
+                .as_deref(),
+            Some("/ostree/boot.1/default/abc/0")
+        );
         assert_eq!(karg("root=UUID=x ro"), None);
-        let i = parse_ini("[core]\nrepo_version=1\nmode=bare\n\n# c\n[sysroot]\nreadonly=true\nbootloader=none\n[remote \"default\"]\nurl=quay.io/x@sha256:1\n");
+        let i = parse_ini(
+            "[core]\nrepo_version=1\nmode=bare\n\n# c\n[sysroot]\nreadonly=true\nbootloader=none\n[remote \"default\"]\nurl=quay.io/x@sha256:1\n",
+        );
         assert_eq!(ini_get(&i, "core", "mode"), Some("bare"));
         assert_eq!(ini_get(&i, "sysroot", "bootloader"), Some("none"));
-        assert_eq!(ini_get(&i, "remote \"default\"", "url"), Some("quay.io/x@sha256:1"));
+        assert_eq!(
+            ini_get(&i, "remote \"default\"", "url"),
+            Some("quay.io/x@sha256:1")
+        );
         assert_eq!(ini_get(&i, "core", "nope"), None);
         let p = parse_ini("[composefs]\nenabled = yes\n[sysroot]\nreadonly = true\n");
         assert_eq!(ini_get(&p, "composefs", "enabled"), Some("yes"));
         let c = "10e6a37fe91449ab0256dc707f50023505f76d29b6d34844b63843d0950f7de6";
-        assert_eq!(parse_deployment(&format!("{c}.1")), Some((c.to_string(), 1)));
+        assert_eq!(
+            parse_deployment(&format!("{c}.1")),
+            Some((c.to_string(), 1))
+        );
         assert_eq!(parse_deployment(&format!("{c}.1.origin")), None);
         assert_eq!(parse_deployment("short.1"), None);
-        assert_eq!(deployment_of(&format!("/ostree/deploy/default/deploy/{c}.0")), Some(("default".into(), format!("{c}.0"))));
-        assert_eq!(deployment_of(&format!("/ostree/deploy/default/deploy/{c}.0/etc")), None);
+        assert_eq!(
+            deployment_of(&format!("/ostree/deploy/default/deploy/{c}.0")),
+            Some(("default".into(), format!("{c}.0")))
+        );
+        assert_eq!(
+            deployment_of(&format!("/ostree/deploy/default/deploy/{c}.0/etc")),
+            None
+        );
     }
 
     #[test]
@@ -300,15 +384,30 @@ mod tests {
         t.dir(&format!("/sysroot/ostree/deploy/default/deploy/{c}.1/etc"))
             .dir(&format!("/sysroot/ostree/deploy/default/deploy/{c}.0"))
             .symlink("/sysroot/ostree/boot.1", "boot.1.1")
-            .symlink("/sysroot/ostree/boot.1.1/default/bb/0", &format!("../../../deploy/default/deploy/{c}.1"))
-            .symlink("/sysroot/ostree/boot.1.1/default/bb/1", &format!("../../../deploy/default/deploy/{c}.0"))
+            .symlink(
+                "/sysroot/ostree/boot.1.1/default/bb/0",
+                &format!("../../../deploy/default/deploy/{c}.1"),
+            )
+            .symlink(
+                "/sysroot/ostree/boot.1.1/default/bb/1",
+                &format!("../../../deploy/default/deploy/{c}.0"),
+            )
             .symlink("/sysroot/abs", "/ostree/boot.1")
             .symlink("/sysroot/loop", "loop");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
-        assert_eq!(resolve(&s, "/sysroot", "/ostree/boot.1/default/bb/0").as_deref(), Some(format!("/ostree/deploy/default/deploy/{c}.1").as_str()));
-        assert_eq!(resolve(&s, "/sysroot/", "/ostree/boot.1/default/bb/1/etc/..").as_deref(), Some(format!("/ostree/deploy/default/deploy/{c}.0").as_str()));
+        assert_eq!(
+            resolve(&s, "/sysroot", "/ostree/boot.1/default/bb/0").as_deref(),
+            Some(format!("/ostree/deploy/default/deploy/{c}.1").as_str())
+        );
+        assert_eq!(
+            resolve(&s, "/sysroot/", "/ostree/boot.1/default/bb/1/etc/..").as_deref(),
+            Some(format!("/ostree/deploy/default/deploy/{c}.0").as_str())
+        );
         // An absolute link is taken from the physical root's top, not the host's.
-        assert_eq!(resolve(&s, "/sysroot", "/abs/default/bb/0/etc").as_deref(), Some(format!("/ostree/deploy/default/deploy/{c}.1/etc").as_str()));
+        assert_eq!(
+            resolve(&s, "/sysroot", "/abs/default/bb/0/etc").as_deref(),
+            Some(format!("/ostree/deploy/default/deploy/{c}.1/etc").as_str())
+        );
         assert_eq!(resolve(&s, "/sysroot", "/ostree/boot.1/default/bb/2"), None);
         assert_eq!(resolve(&s, "/sysroot", "/loop/x"), None);
         assert_eq!(resolve(&s, "/sysroot", "/").as_deref(), Some("/"));
@@ -329,14 +428,45 @@ mod tests {
             }
             let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
             let v = json(&s, "/sysroot");
-            let g = |k: &str| v.at(&["prepare_root", k]).and_then(Value::as_str).map(str::to_string);
-            (g("composefs"), g("readonly"), v.at(&["prepare_root", "files"]).and_then(Value::as_array).map_or(0, |a| a.len()))
+            let g = |k: &str| {
+                v.at(&["prepare_root", k])
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            };
+            (
+                g("composefs"),
+                g("readonly"),
+                v.at(&["prepare_root", "files"])
+                    .and_then(Value::as_array)
+                    .map_or(0, |a| a.len()),
+            )
         };
         let o = |s: &str| Some(s.to_string());
-        assert_eq!(pr(Some("[composefs]\nenabled=yes\n[sysroot]\nreadonly=true\n"), None), (o("yes"), o("true"), 1));
-        assert_eq!(pr(Some("[composefs]\nenabled=yes\n[sysroot]\nreadonly=true\n"), Some("[composefs]\nenabled=verity\n")), (o("verity"), None, 2));
-        assert_eq!(pr(Some("[composefs]\nenabled=verity\n"), Some("[sysroot]\nreadonly=true\n")), (None, o("true"), 2));
-        assert_eq!(pr(Some("[composefs]\nenabled=signed\n"), Some("")), (None, None, 2));
+        assert_eq!(
+            pr(
+                Some("[composefs]\nenabled=yes\n[sysroot]\nreadonly=true\n"),
+                None
+            ),
+            (o("yes"), o("true"), 1)
+        );
+        assert_eq!(
+            pr(
+                Some("[composefs]\nenabled=yes\n[sysroot]\nreadonly=true\n"),
+                Some("[composefs]\nenabled=verity\n")
+            ),
+            (o("verity"), None, 2)
+        );
+        assert_eq!(
+            pr(
+                Some("[composefs]\nenabled=verity\n"),
+                Some("[sysroot]\nreadonly=true\n")
+            ),
+            (None, o("true"), 2)
+        );
+        assert_eq!(
+            pr(Some("[composefs]\nenabled=signed\n"), Some("")),
+            (None, None, 2)
+        );
         assert_eq!(pr(None, None), (None, None, 0));
     }
 }

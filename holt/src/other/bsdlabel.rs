@@ -39,9 +39,13 @@ pub fn parse(text: &str) -> Label {
         } else if t.ends_with("partitions:") {
             in_parts = true;
         } else if in_parts {
-            let Some((letter, rest)) = t.split_once(':') else { continue };
+            let Some((letter, rest)) = t.split_once(':') else {
+                continue;
+            };
             let mut chars = letter.chars();
-            let (Some(c), None) = (chars.next(), chars.next()) else { continue };
+            let (Some(c), None) = (chars.next(), chars.next()) else {
+                continue;
+            };
             if !c.is_ascii_lowercase() {
                 continue;
             }
@@ -49,8 +53,15 @@ pub fn parse(text: &str) -> Label {
             if f.len() < 3 {
                 continue;
             }
-            let (Ok(size), Ok(offset)) = (f[0].parse::<u64>(), f[1].parse::<u64>()) else { continue };
-            l.parts.push(LabelPart { letter: c, size, offset, fstype: f[2].to_string() });
+            let (Ok(size), Ok(offset)) = (f[0].parse::<u64>(), f[1].parse::<u64>()) else {
+                continue;
+            };
+            l.parts.push(LabelPart {
+                letter: c,
+                size,
+                offset,
+                fstype: f[2].to_string(),
+            });
         }
     }
     l
@@ -67,7 +78,12 @@ pub fn parse_mount_line(l: &str) -> Option<(String, String, String, String)> {
         Some((fs, o)) => (fs.trim(), o.trim_end_matches(')')),
         None => (rest.trim(), ""),
     };
-    Some((spec, mp.to_string(), fs.to_string(), opts.split(", ").collect::<Vec<_>>().join(",")))
+    Some((
+        spec,
+        mp.to_string(),
+        fs.to_string(),
+        opts.split(", ").collect::<Vec<_>>().join(","),
+    ))
 }
 
 #[cfg(test)]
@@ -81,7 +97,15 @@ mod tests {
         assert_eq!(l.duid.as_deref(), Some("1a4a1728e6a303a2"));
         assert_eq!(l.total_sectors, 33554432);
         assert_eq!(l.parts.len(), 3);
-        assert_eq!(l.parts[0], LabelPart { letter: 'a', size: 29360064, offset: 64, fstype: "4.2BSD".into() });
+        assert_eq!(
+            l.parts[0],
+            LabelPart {
+                letter: 'a',
+                size: 29360064,
+                offset: 64,
+                fstype: "4.2BSD".into()
+            }
+        );
         assert_eq!(l.parts[1].fstype, "swap");
     }
 
@@ -91,7 +115,17 @@ mod tests {
             parse_mount_line("/dev/sd0a (1a4a1728e6a303a2.a) on / type ffs (rw, local, wxallowed, ctime=Thu Nov  5 21:11:54 2026)").unwrap(),
             ("/dev/sd0a".into(), "/".into(), "ffs".into(), "rw,local,wxallowed,ctime=Thu Nov  5 21:11:54 2026".into())
         );
-        assert_eq!(parse_mount_line("/dev/ld0a on / type ffs (log, local)").unwrap().3, "log,local");
-        assert_eq!(parse_mount_line("tmpfs on /var/shm type tmpfs (local)").unwrap().1, "/var/shm");
+        assert_eq!(
+            parse_mount_line("/dev/ld0a on / type ffs (log, local)")
+                .unwrap()
+                .3,
+            "log,local"
+        );
+        assert_eq!(
+            parse_mount_line("tmpfs on /var/shm type tmpfs (local)")
+                .unwrap()
+                .1,
+            "/var/shm"
+        );
     }
 }

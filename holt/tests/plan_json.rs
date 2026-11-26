@@ -28,7 +28,9 @@ use bko_holt::json::{self, Value};
 use std::path::{Path, PathBuf};
 
 fn corpus() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("corpus")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("corpus")
 }
 
 /// The corpus's guests with a golden plan.txt, in name order.
@@ -47,10 +49,12 @@ fn guests() -> Vec<String> {
 /// `generated` and `version` replaced.  And the document's compact size.
 fn document(guest: &str) -> (String, Value, usize) {
     let src = std::fs::read_to_string(corpus().join(guest).join("src.json")).unwrap();
-    let p = common::plan_onto(&src, &|_, size| size, &["--json".to_string()]).unwrap_or_else(|e| panic!("{guest}: {e}"));
+    let p = common::plan_onto(&src, &|_, size| size, &["--json".to_string()])
+        .unwrap_or_else(|e| panic!("{guest}: {e}"));
     // load's document is its first line; common's status lines follow.
     let line = p.out.lines().next().unwrap_or_default().to_string();
-    let mut v = json::parse(&line).unwrap_or_else(|e| panic!("{guest}: not one JSON document ({}): {}", e.message, p.out));
+    let mut v = json::parse(&line)
+        .unwrap_or_else(|e| panic!("{guest}: not one JSON document ({}): {}", e.message, p.out));
     if let Value::Obj(kv) = &mut v {
         for (k, x) in kv.iter_mut() {
             match k.as_str() {
@@ -59,7 +63,13 @@ fn document(guest: &str) -> (String, Value, usize) {
                 // Over the commands as run, whose paths are the test's own
                 // (its binary for write-table, its tree for kept headers).
                 "plan_sha256" => {
-                    assert!(x.as_str().is_some_and(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit())), "{guest}: plan_sha256 {}", x.compact());
+                    assert!(
+                        x.as_str().is_some_and(
+                            |h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit())
+                        ),
+                        "{guest}: plan_sha256 {}",
+                        x.compact()
+                    );
                     *x = Value::from("PLAN_SHA256");
                 }
                 _ => {}
@@ -86,7 +96,10 @@ fn load_output(plan_txt: &str) -> String {
 /// there replaced by one `# (N bytes, private: not shown)` line of its N
 /// bytes.
 fn same_but_private(text: &str, plan: &str) -> Result<(), String> {
-    let (a, b): (Vec<&str>, Vec<&str>) = (text.split_inclusive('\n').collect(), plan.split_inclusive('\n').collect());
+    let (a, b): (Vec<&str>, Vec<&str>) = (
+        text.split_inclusive('\n').collect(),
+        plan.split_inclusive('\n').collect(),
+    );
     let (mut i, mut j) = (0, 0);
     while i < a.len() && j < b.len() {
         if a[i] == b[j] {
@@ -94,9 +107,17 @@ fn same_but_private(text: &str, plan: &str) -> Result<(), String> {
             j += 1;
             continue;
         }
-        let n: Option<usize> = a[i].strip_prefix("# (").and_then(|r| r.strip_suffix(" bytes, private: not shown)\n")).and_then(|n| n.parse().ok());
+        let n: Option<usize> = a[i]
+            .strip_prefix("# (")
+            .and_then(|r| r.strip_suffix(" bytes, private: not shown)\n"))
+            .and_then(|n| n.parse().ok());
         let (Some(n), Some(eof)) = (n, a.get(i + 1)) else {
-            return Err(format!("line {}: {:?} where plan.txt has {:?}", i + 1, a[i], b[j]));
+            return Err(format!(
+                "line {}: {:?} where plan.txt has {:?}",
+                i + 1,
+                a[i],
+                b[j]
+            ));
         };
         let mut bytes = 0;
         while j < b.len() && b[j] != *eof {
@@ -104,12 +125,21 @@ fn same_but_private(text: &str, plan: &str) -> Result<(), String> {
             j += 1;
         }
         if bytes != n {
-            return Err(format!("line {}: a private write of {n} bytes, and plan.txt's is {bytes}", i + 1));
+            return Err(format!(
+                "line {}: a private write of {n} bytes, and plan.txt's is {bytes}",
+                i + 1
+            ));
         }
         i += 1;
     }
     if i < a.len() || j < b.len() {
-        return Err(format!("the texts end apart: line {} of {}, line {} of {}", i, a.len(), j, b.len()));
+        return Err(format!(
+            "the texts end apart: line {} of {}, line {} of {}",
+            i,
+            a.len(),
+            j,
+            b.len()
+        ));
     }
     Ok(())
 }
@@ -138,7 +168,10 @@ fn is(t: T, v: &Value) -> bool {
         T::OptU64 => v.is_null() || v.as_u64().is_some(),
         T::Bool => v.as_bool().is_some(),
         T::OptBool => v.is_null() || v.as_bool().is_some(),
-        T::Num => matches!(v, Value::Null | Value::Int(_) | Value::UInt(_) | Value::Float(_)),
+        T::Num => matches!(
+            v,
+            Value::Null | Value::Int(_) | Value::UInt(_) | Value::Float(_)
+        ),
         T::Arr => v.as_array().is_some(),
         T::Obj => v.as_object().is_some(),
         T::OptObj => v.is_null() || v.as_object().is_some(),
@@ -151,7 +184,9 @@ fn fields(at: &str, v: &Value, fields: &[(&str, T)], errs: &mut Vec<String>) {
     for (k, t) in fields {
         match v.get(k) {
             None => errs.push(format!("{at}: no {k}")),
-            Some(x) if !is(*t, x) => errs.push(format!("{at}.{k}: {} isn't of its type", x.compact())),
+            Some(x) if !is(*t, x) => {
+                errs.push(format!("{at}.{k}: {} isn't of its type", x.compact()))
+            }
             _ => {}
         }
     }
@@ -189,7 +224,15 @@ const VERDICT: [(&str, T); 16] = [
     ("why", T::OptStr),
 ];
 
-const VERDICTS: [&str; 7] = ["same", "smaller_slack", "smaller", "bigger", "data_wont_fit", "cant_resize", "beyond_limit"];
+const VERDICTS: [&str; 7] = [
+    "same",
+    "smaller_slack",
+    "smaller",
+    "bigger",
+    "data_wont_fit",
+    "cant_resize",
+    "beyond_limit",
+];
 
 /// The plan document's schema (holt-json.md, "bko-holt-plan"): what bko-
 /// rescue reads.  RT10h's testvm/rescue/holt_schema.py is the shared one.
@@ -228,7 +271,9 @@ fn schema(v: &Value) -> Vec<String> {
     if v.get_str("format") != Some("bko-holt-plan") || v.get_u64("schema") != Some(1) {
         e.push("plan: not bko-holt-plan schema 1".into());
     }
-    if v.get_bool("ok") != Some(v.get_u64("exit") == Some(0)) || v.get_bool("ok") != v.get_arr("problems").map(Vec::is_empty) {
+    if v.get_bool("ok") != Some(v.get_u64("exit") == Some(0))
+        || v.get_bool("ok") != v.get_arr("problems").map(Vec::is_empty)
+    {
         e.push("plan: ok, exit and problems disagree".into());
     }
     if let Some(l) = v.get("layout") {
@@ -238,12 +283,34 @@ fn schema(v: &Value) -> Vec<String> {
         fields(
             "source",
             s,
-            &[("hostname", T::OptStr), ("os", T::Obj), ("family", T::Str), ("arch", T::OptStr), ("boot_mode", T::Str), ("loader", T::OptStr), ("generated", T::OptStr), ("dmi_uuid", T::OptStr), ("reformat_possible", T::Bool)],
+            &[
+                ("hostname", T::OptStr),
+                ("os", T::Obj),
+                ("family", T::Str),
+                ("arch", T::OptStr),
+                ("boot_mode", T::Str),
+                ("loader", T::OptStr),
+                ("generated", T::OptStr),
+                ("dmi_uuid", T::OptStr),
+                ("reformat_possible", T::Bool),
+            ],
             &mut e,
         );
     }
     if let Some(h) = v.get("here") {
-        fields("here", h, &[("dmi_uuid", T::OptStr), ("boot_mode", T::OptStr), ("efivars", T::OptBool), ("arch", T::Str), ("privileged", T::Bool), ("same_machine", T::Bool)], &mut e);
+        fields(
+            "here",
+            h,
+            &[
+                ("dmi_uuid", T::OptStr),
+                ("boot_mode", T::OptStr),
+                ("efivars", T::OptBool),
+                ("arch", T::Str),
+                ("privileged", T::Bool),
+                ("same_machine", T::Bool),
+            ],
+            &mut e,
+        );
     }
     let verdicts = |at: &str, x: &Value, e: &mut Vec<String>| {
         fields(at, x, &VERDICT, e);
@@ -258,7 +325,17 @@ fn schema(v: &Value) -> Vec<String> {
             fields(
                 &format!("{at}.source"),
                 s,
-                &[("name", T::Str), ("size_bytes", T::U64), ("model", T::OptStr), ("serial", T::OptStr), ("wwid", T::OptStr), ("sector", T::U64), ("table", T::OptStr), ("mounts", T::Arr), ("largest", T::OptObj)],
+                &[
+                    ("name", T::Str),
+                    ("size_bytes", T::U64),
+                    ("model", T::OptStr),
+                    ("serial", T::OptStr),
+                    ("wwid", T::OptStr),
+                    ("sector", T::U64),
+                    ("table", T::OptStr),
+                    ("mounts", T::Arr),
+                    ("largest", T::OptObj),
+                ],
                 &mut e,
             );
         }
@@ -293,17 +370,42 @@ fn schema(v: &Value) -> Vec<String> {
         fields(
             &at,
             c,
-            &[("serial_shared", T::Bool), ("target_of", T::OptStr), ("ours", T::Bool), ("blank", T::Bool), ("contents", T::Arr), ("refused", T::OptObj), ("erase_needed", T::Bool), ("sizes", T::Arr)],
+            &[
+                ("serial_shared", T::Bool),
+                ("target_of", T::OptStr),
+                ("ours", T::Bool),
+                ("blank", T::Bool),
+                ("contents", T::Arr),
+                ("refused", T::OptObj),
+                ("erase_needed", T::Bool),
+                ("sizes", T::Arr),
+            ],
             &mut e,
         );
         for (j, ct) in c.arr_at(&["contents"]).iter().enumerate() {
-            fields(&format!("{at}.contents[{j}]"), ct, &[("dev", T::Str), ("type", T::Str), ("label", T::OptStr), ("size_bytes", T::U64), ("used_bytes", T::OptU64)], &mut e);
+            fields(
+                &format!("{at}.contents[{j}]"),
+                ct,
+                &[
+                    ("dev", T::Str),
+                    ("type", T::Str),
+                    ("label", T::OptStr),
+                    ("size_bytes", T::U64),
+                    ("used_bytes", T::OptU64),
+                ],
+                &mut e,
+            );
         }
         for (j, z) in c.arr_at(&["sizes"]).iter().enumerate() {
             verdicts(&format!("{at}.sizes[{j}]"), z, &mut e);
         }
         if let Some(r) = c.get("refused").filter(|r| !r.is_null()) {
-            fields(&format!("{at}.refused"), r, &[("code", T::Str), ("text", T::Str)], &mut e);
+            fields(
+                &format!("{at}.refused"),
+                r,
+                &[("code", T::Str), ("text", T::Str)],
+                &mut e,
+            );
         }
     }
     for (i, k) in v.arr_at(&["keys"]).iter().enumerate() {
@@ -326,11 +428,26 @@ fn schema(v: &Value) -> Vec<String> {
             &mut e,
         );
     }
-    for (i, p) in v.arr_at(&["problems"]).iter().chain(v.arr_at(&["notes"])).enumerate() {
-        fields(&format!("problems/notes[{i}]"), p, &[("code", T::Str), ("text", T::Str)], &mut e);
+    for (i, p) in v
+        .arr_at(&["problems"])
+        .iter()
+        .chain(v.arr_at(&["notes"]))
+        .enumerate()
+    {
+        fields(
+            &format!("problems/notes[{i}]"),
+            p,
+            &[("code", T::Str), ("text", T::Str)],
+            &mut e,
+        );
     }
     for (i, s) in v.arr_at(&["stages"]).iter().enumerate() {
-        fields(&format!("stages[{i}]"), s, &[("name", T::Str), ("commands", T::Arr)], &mut e);
+        fields(
+            &format!("stages[{i}]"),
+            s,
+            &[("name", T::Str), ("commands", T::Arr)],
+            &mut e,
+        );
         for (j, c) in s.arr_at(&["commands"]).iter().enumerate() {
             fields(
                 &format!("stages[{i}].commands[{j}]"),
@@ -367,7 +484,10 @@ fn corpus_plan_documents() {
         Ok("check") | Err(_) => false,
         Ok(other) => panic!("BKO_HOLT_JSON_GOLDEN={other:?}: check or bless"),
     };
-    assert!(!bless || cfg!(target_os = "linux"), "the plan documents are Linux's: bless them on a Linux host");
+    assert!(
+        !bless || cfg!(target_os = "linux"),
+        "the plan documents are Linux's: bless them on a Linux host"
+    );
     let mut errs = Vec::new();
     let mut largest = 0;
     let list = guests();
@@ -379,7 +499,10 @@ fn corpus_plan_documents() {
             errs.push(format!("{g}: {size} bytes, over the 8 MiB a reader takes"));
         }
         let plan_txt = std::fs::read_to_string(corpus().join(g).join("plan.txt")).unwrap();
-        if let Err(e) = same_but_private(v.get_str("text").unwrap_or_default(), &load_output(&plan_txt)) {
+        if let Err(e) = same_but_private(
+            v.get_str("text").unwrap_or_default(),
+            &load_output(&plan_txt),
+        ) {
             errs.push(format!("{g}: text isn't plan.txt's: {e}"));
         }
         for e in schema(&v) {
@@ -392,8 +515,13 @@ fn corpus_plan_documents() {
         }
         match std::fs::read_to_string(&path) {
             Ok(kept) if kept == pretty => {}
-            Ok(kept) => errs.push(format!("{g}: plan.json differs ({} lines changed; BKO_HOLT_JSON_GOLDEN=bless takes it)", common::lines_changed(&kept, &pretty))),
-            Err(_) => errs.push(format!("{g}: no plan.json (BKO_HOLT_JSON_GOLDEN=bless writes it)")),
+            Ok(kept) => errs.push(format!(
+                "{g}: plan.json differs ({} lines changed; BKO_HOLT_JSON_GOLDEN=bless takes it)",
+                common::lines_changed(&kept, &pretty)
+            )),
+            Err(_) => errs.push(format!(
+                "{g}: no plan.json (BKO_HOLT_JSON_GOLDEN=bless writes it)"
+            )),
         }
     }
     eprintln!("{} plan documents, the largest {largest} bytes", list.len());
@@ -408,14 +536,23 @@ fn corpus_plan_documents() {
 /// needed_bytes <= most_bytes wherever both are given.
 #[test]
 fn corpus_size_verdicts_are_fits() {
-    use bko_holt::load::fit::{fit, verdict, Target};
+    use bko_holt::load::fit::{Target, fit, verdict};
     let mut errs = Vec::new();
     let mut seen = std::collections::BTreeMap::<&str, usize>::new();
     for g in guests() {
         let src = std::fs::read_to_string(corpus().join(&g).join("src.json")).unwrap();
         let v = json::parse(&src).unwrap();
         for (name, size, ss) in common::dumped_disks(&v) {
-            if v.at(&["storage", "disks"]).and_then(Value::as_array).into_iter().flatten().all(|d| d.get_str("name") != Some(&name) || (d.get("partition_table").is_none_or(Value::is_null) && d.get("content").is_none_or(Value::is_null))) {
+            if v.at(&["storage", "disks"])
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .all(|d| {
+                    d.get_str("name") != Some(&name)
+                        || (d.get("partition_table").is_none_or(Value::is_null)
+                            && d.get("content").is_none_or(Value::is_null))
+                })
+            {
                 continue;
             }
             for (num, den) in [(98u64, 100u64), (90, 100), (70, 100), (40, 100), (110, 100)] {
@@ -423,56 +560,100 @@ fn corpus_size_verdicts_are_fits() {
                 let z = verdict(&v, &name, "sdq", bytes);
                 let at = format!("{g} {name} at {num}%");
                 *seen.entry(z.verdict).or_default() += 1;
-                let t = Target { disk: name.clone(), path: "/dev/sdq".into(), size_bytes: bytes };
+                let t = Target {
+                    disk: name.clone(),
+                    path: "/dev/sdq".into(),
+                    size_bytes: bytes,
+                };
                 match (z.verdict, z.fit_pct) {
                     ("smaller" | "smaller_slack", Some(p)) => {
                         if !fit(&v, std::slice::from_ref(&t), p).problems.is_empty() {
                             errs.push(format!("{at}: {} at {p}%, and fit refuses {p}%", z.verdict));
                         }
                         if p > 1 && fit(&v, std::slice::from_ref(&t), p - 1).problems.is_empty() {
-                            errs.push(format!("{at}: {} at {p}%, and fit takes {}%", z.verdict, p - 1));
+                            errs.push(format!(
+                                "{at}: {} at {p}%, and fit takes {}%",
+                                z.verdict,
+                                p - 1
+                            ));
                         }
                     }
-                    ("smaller" | "smaller_slack", None) => errs.push(format!("{at}: {} without a percentage", z.verdict)),
+                    ("smaller" | "smaller_slack", None) => {
+                        errs.push(format!("{at}: {} without a percentage", z.verdict))
+                    }
                     ("bigger", Some(p)) => {
                         let f = fit(&v, std::slice::from_ref(&t), p);
-                        if !f.problems.is_empty() || f.disks.first().is_none_or(|d| d.unused_bytes != 0) {
-                            errs.push(format!("{at}: bigger at {p}%, and fit's doesn't take the whole extra there"));
+                        if !f.problems.is_empty()
+                            || f.disks.first().is_none_or(|d| d.unused_bytes != 0)
+                        {
+                            errs.push(format!(
+                                "{at}: bigger at {p}%, and fit's doesn't take the whole extra there"
+                            ));
                         }
                         // The least such percentage.
                         if p > 1 {
                             let f = fit(&v, std::slice::from_ref(&t), p - 1);
-                            if f.problems.is_empty() && f.disks.first().is_some_and(|d| d.unused_bytes == 0) {
-                                errs.push(format!("{at}: bigger at {p}%, and fit's takes the whole extra at {}%", p - 1));
+                            if f.problems.is_empty()
+                                && f.disks.first().is_some_and(|d| d.unused_bytes == 0)
+                            {
+                                errs.push(format!(
+                                    "{at}: bigger at {p}%, and fit's takes the whole extra at {}%",
+                                    p - 1
+                                ));
                             }
                         }
                     }
                     ("beyond_limit", p) => {
                         // More than --fit-largest takes: fit refuses its most.
-                        if fit(&v, std::slice::from_ref(&t), bko_holt::load::FIT_MAX).problems.is_empty() {
-                            errs.push(format!("{at}: beyond_limit, and fit takes it at {}%", bko_holt::load::FIT_MAX));
+                        if fit(&v, std::slice::from_ref(&t), bko_holt::load::FIT_MAX)
+                            .problems
+                            .is_empty()
+                        {
+                            errs.push(format!(
+                                "{at}: beyond_limit, and fit takes it at {}%",
+                                bko_holt::load::FIT_MAX
+                            ));
                         }
-                        if p.is_some_and(|p| p <= bko_holt::load::FIT_MAX) || z.data_fits != Some(true) {
-                            errs.push(format!("{at}: beyond_limit at {p:?}, data_fits {:?}", z.data_fits));
+                        if p.is_some_and(|p| p <= bko_holt::load::FIT_MAX)
+                            || z.data_fits != Some(true)
+                        {
+                            errs.push(format!(
+                                "{at}: beyond_limit at {p:?}, data_fits {:?}",
+                                z.data_fits
+                            ));
                         }
                     }
                     ("data_wont_fit" | "cant_resize", _) => {
-                        if fit(&v, std::slice::from_ref(&t), bko_holt::load::FIT_MAX).problems.is_empty() {
-                            errs.push(format!("{at}: {}, and fit takes it at {}%", z.verdict, bko_holt::load::FIT_MAX));
+                        if fit(&v, std::slice::from_ref(&t), bko_holt::load::FIT_MAX)
+                            .problems
+                            .is_empty()
+                        {
+                            errs.push(format!(
+                                "{at}: {}, and fit takes it at {}%",
+                                z.verdict,
+                                bko_holt::load::FIT_MAX
+                            ));
                         }
                     }
                     _ => {}
                 }
                 if let (Some(n), Some(m)) = (z.needed_bytes, z.most_bytes) {
                     if z.data_fits != Some(n <= m) {
-                        errs.push(format!("{at}: data_fits {:?}, needed {n} and most {m}", z.data_fits));
+                        errs.push(format!(
+                            "{at}: data_fits {:?}, needed {n} and most {m}",
+                            z.data_fits
+                        ));
                     }
                 }
             }
         }
     }
     eprintln!("verdicts: {seen:?}");
-    assert!(seen.get("smaller").copied().unwrap_or(0) > 5 && seen.get("bigger").copied().unwrap_or(0) > 5, "{seen:?}");
+    assert!(
+        seen.get("smaller").copied().unwrap_or(0) > 5
+            && seen.get("bigger").copied().unwrap_or(0) > 5,
+        "{seen:?}"
+    );
     assert!(errs.is_empty(), "{}", errs.join("\n"));
 }
 

@@ -53,7 +53,11 @@ pub const DEFAULT_TARGET: &str = "/mnt/bko-target";
 /// elsewhere it's /var/run, which the BSD rescue images keep in memory under
 /// a read-only / with no /run (Haiku's / is virtual: its /var is the boot
 /// volume's).
-pub const RUN_DIR: &str = if cfg!(target_os = "linux") { "/run/bko-holt" } else { "/var/run/bko-holt" };
+pub const RUN_DIR: &str = if cfg!(target_os = "linux") {
+    "/run/bko-holt"
+} else {
+    "/var/run/bko-holt"
+};
 /// restore's archiver, and the snapshot it restores unless --snapshot says.
 pub const DEFAULT_ARCHIVER: &str = "rustic-bko";
 pub const DEFAULT_SNAPSHOT: &str = "latest";
@@ -84,9 +88,27 @@ pub enum Stage {
 }
 
 impl Stage {
-    pub const ALL: [Stage; 9] = [Stage::Plan, Stage::Status, Stage::Partition, Stage::Assemble, Stage::Format, Stage::Mount, Stage::Restore, Stage::Boot, Stage::Close];
+    pub const ALL: [Stage; 9] = [
+        Stage::Plan,
+        Stage::Status,
+        Stage::Partition,
+        Stage::Assemble,
+        Stage::Format,
+        Stage::Mount,
+        Stage::Restore,
+        Stage::Boot,
+        Stage::Close,
+    ];
     /// The stages that change something, in the order they run.
-    pub const WRITING: [Stage; 7] = [Stage::Partition, Stage::Assemble, Stage::Format, Stage::Mount, Stage::Restore, Stage::Boot, Stage::Close];
+    pub const WRITING: [Stage; 7] = [
+        Stage::Partition,
+        Stage::Assemble,
+        Stage::Format,
+        Stage::Mount,
+        Stage::Restore,
+        Stage::Boot,
+        Stage::Close,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -204,18 +226,24 @@ impl Options {
     pub fn stages(&self) -> Vec<Stage> {
         match (self.only, self.through) {
             (Some(s), _) => vec![s],
-            (None, Some(s)) if s.writes() => Stage::WRITING.into_iter().filter(|w| *w <= s).collect(),
+            (None, Some(s)) if s.writes() => {
+                Stage::WRITING.into_iter().filter(|w| *w <= s).collect()
+            }
             (None, Some(s)) => vec![s],
             (None, None) => vec![Stage::Plan],
         }
     }
 
     pub fn key_file(&self, name: &str) -> Option<&str> {
-        self.key_files.iter().find(|(n, _)| n == name).map(|(_, f)| f.as_str())
+        self.key_files
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, f)| f.as_str())
     }
 }
 
-pub const USAGE: &str = "Usage: bko-holt load LAYOUT.json [--through STAGE | --only STAGE] [--commit]
+pub const USAGE: &str =
+    "Usage: bko-holt load LAYOUT.json [--through STAGE | --only STAGE] [--commit]
                      [--map SRC=DST]... [--erase DEV]... [--fit-largest PCT]
                      [--target DIR] [--new-uuids] [--key-file NAME=FILE]...
                      [--reformat MOUNT=TYPE]...
@@ -351,8 +379,13 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
     let mut schema: Option<String> = None;
     let mut it = args.iter();
     let value = |it: &mut std::slice::Iter<String>, flag: &str| {
-        debug_assert!(VALUE_FLAGS.contains(&flag), "{flag} takes a value: add it to VALUE_FLAGS");
-        it.next().cloned().ok_or_else(|| format!("{flag} needs a value"))
+        debug_assert!(
+            VALUE_FLAGS.contains(&flag),
+            "{flag} takes a value: add it to VALUE_FLAGS"
+        );
+        it.next()
+            .cloned()
+            .ok_or_else(|| format!("{flag} needs a value"))
     };
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -379,15 +412,21 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
             "--target" => {
                 let v = value(&mut it, a)?;
                 if !v.starts_with('/') || v == "/" {
-                    return Err(format!("--target {v}: give an absolute directory other than /"));
+                    return Err(format!(
+                        "--target {v}: give an absolute directory other than /"
+                    ));
                 }
                 o.target = v.trim_end_matches('/').to_string();
             }
             "--fit-largest" => {
                 let v = value(&mut it, a)?;
-                let n: u64 = v.strip_suffix('%').unwrap_or(&v).parse().map_err(|_| format!("--fit-largest {v}: give a whole percentage, 1 to {FIT_MAX}"))?;
+                let n: u64 = v.strip_suffix('%').unwrap_or(&v).parse().map_err(|_| {
+                    format!("--fit-largest {v}: give a whole percentage, 1 to {FIT_MAX}")
+                })?;
                 if !(1..=FIT_MAX).contains(&n) {
-                    return Err(format!("--fit-largest {v}: give a whole percentage, 1 to {FIT_MAX}"));
+                    return Err(format!(
+                        "--fit-largest {v}: give a whole percentage, 1 to {FIT_MAX}"
+                    ));
                 }
                 o.fit_largest = Some(n);
             }
@@ -399,9 +438,16 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
                     return Err(format!("--reformat {v}: MOUNT is a mount point, such as /"));
                 }
                 if !reformat::TYPES.contains(&ty.as_str()) {
-                    return Err(format!("--reformat {v}: TYPE is one of {}", reformat::TYPES.join(", ")));
+                    return Err(format!(
+                        "--reformat {v}: TYPE is one of {}",
+                        reformat::TYPES.join(", ")
+                    ));
                 }
-                let m = if m == "/" { m } else { m.trim_end_matches('/').to_string() };
+                let m = if m == "/" {
+                    m
+                } else {
+                    m.trim_end_matches('/').to_string()
+                };
                 if o.reformats.iter().any(|(x, _)| *x == m) {
                     return Err(format!("--reformat {m}=...: {m} is given twice"));
                 }
@@ -440,8 +486,14 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
             "--sysroot" => o.sysroot = Some(value(&mut it, a)?),
             "--expect-plan" => {
                 let v = value(&mut it, a)?;
-                if v.len() != 64 || !v.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
-                    return Err(format!("--expect-plan {v}: give the plan document's plan_sha256 (64 lower-case hex digits)"));
+                if v.len() != 64
+                    || !v
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                {
+                    return Err(format!(
+                        "--expect-plan {v}: give the plan document's plan_sha256 (64 lower-case hex digits)"
+                    ));
                 }
                 o.expect_plan = Some(v);
             }
@@ -469,11 +521,19 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
         return Err("--through and --only don't go together".into());
     }
     if o.expect_plan.is_some() && !o.json {
-        return Err("--expect-plan is for --json runs: it checks the plan document's plan_sha256".into());
+        return Err(
+            "--expect-plan is for --json runs: it checks the plan document's plan_sha256".into(),
+        );
     }
     o.argv = args.to_vec();
-    if o.repo.is_none() && (o.password_file.is_some() || o.snapshot != DEFAULT_SNAPSHOT || o.archiver != DEFAULT_ARCHIVER) {
-        return Err("--password-file, --snapshot and --archiver are for restore; give --repo too".into());
+    if o.repo.is_none()
+        && (o.password_file.is_some()
+            || o.snapshot != DEFAULT_SNAPSHOT
+            || o.archiver != DEFAULT_ARCHIVER)
+    {
+        return Err(
+            "--password-file, --snapshot and --archiver are for restore; give --repo too".into(),
+        );
     }
     if o.repo.is_none() && o.stages().contains(&Stage::Restore) {
         return Err(format!(
@@ -511,7 +571,9 @@ pub fn main(args: &[String]) -> u8 {
 fn records_itself(args: &[String]) -> bool {
     match parse_args(args) {
         Ok(Parsed::Help) => false,
-        Ok(Parsed::Run(o)) if o.json => !matches!(o.stages().as_slice(), [Stage::Plan] | [Stage::Status]),
+        Ok(Parsed::Run(o)) if o.json => {
+            !matches!(o.stages().as_slice(), [Stage::Plan] | [Stage::Status])
+        }
         _ => true,
     }
 }
@@ -537,25 +599,59 @@ fn main_inner(args: &[String]) -> (u8, String) {
         return (EXIT_OK, String::new());
     }
     if let Some(e) = jsonout::schema_error(args, VALUE_FLAGS) {
-        return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::SchemaUnknown, format!("bko-holt load: {e}"), &format!("\n{USAGE}"));
+        return refuse(
+            EXIT_BAD_ARGS,
+            jsonout::ErrorCode::SchemaUnknown,
+            format!("bko-holt load: {e}"),
+            &format!("\n{USAGE}"),
+        );
     }
     let opts = match parsed {
         Ok(Parsed::Run(o)) => o,
         Ok(Parsed::Help) => return (EXIT_OK, String::new()),
-        Err(e) => return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::BadArgs, format!("bko-holt load: {e}"), &format!("\n{USAGE}")),
+        Err(e) => {
+            return refuse(
+                EXIT_BAD_ARGS,
+                jsonout::ErrorCode::BadArgs,
+                format!("bko-holt load: {e}"),
+                &format!("\n{USAGE}"),
+            );
+        }
     };
     // The dry-run lock: after --help, before the layout is read.
     if opts.commit {
         if let Some(v) = jsonout::no_commit() {
-            return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::NoCommit, jsonout::no_commit_refusal(&v), "");
+            return refuse(
+                EXIT_BAD_ARGS,
+                jsonout::ErrorCode::NoCommit,
+                jsonout::no_commit_refusal(&v),
+                "",
+            );
         }
     }
-    let text = match crate::bytes::read_to_string_bounded(std::path::Path::new(&opts.layout), crate::LAYOUT_MAX) {
+    let text = match crate::bytes::read_to_string_bounded(
+        std::path::Path::new(&opts.layout),
+        crate::LAYOUT_MAX,
+    ) {
         Ok(t) => t,
-        Err(e) => return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::LayoutUnreadable, format!("bko-holt load: {}: {e}", opts.layout), ""),
+        Err(e) => {
+            return refuse(
+                EXIT_BAD_ARGS,
+                jsonout::ErrorCode::LayoutUnreadable,
+                format!("bko-holt load: {}: {e}", opts.layout),
+                "",
+            );
+        }
     };
     let sys = match &opts.sysroot {
-        Some(d) if !std::path::Path::new(d).is_dir() => return refuse(EXIT_BAD_ARGS, jsonout::ErrorCode::BadArgs, format!("bko-holt load: --sysroot {d}: not a directory"), ""),
+        Some(d) if !std::path::Path::new(d).is_dir() => {
+            return refuse(
+                EXIT_BAD_ARGS,
+                jsonout::ErrorCode::BadArgs,
+                format!("bko-holt load: --sysroot {d}: not a directory"),
+                "",
+            );
+        }
         Some(d) => Sys::new(d, Box::new(FakeRunner::default()), crate::sys::euid() == 0),
         None => Sys::host(),
     };
@@ -590,24 +686,48 @@ pub fn run(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String)
 fn run_raw(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String) {
     // A refusal: under --json its document is the whole of standard output.
     let refuse = |exit: u8, code: jsonout::ErrorCode, line: String| -> (u8, String, String) {
-        let out = if opts.json { jsonout::error_doc(exit, code, &line) } else { String::new() };
+        let out = if opts.json {
+            jsonout::error_doc(exit, code, &line)
+        } else {
+            String::new()
+        };
         (exit, out, line + "\n")
     };
     let json = match crate::json::parse(layout_text) {
         Ok(v) => v,
-        Err(e) => return refuse(EXIT_UNSUPPORTED, jsonout::ErrorCode::LayoutNotJson, format!("bko-holt load: {}: not JSON ({e})", opts.layout)),
+        Err(e) => {
+            return refuse(
+                EXIT_UNSUPPORTED,
+                jsonout::ErrorCode::LayoutNotJson,
+                format!("bko-holt load: {}: not JSON ({e})", opts.layout),
+            );
+        }
     };
     // --reformat: every stage works from the edited layout (reformat.rs).
-    let json = if opts.reformats.is_empty() { json } else { reformat::apply(json.clone(), &reformat::work_out(&json, &opts.reformats)) };
+    let json = if opts.reformats.is_empty() {
+        json
+    } else {
+        reformat::apply(json.clone(), &reformat::work_out(&json, &opts.reformats))
+    };
     let layout = match layout::Layout::from_json(json) {
         Ok(l) => l,
-        Err(e) => return refuse(EXIT_UNSUPPORTED, jsonout::ErrorCode::LayoutRefused, format!("bko-holt load: {}: {e}", opts.layout)),
+        Err(e) => {
+            return refuse(
+                EXIT_UNSUPPORTED,
+                jsonout::ErrorCode::LayoutRefused,
+                format!("bko-holt load: {}: {e}", opts.layout),
+            );
+        }
     };
     // A dump of another architecture than this rescue system's is refused
     // here, before any stage (plan and status too) reads or writes a disk
     // (crate::arch).
     if let Err(e) = crate::arch::check_load(&layout.v, sys) {
-        return refuse(EXIT_UNSUPPORTED, jsonout::ErrorCode::ArchMismatch, format!("bko-holt load: {}: {e}", opts.layout));
+        return refuse(
+            EXIT_UNSUPPORTED,
+            jsonout::ErrorCode::ArchMismatch,
+            format!("bko-holt load: {}: {e}", opts.layout),
+        );
     }
     let stages = opts.stages();
     if opts.json {
@@ -616,7 +736,11 @@ fn run_raw(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String)
         match stages.as_slice() {
             [Stage::Plan] => return plan::json_run(&layout, opts, sys, layout_text),
             [Stage::Status] => return status::json_run(&layout, opts, sys),
-            _ => return exec::json_run(&layout, opts, sys, &stages, &mut |l| jsonout::write_stdout(l)),
+            _ => {
+                return exec::json_run(&layout, opts, sys, &stages, &mut |l| {
+                    jsonout::write_stdout(l)
+                });
+            }
         }
     }
     match stages.as_slice() {
@@ -630,7 +754,10 @@ fn run_raw(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String)
 /// OPTS's --map or else by WWID or serial (report-bug gives them as --map to
 /// a run on the redacted layout, whose serials match no disk).
 pub fn disk_pairs(opts: &Options, layout_text: &str, sys: &Sys) -> Vec<(String, String)> {
-    let Some(layout) = crate::json::parse(layout_text).ok().and_then(|j| layout::Layout::from_json(j).ok()) else {
+    let Some(layout) = crate::json::parse(layout_text)
+        .ok()
+        .and_then(|j| layout::Layout::from_json(j).ok())
+    else {
         return Vec::new();
     };
     let system = target::scan(sys, opts, &target::layout_pools(&layout));
@@ -646,7 +773,9 @@ pub const OMITTED: &str = "_omitted";
 pub fn has_omitted(v: &crate::json::Value) -> bool {
     use crate::json::Value;
     match v {
-        Value::Obj(kv) => kv.iter().any(|(k, x)| k.ends_with(OMITTED) || has_omitted(x)),
+        Value::Obj(kv) => kv
+            .iter()
+            .any(|(k, x)| k.ends_with(OMITTED) || has_omitted(x)),
         Value::Arr(a) => a.iter().any(has_omitted),
         _ => false,
     }
@@ -654,7 +783,10 @@ pub fn has_omitted(v: &crate::json::Value) -> bool {
 
 /// A word for a shell command line: quoted when it needs to be.
 pub fn shell_quote(s: &str) -> String {
-    if !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_./:=,+@%^".contains(&b)) {
+    if !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_./:=,+@%^".contains(&b))
+    {
         s.to_string()
     } else {
         format!("'{}'", s.replace('\'', "'\\''"))
@@ -685,35 +817,64 @@ mod tests {
     fn lilo_passwords_are_never_shown() {
         use crate::sys::FakeRunner;
         let l = include_str!("../../tests/corpus/slackware15/src.json");
-        let l = l.replacen("\"disk=/dev/vda\",", "\"password=s3cret\", \"disk=/dev/vda\",", 1).replacen("\"label=Linux\",", "\"label=Linux\", \"password=my img pass\",", 1);
+        let l = l
+            .replacen(
+                "\"disk=/dev/vda\",",
+                "\"password=s3cret\", \"disk=/dev/vda\",",
+                1,
+            )
+            .replacen(
+                "\"label=Linux\",",
+                "\"label=Linux\", \"password=my img pass\",",
+                1,
+            );
         assert!(l.contains("s3cret") && l.contains("my img pass"));
         let t = crate::testutil::Tree::new("load-lilo-password");
-        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
-        t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", "41943040\n");
+        t.file("/proc/self/mountinfo", "")
+            .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        t.disk("vdb", "253:16", &[], 512)
+            .file("/sys/block/vdb/size", "41943040\n");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         let run_of = |a: &[&str]| {
             let mut v = vec!["layout.json".to_string(), "--map".into(), "vda=vdb".into()];
             v.extend(a.iter().map(|x| x.to_string()));
-            let Ok(Parsed::Run(o)) = parse_args(&v) else { panic!("{v:?}") };
+            let Ok(Parsed::Run(o)) = parse_args(&v) else {
+                panic!("{v:?}")
+            };
             run(&o, &l, &s)
         };
         let shown = |what: &str, out: &str, err: &str| {
             for gone in ["s3cret", "img pass"] {
-                assert!(!out.contains(gone) && !err.contains(gone), "{what}: {gone} in:\n{out}{err}");
+                assert!(
+                    !out.contains(gone) && !err.contains(gone),
+                    "{what}: {gone} in:\n{out}{err}"
+                );
             }
         };
         let (_, out, err) = run_of(&[]);
         shown("the plan", &out, &err);
-        assert!(out.contains("lilo.conf.bko-holt <<'EOF'\n") && out.contains("password=\"<password>\"\n") && out.contains("  password=\"<password>\"\n"), "{out}{err}");
+        assert!(
+            out.contains("lilo.conf.bko-holt <<'EOF'\n")
+                && out.contains("password=\"<password>\"\n")
+                && out.contains("  password=\"<password>\"\n"),
+            "{out}{err}"
+        );
         // The dry run of the boot stage, the restored tree there and the
         // rescue's tools.
         t.file("/mnt/bko-target/etc/fstab", "");
-        for p in ["wipefs", "dd", "sh", "udevadm", "sfdisk", "mkswap", "mke2fs", "tune2fs", "mkdir", "mount", "chroot", "rm", "cp", "umount", "bash"] {
+        for p in [
+            "wipefs", "dd", "sh", "udevadm", "sfdisk", "mkswap", "mke2fs", "tune2fs", "mkdir",
+            "mount", "chroot", "rm", "cp", "umount", "bash",
+        ] {
             t.file(&format!("/usr/sbin/{p}"), "");
         }
         let (_, out, err) = run_of(&["--only", "boot"]);
         shown("the dry run", &out, &err);
-        assert!(out.contains("lilo.conf.bko-holt <<'EOF'\n") && out.contains("password=\"<password>\"\n"), "{out}{err}");
+        assert!(
+            out.contains("lilo.conf.bko-holt <<'EOF'\n")
+                && out.contains("password=\"<password>\"\n"),
+            "{out}{err}"
+        );
         let (_, out, err) = run_of(&["--json"]);
         shown("the plan document", &out, &err);
     }
@@ -724,16 +885,34 @@ mod tests {
     #[test]
     fn which_runs_record_themselves() {
         let rec = |a: &[&str]| records_itself(&args(a));
-        for a in [&["l.json"][..], &["l.json", "--only", "status"], &["l.json", "--through", "close"], &["l.json", "--through", "format", "--commit"], &["l.json", "--bogus"]] {
+        for a in [
+            &["l.json"][..],
+            &["l.json", "--only", "status"],
+            &["l.json", "--through", "close"],
+            &["l.json", "--through", "format", "--commit"],
+            &["l.json", "--bogus"],
+        ] {
             assert!(rec(a), "text mode: {a:?}");
         }
         assert!(!rec(&["l.json", "--help"]) && !rec(&["--json", "-h"]));
         assert!(!rec(&["l.json", "--json"]), "a --json plan");
-        assert!(!rec(&["l.json", "--only", "status", "--json"]), "a --json status");
-        assert!(!rec(&["l.json", "--through", "plan", "--json"]), "--through plan is a plan");
-        assert!(rec(&["l.json", "--through", "close", "--json"]), "a --json writing run, --commit or not");
+        assert!(
+            !rec(&["l.json", "--only", "status", "--json"]),
+            "a --json status"
+        );
+        assert!(
+            !rec(&["l.json", "--through", "plan", "--json"]),
+            "--through plan is a plan"
+        );
+        assert!(
+            rec(&["l.json", "--through", "close", "--json"]),
+            "a --json writing run, --commit or not"
+        );
         assert!(rec(&["l.json", "--only", "boot", "--json", "--commit"]));
-        assert!(rec(&["l.json", "--json", "--frob"]), "arguments that don't parse: no plan or status ran");
+        assert!(
+            rec(&["l.json", "--json", "--frob"]),
+            "arguments that don't parse: no plan or status ran"
+        );
         // `--json` as --snapshot's value is a text run's.
         assert!(rec(&["l.json", "--repo", "/r", "--snapshot", "--json"]));
     }
@@ -757,28 +936,76 @@ mod tests {
         assert_eq!(o.target, DEFAULT_TARGET);
         assert!(!o.commit && !o.new_uuids && !o.no_nvram && !o.removable);
         assert_eq!(o.stages(), vec![Stage::Plan]);
-        assert_eq!(opts(&["l", "--through", "mount"]).stages(), vec![Stage::Partition, Stage::Assemble, Stage::Format, Stage::Mount]);
-        assert_eq!(opts(&["l", "--through", "close", "--repo", "/r"]).stages(), Stage::WRITING.to_vec());
+        assert_eq!(
+            opts(&["l", "--through", "mount"]).stages(),
+            vec![
+                Stage::Partition,
+                Stage::Assemble,
+                Stage::Format,
+                Stage::Mount
+            ]
+        );
+        assert_eq!(
+            opts(&["l", "--through", "close", "--repo", "/r"]).stages(),
+            Stage::WRITING.to_vec()
+        );
         assert_eq!(opts(&["l", "--through", "mount"]).repo, None);
         assert_eq!(opts(&["l", "--only", "boot"]).stages(), vec![Stage::Boot]);
-        assert_eq!(opts(&["l", "--only", "status"]).stages(), vec![Stage::Status]);
-        assert_eq!(opts(&["l", "--through", "plan"]).stages(), vec![Stage::Plan]);
+        assert_eq!(
+            opts(&["l", "--only", "status"]).stages(),
+            vec![Stage::Status]
+        );
+        assert_eq!(
+            opts(&["l", "--through", "plan"]).stages(),
+            vec![Stage::Plan]
+        );
     }
 
     #[test]
     fn every_flag() {
         let o = opts(&[
-            "--map", "vda=/dev/sdb", "x.json", "--map", "vdb=/dev/disk/by-id/ata-X", "--erase", "/dev/sdb", "--target", "/mnt/t/", "--new-uuids",
-            "--fit-largest", "15%",
-            "--key-file", "root_crypt=/tmp/k", "--no-nvram", "--removable", "--commit", "--only", "partition", "--sysroot", "/tmp/fake",
-            "--repo", "sftp:nas:/bko", "--password-file", "/run/pw", "--snapshot", "1a2b3c", "--archiver", "/usr/local/bin/rustic-bko",
+            "--map",
+            "vda=/dev/sdb",
+            "x.json",
+            "--map",
+            "vdb=/dev/disk/by-id/ata-X",
+            "--erase",
+            "/dev/sdb",
+            "--target",
+            "/mnt/t/",
+            "--new-uuids",
+            "--fit-largest",
+            "15%",
+            "--key-file",
+            "root_crypt=/tmp/k",
+            "--no-nvram",
+            "--removable",
+            "--commit",
+            "--only",
+            "partition",
+            "--sysroot",
+            "/tmp/fake",
+            "--repo",
+            "sftp:nas:/bko",
+            "--password-file",
+            "/run/pw",
+            "--snapshot",
+            "1a2b3c",
+            "--archiver",
+            "/usr/local/bin/rustic-bko",
         ]);
         assert_eq!(o.repo.as_deref(), Some("sftp:nas:/bko"));
         assert_eq!(o.password_file.as_deref(), Some("/run/pw"));
         assert_eq!(o.snapshot, "1a2b3c");
         assert_eq!(o.archiver, "/usr/local/bin/rustic-bko");
         assert_eq!(o.layout, "x.json");
-        assert_eq!(o.maps, vec![("vda".to_string(), "/dev/sdb".to_string()), ("vdb".to_string(), "/dev/disk/by-id/ata-X".to_string())]);
+        assert_eq!(
+            o.maps,
+            vec![
+                ("vda".to_string(), "/dev/sdb".to_string()),
+                ("vdb".to_string(), "/dev/disk/by-id/ata-X".to_string())
+            ]
+        );
         assert_eq!(o.erase, vec!["/dev/sdb".to_string()]);
         assert_eq!(o.target, "/mnt/t");
         assert!(o.new_uuids && o.no_nvram && o.removable && o.commit);
@@ -811,7 +1038,10 @@ mod tests {
         assert!(err(&["a", "--erase"]).contains("needs a value"));
         assert!(err(&["a", "--fit-largest"]).contains("needs a value"));
         for v in ["0", "51", "100", "lots", "", "5%%", "-5"] {
-            assert!(err(&["a", "--fit-largest", v]).contains("whole percentage, 1 to 50"), "{v:?}");
+            assert!(
+                err(&["a", "--fit-largest", v]).contains("whole percentage, 1 to 50"),
+                "{v:?}"
+            );
         }
         assert_eq!(parse_args(&args(&["--help"])).unwrap(), Parsed::Help);
     }
@@ -827,10 +1057,22 @@ mod tests {
         let o = opts(&["l", "--repo", "/r", "--snapshot", "--json"]);
         assert!(!o.json);
         assert_eq!(o.snapshot, "--json");
-        assert_eq!(jsonout::find_json_flag(&args(&["l", "--repo", "/r", "--snapshot", "--json"]), VALUE_FLAGS), None);
-        assert_eq!(parse_args(&args(&["l", "--json", "--help"])).unwrap(), Parsed::Help);
+        assert_eq!(
+            jsonout::find_json_flag(
+                &args(&["l", "--repo", "/r", "--snapshot", "--json"]),
+                VALUE_FLAGS
+            ),
+            None
+        );
+        assert_eq!(
+            parse_args(&args(&["l", "--json", "--help"])).unwrap(),
+            Parsed::Help
+        );
         // The help wherever it stands, a bad schema too.
-        assert_eq!(parse_args(&args(&["l", "--json=2", "--help"])).unwrap(), Parsed::Help);
+        assert_eq!(
+            parse_args(&args(&["l", "--json=2", "--help"])).unwrap(),
+            Parsed::Help
+        );
         assert!(err(&["l", "--json", "--json=2"]).contains("writes schema 1"));
     }
 
@@ -843,7 +1085,14 @@ mod tests {
             assert!(e.contains("needs a value"), "{f}: {e}");
         }
         // And none of the switches does.
-        for f in ["--commit", "--new-uuids", "--no-nvram", "--removable", "--new-machine", "--json"] {
+        for f in [
+            "--commit",
+            "--new-uuids",
+            "--no-nvram",
+            "--removable",
+            "--new-machine",
+            "--json",
+        ] {
             assert_eq!(opts(&[f, "l"]).layout, "l", "{f}");
         }
     }
@@ -861,7 +1110,13 @@ mod tests {
         assert_eq!(doc(&jout).get_str("code"), Some("layout_not_json"));
         assert_eq!(doc(&jout).get_str("text"), Some(err.trim_end()));
         let e = crate::json::parse("{not json").unwrap_err();
-        assert_eq!(err, format!("bko-holt load: l.json: not JSON ({} at byte {})\n", e.message, e.offset));
+        assert_eq!(
+            err,
+            format!(
+                "bko-holt load: l.json: not JSON ({} at byte {})\n",
+                e.message, e.offset
+            )
+        );
         let (code, out, _) = run(&opts(&["l.json", "--json"]), r#"{"format": "x"}"#, &s);
         assert_eq!(code, EXIT_UNSUPPORTED);
         assert_eq!(doc(&out).get_str("code"), Some("layout_refused"));
@@ -873,13 +1128,21 @@ mod tests {
     #[test]
     fn reformat_arguments() {
         let o = opts(&["l", "--reformat", "/=xfs", "--reformat", "/srv/=ext4"]);
-        assert_eq!(o.reformats, vec![("/".to_string(), "xfs".to_string()), ("/srv".to_string(), "ext4".to_string())]);
+        assert_eq!(
+            o.reformats,
+            vec![
+                ("/".to_string(), "xfs".to_string()),
+                ("/srv".to_string(), "ext4".to_string())
+            ]
+        );
         assert!(opts(&["l"]).reformats.is_empty());
         let err = |a: &[&str]| parse_args(&args(a)).unwrap_err();
         assert!(err(&["l", "--reformat", "root=xfs"]).contains("MOUNT is a mount point"));
         assert!(err(&["l", "--reformat", "/=zfs"]).contains("TYPE is one of ext4, xfs, btrfs"));
         assert!(err(&["l", "--reformat", "/="]).contains("NAME=VALUE"));
-        assert!(err(&["l", "--reformat", "/=xfs", "--reformat", "/=ext4"]).contains("/ is given twice"));
+        assert!(
+            err(&["l", "--reformat", "/=xfs", "--reformat", "/=ext4"]).contains("/ is given twice")
+        );
     }
 
     #[test]
@@ -888,10 +1151,17 @@ mod tests {
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         let layout = r#"{"format": "bko-holt", "schema": 1, "os": {"id": "debian", "version_id": "13"}, "storage": {"disks": []}}"#;
         // The same checks as plan's: this layout mounts no /.
-        let (code, out, err) = run(&opts(&["l.json", "--through", "mount", "--commit"]), layout, &s);
+        let (code, out, err) = run(
+            &opts(&["l.json", "--through", "mount", "--commit"]),
+            layout,
+            &s,
+        );
         assert_eq!(code, EXIT_PLAN_PROBLEMS);
         assert!(out.is_empty());
-        assert!(err.contains("nothing in fstab or the ZFS datasets mounts /"), "{err}");
+        assert!(
+            err.contains("nothing in fstab or the ZFS datasets mounts /"),
+            "{err}"
+        );
         assert!(err.contains("nothing was written"), "{err}");
         let (code, _, err) = run(&opts(&["l.json"]), "{not json", &s);
         assert_eq!(code, EXIT_UNSUPPORTED);
@@ -901,10 +1171,16 @@ mod tests {
     #[test]
     fn quoting() {
         assert_eq!(shell_quote("/dev/sda1"), "/dev/sda1");
-        assert_eq!(shell_quote("feature@encryption=enabled"), "feature@encryption=enabled");
+        assert_eq!(
+            shell_quote("feature@encryption=enabled"),
+            "feature@encryption=enabled"
+        );
         assert_eq!(shell_quote("EFI System"), "'EFI System'");
         assert_eq!(shell_quote("it's"), "'it'\\''s'");
         assert_eq!(shell_quote(""), "''");
-        assert_eq!(shell_quote("\\EFI\\DEBIAN\\SHIMX64.EFI"), "'\\EFI\\DEBIAN\\SHIMX64.EFI'");
+        assert_eq!(
+            shell_quote("\\EFI\\DEBIAN\\SHIMX64.EFI"),
+            "'\\EFI\\DEBIAN\\SHIMX64.EFI'"
+        );
     }
 }

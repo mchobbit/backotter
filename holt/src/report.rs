@@ -20,7 +20,9 @@ mod zfs;
 pub(crate) use btrfs::btrfs_allocation;
 use btrfs::btrfs_json;
 pub use btrfs::{btrfs_reachable_path, parse_btrfs_qgroups, parse_btrfs_subvol_line};
-pub use sources::{BackupSource, MountHint, backup_sources, not_backed_up, unmatched_fstab, zfs_mounted_twice};
+pub use sources::{
+    BackupSource, MountHint, backup_sources, not_backed_up, unmatched_fstab, zfs_mounted_twice,
+};
 use zfs::zfs_json;
 pub use zfs::{parse_zfs_get, parse_zpool_status_text, zfs_section, zfs_tools_json};
 
@@ -74,7 +76,11 @@ pub fn udev_decode(s: &str) -> String {
     let mut out = Vec::new();
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'\\' && b.get(i + 1) == Some(&b'x') && i + 4 <= b.len() && b[i + 2..i + 4].iter().all(u8::is_ascii_hexdigit) {
+        if b[i] == b'\\'
+            && b.get(i + 1) == Some(&b'x')
+            && i + 4 <= b.len()
+            && b[i + 2..i + 4].iter().all(u8::is_ascii_hexdigit)
+        {
             if let Ok(byte) = u8::from_str_radix(&s[i + 2..i + 4], 16) {
                 out.push(byte);
                 i += 4;
@@ -120,17 +126,32 @@ pub fn rfc3339(secs: u64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
 }
 
 fn examine(sys: &Sys, b: BlockDev) -> Dev {
-    let mut d = Dev { b, table: None, contents: vec![], boot_code: None, partition_boot_code: None, first_partition_lba: None, read_ok: false };
+    let mut d = Dev {
+        b,
+        table: None,
+        contents: vec![],
+        boot_code: None,
+        partition_boot_code: None,
+        first_partition_lba: None,
+        read_ok: false,
+    };
     // Removable-media drives: often empty (reads fail with ENXIO), and
     // never part of the system's layout.
     if matches!(d.b.kind, Kind::Rom | Kind::Floppy) {
         return d;
     }
-    let Some(src) = sys.open_dev(&d.b.dev_path()) else { return d };
+    let Some(src) = sys.open_dev(&d.b.dev_path()) else {
+        return d;
+    };
     d.read_ok = true;
     let whole = d.b.kind != Kind::Partition;
     if whole {
@@ -154,7 +175,9 @@ fn examine(sys: &Sys, b: BlockDev) -> Dev {
 }
 
 fn udev_content(u: &Udev) -> Value {
-    let Some(t) = u.get("ID_FS_TYPE") else { return Value::Null };
+    let Some(t) = u.get("ID_FS_TYPE") else {
+        return Value::Null;
+    };
     Obj::new()
         .set("type", t)
         .set("usage", u.get("ID_FS_USAGE"))
@@ -180,7 +203,9 @@ fn udev_partition(u: &Udev) -> Obj {
     o.put_some("type", u.get("ID_PART_ENTRY_TYPE"));
     if let Some(t) = u.get("ID_PART_ENTRY_TYPE") {
         let name = if let Some(hex) = t.strip_prefix("0x") {
-            u8::from_str_radix(hex, 16).ok().and_then(parttable::mbr_type_name)
+            u8::from_str_radix(hex, 16)
+                .ok()
+                .and_then(parttable::mbr_type_name)
         } else {
             parttable::gpt_type_name(t)
         };
@@ -210,30 +235,52 @@ impl Ctx<'_> {
     /// /dev/mapper/root is a block node of its own, not a link to ../dm-0,
     /// so following links never reaches the kernel's name.
     fn dm_named(&self, name: &str) -> Option<&Dev> {
-        self.devs.iter().find(|d| d.b.dm_name.as_deref() == Some(name))
+        self.devs
+            .iter()
+            .find(|d| d.b.dm_name.as_deref() == Some(name))
     }
     fn partition_uuid(&self, d: &Dev) -> Option<String> {
         if let (Some(parent), Some(n)) = (&d.b.parent, d.b.partition_number) {
             if let Some(t) = self.dev(parent).and_then(|p| p.table.as_ref()) {
-                return t.partition_json(n, 512).and_then(|o| o.build().get("uuid").and_then(Value::as_str).map(str::to_string));
+                return t.partition_json(n, 512).and_then(|o| {
+                    o.build()
+                        .get("uuid")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                });
             }
         }
         d.b.udev.get("ID_PART_ENTRY_UUID").map(str::to_string)
     }
     /// Whether `d` is a partition of the ESP's type (GPT's, or MBR's 0xef).
     fn is_esp_partition(&self, d: &Dev) -> bool {
-        d.b.parent.as_ref().and_then(|p| self.dev(p)).and_then(|p| p.table.as_ref()).is_some_and(|t| {
-            let n = d.b.partition_number.unwrap_or(0);
-            match t {
-                Table::Gpt { gpt, .. } => gpt.parts.iter().any(|p| p.number == n && p.type_guid == parttable::ESP),
-                Table::Mbr(mb) => mb.parts.iter().any(|p| p.number == n && p.ptype == 0xef),
-            }
-        }) || d.b.udev.get("ID_PART_ENTRY_TYPE").is_some_and(|t| t == parttable::ESP || t == "0xef")
+        d.b.parent
+            .as_ref()
+            .and_then(|p| self.dev(p))
+            .and_then(|p| p.table.as_ref())
+            .is_some_and(|t| {
+                let n = d.b.partition_number.unwrap_or(0);
+                match t {
+                    Table::Gpt { gpt, .. } => gpt
+                        .parts
+                        .iter()
+                        .any(|p| p.number == n && p.type_guid == parttable::ESP),
+                    Table::Mbr(mb) => mb.parts.iter().any(|p| p.number == n && p.ptype == 0xef),
+                }
+            })
+            || d.b
+                .udev
+                .get("ID_PART_ENTRY_TYPE")
+                .is_some_and(|t| t == parttable::ESP || t == "0xef")
     }
     fn partition_label(&self, d: &Dev) -> Option<String> {
         if let (Some(parent), Some(n)) = (&d.b.parent, d.b.partition_number) {
             if let Some(Table::Gpt { gpt, .. }) = self.dev(parent).and_then(|p| p.table.as_ref()) {
-                return gpt.parts.iter().find(|p| p.number == n).map(|p| p.name.clone());
+                return gpt
+                    .parts
+                    .iter()
+                    .find(|p| p.number == n)
+                    .map(|p| p.name.clone());
             }
         }
         d.b.udev.get("ID_PART_ENTRY_NAME").map(udev_decode)
@@ -248,16 +295,30 @@ impl Ctx<'_> {
         if path.starts_with("/dev/") {
             // Follow /dev/mapper/x, /dev/disk/by-*/x, /dev/vg/lv links.
             let canon = std::fs::canonicalize(sys.p(path)).ok();
-            let name = canon.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned());
+            let name = canon
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().into_owned());
             let name = name.unwrap_or_else(|| path.trim_start_matches("/dev/").to_string());
             let mapper = match &canon {
-                Some(c) => c.parent().and_then(|p| p.file_name()).is_some_and(|d| d == "mapper").then_some(name.as_str()),
+                Some(c) => c
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .is_some_and(|d| d == "mapper")
+                    .then_some(name.as_str()),
                 None => path.strip_prefix("/dev/mapper/"),
             };
-            return self.dev(&name).or_else(|| self.dm_named(mapper?)).map(|d| d.b.name.clone()).or_else(|| {
-                // A link udev knows of, though not on this root's /dev.
-                self.devs.iter().find(|d| d.b.udev.links.iter().any(|l| l == path)).map(|d| d.b.name.clone())
-            });
+            return self
+                .dev(&name)
+                .or_else(|| self.dm_named(mapper?))
+                .map(|d| d.b.name.clone())
+                .or_else(|| {
+                    // A link udev knows of, though not on this root's /dev.
+                    self.devs
+                        .iter()
+                        .find(|d| d.b.udev.links.iter().any(|l| l == path))
+                        .map(|d| d.b.name.clone())
+                });
         }
         let (key, val) = spec.split_once('=')?;
         let val = val.trim_matches('"');
@@ -269,15 +330,29 @@ impl Ctx<'_> {
         let pick = |want: &dyn Fn(&Dev) -> bool| {
             let first = self.devs.iter().find(|d| want(d));
             match first {
-                Some(f) if f.b.dm_uuid.as_deref().is_some_and(|u| u.starts_with("LVM-")) && !mounted(&f) => self.devs.iter().filter(|d| want(d)).find(mounted).or(first),
+                Some(f)
+                    if f.b
+                        .dm_uuid
+                        .as_deref()
+                        .is_some_and(|u| u.starts_with("LVM-"))
+                        && !mounted(&f) =>
+                {
+                    self.devs.iter().filter(|d| want(d)).find(mounted).or(first)
+                }
                 _ => first,
             }
         };
         let found = match key {
             "UUID" => pick(&|d: &Dev| d.fs_uuid().is_some_and(|u| u.eq_ignore_ascii_case(val))),
             "LABEL" => pick(&|d: &Dev| d.fs_label().as_deref() == Some(val)),
-            "PARTUUID" => self.devs.iter().find(|d| self.partition_uuid(d).is_some_and(|u| u.eq_ignore_ascii_case(val))),
-            "PARTLABEL" => self.devs.iter().find(|d| self.partition_label(d).as_deref() == Some(val)),
+            "PARTUUID" => self.devs.iter().find(|d| {
+                self.partition_uuid(d)
+                    .is_some_and(|u| u.eq_ignore_ascii_case(val))
+            }),
+            "PARTLABEL" => self
+                .devs
+                .iter()
+                .find(|d| self.partition_label(d).as_deref() == Some(val)),
             _ => None,
         };
         found.map(|d| d.b.name.clone())
@@ -287,26 +362,47 @@ impl Ctx<'_> {
         self.mounts
             .iter()
             .filter(|m| mounts::is_layout_mount(m))
-            .filter(|m| m.devno == d.b.devno || (m.source.starts_with("/dev/") && self.resolve(sys, &m.source).as_deref() == Some(d.b.name.as_str())))
+            .filter(|m| {
+                m.devno == d.b.devno
+                    || (m.source.starts_with("/dev/")
+                        && self.resolve(sys, &m.source).as_deref() == Some(d.b.name.as_str()))
+            })
             .collect()
     }
 }
 
 fn partition_json(ctx: &Ctx, sys: &Sys, disk: &Dev, p: &Dev) -> Value {
-    let mut o = Obj::new().set("name", p.b.name.as_str()).set("path", p.b.dev_path()).set("devno", p.b.devno.as_str());
+    let mut o = Obj::new()
+        .set("name", p.b.name.as_str())
+        .set("path", p.b.dev_path())
+        .set("devno", p.b.devno.as_str());
     let n = p.b.partition_number.unwrap_or(0);
-    let from_table = disk.table.as_ref().and_then(|t| t.partition_json(n, disk.ss()));
+    let from_table = disk
+        .table
+        .as_ref()
+        .and_then(|t| t.partition_json(n, disk.ss()));
     match from_table {
         Some(t) => {
-            let start = t.0.iter().find(|(k, _)| k == "start_bytes").and_then(|(_, v)| v.as_u64());
-            let size = t.0.iter().find(|(k, _)| k == "size_bytes").and_then(|(_, v)| v.as_u64());
+            let start =
+                t.0.iter()
+                    .find(|(k, _)| k == "start_bytes")
+                    .and_then(|(_, v)| v.as_u64());
+            let size =
+                t.0.iter()
+                    .find(|(k, _)| k == "size_bytes")
+                    .and_then(|(_, v)| v.as_u64());
             for (k, v) in t.0 {
                 o.put(&k, v);
             }
             let kstart = p.b.start_sectors.map(|s| s * 512);
             // The kernel's view of an extended partition is a 1 KiB stub.
-            let is_ext = o.0.iter().any(|(k, v)| k == "extended" && *v == Value::Bool(true));
-            o.put("matches_kernel", kstart == start && (is_ext || size == Some(p.b.size_bytes)));
+            let is_ext =
+                o.0.iter()
+                    .any(|(k, v)| k == "extended" && *v == Value::Bool(true));
+            o.put(
+                "matches_kernel",
+                kstart == start && (is_ext || size == Some(p.b.size_bytes)),
+            );
         }
         None => {
             o.put("number", n);
@@ -322,7 +418,11 @@ fn partition_json(ctx: &Ctx, sys: &Sys, disk: &Dev, p: &Dev) -> Value {
     o.put("content", content_json(p));
     o.put_some("boot_code", p.partition_boot_code);
     o.put("mounted_at", {
-        let mut t: Vec<String> = ctx.mounts_of(sys, p).iter().map(|m| m.target.clone()).collect();
+        let mut t: Vec<String> = ctx
+            .mounts_of(sys, p)
+            .iter()
+            .map(|m| m.target.clone())
+            .collect();
         t.sort();
         t
     });
@@ -359,7 +459,11 @@ fn whole_json(ctx: &Ctx, sys: &Sys, d: &Dev, src: Option<&dyn ByteSource>) -> Ob
     let table = match &d.table {
         Some(t) => t.header_json(d.ss(), total_sectors),
         None if !d.read_ok => match b.udev.get("ID_PART_TABLE_TYPE") {
-            Some(t) => Obj::new().set("type", t).set("uuid", b.udev.get("ID_PART_TABLE_UUID")).set("source", "udev").build(),
+            Some(t) => Obj::new()
+                .set("type", t)
+                .set("uuid", b.udev.get("ID_PART_TABLE_UUID"))
+                .set("source", "udev")
+                .build(),
             None => Value::Null,
         },
         None => Value::Null,
@@ -373,8 +477,18 @@ fn whole_json(ctx: &Ctx, sys: &Sys, d: &Dev, src: Option<&dyn ByteSource>) -> Ob
         .collect();
     if let Some(Table::Gpt { gpt, .. }) = &d.table {
         // Entries the kernel didn't create a device for.
-        let known: Vec<u32> = ctx.devs.iter().filter(|p| p.b.parent.as_deref() == Some(b.name.as_str())).filter_map(|p| p.b.partition_number).collect();
-        let missing: Vec<u32> = gpt.parts.iter().map(|p| p.number).filter(|n| !known.contains(n)).collect();
+        let known: Vec<u32> = ctx
+            .devs
+            .iter()
+            .filter(|p| p.b.parent.as_deref() == Some(b.name.as_str()))
+            .filter_map(|p| p.b.partition_number)
+            .collect();
+        let missing: Vec<u32> = gpt
+            .parts
+            .iter()
+            .map(|p| p.number)
+            .filter(|n| !known.contains(n))
+            .collect();
         if !missing.is_empty() {
             o.put("partitions_without_device", missing);
         }
@@ -385,7 +499,11 @@ fn whole_json(ctx: &Ctx, sys: &Sys, d: &Dev, src: Option<&dyn ByteSource>) -> Ob
     }
     o.put("content", content_json(d));
     o.put("mounted_at", {
-        let mut t: Vec<String> = ctx.mounts_of(sys, d).iter().map(|m| m.target.clone()).collect();
+        let mut t: Vec<String> = ctx
+            .mounts_of(sys, d)
+            .iter()
+            .map(|m| m.target.clone())
+            .collect();
         t.sort();
         t
     });
@@ -395,7 +513,10 @@ fn whole_json(ctx: &Ctx, sys: &Sys, d: &Dev, src: Option<&dyn ByteSource>) -> Ob
 fn dm_json(d: &Dev) -> Value {
     let uuid = d.b.dm_uuid.clone().unwrap_or_default();
     let name = d.b.dm_name.clone().unwrap_or_default();
-    let mut o = Obj::new().set("dm_name", name.as_str()).set("dm_uuid", uuid.as_str()).set("mapper_path", format!("/dev/mapper/{name}"));
+    let mut o = Obj::new()
+        .set("dm_name", name.as_str())
+        .set("dm_uuid", uuid.as_str())
+        .set("mapper_path", format!("/dev/mapper/{name}"));
     if let Some(rest) = uuid.strip_prefix("LVM-") {
         o.put("target", "lvm");
         if let Some((vg, lv)) = blockdev::split_lvm_dm_name(&name) {
@@ -405,10 +526,17 @@ fn dm_json(d: &Dev) -> Value {
         // `get`, not indexing: the uuid comes from sysfs through a lossy
         // UTF-8 read, so a cut can land inside a multi-byte char.  A uuid
         // that doesn't split cleanly leaves the fields out.
-        if let (true, Some(vg_uuid), Some(lv_uuid)) = (rest.len() >= 64, rest.get(..32), rest.get(32..64)) {
+        if let (true, Some(vg_uuid), Some(lv_uuid)) =
+            (rest.len() >= 64, rest.get(..32), rest.get(32..64))
+        {
             o.put("vg_uuid", crate::probe::lvm::format_uuid(vg_uuid));
             o.put("lv_uuid", crate::probe::lvm::format_uuid(lv_uuid));
-            o.put_some("lv_layer", rest.get(64..).filter(|s| !s.is_empty()).map(|s| s.trim_start_matches('-').to_string()));
+            o.put_some(
+                "lv_layer",
+                rest.get(64..)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.trim_start_matches('-').to_string()),
+            );
         }
     } else if let Some(rest) = uuid.strip_prefix("CRYPT-") {
         o.put("target", "crypt");
@@ -434,7 +562,14 @@ fn dm_json(d: &Dev) -> Value {
 /// inside a multi-byte char (sysfs is input, read lossily).
 fn luks_uuid_from_dm(tail: &str) -> Option<String> {
     let h = tail.get(..32)?;
-    Some(format!("{}-{}-{}-{}-{}", h.get(0..8)?, h.get(8..12)?, h.get(12..16)?, h.get(16..20)?, h.get(20..32)?))
+    Some(format!(
+        "{}-{}-{}-{}-{}",
+        h.get(0..8)?,
+        h.get(8..12)?,
+        h.get(12..16)?,
+        h.get(16..20)?,
+        h.get(20..32)?
+    ))
 }
 
 fn md_json(sys: &Sys, d: &Dev) -> Value {
@@ -454,12 +589,21 @@ fn md_json(sys: &Sys, d: &Dev) -> Value {
         .collect();
     Obj::new()
         .set("level", r("level"))
-        .set("raid_disks", r("raid_disks").and_then(|v| v.parse::<u32>().ok()))
+        .set(
+            "raid_disks",
+            r("raid_disks").and_then(|v| v.parse::<u32>().ok()),
+        )
         .set("metadata_version", r("metadata_version"))
-        .set("chunk_size", r("chunk_size").and_then(|v| v.parse::<u64>().ok()))
+        .set(
+            "chunk_size",
+            r("chunk_size").and_then(|v| v.parse::<u64>().ok()),
+        )
         .set("layout", r("layout"))
         .set("array_state", r("array_state"))
-        .set("degraded", r("degraded").and_then(|v| v.parse::<u32>().ok()))
+        .set(
+            "degraded",
+            r("degraded").and_then(|v| v.parse::<u32>().ok()),
+        )
         .set("sync_action", r("sync_action"))
         .set("uuid", d.b.udev.get("MD_UUID"))
         .set("name", d.b.udev.get("MD_NAME"))
@@ -481,7 +625,11 @@ fn lvm_json(ctx: &Ctx) -> Value {
                 pv_dev.insert(u.clone(), d.b.name.clone());
             }
             if let Some(vg) = &c.extra {
-                let id = vg.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                let id = vg
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
                 let seq = vg.get("seqno").and_then(Value::as_u64).unwrap_or(0);
                 if vgs.get(&id).is_none_or(|(s, _)| *s < seq) {
                     vgs.insert(id, (seq, vg.clone()));
@@ -497,7 +645,11 @@ fn lvm_json(ctx: &Ctx) -> Value {
                 if k == "physical_volumes" {
                     if let Value::Arr(pvs) = v {
                         for pv in pvs.iter_mut() {
-                            let dev = pv.get("id").and_then(Value::as_str).and_then(|id| pv_dev.get(id)).cloned();
+                            let dev = pv
+                                .get("id")
+                                .and_then(Value::as_str)
+                                .and_then(|id| pv_dev.get(id))
+                                .cloned();
                             if let Value::Obj(p) = pv {
                                 p.push(("device".into(), Value::from(dev)));
                             }
@@ -505,14 +657,27 @@ fn lvm_json(ctx: &Ctx) -> Value {
                     }
                 }
             }
-            let vgid: String = o.iter().find(|(k, _)| k == "id").and_then(|(_, v)| v.as_str()).unwrap_or("").replace('-', "");
+            let vgid: String = o
+                .iter()
+                .find(|(k, _)| k == "id")
+                .and_then(|(_, v)| v.as_str())
+                .unwrap_or("")
+                .replace('-', "");
             for (k, v) in o.iter_mut() {
                 if k == "logical_volumes" {
                     if let Value::Arr(lvs) = v {
                         for lv in lvs.iter_mut() {
-                            let lvid = lv.get("id").and_then(Value::as_str).unwrap_or("").replace('-', "");
+                            let lvid = lv
+                                .get("id")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .replace('-', "");
                             let want = format!("LVM-{vgid}{lvid}");
-                            let dev = ctx.devs.iter().find(|d| d.b.dm_uuid.as_deref() == Some(want.as_str())).map(|d| d.b.name.clone());
+                            let dev = ctx
+                                .devs
+                                .iter()
+                                .find(|d| d.b.dm_uuid.as_deref() == Some(want.as_str()))
+                                .map(|d| d.b.name.clone());
                             if let Value::Obj(l) = lv {
                                 l.push(("active_device".into(), Value::from(dev)));
                             }
@@ -532,8 +697,15 @@ fn lvm_json(ctx: &Ctx) -> Value {
 fn xfs_external_logs(sys: &Sys, ctx: &Ctx) -> Value {
     let mut out = Vec::new();
     for d in ctx.devs {
-        let Some(c) = d.contents.first().filter(|c| c.kind == "xfs") else { continue };
-        let internal = c.details.0.iter().find(|(k, _)| k == "log_internal").and_then(|(_, v)| v.as_bool());
+        let Some(c) = d.contents.first().filter(|c| c.kind == "xfs") else {
+            continue;
+        };
+        let internal = c
+            .details
+            .0
+            .iter()
+            .find(|(k, _)| k == "log_internal")
+            .and_then(|(_, v)| v.as_bool());
         if internal != Some(false) {
             continue;
         }
@@ -541,7 +713,10 @@ fn xfs_external_logs(sys: &Sys, ctx: &Ctx) -> Value {
         let by_uuid = ctx.devs.iter().find(|l| {
             l.contents.iter().any(|lc| {
                 lc.kind == "xfs_external_log"
-                    && lc.details.0.iter().any(|(k, v)| k == "filesystem_uuid" && v.as_str().is_some_and(|u| u.eq_ignore_ascii_case(&uuid)))
+                    && lc.details.0.iter().any(|(k, v)| {
+                        k == "filesystem_uuid"
+                            && v.as_str().is_some_and(|u| u.eq_ignore_ascii_case(&uuid))
+                    })
             })
         });
         let option = ctx
@@ -555,7 +730,10 @@ fn xfs_external_logs(sys: &Sys, ctx: &Ctx) -> Value {
             Obj::new()
                 .set("filesystem_uuid", uuid.as_str())
                 .set("filesystem_device", d.b.name.as_str())
-                .set("log_device", by_uuid.map(|l| l.b.name.clone()).or(by_option))
+                .set(
+                    "log_device",
+                    by_uuid.map(|l| l.b.name.clone()).or(by_option),
+                )
                 .set("logdev_option", option)
                 .build(),
         );
@@ -568,7 +746,11 @@ fn xfs_external_logs(sys: &Sys, ctx: &Ctx) -> Value {
 /// partition 2), as (partition, disk, volume ID, label), disk by disk.
 fn truenas_esps(ctx: &Ctx) -> Vec<(String, String, Option<String>, Option<String>)> {
     let mut disks: Vec<String> = Vec::new();
-    for d in ctx.devs.iter().filter(|d| d.b.kind == Kind::Partition && d.fs_type().as_deref() == Some("zfs_member") && d.fs_label().as_deref() == Some(crate::zfs_be::TRUENAS_POOL)) {
+    for d in ctx.devs.iter().filter(|d| {
+        d.b.kind == Kind::Partition
+            && d.fs_type().as_deref() == Some("zfs_member")
+            && d.fs_label().as_deref() == Some(crate::zfs_be::TRUENAS_POOL)
+    }) {
         if let Some(p) = &d.b.parent {
             if !disks.contains(p) {
                 disks.push(p.clone());
@@ -579,12 +761,19 @@ fn truenas_esps(ctx: &Ctx) -> Vec<(String, String, Option<String>, Option<String
     let mut out = Vec::new();
     for disk in &disks {
         let table = ctx.dev(disk).and_then(|p| p.table.as_ref());
-        let mut parts: Vec<&Dev> = ctx.devs.iter().filter(|p| p.b.parent.as_deref() == Some(disk.as_str()) && p.b.kind == Kind::Partition).collect();
+        let mut parts: Vec<&Dev> = ctx
+            .devs
+            .iter()
+            .filter(|p| p.b.parent.as_deref() == Some(disk.as_str()) && p.b.kind == Kind::Partition)
+            .collect();
         parts.sort_by_key(|p| p.b.partition_number.unwrap_or(0));
         for p in parts {
             let n = p.b.partition_number.unwrap_or(0);
             let esp = match table {
-                Some(Table::Gpt { gpt, .. }) => gpt.parts.iter().any(|x| x.number == n && x.type_guid == parttable::ESP),
+                Some(Table::Gpt { gpt, .. }) => gpt
+                    .parts
+                    .iter()
+                    .any(|x| x.number == n && x.type_guid == parttable::ESP),
                 _ => p.b.udev.get("ID_PART_ENTRY_TYPE") == Some(parttable::ESP),
             };
             if esp {
@@ -599,7 +788,12 @@ fn truenas_esps(ctx: &Ctx) -> Vec<(String, String, Option<String>, Option<String
 /// device, values hold what sits on it.
 fn topology(ctx: &Ctx, sys: &Sys) -> Value {
     fn describe(ctx: &Ctx, sys: &Sys, d: &Dev) -> String {
-        let mut s = format!("{} ({}, {}", d.b.name, d.b.kind.name(), human(d.b.size_bytes));
+        let mut s = format!(
+            "{} ({}, {}",
+            d.b.name,
+            d.b.kind.name(),
+            human(d.b.size_bytes)
+        );
         if let Some(t) = &d.table {
             s.push_str(match t {
                 Table::Gpt { .. } => ", gpt",
@@ -616,7 +810,11 @@ fn topology(ctx: &Ctx, sys: &Sys) -> Value {
                 s.push_str(&format!(" \"{l}\""));
             }
         }
-        let m: Vec<String> = ctx.mounts_of(sys, d).iter().map(|m| m.target.clone()).collect();
+        let m: Vec<String> = ctx
+            .mounts_of(sys, d)
+            .iter()
+            .map(|m| m.target.clone())
+            .collect();
         if !m.is_empty() {
             s.push_str(&format!(" on {}", m.join(", ")));
         }
@@ -627,7 +825,11 @@ fn topology(ctx: &Ctx, sys: &Sys) -> Value {
         if depth > 16 {
             return o.build();
         }
-        let mut kids: Vec<&Dev> = ctx.devs.iter().filter(|p| p.b.parent.as_deref() == Some(d.b.name.as_str())).collect();
+        let mut kids: Vec<&Dev> = ctx
+            .devs
+            .iter()
+            .filter(|p| p.b.parent.as_deref() == Some(d.b.name.as_str()))
+            .collect();
         kids.extend(d.b.holders.iter().filter_map(|h| ctx.dev(h)));
         for k in kids {
             o.put(&describe(ctx, sys, k), node(ctx, sys, k, depth + 1));
@@ -635,7 +837,13 @@ fn topology(ctx: &Ctx, sys: &Sys) -> Value {
         o.build()
     }
     let mut o = Obj::new();
-    for d in ctx.devs.iter().filter(|d| d.b.slaves.is_empty() && !matches!(d.b.kind, Kind::Partition | Kind::Zram | Kind::Rom | Kind::Floppy)) {
+    for d in ctx.devs.iter().filter(|d| {
+        d.b.slaves.is_empty()
+            && !matches!(
+                d.b.kind,
+                Kind::Partition | Kind::Zram | Kind::Rom | Kind::Floppy
+            )
+    }) {
         o.put(&describe(ctx, sys, d), node(ctx, sys, d, 0));
     }
     o.build()
@@ -660,7 +868,11 @@ fn host_json(sys: &Sys) -> Value {
                 .set("product_uuid", dmi("product_uuid"))
                 .set("chassis_type", dmi("chassis_type")),
         )
-        .set("virtualization", sys.run("systemd-detect-virt", &[]).map(|s| s.trim().to_string()))
+        .set(
+            "virtualization",
+            sys.run("systemd-detect-virt", &[])
+                .map(|s| s.trim().to_string()),
+        )
         .build()
 }
 
@@ -671,16 +883,28 @@ fn is_whole_disk(b: &blockdev::BlockDev) -> bool {
 /// The pool of a ZFS volume, by udev's /dev/zvol/POOL/... link (load finds
 /// zvols the same way: commands.rs zvols_of); None for any other device.
 fn zvol_pool(b: &blockdev::BlockDev) -> Option<String> {
-    b.udev.links.iter().find_map(|l| l.strip_prefix("/dev/zvol/")?.split('/').next().filter(|p| !p.is_empty()).map(str::to_string))
+    b.udev.links.iter().find_map(|l| {
+        l.strip_prefix("/dev/zvol/")?
+            .split('/')
+            .next()
+            .filter(|p| !p.is_empty())
+            .map(str::to_string)
+    })
 }
 
 /// The pool a ZFS vdev belongs to: its label's, or udev's when the device
 /// couldn't be read.
 fn member_pool(d: &Dev) -> Option<String> {
     if d.read_ok {
-        return d.contents.iter().filter(|c| c.kind == "zfs_member").find_map(|c| c.extra.as_ref()?.get("name")?.as_str().map(str::to_string));
+        return d
+            .contents
+            .iter()
+            .filter(|c| c.kind == "zfs_member")
+            .find_map(|c| c.extra.as_ref()?.get("name")?.as_str().map(str::to_string));
     }
-    (d.b.udev.get("ID_FS_TYPE") == Some("zfs_member")).then(|| d.b.udev.get("ID_FS_LABEL").map(str::to_string)).flatten()
+    (d.b.udev.get("ID_FS_TYPE") == Some("zfs_member"))
+        .then(|| d.b.udev.get("ID_FS_LABEL").map(str::to_string))
+        .flatten()
 }
 
 /// The first of `only` that isn't a whole disk here.
@@ -689,7 +913,9 @@ pub fn unknown_disk(sys: &Sys, only: &[String]) -> Option<String> {
         return None;
     }
     let found = blockdev::scan(sys);
-    only.iter().find(|n| !found.iter().any(|b| is_whole_disk(b) && b.name == **n)).cloned()
+    only.iter()
+        .find(|n| !found.iter().any(|b| is_whole_disk(b) && b.name == **n))
+        .cloned()
 }
 
 /// Solus's ESP (docs/design/solus.md, decision 3): clr-boot-manager mounts
@@ -702,19 +928,39 @@ pub fn unknown_disk(sys: &Sys, only: &[String]) -> Option<String> {
 /// type on the root file system's disk (device null if none is).  dump
 /// refuses such a report (refusal): the backup would have none of the
 /// kernels, the loader or its entries.
-fn cbm_esps(mut boot: Value, ctx: &Ctx, sys: &Sys, packages: &[crate::boot::Package], fstab: &[(&mounts::FstabEntry, Option<String>)]) -> Value {
+fn cbm_esps(
+    mut boot: Value,
+    ctx: &Ctx,
+    sys: &Sys,
+    packages: &[crate::boot::Package],
+    fstab: &[(&mounts::FstabEntry, Option<String>)],
+) -> Value {
     if !crate::boot::has_package(packages, crate::boot::CBM) {
         return boot;
     }
     let unmounted = (!ctx.mounts.iter().any(|m| m.target == "/boot")).then(|| {
-        let partuuid = boot.at(&["efi", "loader_interface", "loader_device_partuuid"]).and_then(Value::as_str).map(str::to_string);
-        let by_uuid = partuuid.and_then(|u| ctx.resolve(sys, &format!("PARTUUID={u}")).map(|d| (d, format!("LoaderDevicePartUUID ({u})"))));
-        let by_label = || ctx.resolve(sys, "PARTLABEL=ESP").map(|d| (d, "its partition name, ESP".to_string()));
+        let partuuid = boot
+            .at(&["efi", "loader_interface", "loader_device_partuuid"])
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let by_uuid = partuuid.and_then(|u| {
+            ctx.resolve(sys, &format!("PARTUUID={u}"))
+                .map(|d| (d, format!("LoaderDevicePartUUID ({u})")))
+        });
+        let by_label = || {
+            ctx.resolve(sys, "PARTLABEL=ESP")
+                .map(|d| (d, "its partition name, ESP".to_string()))
+        };
         let by_type = || {
             let root = ctx.mounts.iter().rev().find(|m| m.target == "/")?;
             let disk = ctx.by_devno(&root.devno)?.b.parent.clone()?;
-            let d = ctx.devs.iter().find(|d| d.b.parent.as_deref() == Some(disk.as_str()) && ctx.is_esp_partition(d))?;
-            Some((d.b.name.clone(), format!("the ESP type, on the root file system's disk {disk}")))
+            let d = ctx.devs.iter().find(|d| {
+                d.b.parent.as_deref() == Some(disk.as_str()) && ctx.is_esp_partition(d)
+            })?;
+            Some((
+                d.b.name.clone(),
+                format!("the ESP type, on the root file system's disk {disk}"),
+            ))
         };
         by_uuid.or_else(by_label).or_else(by_type)
     });
@@ -724,8 +970,14 @@ fn cbm_esps(mut boot: Value, ctx: &Ctx, sys: &Sys, packages: &[crate::boot::Pack
         .into_iter()
         .flatten()
         .map(|e| {
-            let (dev, at) = (e.get("device").and_then(Value::as_str), e.get("mounted_at").and_then(Value::as_str));
-            fstab.iter().any(|(f, r)| f.vfstype != "swap" && (dev.is_some() && r.as_deref() == dev || at == Some(f.file.as_str())))
+            let (dev, at) = (
+                e.get("device").and_then(Value::as_str),
+                e.get("mounted_at").and_then(Value::as_str),
+            );
+            fstab.iter().any(|(f, r)| {
+                f.vfstype != "swap"
+                    && (dev.is_some() && r.as_deref() == dev || at == Some(f.file.as_str()))
+            })
         })
         .collect();
     if let Value::Obj(o) = &mut boot {
@@ -740,7 +992,10 @@ fn cbm_esps(mut boot: Value, ctx: &Ctx, sys: &Sys, packages: &[crate::boot::Pack
         }
         if let Some(found) = unmounted {
             let (dev, how) = found.map_or((None, None), |(d, h)| (Some(d), Some(h)));
-            o.push(("cbm_esp_unmounted".into(), Obj::new().set("device", dev).set("found_by", how).build()));
+            o.push((
+                "cbm_esp_unmounted".into(),
+                Obj::new().set("device", dev).set("found_by", how).build(),
+            ));
         }
     }
     boot
@@ -754,7 +1009,9 @@ pub fn refusal(v: &Value) -> Option<String> {
         Some(d) => format!("`mount /dev/{d} /boot`"),
         None => "mount the ESP at /boot".to_string(),
     };
-    Some(format!("Solus keeps its ESP out of fstab, and nothing is mounted at /boot: run `clr-boot-manager mount-boot` (or {mount}) and dump again"))
+    Some(format!(
+        "Solus keeps its ESP out of fstab, and nothing is mounted at /boot: run `clr-boot-manager mount-boot` (or {mount}) and dump again"
+    ))
 }
 
 /// Every block device, examined, in the kernel's order: less the whole
@@ -769,20 +1026,44 @@ fn devices(sys: &Sys, only: &[String]) -> Vec<Dev> {
     // which pools those are (only_disk_zvols).
     let mut zvols: Vec<BlockDev> = Vec::new();
     if !only.is_empty() {
-        let left_out: Vec<String> = scanned.iter().filter(|b| is_whole_disk(b) && !only.contains(&b.name)).map(|b| b.name.clone()).collect();
-        let (kept, out): (Vec<BlockDev>, Vec<BlockDev>) =
-            scanned.into_iter().partition(|b| !left_out.contains(&b.name) && !b.parent.as_ref().is_some_and(|p| left_out.contains(p)));
+        let left_out: Vec<String> = scanned
+            .iter()
+            .filter(|b| is_whole_disk(b) && !only.contains(&b.name))
+            .map(|b| b.name.clone())
+            .collect();
+        let (kept, out): (Vec<BlockDev>, Vec<BlockDev>) = scanned.into_iter().partition(|b| {
+            !left_out.contains(&b.name) && !b.parent.as_ref().is_some_and(|p| left_out.contains(p))
+        });
         scanned = kept;
-        zvols = out.into_iter().filter(|b| zvol_pool(b).is_some() || b.parent.is_some()).collect();
+        zvols = out
+            .into_iter()
+            .filter(|b| zvol_pool(b).is_some() || b.parent.is_some())
+            .collect();
     }
     let mut devs: Vec<Dev> = scanned.into_iter().map(|b| examine(sys, b)).collect();
     if !zvols.is_empty() {
         let pools: Vec<String> = devs.iter().filter_map(member_pool).collect();
-        let keep: Vec<String> = zvols.iter().filter(|b| b.parent.is_none() && zvol_pool(b).is_some_and(|p| pools.contains(&p))).map(|b| b.name.clone()).collect();
+        let keep: Vec<String> = zvols
+            .iter()
+            .filter(|b| b.parent.is_none() && zvol_pool(b).is_some_and(|p| pools.contains(&p)))
+            .map(|b| b.name.clone())
+            .collect();
         let order: Vec<String> = blockdev::scan(sys).into_iter().map(|b| b.name).collect();
-        devs.extend(zvols.into_iter().filter(|b| keep.contains(&b.name) || b.parent.as_ref().is_some_and(|p| keep.contains(p))).map(|b| examine(sys, b)));
+        devs.extend(
+            zvols
+                .into_iter()
+                .filter(|b| {
+                    keep.contains(&b.name) || b.parent.as_ref().is_some_and(|p| keep.contains(p))
+                })
+                .map(|b| examine(sys, b)),
+        );
         // In the kernel's order, as without --only-disk.
-        devs.sort_by_key(|d| order.iter().position(|n| *n == d.b.name).unwrap_or(usize::MAX));
+        devs.sort_by_key(|d| {
+            order
+                .iter()
+                .position(|n| *n == d.b.name)
+                .unwrap_or(usize::MAX)
+        });
     }
     devs
 }
@@ -800,7 +1081,14 @@ fn swaps_json(sys: &Sys, ctx: &Ctx) -> Vec<Value> {
                 .set("size_bytes", s.size_kib * 1024)
                 .set("used_bytes", s.used_kib * 1024)
                 .set("priority", s.priority)
-                .set("device", if s.kind == "partition" { ctx.resolve(sys, &s.file) } else { None })
+                .set(
+                    "device",
+                    if s.kind == "partition" {
+                        ctx.resolve(sys, &s.file)
+                    } else {
+                        None
+                    },
+                )
                 .build()
         })
         .collect()
@@ -815,23 +1103,38 @@ fn mounted_esps(ctx: &Ctx) -> Vec<(String, String)> {
         .filter_map(|m| {
             let name = ctx.by_devno(&m.devno).map(|d| d.b.name.clone())?;
             let d = ctx.dev(&name)?;
-            (ctx.is_esp_partition(d) || matches!(m.target.as_str(), "/boot/efi" | "/efi")).then(|| (name, m.target.clone()))
+            (ctx.is_esp_partition(d) || matches!(m.target.as_str(), "/boot/efi" | "/efi"))
+                .then(|| (name, m.target.clone()))
         })
         .collect()
 }
 
 /// The dump's os: os-release's, with the product Proxmox VE's packages,
 /// TrueNAS (TRUENAS: it was detected) or Qubes name, the later winning.
-fn os_json(sys: &Sys, os: Option<&OsRelease>, packages: &[crate::boot::Package], truenas: Option<&crate::truenas::TrueNas>) -> Value {
+fn os_json(
+    sys: &Sys,
+    os: Option<&OsRelease>,
+    packages: &[crate::boot::Package],
+    truenas: Option<&crate::truenas::TrueNas>,
+) -> Value {
     let mut os_json = crate::osrel::to_json(sys, os);
     if let (Some(p), Value::Obj(o)) = (crate::boot::proxmox_product(packages), &mut os_json) {
         o.push(("product".into(), Value::from(p)));
     }
-    if let (Some(p), Value::Obj(o)) = (truenas.and_then(|_| crate::truenas::product(sys)), &mut os_json) {
+    if let (Some(p), Value::Obj(o)) = (
+        truenas.and_then(|_| crate::truenas::product(sys)),
+        &mut os_json,
+    ) {
         o.retain(|(k, _)| k != "product");
         o.push(("product".into(), Value::from(p)));
     }
-    if let (Some(p), Value::Obj(o)) = (crate::qubes::product(os.and_then(|o| o.get("ID")), os.and_then(|o| o.get("VERSION_ID"))), &mut os_json) {
+    if let (Some(p), Value::Obj(o)) = (
+        crate::qubes::product(
+            os.and_then(|o| o.get("ID")),
+            os.and_then(|o| o.get("VERSION_ID")),
+        ),
+        &mut os_json,
+    ) {
         o.retain(|(k, _)| k != "product");
         o.push(("product".into(), Value::from(p)));
     }
@@ -846,12 +1149,24 @@ pub fn build(sys: &Sys, os: Option<&OsRelease>, generated: &str) -> Value {
 /// everything else (loop devices, md, device-mapper) stays.  An empty `only`
 /// leaves nothing out.
 pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[String]) -> Value {
-    build_with(sys, os, generated, only, &crate::luksheader::Options::default())
+    build_with(
+        sys,
+        os,
+        generated,
+        only,
+        &crate::luksheader::Options::default(),
+    )
 }
 
 /// `build_only`, keeping the LUKS2 headers LUKS asks for (dump's
 /// --keep-luks-header and --luks-header-dir: crate::luksheader).
-pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[String], luks: &crate::luksheader::Options) -> Value {
+pub fn build_with(
+    sys: &Sys,
+    os: Option<&OsRelease>,
+    generated: &str,
+    only: &[String],
+    luks: &crate::luksheader::Options,
+) -> Value {
     if !sys.privileged {
         sys.warn("not running as root: partition tables, superblocks and LVM/ZFS labels were not read; device contents come from udev's database");
     }
@@ -859,14 +1174,26 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     // the dump reads them (crate::qubes).
     let activated = crate::qubes::activate_skipped(sys);
     let devs = devices(sys, only);
-    let mountinfo = sys.read("/proc/self/mountinfo").map(|t| mounts::parse_mountinfo(&t)).unwrap_or_default();
-    let ctx = Ctx { devs: &devs, mounts: &mountinfo };
+    let mountinfo = sys
+        .read("/proc/self/mountinfo")
+        .map(|t| mounts::parse_mountinfo(&t))
+        .unwrap_or_default();
+    let ctx = Ctx {
+        devs: &devs,
+        mounts: &mountinfo,
+    };
 
-    let section = |kinds: &[Kind], extra: &dyn Fn(&Dev) -> Option<(&'static str, Value)>| -> Vec<Value> {
+    let section = |kinds: &[Kind],
+                   extra: &dyn Fn(&Dev) -> Option<(&'static str, Value)>|
+     -> Vec<Value> {
         devs.iter()
             .filter(|d| kinds.contains(&d.b.kind))
             .map(|d| {
-                let src = if d.read_ok { sys.open_dev(&d.b.dev_path()) } else { None };
+                let src = if d.read_ok {
+                    sys.open_dev(&d.b.dev_path())
+                } else {
+                    None
+                };
                 let mut o = whole_json(&ctx, sys, d, src.as_ref().map(|s| s as &dyn ByteSource));
                 if let Some((k, v)) = extra(d) {
                     o.put(k, v);
@@ -883,14 +1210,23 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     crate::qubes::thin_usage(sys, &mut lvm, &dm);
     let qubes = crate::qubes::read(sys, os.and_then(|o| o.get("ID")));
     let raw_sources = crate::qubes::raw_volumes(&mut dm, &lvm, qubes.as_ref());
-    let loops = section(&[Kind::Loop], &|d| Some(("backing_file", Value::from(d.b.loop_backing_file.clone()))));
+    let loops = section(&[Kind::Loop], &|d| {
+        Some(("backing_file", Value::from(d.b.loop_backing_file.clone())))
+    });
     let other = section(&[Kind::Zram, Kind::Rom, Kind::Floppy], &|_| None);
 
-    let layout_mounts: Vec<&Mount> = mountinfo.iter().filter(|m| mounts::is_layout_mount(m)).collect();
+    let layout_mounts: Vec<&Mount> = mountinfo
+        .iter()
+        .filter(|m| mounts::is_layout_mount(m))
+        .collect();
     if mountinfo.iter().any(mounts::is_pmxcfs) {
         sys.warn("/etc/pve is Proxmox VE's pmxcfs (FUSE), not a file system to back up: its data is /var/lib/pve-cluster/config.db, a file on /, and comes back with /");
     }
-    let mount_dev = |m: &Mount| ctx.by_devno(&m.devno).map(|d| d.b.name.clone()).or_else(|| ctx.resolve(sys, &m.source));
+    let mount_dev = |m: &Mount| {
+        ctx.by_devno(&m.devno)
+            .map(|d| d.b.name.clone())
+            .or_else(|| ctx.resolve(sys, &m.source))
+    };
     let mounts_json: Vec<Value> = layout_mounts
         .iter()
         .map(|m| {
@@ -903,14 +1239,21 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         .collect();
     let fstab_entries = sys.read("/etc/fstab").map(|t| mounts::parse_fstab(&t));
     let fstab: Value = match &fstab_entries {
-        Some(f) => Value::Arr(f.iter().map(|e| e.to_json(ctx.resolve(sys, &e.spec).as_deref())).collect()),
+        Some(f) => Value::Arr(
+            f.iter()
+                .map(|e| e.to_json(ctx.resolve(sys, &e.spec).as_deref()))
+                .collect(),
+        ),
         None => Value::Null,
     };
     // An ESP that fstab mounts but that isn't mounted (Gentoo's /efi, after
     // a boot that didn't mount it): the dump would have no ESP, a backup
     // none of its files, and load nowhere to put the loader.  Said now.
     for e in fstab_entries.iter().flatten() {
-        if e.vfstype == "vfat" && matches!(e.file.as_str(), "/efi" | "/boot/efi") && !mountinfo.iter().any(|m| m.target == e.file) {
+        if e.vfstype == "vfat"
+            && matches!(e.file.as_str(), "/efi" | "/boot/efi")
+            && !mountinfo.iter().any(|m| m.target == e.file)
+        {
             sys.warn(format!(
                 "fstab mounts a vfat {} ({}), but nothing is mounted there: this dump has no ESP and a backup would have none of its files; mount {} and dump again",
                 e.file, e.spec, e.file
@@ -918,7 +1261,11 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         }
     }
     let ostree = crate::ostree::detect(sys, &mountinfo);
-    let fstab_resolved: Vec<(&mounts::FstabEntry, Option<String>)> = fstab_entries.iter().flatten().map(|e| (e, ctx.resolve(sys, &e.spec))).collect();
+    let fstab_resolved: Vec<(&mounts::FstabEntry, Option<String>)> = fstab_entries
+        .iter()
+        .flatten()
+        .map(|e| (e, ctx.resolve(sys, &e.spec)))
+        .collect();
     let mut sources = backup_sources(&layout_mounts, &mount_dev, &fstab_resolved, ostree);
     zfs_mounted_twice(&mut sources);
     // ZFS boot environments the running system doesn't mount
@@ -926,12 +1273,16 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     // with the read-only mount a backup makes for it.  On Linux only.
     let zfs = zfs_json(sys, &ctx);
     let zfs_tools = zfs.get("tools").cloned().unwrap_or(Value::Null);
-    let (bes, be_sources, be_warnings) = crate::zfs_be::dump_sources(crate::other::Family::current(), &zfs_tools);
+    let (bes, be_sources, be_warnings) =
+        crate::zfs_be::dump_sources(crate::other::Family::current(), &zfs_tools);
     for w in be_warnings {
         sys.warn(w);
     }
     not_backed_up(&mut sources, !only.is_empty(), &zfs_tools, &fstab_resolved);
-    let be_sources: Vec<BackupSource> = be_sources.into_iter().filter(|x| !sources.iter().any(|s| s.path == x.path)).collect();
+    let be_sources: Vec<BackupSource> = be_sources
+        .into_iter()
+        .filter(|x| !sources.iter().any(|s| s.path == x.path))
+        .collect();
     if !be_sources.is_empty() {
         sources.extend(be_sources);
         sources.sort_by(|a, b| a.path.cmp(&b.path));
@@ -942,12 +1293,28 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     let abroot = crate::abroot::config(sys).map(|cfg| {
         let fss: Vec<crate::abroot::Fs> = devs
             .iter()
-            .filter(|d| !d.b.dm_uuid.as_deref().and_then(|u| u.strip_prefix("LVM-")).is_some_and(|r| r.len() > 64))
+            .filter(|d| {
+                !d.b.dm_uuid
+                    .as_deref()
+                    .and_then(|u| u.strip_prefix("LVM-"))
+                    .is_some_and(|r| r.len() > 64)
+            })
             .filter_map(|d| {
                 let label = d.fs_label()?;
-                let at: Vec<String> = ctx.mounts_of(sys, d).iter().map(|m| m.target.clone()).collect();
+                let at: Vec<String> = ctx
+                    .mounts_of(sys, d)
+                    .iter()
+                    .map(|m| m.target.clone())
+                    .collect();
                 let mounted_at = at.iter().find(|t| *t == "/").or(at.first()).cloned();
-                Some(crate::abroot::Fs { dev: d.b.name.clone(), label, uuid: d.fs_uuid(), fstype: d.fs_type(), dm_name: d.b.dm_name.clone(), mounted_at })
+                Some(crate::abroot::Fs {
+                    dev: d.b.name.clone(),
+                    label,
+                    uuid: d.fs_uuid(),
+                    fstype: d.fs_type(),
+                    dm_name: d.b.dm_name.clone(),
+                    mounted_at,
+                })
             })
             .collect();
         crate::abroot::read(sys, &cfg, &fss)
@@ -956,22 +1323,45 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         for s in sources.iter_mut().filter(|s| s.path == "/") {
             s.note = Some(a.root_note.clone());
         }
-        let more: Vec<BackupSource> = a.sources.iter().filter(|x| !sources.iter().any(|s| s.path == x.path)).cloned().collect();
+        let more: Vec<BackupSource> = a
+            .sources
+            .iter()
+            .filter(|x| !sources.iter().any(|s| s.path == x.path))
+            .cloned()
+            .collect();
         sources.extend(more);
         sources.sort_by(|a, b| a.path.cmp(&b.path));
     }
     // Ubuntu Core (crate::snapcore): the backup's tree is the gadget's four
     // partitions at snap-bootstrap's mount points, nothing else (not the
     // base snap at `/`, nor its bind mounts); its LUKS2 headers are kept.
-    let mut snapcore = (os.and_then(|o| o.get("ID")) == Some(crate::snapcore::OS_ID)).then(|| crate::snapcore::read(sys, &disks, &dm));
+    let mut snapcore = (os.and_then(|o| o.get("ID")) == Some(crate::snapcore::OS_ID))
+        .then(|| crate::snapcore::read(sys, &disks, &dm));
     if let Some(sc) = &snapcore {
         sources = sc.sources.clone();
     }
-    let luks_headers = crate::luksheader::capture(sys, &[&disks, &md, &dm], snapcore.as_ref().map(|sc| sc.luks.as_slice()).unwrap_or(&[]), luks);
+    let luks_headers = crate::luksheader::capture(
+        sys,
+        &[&disks, &md, &dm],
+        snapcore
+            .as_ref()
+            .map(|sc| sc.luks.as_slice())
+            .unwrap_or(&[]),
+        luks,
+    );
     if let Some(sc) = snapcore.as_mut() {
-        sc.require_headers(sys, &luks_headers, luks.dir.as_deref().unwrap_or(crate::luksheader::DEFAULT_DIR));
+        sc.require_headers(
+            sys,
+            &luks_headers,
+            luks.dir
+                .as_deref()
+                .unwrap_or(crate::luksheader::DEFAULT_DIR),
+        );
     }
-    let physical_root = sources.iter().find(|s| s.path == "/").and_then(|s| s.from.clone());
+    let physical_root = sources
+        .iter()
+        .find(|s| s.path == "/")
+        .and_then(|s| s.from.clone());
     if ostree {
         // The backup tree is fstab's only where every mount matched its entry
         // (docs/design/bazzite.md, "One tree convention"); say where not, now
@@ -993,20 +1383,41 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         }
     }
     let crypttab: Value = match sys.read("/etc/crypttab") {
-        Some(t) => Value::Arr(mounts::parse_crypttab(&t).iter().map(|e| e.to_json(ctx.resolve(sys, &e.device).as_deref())).collect()),
+        Some(t) => Value::Arr(
+            mounts::parse_crypttab(&t)
+                .iter()
+                .map(|e| e.to_json(ctx.resolve(sys, &e.device).as_deref()))
+                .collect(),
+        ),
         None => Value::Null,
     };
     let swaps = swaps_json(sys, &ctx);
-    let mdadm_conf = sys.read("/etc/mdadm/mdadm.conf").or_else(|| sys.read("/etc/mdadm.conf")).map(|t| mounts::parse_mdadm_conf(&t));
+    let mdadm_conf = sys
+        .read("/etc/mdadm/mdadm.conf")
+        .or_else(|| sys.read("/etc/mdadm.conf"))
+        .map(|t| mounts::parse_mdadm_conf(&t));
 
     let packages = crate::boot::installed_packages(sys);
     let partuuid_to_dev = |u: &str| ctx.resolve(sys, &format!("PARTUUID={u}"));
     let efi_boot = crate::efi::boot_json(sys, &partuuid_to_dev);
     let esps = mounted_esps(&ctx);
-    let mbr_codes: Vec<(String, String)> =
-        devs.iter().filter_map(|d| d.boot_code.as_ref().map(|bc| (d.b.name.clone(), bc.kind.to_string()))).collect();
+    let mbr_codes: Vec<(String, String)> = devs
+        .iter()
+        .filter_map(|d| {
+            d.boot_code
+                .as_ref()
+                .map(|bc| (d.b.name.clone(), bc.kind.to_string()))
+        })
+        .collect();
 
-    let btrfs = btrfs_json(sys, &ctx, abroot.as_ref().map(|a| a.btrfs_profiles.as_slice()).unwrap_or(&[]));
+    let btrfs = btrfs_json(
+        sys,
+        &ctx,
+        abroot
+            .as_ref()
+            .map(|a| a.btrfs_profiles.as_slice())
+            .unwrap_or(&[]),
+    );
     // transactional-update (crate::transactional): from fstab's / and the
     // btrfs it's on.
     let transactional = crate::transactional::read(sys, &fstab, &btrfs);
@@ -1029,7 +1440,11 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
             // where there's no raw volume.)
             if !raw_sources.is_empty() {
                 all.extend(raw_sources);
-                all.sort_by(|a, b| a.get("path").and_then(Value::as_str).cmp(&b.get("path").and_then(Value::as_str)));
+                all.sort_by(|a, b| {
+                    a.get("path")
+                        .and_then(Value::as_str)
+                        .cmp(&b.get("path").and_then(Value::as_str))
+                });
             }
             all
         })
@@ -1042,23 +1457,54 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         // load mounts the restored FAT filesystems with it
         // (load::commands::fat_time_option).
         .set_some("sys_tz_minuteswest", sys.sys_tz_minuteswest())
-        .set_some("luks_headers", (!luks_headers.is_empty()).then_some(luks_headers))
+        .set_some(
+            "luks_headers",
+            (!luks_headers.is_empty()).then_some(luks_headers),
+        )
         .set_some("qubes", qubes);
-    let ostree_json = ostree.then(|| crate::ostree::json(sys, physical_root.as_deref().unwrap_or(crate::ostree::SYSROOT)));
-    let proxmox = crate::boot::proxmox_boot_json(sys, &packages, &|spec: &str| ctx.resolve(sys, spec), &esps);
+    let ostree_json = ostree.then(|| {
+        crate::ostree::json(
+            sys,
+            physical_root.as_deref().unwrap_or(crate::ostree::SYSROOT),
+        )
+    });
+    let proxmox =
+        crate::boot::proxmox_boot_json(sys, &packages, &|spec: &str| ctx.resolve(sys, spec), &esps);
     // TrueNAS (crate::truenas): its BEs and the ESPs of its boot-pool
     // disks, which nothing mounts, each read as Proxmox's are.
     let truenas = crate::truenas::detect(sys).then(|| {
         let read_esp = |dev: &str| -> Option<Value> {
-            if !sys.privileged || dev.is_empty() || !dev.bytes().all(|b| b.is_ascii_alphanumeric()) {
+            if !sys.privileged || dev.is_empty() || !dev.bytes().all(|b| b.is_ascii_alphanumeric())
+            {
                 return None;
             }
-            crate::boot::read_unmounted_esp(sys, dev, dev, &format!("{}/esp-{dev}", crate::boot::UNMOUNTED_ESP_MOUNTS), "its files", |at| crate::boot::esp_inventory(sys, at))
+            crate::boot::read_unmounted_esp(
+                sys,
+                dev,
+                dev,
+                &format!("{}/esp-{dev}", crate::boot::UNMOUNTED_ESP_MOUNTS),
+                "its files",
+                |at| crate::boot::esp_inventory(sys, at),
+            )
         };
         crate::truenas::read(sys, &zfs_tools, &bes, truenas_esps(&ctx), &read_esp)
     });
-    let unmounted: Vec<(String, Value)> = truenas.iter().flat_map(|t| &t.esps).map(|e| (e.device.clone(), e.contents.clone())).collect();
-    let boot = crate::boot::boot_json(sys, &packages, &esps, efi_boot, mbr_codes, ostree_json, proxmox, &unmounted, &zfs_tools);
+    let unmounted: Vec<(String, Value)> = truenas
+        .iter()
+        .flat_map(|t| &t.esps)
+        .map(|e| (e.device.clone(), e.contents.clone()))
+        .collect();
+    let boot = crate::boot::boot_json(
+        sys,
+        &packages,
+        &esps,
+        efi_boot,
+        mbr_codes,
+        ostree_json,
+        proxmox,
+        &unmounted,
+        &zfs_tools,
+    );
     let os_json = os_json(sys, os, &packages, truenas.as_ref());
     let boot = crate::abroot::add_to_boot(boot, abroot.as_ref());
     let boot = crate::truenas::add_to_boot(boot, truenas.as_ref());
@@ -1070,7 +1516,12 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     let mut out = Obj::new()
         .set("format", FORMAT)
         .set("schema", SCHEMA)
-        .set("tool", Obj::new().set("name", "bko-holt").set("version", env!("CARGO_PKG_VERSION")))
+        .set(
+            "tool",
+            Obj::new()
+                .set("name", "bko-holt")
+                .set("version", env!("CARGO_PKG_VERSION")),
+        )
         .set("generated", generated)
         .set("privileged", sys.privileged)
         .set("host", host_json(sys))
@@ -1092,12 +1543,24 @@ mod tests {
         let v = parse_zpool_status_text(t, "rpool").unwrap();
         let m = v.at(&["vdevs", "rpool", "vdevs", "mirror-0"]).unwrap();
         assert_eq!(m.get("vdev_type").and_then(Value::as_str), Some("mirror"));
-        assert_eq!(m.at(&["vdevs", "/dev/vdb4", "path"]).and_then(Value::as_str), Some("/dev/vdb4"));
-        assert_eq!(v.at(&["logs", "/dev/vdc1", "vdev_type"]).and_then(Value::as_str), Some("disk"));
+        assert_eq!(
+            m.at(&["vdevs", "/dev/vdb4", "path"])
+                .and_then(Value::as_str),
+            Some("/dev/vdb4")
+        );
+        assert_eq!(
+            v.at(&["logs", "/dev/vdc1", "vdev_type"])
+                .and_then(Value::as_str),
+            Some("disk")
+        );
         assert!(v.get("l2cache").is_some_and(Value::is_null));
         let single = "config:\n\n\tNAME        STATE     READ WRITE CKSUM\n\trpool       ONLINE       0     0     0\n\t  /dev/vda3  ONLINE       0     0     0\n";
         let v = parse_zpool_status_text(single, "rpool").unwrap();
-        assert_eq!(v.at(&["vdevs", "rpool", "vdevs", "/dev/vda3", "path"]).and_then(Value::as_str), Some("/dev/vda3"));
+        assert_eq!(
+            v.at(&["vdevs", "rpool", "vdevs", "/dev/vda3", "path"])
+                .and_then(Value::as_str),
+            Some("/dev/vda3")
+        );
         assert!(parse_zpool_status_text("no config here", "rpool").is_none());
     }
 
@@ -1125,7 +1588,10 @@ mod tests {
 
     #[test]
     fn udev_escapes() {
-        assert_eq!(udev_decode("EFI\\x20System\\x20Partition"), "EFI System Partition");
+        assert_eq!(
+            udev_decode("EFI\\x20System\\x20Partition"),
+            "EFI System Partition"
+        );
         assert_eq!(udev_decode("a\\x2fb"), "a/b");
         assert_eq!(udev_decode("bad\\xzz"), "bad\\xzz");
         assert_eq!(udev_decode("end\\x2"), "end\\x2");
@@ -1146,16 +1612,30 @@ mod tests {
         assert_eq!(v.get("path").and_then(Value::as_str), Some("@rootfs"));
         let v = parse_btrfs_subvol_line("ID 5 (FS_TREE)").unwrap();
         assert_eq!(v.get("id").and_then(Value::as_u64), Some(5));
-        let v = parse_btrfs_subvol_line("ID 300 gen 9 top level 256 path <FS_TREE>/@/with space").unwrap();
-        assert_eq!(v.get("path").and_then(Value::as_str), Some("<FS_TREE>/@/with space"));
+        let v = parse_btrfs_subvol_line("ID 300 gen 9 top level 256 path <FS_TREE>/@/with space")
+            .unwrap();
+        assert_eq!(
+            v.get("path").and_then(Value::as_str),
+            Some("<FS_TREE>/@/with space")
+        );
         assert!(parse_btrfs_subvol_line("garbage").is_none());
     }
 
     #[test]
     fn zfs_get_lines() {
-        let v = parse_zfs_get("rpool\tcompression\tlz4\tlocal\nrpool/home\tcom.sun:auto-snapshot\ttrue\treceived\nshort\tline\nrpool\tdesc\ta\tb c\tlocal\n");
+        let v = parse_zfs_get(
+            "rpool\tcompression\tlz4\tlocal\nrpool/home\tcom.sun:auto-snapshot\ttrue\treceived\nshort\tline\nrpool\tdesc\ta\tb c\tlocal\n",
+        );
         assert_eq!(v.len(), 3);
-        assert_eq!(v[0], ("rpool".into(), "compression".into(), "lz4".into(), "local".into()));
+        assert_eq!(
+            v[0],
+            (
+                "rpool".into(),
+                "compression".into(),
+                "lz4".into(),
+                "local".into()
+            )
+        );
         assert_eq!(v[1].1, "com.sun:auto-snapshot");
         assert_eq!(v[1].3, "received");
         // A tab in the value isn't possible; one in the source is kept whole.
@@ -1170,12 +1650,20 @@ mod tests {
         assert_eq!(q.len(), 3);
         assert_eq!(q[0].get("qgroupid").and_then(Value::as_str), Some("0/5"));
         assert!(q[0].get("max_referenced").unwrap().is_null());
-        assert_eq!(q[1].get("max_referenced").and_then(Value::as_u64), Some(2147483648));
+        assert_eq!(
+            q[1].get("max_referenced").and_then(Value::as_u64),
+            Some(2147483648)
+        );
         assert_eq!(q[1].get("parents"), Some(&Value::from(vec!["1/100"])));
         assert_eq!(q[1].get("path").and_then(Value::as_str), Some("@home"));
-        assert_eq!(q[2].get("path").and_then(Value::as_str), Some("<0 member qgroups>"));
+        assert_eq!(
+            q[2].get("path").and_then(Value::as_str),
+            Some("<0 member qgroups>")
+        );
         // Older btrfs-progs: no path column.
-        let q = parse_btrfs_qgroups("qgroupid rfer excl max_rfer max_excl parent\n-------- ---- ---- -------- -------- ------\n0/5 16384 16384 none none ---\n");
+        let q = parse_btrfs_qgroups(
+            "qgroupid rfer excl max_rfer max_excl parent\n-------- ---- ---- -------- -------- ------\n0/5 16384 16384 none none ---\n",
+        );
         assert_eq!(q.len(), 1);
         assert!(q[0].get("path").unwrap().is_null());
         assert_eq!(q[0].get("parents"), Some(&Value::Arr(vec![])));
@@ -1198,19 +1686,34 @@ mod tests {
         let (root, home, top) = (m("/", "/@"), m("/home", "/@home"), m("/mnt/top", "/"));
         let only_root = [&root, &home];
         assert_eq!(btrfs_reachable_path(&only_root, "@").as_deref(), Some("/"));
-        assert_eq!(btrfs_reachable_path(&only_root, "<FS_TREE>/@home").as_deref(), Some("/home"));
-        assert_eq!(btrfs_reachable_path(&only_root, "@/var/lib/machines").as_deref(), Some("/var/lib/machines"));
-        assert_eq!(btrfs_reachable_path(&only_root, "@home/user/snap").as_deref(), Some("/home/user/snap"));
+        assert_eq!(
+            btrfs_reachable_path(&only_root, "<FS_TREE>/@home").as_deref(),
+            Some("/home")
+        );
+        assert_eq!(
+            btrfs_reachable_path(&only_root, "@/var/lib/machines").as_deref(),
+            Some("/var/lib/machines")
+        );
+        assert_eq!(
+            btrfs_reachable_path(&only_root, "@home/user/snap").as_deref(),
+            Some("/home/user/snap")
+        );
         assert_eq!(btrfs_reachable_path(&only_root, "@snapshots"), None);
         // "@home" isn't under "@" just because it starts with it.
         assert_eq!(btrfs_reachable_path(&[&root], "@home"), None);
-        assert_eq!(btrfs_reachable_path(&[&top], "@snapshots/1").as_deref(), Some("/mnt/top/@snapshots/1"));
+        assert_eq!(
+            btrfs_reachable_path(&[&top], "@snapshots/1").as_deref(),
+            Some("/mnt/top/@snapshots/1")
+        );
         // ostree's /etc: a directory of subvolume root, with root's subvol=,
         // mounted before the physical root at /sysroot.  It doesn't count.
         let mut etc = m("/etc", "/root");
         etc.root = "/root/ostree/deploy/default/deploy/c.1/etc".into();
         let sysroot = m("/sysroot", "/root");
-        assert_eq!(btrfs_reachable_path(&[&etc, &sysroot], "root").as_deref(), Some("/sysroot"));
+        assert_eq!(
+            btrfs_reachable_path(&[&etc, &sysroot], "root").as_deref(),
+            Some("/sysroot")
+        );
         assert_eq!(btrfs_reachable_path(&[&etc], "root"), None);
     }
 
@@ -1219,40 +1722,93 @@ mod tests {
         let mi = crate::mounts::parse_mountinfo(
             "51 1 0:42 / / ro - overlay composefs ro\n48 51 0:37 /root/ostree/deploy/default/deploy/c.1/etc /etc rw - btrfs /dev/vda3 rw,subvolid=258,subvol=/root\n52 51 0:37 /root /sysroot ro - btrfs /dev/vda3 rw,subvolid=258,subvol=/root\n53 52 0:37 /root/ostree/deploy/default/var /sysroot/ostree/deploy/default/var rw - btrfs /dev/vda3 rw,subvolid=258,subvol=/root\n125 51 0:37 /var /var rw - btrfs /dev/vda3 rw,subvolid=256,subvol=/var\n82 125 0:37 /home /var/home rw - btrfs /dev/vda3 rw,subvolid=257,subvol=/home\n120 51 253:2 / /boot rw - ext4 /dev/vda2 rw\n220 120 253:1 / /boot/efi rw - vfat /dev/vda1 rw\n300 51 253:9 / /var/mnt/usb rw - ext4 /dev/sdb1 rw\n",
         );
-        let all: Vec<&Mount> = mi.iter().filter(|m| crate::mounts::is_layout_mount(m)).collect();
-        let fstab = crate::mounts::parse_fstab("UUID=b / btrfs subvol=root,compress=zstd:1,ro 0 0\nUUID=x /boot ext4 defaults 1 2\nUUID=E /boot/efi vfat umask=077 0 2\nUUID=b /home btrfs subvol=home,compress=zstd:1 0 0\nUUID=b /var btrfs subvol=var,compress=zstd:1 0 0\n");
+        let all: Vec<&Mount> = mi
+            .iter()
+            .filter(|m| crate::mounts::is_layout_mount(m))
+            .collect();
+        let fstab = crate::mounts::parse_fstab(
+            "UUID=b / btrfs subvol=root,compress=zstd:1,ro 0 0\nUUID=x /boot ext4 defaults 1 2\nUUID=E /boot/efi vfat umask=077 0 2\nUUID=b /home btrfs subvol=home,compress=zstd:1 0 0\nUUID=b /var btrfs subvol=var,compress=zstd:1 0 0\n",
+        );
         let dev = |m: &Mount| Some(m.source.trim_start_matches("/dev/").to_string());
-        let res = |e: &crate::mounts::FstabEntry| Some(match e.spec.as_str() { "UUID=b" => "vda3", "UUID=x" => "vda2", _ => "vda1" }.to_string());
-        let f: Vec<(&crate::mounts::FstabEntry, Option<String>)> = fstab.iter().map(|e| (e, res(e))).collect();
-        let pairs = |v: Vec<BackupSource>| v.into_iter().map(|s| (s.path, s.from.unwrap_or_default())).collect::<Vec<_>>();
+        let res = |e: &crate::mounts::FstabEntry| {
+            Some(
+                match e.spec.as_str() {
+                    "UUID=b" => "vda3",
+                    "UUID=x" => "vda2",
+                    _ => "vda1",
+                }
+                .to_string(),
+            )
+        };
+        let f: Vec<(&crate::mounts::FstabEntry, Option<String>)> =
+            fstab.iter().map(|e| (e, res(e))).collect();
+        let pairs = |v: Vec<BackupSource>| {
+            v.into_iter()
+                .map(|s| (s.path, s.from.unwrap_or_default()))
+                .collect::<Vec<_>>()
+        };
         let p = |a: &str, b: &str| (a.to_string(), b.to_string());
         let ostree = backup_sources(&all, &dev, &f, true);
         assert_eq!(ostree[0].subvol.as_deref(), Some("/root"));
         assert_eq!(ostree[0].device.as_deref(), Some("vda3"));
-        assert_eq!(pairs(ostree), vec![p("/", "/sysroot"), p("/boot", "/boot"), p("/boot/efi", "/boot/efi"), p("/home", "/var/home"), p("/var", "/var"), p("/var/mnt/usb", "/var/mnt/usb")]);
+        assert_eq!(
+            pairs(ostree),
+            vec![
+                p("/", "/sysroot"),
+                p("/boot", "/boot"),
+                p("/boot/efi", "/boot/efi"),
+                p("/home", "/var/home"),
+                p("/var", "/var"),
+                p("/var/mnt/usb", "/var/mnt/usb")
+            ]
+        );
         // Not ostree: each mount where it is, aliases still left out.
-        assert_eq!(pairs(backup_sources(&all, &dev, &f, false)), vec![p("/boot", "/boot"), p("/boot/efi", "/boot/efi"), p("/sysroot", "/sysroot"), p("/var", "/var"), p("/var/home", "/var/home"), p("/var/mnt/usb", "/var/mnt/usb")]);
+        assert_eq!(
+            pairs(backup_sources(&all, &dev, &f, false)),
+            vec![
+                p("/boot", "/boot"),
+                p("/boot/efi", "/boot/efi"),
+                p("/sysroot", "/sysroot"),
+                p("/var", "/var"),
+                p("/var/home", "/var/home"),
+                p("/var/mnt/usb", "/var/mnt/usb")
+            ]
+        );
         // subvolid= in fstab matches too.
         let fstab = crate::mounts::parse_fstab("UUID=b / btrfs subvolid=258 0 0\n");
-        let f: Vec<(&crate::mounts::FstabEntry, Option<String>)> = fstab.iter().map(|e| (e, res(e))).collect();
-        assert_eq!(backup_sources(&all, &dev, &f, true)[0].from.as_deref(), Some("/sysroot"));
+        let f: Vec<(&crate::mounts::FstabEntry, Option<String>)> =
+            fstab.iter().map(|e| (e, res(e))).collect();
+        assert_eq!(
+            backup_sources(&all, &dev, &f, true)[0].from.as_deref(),
+            Some("/sysroot")
+        );
     }
 
     #[test]
     fn only_disk_leaves_out_other_disks_and_their_partitions() {
         let t = crate::testutil::Tree::new("only-disk");
-        t.disk("nvme0n1", "259:0", &[0u8; 4096], 512).disk("sda", "8:0", &[0u8; 4096], 512).partition("sda", "sda1", "8:1", 1, 2048, 2048, &[0u8; 512]);
+        t.disk("nvme0n1", "259:0", &[0u8; 4096], 512)
+            .disk("sda", "8:0", &[0u8; 4096], 512)
+            .partition("sda", "sda1", "8:1", 1, 2048, 2048, &[0u8; 512]);
         t.file("/proc/self/mountinfo", "");
         let s = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), true);
         let names = |only: &[String]| -> Vec<String> {
             let v = build_only(&s, None, "2026-11-08T00:00:00Z", only);
-            v.at(&["storage", "disks"]).and_then(Value::as_array).into_iter().flatten().filter_map(|d| d.get("name").and_then(Value::as_str).map(str::to_string)).collect()
+            v.at(&["storage", "disks"])
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|d| d.get("name").and_then(Value::as_str).map(str::to_string))
+                .collect()
         };
         assert_eq!(names(&[]).len(), 2);
         assert_eq!(names(&["nvme0n1".to_string()]), vec!["nvme0n1".to_string()]);
         assert_eq!(unknown_disk(&s, &["nvme0n1".to_string()]), None);
         // A partition isn't a whole disk.
-        assert_eq!(unknown_disk(&s, &["sda1".to_string()]).as_deref(), Some("sda1"));
+        assert_eq!(
+            unknown_disk(&s, &["sda1".to_string()]).as_deref(),
+            Some("sda1")
+        );
     }
 
     /// A device path with '=' in it (udev keeps it in by-label links) is a
@@ -1262,13 +1818,20 @@ mod tests {
     #[test]
     fn resolve_device_path_with_equals() {
         let t = crate::testutil::Tree::new("resolve-eq");
-        t.disk("sda", "8:0", &[0u8; 4096], 512).partition("sda", "sda1", "8:1", 1, 2, 2, &[0u8; 4096]).partition("sda", "sda2", "8:2", 2, 4, 2, &[0u8; 4096]);
-        t.symlink("/dev/disk/by-label/data=1", "../../sda1").file("/run/udev/data/b8:2", "S:disk/by-label/home=2\n");
+        t.disk("sda", "8:0", &[0u8; 4096], 512)
+            .partition("sda", "sda1", "8:1", 1, 2, 2, &[0u8; 4096])
+            .partition("sda", "sda2", "8:2", 2, 4, 2, &[0u8; 4096]);
+        t.symlink("/dev/disk/by-label/data=1", "../../sda1")
+            .file("/run/udev/data/b8:2", "S:disk/by-label/home=2\n");
         t.file("/etc/fstab", "/dev/disk/by-label/data=1 /data ext4 defaults 0 2\n/dev/disk/by-label/home=2 /home ext4 defaults 0 2\n/dev/sda1 /x ext4 defaults 0 2\nLABEL=a=b /y ext4 defaults 0 2\n");
         t.file("/proc/self/mountinfo", "");
         let s = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), true);
         let v = build_only(&s, None, "2026-11-21T00:00:00Z", &[]);
-        let to = |i: &str| v.at(&["storage", "fstab", i, "resolves_to"]).and_then(Value::as_str).map(str::to_string);
+        let to = |i: &str| {
+            v.at(&["storage", "fstab", i, "resolves_to"])
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
         assert_eq!(to("0").as_deref(), Some("sda1"));
         assert_eq!(to("1").as_deref(), Some("sda2"));
         assert_eq!(to("2").as_deref(), Some("sda1"));
@@ -1283,22 +1846,41 @@ mod tests {
     #[test]
     fn resolve_mdev_mapper_nodes() {
         let t = crate::testutil::Tree::new("resolve-mdev");
-        for (dm, devno, name) in [("dm-0", "253:0", "root"), ("dm-1", "253:1", "vg0-swap"), ("dm-2", "253:2", "late")] {
-            t.disk(dm, devno, &[0u8; 4096], 512).file(&format!("/sys/block/{dm}/dm/name"), format!("{name}\n"));
+        for (dm, devno, name) in [
+            ("dm-0", "253:0", "root"),
+            ("dm-1", "253:1", "vg0-swap"),
+            ("dm-2", "253:2", "late"),
+        ] {
+            t.disk(dm, devno, &[0u8; 4096], 512)
+                .file(&format!("/sys/block/{dm}/dm/name"), format!("{name}\n"));
         }
-        t.file("/dev/mapper/root", "").file("/dev/mapper/vg0-swap", "").symlink("/dev/vg0/swap", "../mapper/vg0-swap").file("/dev/root", "");
+        t.file("/dev/mapper/root", "")
+            .file("/dev/mapper/vg0-swap", "")
+            .symlink("/dev/vg0/swap", "../mapper/vg0-swap")
+            .file("/dev/root", "");
         t.file("/etc/fstab", "/dev/mapper/root / btrfs defaults 0 1\n/dev/vg0/swap none swap sw 0 0\n/dev/mapper/late /late ext4 defaults 0 2\n/dev/root /x ext4 defaults 0 2\n/dev/mapper/none /y ext4 defaults 0 2\n");
         // btrfs's anonymous devno: the mount's device is its source's.
-        t.file("/proc/self/mountinfo", "30 1 0:40 /@ / rw - btrfs /dev/mapper/root rw,subvolid=256,subvol=/@\n");
+        t.file(
+            "/proc/self/mountinfo",
+            "30 1 0:40 /@ / rw - btrfs /dev/mapper/root rw,subvolid=256,subvol=/@\n",
+        );
         let s = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), true);
         let v = build_only(&s, None, "2026-11-21T00:00:00Z", &[]);
-        let to = |i: &str| v.at(&["storage", "fstab", i, "resolves_to"]).and_then(Value::as_str).map(str::to_string);
+        let to = |i: &str| {
+            v.at(&["storage", "fstab", i, "resolves_to"])
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
         assert_eq!(to("0").as_deref(), Some("dm-0"));
         assert_eq!(to("1").as_deref(), Some("dm-1"));
         assert_eq!(to("2").as_deref(), Some("dm-2"));
         assert_eq!(to("3"), None);
         assert_eq!(to("4"), None);
-        assert_eq!(v.at(&["storage", "mounts", "0", "device"]).and_then(Value::as_str), Some("dm-0"));
+        assert_eq!(
+            v.at(&["storage", "mounts", "0", "device"])
+                .and_then(Value::as_str),
+            Some("dm-0")
+        );
     }
 
     /// Ubuntu's ZFS + encryption install, dumped --only-disk nvme0n1 (the
@@ -1320,25 +1902,50 @@ mod tests {
             img
         };
         let (nvme, sda) = (label("rpool", 777), label("tank", 888));
-        t.disk("nvme0n1", "259:0", &nvme, 512).partition("nvme0n1", "nvme0n1p1", "259:1", 1, 2048, 8192, &nvme);
-        t.disk("sda", "8:0", &sda, 512).partition("sda", "sda1", "8:1", 1, 2048, 8192, &sda);
-        t.disk("zd0", "230:0", &[0u8; 8192], 512).partition("zd0", "zd0p1", "230:1", 1, 2, 8, &[0u8; 8192]).file("/run/udev/data/b230:0", "S:zvol/rpool/keystore\n");
-        t.disk("zd16", "230:16", &[0u8; 8192], 512).file("/run/udev/data/b230:16", "S:zvol/tank/vol\n");
-        t.disk("dm-0", "252:0", &[0u8; 8192], 512).file("/sys/block/dm-0/slaves/zd0p1", "").file("/sys/block/dm-0/dm/name", "keystore-rpool");
+        t.disk("nvme0n1", "259:0", &nvme, 512).partition(
+            "nvme0n1",
+            "nvme0n1p1",
+            "259:1",
+            1,
+            2048,
+            8192,
+            &nvme,
+        );
+        t.disk("sda", "8:0", &sda, 512)
+            .partition("sda", "sda1", "8:1", 1, 2048, 8192, &sda);
+        t.disk("zd0", "230:0", &[0u8; 8192], 512)
+            .partition("zd0", "zd0p1", "230:1", 1, 2, 8, &[0u8; 8192])
+            .file("/run/udev/data/b230:0", "S:zvol/rpool/keystore\n");
+        t.disk("zd16", "230:16", &[0u8; 8192], 512)
+            .file("/run/udev/data/b230:16", "S:zvol/tank/vol\n");
+        t.disk("dm-0", "252:0", &[0u8; 8192], 512)
+            .file("/sys/block/dm-0/slaves/zd0p1", "")
+            .file("/sys/block/dm-0/dm/name", "keystore-rpool");
         t.file("/proc/self/mountinfo", "");
         let s = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), true);
         let names = |only: &[&str], sect: &str| -> Vec<String> {
             let only: Vec<String> = only.iter().map(|n| n.to_string()).collect();
             let v = build_only(&s, None, "2026-11-18T00:00:00Z", &only);
-            v.at(&["storage", sect]).and_then(Value::as_array).into_iter().flatten().filter_map(|d| d.get("name").and_then(Value::as_str).map(str::to_string)).collect()
+            v.at(&["storage", sect])
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|d| d.get("name").and_then(Value::as_str).map(str::to_string))
+                .collect()
         };
         assert_eq!(names(&[], "disks"), ["nvme0n1", "sda", "zd0", "zd16"]);
         assert_eq!(names(&["nvme0n1"], "disks"), ["nvme0n1", "zd0"]);
         assert_eq!(names(&["nvme0n1"], "dm_devices"), ["dm-0"]);
         let v = build_only(&s, None, "2026-11-18T00:00:00Z", &["nvme0n1".to_string()]);
         let zd0 = v.at(&["storage", "disks", "1"]).unwrap();
-        assert_eq!(zd0.at(&["partitions", "0", "name"]).and_then(Value::as_str), Some("zd0p1"));
-        assert_eq!(zd0.at(&["links", "0"]).and_then(Value::as_str), Some("/dev/zvol/rpool/keystore"));
+        assert_eq!(
+            zd0.at(&["partitions", "0", "name"]).and_then(Value::as_str),
+            Some("zd0p1")
+        );
+        assert_eq!(
+            zd0.at(&["links", "0"]).and_then(Value::as_str),
+            Some("/dev/zvol/rpool/keystore")
+        );
         assert_eq!(names(&["sda"], "disks"), ["sda", "zd16"]);
         // A zvol whose pool udev doesn't name (no link) isn't kept.
         std::fs::remove_file(t.p("/run/udev/data/b230:0")).unwrap();
@@ -1365,7 +1972,12 @@ mod tests {
             src("/", None, "zfs", "rpool/ROOT/ubuntu"),
             src("/boot", Some("nvme0n1p2"), "ext4", "/dev/nvme0n1p2"),
             src("/etc/zfs/keys", Some("nvme0n1p5"), "ext4", "/dev/nvme0n1p5"),
-            src("/run/keystore/rpool", Some("dm-0"), "ext4", "/dev/mapper/keystore-rpool"),
+            src(
+                "/run/keystore/rpool",
+                Some("dm-0"),
+                "ext4",
+                "/dev/mapper/keystore-rpool",
+            ),
             src("/run/media/m/mybig512", None, "xfs", "/dev/sdb1"),
             src("/srv/nfs", None, "nfs4", "server:/srv"),
         ];
@@ -1375,15 +1987,27 @@ mod tests {
                              {"name": "rpool/ROOT", "encryptionroot": "rpool", "keylocation": "none"}]}"#,
         )
         .unwrap();
-        let fstab_e = crate::mounts::parse_fstab("UUID=x /etc/zfs/keys ext4 defaults 0 2\nUUID=y /boot ext4 defaults 0 2\n");
-        let fstab: Vec<(&crate::mounts::FstabEntry, Option<String>)> = fstab_e.iter().map(|e| (e, None)).collect();
+        let fstab_e = crate::mounts::parse_fstab(
+            "UUID=x /etc/zfs/keys ext4 defaults 0 2\nUUID=y /boot ext4 defaults 0 2\n",
+        );
+        let fstab: Vec<(&crate::mounts::FstabEntry, Option<String>)> =
+            fstab_e.iter().map(|e| (e, None)).collect();
         let paths = |only: bool| {
             let mut v = all.clone();
             not_backed_up(&mut v, only, &tools, &fstab);
             v.into_iter().map(|s| s.path).collect::<Vec<_>>()
         };
         assert_eq!(paths(true), ["/", "/boot", "/etc/zfs/keys", "/srv/nfs"]);
-        assert_eq!(paths(false), ["/", "/boot", "/etc/zfs/keys", "/run/media/m/mybig512", "/srv/nfs"]);
+        assert_eq!(
+            paths(false),
+            [
+                "/",
+                "/boot",
+                "/etc/zfs/keys",
+                "/run/media/m/mybig512",
+                "/srv/nfs"
+            ]
+        );
 
         // Ancestor mounts, persistent non-/run mounts, passphrase key stores,
         // and unbacked/network mounts stay in backup_sources.
@@ -1394,7 +2018,12 @@ mod tests {
             src("/var/keys", Some("nvme0n1p4"), "ext4", "/dev/nvme0n1p4"),
             src("/run/parent", Some("dm-1"), "ext4", "/dev/mapper/parent"),
             src("/run/parent/usb", None, "ext4", "/dev/sdb1"),
-            src("/run/keystore/pass", Some("dm-2"), "ext4", "/dev/mapper/pass"),
+            src(
+                "/run/keystore/pass",
+                Some("dm-2"),
+                "ext4",
+                "/dev/mapper/pass",
+            ),
             src("/run/nfs-keys", None, "nfs4", "server:/keys"),
         ];
         let edge_tools = crate::json::parse(
@@ -1408,41 +2037,97 @@ mod tests {
         )
         .unwrap();
         let edge_fstab_e = crate::mounts::parse_fstab("UUID=k /var/keys ext4 defaults 0 2\n");
-        let edge_fstab: Vec<(&crate::mounts::FstabEntry, Option<String>)> = edge_fstab_e.iter().map(|e| (e, None)).collect();
+        let edge_fstab: Vec<(&crate::mounts::FstabEntry, Option<String>)> =
+            edge_fstab_e.iter().map(|e| (e, None)).collect();
         not_backed_up(&mut edge, true, &edge_tools, &edge_fstab);
         let edge_paths: Vec<String> = edge.into_iter().map(|s| s.path).collect();
-        assert_eq!(edge_paths, ["/", "/boot", "/var", "/var/keys", "/run/parent", "/run/keystore/pass", "/run/nfs-keys"]);
+        assert_eq!(
+            edge_paths,
+            [
+                "/",
+                "/boot",
+                "/var",
+                "/var/keys",
+                "/run/parent",
+                "/run/keystore/pass",
+                "/run/nfs-keys"
+            ]
+        );
     }
 
     #[test]
     fn dm_classification() {
         let mk = |name: &str, uuid: &str| {
             let t = crate::testutil::Tree::new("dmcls");
-            t.disk("dm-0", "253:0", &[0u8; 1024], 512).file("/sys/block/dm-0/dm/name", name).file("/sys/block/dm-0/dm/uuid", uuid);
+            t.disk("dm-0", "253:0", &[0u8; 1024], 512)
+                .file("/sys/block/dm-0/dm/name", name)
+                .file("/sys/block/dm-0/dm/uuid", uuid);
             let s = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), false);
             let mut b = crate::blockdev::scan(&s);
-            dm_json(&Dev { b: b.remove(0), table: None, contents: vec![], boot_code: None, partition_boot_code: None, first_partition_lba: None, read_ok: false })
+            dm_json(&Dev {
+                b: b.remove(0),
+                table: None,
+                contents: vec![],
+                boot_code: None,
+                partition_boot_code: None,
+                first_partition_lba: None,
+                read_ok: false,
+            })
         };
-        let v = mk("vg0-root", &format!("LVM-{}{}", "a".repeat(32), "b".repeat(32)));
+        let v = mk(
+            "vg0-root",
+            &format!("LVM-{}{}", "a".repeat(32), "b".repeat(32)),
+        );
         assert_eq!(v.get("target").and_then(Value::as_str), Some("lvm"));
         assert_eq!(v.get("vg").and_then(Value::as_str), Some("vg0"));
         assert_eq!(v.get("lv").and_then(Value::as_str), Some("root"));
-        assert_eq!(v.get("vg_uuid").and_then(Value::as_str), Some("aaaaaa-aaaa-aaaa-aaaa-aaaa-aaaa-aaaaaa"));
+        assert_eq!(
+            v.get("vg_uuid").and_then(Value::as_str),
+            Some("aaaaaa-aaaa-aaaa-aaaa-aaaa-aaaa-aaaaaa")
+        );
         assert!(v.get("lv_layer").is_none());
-        let v = mk("vg0-pool_tdata", &format!("LVM-{}{}-tdata", "a".repeat(32), "b".repeat(32)));
+        let v = mk(
+            "vg0-pool_tdata",
+            &format!("LVM-{}{}-tdata", "a".repeat(32), "b".repeat(32)),
+        );
         assert_eq!(v.get("lv_layer").and_then(Value::as_str), Some("tdata"));
-        let v = mk("vda5_crypt", "CRYPT-LUKS2-0b5f04ede7314ac6933e83ff25657722-vda5_crypt");
+        let v = mk(
+            "vda5_crypt",
+            "CRYPT-LUKS2-0b5f04ede7314ac6933e83ff25657722-vda5_crypt",
+        );
         assert_eq!(v.get("target").and_then(Value::as_str), Some("crypt"));
         assert_eq!(v.get("crypt_type").and_then(Value::as_str), Some("LUKS2"));
-        assert_eq!(v.get("luks_uuid").and_then(Value::as_str), Some("0b5f04ed-e731-4ac6-933e-83ff25657722"));
-        assert_eq!(v.get("mapper_path").and_then(Value::as_str), Some("/dev/mapper/vda5_crypt"));
+        assert_eq!(
+            v.get("luks_uuid").and_then(Value::as_str),
+            Some("0b5f04ed-e731-4ac6-933e-83ff25657722")
+        );
+        assert_eq!(
+            v.get("mapper_path").and_then(Value::as_str),
+            Some("/dev/mapper/vda5_crypt")
+        );
         let v = mk("swap", "CRYPT-PLAIN-swap");
         assert_eq!(v.get("crypt_type").and_then(Value::as_str), Some("PLAIN"));
         assert!(v.get("luks_uuid").is_none());
-        assert_eq!(mk("mpatha", "mpath-3600").get("target").and_then(Value::as_str), Some("multipath"));
-        assert_eq!(mk("mpatha1", "part1-mpath-3600").get("target").and_then(Value::as_str), Some("partition"));
-        assert_eq!(mk("x", "").get("target").and_then(Value::as_str), Some("unknown"));
-        assert_eq!(mk("x", "SOMETHING").get("target").and_then(Value::as_str), Some("other"));
+        assert_eq!(
+            mk("mpatha", "mpath-3600")
+                .get("target")
+                .and_then(Value::as_str),
+            Some("multipath")
+        );
+        assert_eq!(
+            mk("mpatha1", "part1-mpath-3600")
+                .get("target")
+                .and_then(Value::as_str),
+            Some("partition")
+        );
+        assert_eq!(
+            mk("x", "").get("target").and_then(Value::as_str),
+            Some("unknown")
+        );
+        assert_eq!(
+            mk("x", "SOMETHING").get("target").and_then(Value::as_str),
+            Some("other")
+        );
     }
 
     /// RustAudit1 H3-09: a dm uuid with a multi-byte char across one of the
@@ -1452,29 +2137,56 @@ mod tests {
     fn dm_classification_non_ascii_uuid() {
         let mk = |name: &str, uuid: &str| {
             let t = crate::testutil::Tree::new("dmcls8");
-            t.disk("dm-0", "253:0", &[0u8; 1024], 512).file("/sys/block/dm-0/dm/name", name).file("/sys/block/dm-0/dm/uuid", uuid);
+            t.disk("dm-0", "253:0", &[0u8; 1024], 512)
+                .file("/sys/block/dm-0/dm/name", name)
+                .file("/sys/block/dm-0/dm/uuid", uuid);
             let s = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), false);
             let mut b = crate::blockdev::scan(&s);
-            dm_json(&Dev { b: b.remove(0), table: None, contents: vec![], boot_code: None, partition_boot_code: None, first_partition_lba: None, read_ok: false })
+            dm_json(&Dev {
+                b: b.remove(0),
+                table: None,
+                contents: vec![],
+                boot_code: None,
+                partition_boot_code: None,
+                first_partition_lba: None,
+                read_ok: false,
+            })
         };
         // 'é' is 2 bytes; 31 ASCII bytes put it across byte 32.
-        let v = mk("vg0-root", &format!("LVM-{}é{}", "a".repeat(31), "b".repeat(32)));
+        let v = mk(
+            "vg0-root",
+            &format!("LVM-{}é{}", "a".repeat(31), "b".repeat(32)),
+        );
         assert_eq!(v.get("target").and_then(Value::as_str), Some("lvm"));
         assert_eq!(v.get("vg").and_then(Value::as_str), Some("vg0"));
-        assert!(v.get("vg_uuid").is_none() && v.get("lv_uuid").is_none() && v.get("lv_layer").is_none());
+        assert!(
+            v.get("vg_uuid").is_none() && v.get("lv_uuid").is_none() && v.get("lv_layer").is_none()
+        );
         // Across byte 64.
         let v = mk("vg0-root", &format!("LVM-{}é-tdata", "a".repeat(63)));
         assert!(v.get("vg_uuid").is_none() && v.get("lv_layer").is_none());
         // Across byte 32 of the LUKS hex, and across an inner cut (byte 8).
-        let v = mk("c", &format!("CRYPT-LUKS2-{}é{}-c", "0".repeat(31), "1".repeat(8)));
+        let v = mk(
+            "c",
+            &format!("CRYPT-LUKS2-{}é{}-c", "0".repeat(31), "1".repeat(8)),
+        );
         assert_eq!(v.get("crypt_type").and_then(Value::as_str), Some("LUKS2"));
         assert!(v.get("luks_uuid").is_none());
-        let v = mk("c", &format!("CRYPT-LUKS2-{}é{}-c", "0".repeat(7), "1".repeat(30)));
+        let v = mk(
+            "c",
+            &format!("CRYPT-LUKS2-{}é{}-c", "0".repeat(7), "1".repeat(30)),
+        );
         assert!(v.get("luks_uuid").is_none());
         // A lossy read's U+FFFD (3 bytes) across a cut.
-        let v = mk("c", &format!("CRYPT-LUKS1-{}\u{fffd}{}", "0".repeat(30), "1".repeat(8)));
+        let v = mk(
+            "c",
+            &format!("CRYPT-LUKS1-{}\u{fffd}{}", "0".repeat(30), "1".repeat(8)),
+        );
         assert!(v.get("luks_uuid").is_none());
-        assert_eq!(luks_uuid_from_dm("0b5f04ede7314ac6933e83ff25657722-x").as_deref(), Some("0b5f04ed-e731-4ac6-933e-83ff25657722"));
+        assert_eq!(
+            luks_uuid_from_dm("0b5f04ede7314ac6933e83ff25657722-x").as_deref(),
+            Some("0b5f04ed-e731-4ac6-933e-83ff25657722")
+        );
         assert_eq!(luks_uuid_from_dm("0b5f04ed"), None);
     }
 }

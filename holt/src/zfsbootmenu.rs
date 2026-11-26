@@ -36,7 +36,7 @@
 //! already warns of it, and its entry says `read: false`.
 
 use crate::json::{Obj, Value};
-use crate::sys::{safe_name, RoMountWords, Sys, RUN_DIR};
+use crate::sys::{RUN_DIR, RoMountWords, Sys, safe_name};
 use crate::zfs_be::{BootEnv, Rule};
 use std::io::{Read, Seek, SeekFrom};
 
@@ -76,12 +76,22 @@ pub fn pe_sections(head: &[u8]) -> Option<Vec<Section>> {
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
         let e = head.get(table + 40 * i..table + 40 * (i + 1))?;
-        let name = String::from_utf8_lossy(&e[..8]).trim_end_matches('\0').to_string();
+        let name = String::from_utf8_lossy(&e[..8])
+            .trim_end_matches('\0')
+            .to_string();
         let vsize = le32(e, 8)? as u64;
         let raw_size = le32(e, 16)? as u64;
         let raw_at = le32(e, 20)? as u64;
-        let size = if vsize == 0 { raw_size } else { vsize.min(raw_size) };
-        out.push(Section { name, offset: raw_at, size });
+        let size = if vsize == 0 {
+            raw_size
+        } else {
+            vsize.min(raw_size)
+        };
+        out.push(Section {
+            name,
+            offset: raw_at,
+            size,
+        });
     }
     Some(out)
 }
@@ -101,22 +111,36 @@ pub struct Uki {
 
 impl Uki {
     fn osrel(&self, k: &str) -> Option<&str> {
-        self.osrel.iter().find(|(x, _)| x == k).map(|(_, v)| v.as_str())
+        self.osrel
+            .iter()
+            .find(|(x, _)| x == k)
+            .map(|(_, v)| v.as_str())
     }
 
     /// Whether its .osrel says ZFSBootMenu.
     pub fn names_zbm(&self) -> bool {
-        ["NAME", "ID", "PRETTY_NAME"].iter().any(|k| self.osrel(k).is_some_and(|v| v.to_ascii_lowercase().contains("zfsbootmenu")))
+        ["NAME", "ID", "PRETTY_NAME"].iter().any(|k| {
+            self.osrel(k)
+                .is_some_and(|v| v.to_ascii_lowercase().contains("zfsbootmenu"))
+        })
     }
 
     /// Its .osrel's PRETTY_NAME, or NAME.
     pub fn osrel_name(&self) -> Option<String> {
-        self.osrel("PRETTY_NAME").or_else(|| self.osrel("NAME")).map(str::to_string)
+        self.osrel("PRETTY_NAME")
+            .or_else(|| self.osrel("NAME"))
+            .map(str::to_string)
     }
 
     /// ZFSBootMenu's version, when its .osrel is ZFSBootMenu's own.
     pub fn version(&self) -> Option<String> {
-        self.names_zbm().then(|| self.osrel("VERSION").or_else(|| self.osrel("VERSION_ID")).map(str::to_string)).flatten()
+        self.names_zbm()
+            .then(|| {
+                self.osrel("VERSION")
+                    .or_else(|| self.osrel("VERSION_ID"))
+                    .map(str::to_string)
+            })
+            .flatten()
     }
 }
 
@@ -154,20 +178,42 @@ pub fn read_uki(sys: &Sys, abs: &str) -> Option<Uki> {
     let find = |n: &str| sections.iter().find(|s| s.name == n);
     let linux = find(".linux")?;
     find(".initrd")?;
-    let mut small = |s: Option<&Section>| s.and_then(|s| read_at(&mut f, s.offset, s.size.min(64 << 10))).map(|b| text(&b));
-    let osrel = small(find(".osrel")).map(|t| crate::boot::parse_shell_assignments(&t)).unwrap_or_default();
+    let mut small = |s: Option<&Section>| {
+        s.and_then(|s| read_at(&mut f, s.offset, s.size.min(64 << 10)))
+            .map(|b| text(&b))
+    };
+    let osrel = small(find(".osrel"))
+        .map(|t| crate::boot::parse_shell_assignments(&t))
+        .unwrap_or_default();
     let cmdline = small(find(".cmdline")).filter(|c| !c.is_empty());
-    let stub = small(find(".sdmagic")).map(|m| m.trim_matches('#').trim().trim_start_matches("LoaderInfo:").trim().to_string()).filter(|m| !m.is_empty());
+    let stub = small(find(".sdmagic"))
+        .map(|m| {
+            m.trim_matches('#')
+                .trim()
+                .trim_start_matches("LoaderInfo:")
+                .trim()
+                .to_string()
+        })
+        .filter(|m| !m.is_empty());
     // The bzImage's setup header: "HdrS" at 0x202, then at 0x20e the
     // offset (less 0x200) of its version string.
     let hdr = read_at(&mut f, linux.offset, 0x210)?;
     let kernel = if hdr.get(0x202..0x206) == Some(b"HdrS") {
         let at = le16(&hdr, 0x20e)? as u64 + 0x200;
-        (at < linux.size).then(|| read_at(&mut f, linux.offset + at, 256)).flatten().map(|b| text(&b)).and_then(|t| t.split_whitespace().next().map(str::to_string))
+        (at < linux.size)
+            .then(|| read_at(&mut f, linux.offset + at, 256))
+            .flatten()
+            .map(|b| text(&b))
+            .and_then(|t| t.split_whitespace().next().map(str::to_string))
     } else {
         None
     };
-    Some(Uki { osrel, cmdline, kernel, stub })
+    Some(Uki {
+        osrel,
+        cmdline,
+        kernel,
+        stub,
+    })
 }
 
 /// One ZFSBootMenu image on a mounted ESP.
@@ -208,13 +254,21 @@ fn zbm_why(path: &str, uki: &Uki, root_is_be: bool) -> Option<String> {
         return Some("its .osrel names ZFSBootMenu".into());
     }
     let parts: Vec<String> = path.split('/').map(str::to_ascii_lowercase).collect();
-    if let Some(d) = parts[..parts.len().saturating_sub(1)].iter().find(|p| *p == "zbm" || *p == "zfsbootmenu") {
+    if let Some(d) = parts[..parts.len().saturating_sub(1)]
+        .iter()
+        .find(|p| *p == "zbm" || *p == "zfsbootmenu")
+    {
         return Some(format!("it is in a {d} directory"));
     }
     if parts.last().is_some_and(|f| f.starts_with("zfsbootmenu")) {
         return Some("its file name is ZFSBootMenu's".into());
     }
-    let words: Vec<&str> = uki.cmdline.as_deref().unwrap_or("").split_whitespace().collect();
+    let words: Vec<&str> = uki
+        .cmdline
+        .as_deref()
+        .unwrap_or("")
+        .split_whitespace()
+        .collect();
     if words.iter().any(|w| w.starts_with("zbm.")) {
         return Some("its embedded command line has a zbm. argument".into());
     }
@@ -230,20 +284,38 @@ fn zbm_why(path: &str, uki: &Uki, root_is_be: bool) -> Option<String> {
 pub fn find_images(sys: &Sys, esps: &[(String, String, Value)], root_is_be: bool) -> Vec<Image> {
     let mut out: Vec<Image> = Vec::new();
     for (dev, mnt, inv) in esps {
-        let files: Vec<&Value> = inv.get("files").and_then(Value::as_array).into_iter().flatten().collect();
+        let files: Vec<&Value> = inv
+            .get("files")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .collect();
         let path_of = |f: &Value| f.get("path").and_then(Value::as_str).map(str::to_string);
         let mut found: Vec<(String, u64, Uki, String)> = Vec::new();
-        let efi = |p: &str| p.to_ascii_lowercase().ends_with(".efi") && p.to_ascii_lowercase().starts_with("efi/");
+        let efi = |p: &str| {
+            p.to_ascii_lowercase().ends_with(".efi") && p.to_ascii_lowercase().starts_with("efi/")
+        };
         for f in &files {
-            let Some(p) = path_of(f).filter(|p| efi(p)) else { continue };
-            let Some(uki) = read_uki(sys, &format!("{mnt}/{p}")) else { continue };
+            let Some(p) = path_of(f).filter(|p| efi(p)) else {
+                continue;
+            };
+            let Some(uki) = read_uki(sys, &format!("{mnt}/{p}")) else {
+                continue;
+            };
             if let Some(why) = zbm_why(&p, &uki, root_is_be) {
-                found.push((p, f.get("size").and_then(Value::as_u64).unwrap_or(0), uki, why));
+                found.push((
+                    p,
+                    f.get("size").and_then(Value::as_u64).unwrap_or(0),
+                    uki,
+                    why,
+                ));
             }
         }
         // A byte copy of one (the fallback path's).
         for f in &files {
-            let (Some(p), Some(of)) = (path_of(f), f.get("same_as").and_then(Value::as_str)) else { continue };
+            let (Some(p), Some(of)) = (path_of(f), f.get("same_as").and_then(Value::as_str)) else {
+                continue;
+            };
             if found.iter().any(|(x, ..)| *x == p) {
                 continue;
             }
@@ -251,11 +323,27 @@ pub fn find_images(sys: &Sys, esps: &[(String, String, Value)], root_is_be: bool
                 found.push((p, src.1, src.2, format!("a copy of {of}")));
             }
         }
-        let order = |p: &str| files.iter().position(|f| path_of(f).as_deref() == Some(p)).unwrap_or(usize::MAX);
+        let order = |p: &str| {
+            files
+                .iter()
+                .position(|f| path_of(f).as_deref() == Some(p))
+                .unwrap_or(usize::MAX)
+        };
         found.sort_by_key(|(p, ..)| order(p));
         for (path, size, uki, why) in found {
-            let sha256 = sys.read_bytes(&format!("{mnt}/{path}")).map(|b| crate::bytes::sha256_hex(&b)).unwrap_or_default();
-            out.push(Image { esp_device: dev.clone(), esp_mount: mnt.clone(), path, size, sha256, uki, why });
+            let sha256 = sys
+                .read_bytes(&format!("{mnt}/{path}"))
+                .map(|b| crate::bytes::sha256_hex(&b))
+                .unwrap_or_default();
+            out.push(Image {
+                esp_device: dev.clone(),
+                esp_mount: mnt.clone(),
+                path,
+                size,
+                sha256,
+                uki,
+                why,
+            });
         }
     }
     out
@@ -271,7 +359,10 @@ fn boot_files(sys: &Sys, dir: &str) -> (Vec<String>, Vec<String>) {
         if !sys.is_file(&format!("{dir}/{f}")) {
             continue;
         }
-        if ["vmlinuz", "vmlinux", "linux", "kernel"].iter().any(|p| f.starts_with(p)) {
+        if ["vmlinuz", "vmlinux", "linux", "kernel"]
+            .iter()
+            .any(|p| f.starts_with(p))
+        {
             kernels.push(f);
         } else if f.starts_with("initramfs") || f.starts_with("initrd") {
             initramfs.push(f);
@@ -295,11 +386,26 @@ fn inactive_boot(sys: &Sys, be: &BootEnv) -> Option<(Vec<String>, Vec<String>)> 
     // `/run/bko-holt/zbm-be-NAME`.
     let at = format!("{RUN_DIR}/zbm-be-{}", be.name);
     let words = RoMountWords {
-        cant_make: format!("ZFSBootMenu: can't make {at} to read boot environment {}'s /boot", be.name),
-        mount_failed: format!("ZFSBootMenu: a read-only mount of {ds} at {at} failed, so boot.zfsbootmenu doesn't list boot environment {}'s kernels", be.name),
-        still_mounted: format!("ZFSBootMenu: {ds} is still mounted read-only at {at}; `umount {at}` when this dump is done"),
+        cant_make: format!(
+            "ZFSBootMenu: can't make {at} to read boot environment {}'s /boot",
+            be.name
+        ),
+        mount_failed: format!(
+            "ZFSBootMenu: a read-only mount of {ds} at {at} failed, so boot.zfsbootmenu doesn't list boot environment {}'s kernels",
+            be.name
+        ),
+        still_mounted: format!(
+            "ZFSBootMenu: {ds} is still mounted read-only at {at}; `umount {at}` when this dump is done"
+        ),
     };
-    sys.with_ro_mount("zfs", &crate::zfs_be::ro_options(legacy), ds, &at, &words, |at| boot_files(sys, &format!("{at}{rel}")))
+    sys.with_ro_mount(
+        "zfs",
+        &crate::zfs_be::ro_options(legacy),
+        ds,
+        &at,
+        &words,
+        |at| boot_files(sys, &format!("{at}{rel}")),
+    )
 }
 
 /// A dataset's local or inherited user property K, from the dump's
@@ -309,7 +415,12 @@ fn user_prop(tools: &Value, ds: &str, k: &str) -> Option<(String, String)> {
     let datasets = tools.get("datasets").and_then(Value::as_array)?;
     let mut name = ds;
     loop {
-        if let Some(v) = datasets.iter().find(|d| d.get("name").and_then(Value::as_str) == Some(name)).and_then(|d| d.at(&["properties", k, "value"])).and_then(Value::as_str) {
+        if let Some(v) = datasets
+            .iter()
+            .find(|d| d.get("name").and_then(Value::as_str) == Some(name))
+            .and_then(|d| d.at(&["properties", k, "value"]))
+            .and_then(Value::as_str)
+        {
             return Some((v.to_string(), name.to_string()));
         }
         name = name.rsplit_once('/')?.0;
@@ -324,7 +435,10 @@ pub fn root_is_be(bes: &[BootEnv]) -> bool {
 /// boot.zfsbootmenu: the images, the pools holding BEs (with their
 /// bootfs), and the BEs (crate::zfs_be::list of the dump's `tools`).
 pub fn json(sys: &Sys, images: &[Image], tools: &Value) -> Value {
-    let bes: Vec<BootEnv> = crate::zfs_be::list(tools).into_iter().filter(|b| b.rule == Rule::ZfsBootMenu).collect();
+    let bes: Vec<BootEnv> = crate::zfs_be::list(tools)
+        .into_iter()
+        .filter(|b| b.rule == Rule::ZfsBootMenu)
+        .collect();
     let mut pools: Vec<String> = Vec::new();
     for b in &bes {
         if !pools.contains(&b.pool) {
@@ -332,9 +446,26 @@ pub fn json(sys: &Sys, images: &[Image], tools: &Value) -> Value {
         }
     }
     let bootfs = |pool: &str| {
-        tools.get("imported_pools").and_then(Value::as_array).into_iter().flatten().find(|p| p.get("name").and_then(Value::as_str) == Some(pool)).and_then(|p| p.at(&["properties", "bootfs"])).and_then(Value::as_str).filter(|b| *b != "-").map(str::to_string)
+        tools
+            .get("imported_pools")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|p| p.get("name").and_then(Value::as_str) == Some(pool))
+            .and_then(|p| p.at(&["properties", "bootfs"]))
+            .and_then(Value::as_str)
+            .filter(|b| *b != "-")
+            .map(str::to_string)
     };
-    let pools_json: Vec<Value> = pools.iter().map(|p| Obj::new().set("name", p.as_str()).set("bootfs", bootfs(p)).build()).collect();
+    let pools_json: Vec<Value> = pools
+        .iter()
+        .map(|p| {
+            Obj::new()
+                .set("name", p.as_str())
+                .set("bootfs", bootfs(p))
+                .build()
+        })
+        .collect();
     let mut list = Vec::new();
     for be in &bes {
         let files = if be.locked {
@@ -357,12 +488,19 @@ pub fn json(sys: &Sys, images: &[Image], tools: &Value) -> Value {
                 .set("commandline_from", cl.map(|(_, d)| d))
                 .set("locked", be.locked)
                 .set("read", files.is_some())
-                .set("kernels", files.as_ref().map(|f| f.0.clone()).unwrap_or_default())
+                .set(
+                    "kernels",
+                    files.as_ref().map(|f| f.0.clone()).unwrap_or_default(),
+                )
                 .set("initramfs", files.map(|f| f.1).unwrap_or_default())
                 .build(),
         );
     }
-    Obj::new().set("images", images.iter().map(Image::json).collect::<Vec<_>>()).set("pools", pools_json).set("bes", list).build()
+    Obj::new()
+        .set("images", images.iter().map(Image::json).collect::<Vec<_>>())
+        .set("pools", pools_json)
+        .set("bes", list)
+        .build()
 }
 
 /// Test helpers: a tiny unified kernel image.
@@ -378,7 +516,15 @@ pub mod sample {
         linux[0x20e..0x210].copy_from_slice(&0x100u16.to_le_bytes());
         let v = format!("{kernel} (builder@host) #1 SMP\0");
         linux[0x300..0x300 + v.len()].copy_from_slice(v.as_bytes());
-        let mut secs: Vec<(&str, Vec<u8>)> = vec![(".text", vec![0xc3; 16]), (".sdmagic", b"#### LoaderInfo: systemd-stub 256.6 ####\0".to_vec()), (".osrel", osrel.as_bytes().to_vec()), (".cmdline", cmdline.as_bytes().to_vec())];
+        let mut secs: Vec<(&str, Vec<u8>)> = vec![
+            (".text", vec![0xc3; 16]),
+            (
+                ".sdmagic",
+                b"#### LoaderInfo: systemd-stub 256.6 ####\0".to_vec(),
+            ),
+            (".osrel", osrel.as_bytes().to_vec()),
+            (".cmdline", cmdline.as_bytes().to_vec()),
+        ];
         if uki {
             secs.push((".initrd", vec![0x28, 0xb5, 0x2f, 0xfd, 0, 0, 0, 0]));
             secs.push((".linux", linux));
@@ -412,7 +558,8 @@ pub mod sample {
     /// the release is built in a Void container), with zbm-kcl's serial
     /// console added as the void-zbm guest has it.
     pub const RELEASE_OSREL: &str = "NAME=\"Void\"\nID=\"void\"\nPRETTY_NAME=\"Void Linux\"\nHOME_URL=\"https://voidlinux.org/\"\nDOCUMENTATION_URL=\"https://docs.voidlinux.org/\"\nLOGO=\"void-logo\"\nANSI_COLOR=\"0;38;2;71;128;97\"\n\nDISTRIB_ID=\"void\"\n";
-    pub const RELEASE_CMDLINE: &str = "quiet loglevel=0 nomodeset console=ttyS0,115200n8 zbm.timeout=5";
+    pub const RELEASE_CMDLINE: &str =
+        "quiet loglevel=0 nomodeset console=ttyS0,115200n8 zbm.timeout=5";
     pub const RELEASE_KERNEL: &str = "6.12.63_1";
 }
 
@@ -423,16 +570,49 @@ mod tests {
 
     #[test]
     fn pe_sections_and_uki() {
-        let img = sample::uki(sample::RELEASE_OSREL, sample::RELEASE_CMDLINE, sample::RELEASE_KERNEL, true);
-        let names: Vec<String> = pe_sections(&img).unwrap().into_iter().map(|s| s.name).collect();
-        assert_eq!(names, [".text", ".sdmagic", ".osrel", ".cmdline", ".initrd", ".linux"]);
+        let img = sample::uki(
+            sample::RELEASE_OSREL,
+            sample::RELEASE_CMDLINE,
+            sample::RELEASE_KERNEL,
+            true,
+        );
+        let names: Vec<String> = pe_sections(&img)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ".text", ".sdmagic", ".osrel", ".cmdline", ".initrd", ".linux"
+            ]
+        );
         assert!(pe_sections(b"MZ not a PE").is_none());
         assert!(pe_sections(&[0u8; 512]).is_none());
         let t = Tree::new("zbm-pe");
         t.file("/esp/EFI/ZBM/VMLINUZ.EFI", &img)
-            .file("/esp/EFI/systemd/systemd-bootx64.efi", sample::uki("NAME=x\n", "", "", false))
-            .file("/esp/EFI/Linux/debian.efi", sample::uki("NAME=\"Debian GNU/Linux\"\n", "root=UUID=1 ro", "6.12.1-amd64", true))
-            .file("/esp/EFI/other/zbm.efi", sample::uki("NAME=\"ZFSBootMenu\"\nVERSION=\"3.2.0\"\n", "", "6.18.1", true))
+            .file(
+                "/esp/EFI/systemd/systemd-bootx64.efi",
+                sample::uki("NAME=x\n", "", "", false),
+            )
+            .file(
+                "/esp/EFI/Linux/debian.efi",
+                sample::uki(
+                    "NAME=\"Debian GNU/Linux\"\n",
+                    "root=UUID=1 ro",
+                    "6.12.1-amd64",
+                    true,
+                ),
+            )
+            .file(
+                "/esp/EFI/other/zbm.efi",
+                sample::uki(
+                    "NAME=\"ZFSBootMenu\"\nVERSION=\"3.2.0\"\n",
+                    "",
+                    "6.18.1",
+                    true,
+                ),
+            )
             .file("/esp/EFI/junk.efi", "MZ");
         let sys = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), true);
         let u = read_uki(&sys, "/esp/EFI/ZBM/VMLINUZ.EFI").unwrap();
@@ -443,23 +623,75 @@ mod tests {
         assert!(!u.names_zbm() && u.version().is_none());
         assert!(read_uki(&sys, "/esp/EFI/systemd/systemd-bootx64.efi").is_none());
         assert!(read_uki(&sys, "/esp/EFI/junk.efi").is_none());
-        assert_eq!(read_uki(&sys, "/esp/EFI/other/zbm.efi").unwrap().version().as_deref(), Some("3.2.0"));
+        assert_eq!(
+            read_uki(&sys, "/esp/EFI/other/zbm.efi")
+                .unwrap()
+                .version()
+                .as_deref(),
+            Some("3.2.0")
+        );
         // The rules: directory, .osrel, zbm. argument, no root= on a BE root.
         let inv = crate::boot::esp_inventory(&sys, "/esp");
         let esps = vec![("vda1".to_string(), "/esp".to_string(), inv)];
-        let got: Vec<(String, String)> = find_images(&sys, &esps, false).into_iter().map(|i| (i.path, i.why)).collect();
-        assert_eq!(got, vec![("EFI/ZBM/VMLINUZ.EFI".to_string(), "it is in a zbm directory".to_string()), ("EFI/other/zbm.efi".to_string(), "its .osrel names ZFSBootMenu".to_string())]);
+        let got: Vec<(String, String)> = find_images(&sys, &esps, false)
+            .into_iter()
+            .map(|i| (i.path, i.why))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "EFI/ZBM/VMLINUZ.EFI".to_string(),
+                    "it is in a zbm directory".to_string()
+                ),
+                (
+                    "EFI/other/zbm.efi".to_string(),
+                    "its .osrel names ZFSBootMenu".to_string()
+                )
+            ]
+        );
         let img = find_images(&sys, &esps, false).remove(0);
-        assert_eq!(img.sha256, crate::bytes::sha256_hex(&sample::uki(sample::RELEASE_OSREL, sample::RELEASE_CMDLINE, sample::RELEASE_KERNEL, true)));
+        assert_eq!(
+            img.sha256,
+            crate::bytes::sha256_hex(&sample::uki(
+                sample::RELEASE_OSREL,
+                sample::RELEASE_CMDLINE,
+                sample::RELEASE_KERNEL,
+                true
+            ))
+        );
         assert_eq!(img.json().get("version"), Some(&Value::Null));
-        let u = Uki { cmdline: Some("zbm.prefer=zroot".into()), ..Uki::default() };
-        assert_eq!(zbm_why("EFI/BOOT/BOOTX64.EFI", &u, false).as_deref(), Some("its embedded command line has a zbm. argument"));
-        let u = Uki { cmdline: Some("quiet".into()), ..Uki::default() };
+        let u = Uki {
+            cmdline: Some("zbm.prefer=zroot".into()),
+            ..Uki::default()
+        };
+        assert_eq!(
+            zbm_why("EFI/BOOT/BOOTX64.EFI", &u, false).as_deref(),
+            Some("its embedded command line has a zbm. argument")
+        );
+        let u = Uki {
+            cmdline: Some("quiet".into()),
+            ..Uki::default()
+        };
         assert!(zbm_why("EFI/BOOT/BOOTX64.EFI", &u, false).is_none());
         assert!(zbm_why("EFI/BOOT/BOOTX64.EFI", &u, true).is_some());
-        let u = Uki { cmdline: Some("root=zfs:zroot/ROOT/void".into()), ..Uki::default() };
+        let u = Uki {
+            cmdline: Some("root=zfs:zroot/ROOT/void".into()),
+            ..Uki::default()
+        };
         assert!(zbm_why("EFI/Linux/void.efi", &u, true).is_none());
-        assert_eq!(zbm_why("EFI/zfsbootmenu-release-x86_64-v3.1.0-linux6.12.EFI", &Uki::default(), false).as_deref(), Some("its file name is ZFSBootMenu's"));
-        assert_eq!(zbm_why("EFI/zbm/vmlinuz-backup.EFI", &Uki::default(), false).as_deref(), Some("it is in a zbm directory"));
+        assert_eq!(
+            zbm_why(
+                "EFI/zfsbootmenu-release-x86_64-v3.1.0-linux6.12.EFI",
+                &Uki::default(),
+                false
+            )
+            .as_deref(),
+            Some("its file name is ZFSBootMenu's")
+        );
+        assert_eq!(
+            zbm_why("EFI/zbm/vmlinuz-backup.EFI", &Uki::default(), false).as_deref(),
+            Some("it is in a zbm directory")
+        );
     }
 }

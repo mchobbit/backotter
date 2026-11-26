@@ -2,7 +2,7 @@
 //! metadata text from the PV's metadata area, parsed into JSON.
 
 use super::Content;
-use crate::bytes::{le32, le64, sub, ByteSource};
+use crate::bytes::{ByteSource, le32, le64, sub};
 use crate::json::{Obj, Value};
 
 const LABEL_ID: &[u8] = b"LABELONE";
@@ -31,12 +31,18 @@ pub fn format_uuid(raw: &str) -> String {
 
 pub fn probe(src: &dyn ByteSource) -> Option<Content> {
     let head = src.read_exact_at(0, 2048)?;
-    let (sector, label) = (0..4).map(|s| (s, sub(&head, s * 512, 512))).find(|(_, l)| sub(l, 0, 8) == LABEL_ID)?;
+    let (sector, label) = (0..4)
+        .map(|s| (s, sub(&head, s * 512, 512)))
+        .find(|(_, l)| sub(l, 0, 8) == LABEL_ID)?;
     if sub(label, 24, 8) != LVM2_TYPE {
         return None;
     }
     let ph_off = le32(label, 20) as usize;
-    let ph = sub(&head, sector * 512 + ph_off, 2048 - (sector * 512 + ph_off).min(2048));
+    let ph = sub(
+        &head,
+        sector * 512 + ph_off,
+        2048 - (sector * 512 + ph_off).min(2048),
+    );
     let pv_uuid = crate::bytes::cstr(sub(ph, 0, 32));
     let dev_size = le64(ph, 32);
     // Two lists of (offset, size), each ended by a zero entry: data areas,
@@ -61,7 +67,12 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
         .set("label_sector", sector)
         .set("device_size", dev_size)
         .set("data_area_offset", data_areas.first().map(|a| a.0))
-        .set("metadata_areas", mdas.iter().map(|(o, s)| Obj::new().set("offset", *o).set("size", *s).build()).collect::<Vec<_>>());
+        .set(
+            "metadata_areas",
+            mdas.iter()
+                .map(|(o, s)| Obj::new().set("offset", *o).set("size", *s).build())
+                .collect::<Vec<_>>(),
+        );
     let mut extra = None;
     for &(off, size) in &mdas {
         match read_metadata(src, off, size) {
@@ -95,7 +106,9 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
 
 /// The current metadata text from the metadata area at `off`.
 fn read_metadata(src: &dyn ByteSource, off: u64, size: u64) -> Result<String, String> {
-    let h = src.read_exact_at(off, MDA_HEADER_SIZE as usize).ok_or("metadata area unreadable")?;
+    let h = src
+        .read_exact_at(off, MDA_HEADER_SIZE as usize)
+        .ok_or("metadata area unreadable")?;
     if sub(&h, 4, 16) != MDA_MAGIC {
         return Err("no metadata area header".into());
     }
@@ -107,7 +120,12 @@ fn read_metadata(src: &dyn ByteSource, off: u64, size: u64) -> Result<String, St
     if flags & 1 != 0 {
         return Err("metadata area is ignored".into());
     }
-    if loc_size > MAX_METADATA || area_size <= MDA_HEADER_SIZE || (size != 0 && area_size > size) || loc_off >= area_size || loc_off < MDA_HEADER_SIZE {
+    if loc_size > MAX_METADATA
+        || area_size <= MDA_HEADER_SIZE
+        || (size != 0 && area_size > size)
+        || loc_off >= area_size
+        || loc_off < MDA_HEADER_SIZE
+    {
         return Err("metadata location out of range".into());
     }
     let first = loc_size.min(area_size - loc_off);
@@ -183,9 +201,20 @@ fn tokenize(text: &str) -> Result<Vec<Tok>, String> {
                 // only a word that parses whole is a number.
                 let num = if t.starts_with(|x: char| x.is_ascii_digit() || x == '-') {
                     t.parse::<i64>()
-                        .map(|n| if n >= 0 { Value::UInt(n as u64) } else { Value::Int(n) })
+                        .map(|n| {
+                            if n >= 0 {
+                                Value::UInt(n as u64)
+                            } else {
+                                Value::Int(n)
+                            }
+                        })
                         .ok()
-                        .or_else(|| t.parse::<f64>().ok().filter(|f| f.is_finite()).map(Value::Float))
+                        .or_else(|| {
+                            t.parse::<f64>()
+                                .ok()
+                                .filter(|f| f.is_finite())
+                                .map(Value::Float)
+                        })
                 } else {
                     None
                 };
@@ -286,7 +315,10 @@ fn value(t: &[Tok], i: &mut usize, depth: usize) -> Result<Value, String> {
 /// The volume group in parsed metadata: the one top-level section that has
 /// an id and a seqno.
 pub fn vg_summary(cfg: &Value) -> Option<Value> {
-    let (name, vg) = cfg.as_object()?.iter().find(|(_, v)| v.get("id").is_some() && v.get("seqno").is_some())?;
+    let (name, vg) = cfg
+        .as_object()?
+        .iter()
+        .find(|(_, v)| v.get("id").is_some() && v.get("seqno").is_some())?;
     let u = |v: &Value, k: &str| v.get(k).and_then(Value::as_u64);
     let extent_sectors = u(vg, "extent_size").unwrap_or(0);
     let mut pvs = Vec::new();
@@ -296,11 +328,17 @@ pub fn vg_summary(cfg: &Value) -> Option<Value> {
                 Obj::new()
                     .set("name", pn.as_str())
                     .set("id", pv.get("id").cloned().unwrap_or(Value::Null))
-                    .set("device_hint", pv.get("device").cloned().unwrap_or(Value::Null))
+                    .set(
+                        "device_hint",
+                        pv.get("device").cloned().unwrap_or(Value::Null),
+                    )
                     .set("dev_size_bytes", u(pv, "dev_size").map(|s| s * 512))
                     .set("pe_start_bytes", u(pv, "pe_start").map(|s| s * 512))
                     .set("pe_count", u(pv, "pe_count"))
-                    .set("status", pv.get("status").cloned().unwrap_or(Value::Arr(vec![])))
+                    .set(
+                        "status",
+                        pv.get("status").cloned().unwrap_or(Value::Arr(vec![])),
+                    )
                     .build(),
             );
         }
@@ -320,14 +358,31 @@ pub fn vg_summary(cfg: &Value) -> Option<Value> {
                 Obj::new()
                     .set("name", ln.as_str())
                     .set("id", lv.get("id").cloned().unwrap_or(Value::Null))
-                    .set("status", lv.get("status").cloned().unwrap_or(Value::Arr(vec![])))
-                    .set("flags", lv.get("flags").cloned().unwrap_or(Value::Arr(vec![])))
+                    .set(
+                        "status",
+                        lv.get("status").cloned().unwrap_or(Value::Arr(vec![])),
+                    )
+                    .set(
+                        "flags",
+                        lv.get("flags").cloned().unwrap_or(Value::Arr(vec![])),
+                    )
                     .set("size_bytes", extents * extent_sectors * 512)
-                    .set("creation_host", lv.get("creation_host").cloned().unwrap_or(Value::Null))
-                    .set("creation_time", lv.get("creation_time").cloned().unwrap_or(Value::Null))
+                    .set(
+                        "creation_host",
+                        lv.get("creation_host").cloned().unwrap_or(Value::Null),
+                    )
+                    .set(
+                        "creation_time",
+                        lv.get("creation_time").cloned().unwrap_or(Value::Null),
+                    )
                     // Only where the LV has tags (load's lvcreate of a thin
                     // LV adds them).
-                    .set_some("tags", lv.get("tags").filter(|t| t.as_array().is_some_and(|a| !a.is_empty())).cloned())
+                    .set_some(
+                        "tags",
+                        lv.get("tags")
+                            .filter(|t| t.as_array().is_some_and(|a| !a.is_empty()))
+                            .cloned(),
+                    )
                     .set("segments", segs)
                     .build(),
             );
@@ -339,16 +394,28 @@ pub fn vg_summary(cfg: &Value) -> Option<Value> {
             .set("id", vg.get("id").cloned().unwrap_or(Value::Null))
             .set("seqno", u(vg, "seqno"))
             .set("format", vg.get("format").cloned().unwrap_or(Value::Null))
-            .set("status", vg.get("status").cloned().unwrap_or(Value::Arr(vec![])))
-            .set("flags", vg.get("flags").cloned().unwrap_or(Value::Arr(vec![])))
+            .set(
+                "status",
+                vg.get("status").cloned().unwrap_or(Value::Arr(vec![])),
+            )
+            .set(
+                "flags",
+                vg.get("flags").cloned().unwrap_or(Value::Arr(vec![])),
+            )
             .set("extent_size_bytes", extent_sectors * 512)
             .set("max_lv", u(vg, "max_lv"))
             .set("max_pv", u(vg, "max_pv"))
             .set("metadata_copies", u(vg, "metadata_copies"))
             .set("physical_volumes", pvs)
             .set("logical_volumes", lvs)
-            .set("creation_host", cfg.get("creation_host").cloned().unwrap_or(Value::Null))
-            .set("creation_time", cfg.get("creation_time").cloned().unwrap_or(Value::Null))
+            .set(
+                "creation_host",
+                cfg.get("creation_host").cloned().unwrap_or(Value::Null),
+            )
+            .set(
+                "creation_time",
+                cfg.get("creation_time").cloned().unwrap_or(Value::Null),
+            )
             .build(),
     )
 }
@@ -690,7 +757,10 @@ mod tests {
 
     #[test]
     fn uuid_grouping() {
-        assert_eq!(format_uuid("Hc7n2maaaabbbbccccddddeeeeffffff"), "Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff");
+        assert_eq!(
+            format_uuid("Hc7n2maaaabbbbccccddddeeeeffffff"),
+            "Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff"
+        );
         assert_eq!(format_uuid("short"), "short");
     }
 
@@ -698,19 +768,59 @@ mod tests {
     fn parses_installer_metadata() {
         let cfg = parse_config(METADATA).unwrap();
         assert_eq!(cfg.at(&["vg0", "seqno"]).and_then(Value::as_u64), Some(4));
-        assert_eq!(cfg.at(&["vg0", "status", "1"]).and_then(Value::as_str), Some("READ"));
-        assert_eq!(cfg.at(&["vg0", "logical_volumes", "root", "segment1", "stripes", "0"]).and_then(Value::as_str), Some("pv0"));
-        assert_eq!(cfg.get("contents").and_then(Value::as_str), Some("Text Format Volume Group"));
+        assert_eq!(
+            cfg.at(&["vg0", "status", "1"]).and_then(Value::as_str),
+            Some("READ")
+        );
+        assert_eq!(
+            cfg.at(&["vg0", "logical_volumes", "root", "segment1", "stripes", "0"])
+                .and_then(Value::as_str),
+            Some("pv0")
+        );
+        assert_eq!(
+            cfg.get("contents").and_then(Value::as_str),
+            Some("Text Format Volume Group")
+        );
         let vg = vg_summary(&cfg).unwrap();
         assert_eq!(vg.get("name").and_then(Value::as_str), Some("vg0"));
-        assert_eq!(vg.get("extent_size_bytes").and_then(Value::as_u64), Some(4 << 20));
-        assert_eq!(vg.at(&["physical_volumes", "0", "pe_start_bytes"]).and_then(Value::as_u64), Some(1 << 20));
-        assert_eq!(vg.at(&["physical_volumes", "0", "device_hint"]).and_then(Value::as_str), Some("/dev/vda5"));
-        assert_eq!(vg.at(&["logical_volumes", "0", "name"]).and_then(Value::as_str), Some("root"));
-        assert_eq!(vg.at(&["logical_volumes", "0", "size_bytes"]).and_then(Value::as_u64), Some(3000 * (4 << 20)));
-        assert_eq!(vg.at(&["logical_volumes", "1", "size_bytes"]).and_then(Value::as_u64), Some(239 * (4 << 20)));
-        assert_eq!(vg.at(&["logical_volumes", "1", "segments", "1", "start_extent"]).and_then(Value::as_u64), Some(200));
-        assert_eq!(vg.get("creation_host").and_then(Value::as_str), Some("debian"));
+        assert_eq!(
+            vg.get("extent_size_bytes").and_then(Value::as_u64),
+            Some(4 << 20)
+        );
+        assert_eq!(
+            vg.at(&["physical_volumes", "0", "pe_start_bytes"])
+                .and_then(Value::as_u64),
+            Some(1 << 20)
+        );
+        assert_eq!(
+            vg.at(&["physical_volumes", "0", "device_hint"])
+                .and_then(Value::as_str),
+            Some("/dev/vda5")
+        );
+        assert_eq!(
+            vg.at(&["logical_volumes", "0", "name"])
+                .and_then(Value::as_str),
+            Some("root")
+        );
+        assert_eq!(
+            vg.at(&["logical_volumes", "0", "size_bytes"])
+                .and_then(Value::as_u64),
+            Some(3000 * (4 << 20))
+        );
+        assert_eq!(
+            vg.at(&["logical_volumes", "1", "size_bytes"])
+                .and_then(Value::as_u64),
+            Some(239 * (4 << 20))
+        );
+        assert_eq!(
+            vg.at(&["logical_volumes", "1", "segments", "1", "start_extent"])
+                .and_then(Value::as_u64),
+            Some(200)
+        );
+        assert_eq!(
+            vg.get("creation_host").and_then(Value::as_str),
+            Some("debian")
+        );
     }
 
     /// A thin pool's and its thin LVs' segments come through with their own
@@ -720,33 +830,72 @@ mod tests {
         let vg = thin_vg();
         assert_eq!(vg.get("name").and_then(Value::as_str), Some("vos-root"));
         let lvs = vg.get("logical_volumes").and_then(Value::as_array).unwrap();
-        let names: Vec<&str> = lvs.iter().filter_map(|l| l.get("name").and_then(Value::as_str)).collect();
-        assert_eq!(names, vec!["init", "root", "root-a", "root-b", "lvol0_pmspare", "root_tmeta", "root_tdata"]);
+        let names: Vec<&str> = lvs
+            .iter()
+            .filter_map(|l| l.get("name").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "init",
+                "root",
+                "root-a",
+                "root-b",
+                "lvol0_pmspare",
+                "root_tmeta",
+                "root_tdata"
+            ]
+        );
         let pool = lvs[1].at(&["segments", "0"]).unwrap();
         assert_eq!(pool.get("type").and_then(Value::as_str), Some("thin-pool"));
-        assert_eq!(pool.get("metadata").and_then(Value::as_str), Some("root_tmeta"));
+        assert_eq!(
+            pool.get("metadata").and_then(Value::as_str),
+            Some("root_tmeta")
+        );
         assert_eq!(pool.get("pool").and_then(Value::as_str), Some("root_tdata"));
         assert_eq!(pool.get("chunk_size").and_then(Value::as_u64), Some(128));
-        assert_eq!(pool.get("discards").and_then(Value::as_str), Some("passdown"));
+        assert_eq!(
+            pool.get("discards").and_then(Value::as_str),
+            Some("passdown")
+        );
         assert_eq!(pool.get("zero_new_blocks").and_then(Value::as_u64), Some(1));
         let thin = lvs[3].at(&["segments", "0"]).unwrap();
         assert_eq!(thin.get("thin_pool").and_then(Value::as_str), Some("root"));
         assert_eq!(thin.get("device_id").and_then(Value::as_u64), Some(2));
-        assert_eq!(lvs[3].get("size_bytes").and_then(Value::as_u64), Some(19 << 30));
-        assert_eq!(lvs[6].get("status").map(Value::compact).as_deref(), Some(r#"["READ","WRITE"]"#));
+        assert_eq!(
+            lvs[3].get("size_bytes").and_then(Value::as_u64),
+            Some(19 << 30)
+        );
+        assert_eq!(
+            lvs[6].get("status").map(Value::compact).as_deref(),
+            Some(r#"["READ","WRITE"]"#)
+        );
     }
 
     #[test]
     fn pv_probe_reads_metadata() {
         let c = probe(&MemSource(pv(512, 1 << 20))).unwrap();
         assert_eq!(c.kind, "LVM2_member");
-        assert_eq!(c.uuid.as_deref(), Some("Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff"));
+        assert_eq!(
+            c.uuid.as_deref(),
+            Some("Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff")
+        );
         let d = c.details.build();
         assert_eq!(d.get("label_sector").and_then(Value::as_u64), Some(1));
         assert_eq!(d.get("vg_name").and_then(Value::as_str), Some("vg0"));
-        assert_eq!(d.get("data_area_offset").and_then(Value::as_u64), Some(1 << 20));
-        assert_eq!(d.at(&["metadata_areas", "0", "offset"]).and_then(Value::as_u64), Some(4096));
-        assert_eq!(c.extra.unwrap().get("seqno").and_then(Value::as_u64), Some(4));
+        assert_eq!(
+            d.get("data_area_offset").and_then(Value::as_u64),
+            Some(1 << 20)
+        );
+        assert_eq!(
+            d.at(&["metadata_areas", "0", "offset"])
+                .and_then(Value::as_u64),
+            Some(4096)
+        );
+        assert_eq!(
+            c.extra.unwrap().get("seqno").and_then(Value::as_u64),
+            Some(4)
+        );
     }
 
     #[test]
@@ -754,8 +903,15 @@ mod tests {
         let area = 8192u64;
         let at = area - 1000;
         let c = probe(&MemSource(pv(at, area))).unwrap();
-        assert!(c.details.clone().build().get("metadata_error").is_none(), "{:?}", c.details.build());
-        assert_eq!(c.extra.unwrap().get("name").and_then(Value::as_str), Some("vg0"));
+        assert!(
+            c.details.clone().build().get("metadata_error").is_none(),
+            "{:?}",
+            c.details.build()
+        );
+        assert_eq!(
+            c.extra.unwrap().get("name").and_then(Value::as_str),
+            Some("vg0")
+        );
     }
 
     #[test]
@@ -764,16 +920,39 @@ mod tests {
         let mut img = pv(512, 1 << 20);
         img[4096 + 40..4096 + 56].fill(0);
         let c = probe(&MemSource(img)).unwrap();
-        assert!(c.details.build().get("metadata_error").unwrap().as_str().unwrap().contains("not in a volume group"));
+        assert!(
+            c.details
+                .build()
+                .get("metadata_error")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("not in a volume group")
+        );
         // Ignored area.
         let mut img = pv(512, 1 << 20);
         img[4096 + 60] = 1;
         let c = probe(&MemSource(img)).unwrap();
-        assert!(c.details.build().get("metadata_error").unwrap().as_str().unwrap().contains("ignored"));
+        assert!(
+            c.details
+                .build()
+                .get("metadata_error")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("ignored")
+        );
         // No mda header magic.
         let mut img = pv(512, 1 << 20);
         img[4096 + 4] = b'x';
-        assert!(probe(&MemSource(img)).unwrap().details.build().get("metadata_error").is_some());
+        assert!(
+            probe(&MemSource(img))
+                .unwrap()
+                .details
+                .build()
+                .get("metadata_error")
+                .is_some()
+        );
         // Garbage text.
         let mut img = pv(512, 1 << 20);
         img[4096 + 512] = b'{';
@@ -783,7 +962,17 @@ mod tests {
         // Absurd location.
         let mut img = pv(512, 1 << 20);
         img[4096 + 48..4096 + 56].copy_from_slice(&(1u64 << 40).to_le_bytes());
-        assert!(probe(&MemSource(img)).unwrap().details.build().get("metadata_error").unwrap().as_str().unwrap().contains("range"));
+        assert!(
+            probe(&MemSource(img))
+                .unwrap()
+                .details
+                .build()
+                .get("metadata_error")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("range")
+        );
     }
 
     #[test]
@@ -798,7 +987,13 @@ mod tests {
         moved[0..512].copy_from_slice(&img[512..1024]);
         moved[512..1024].fill(0);
         let c = probe(&MemSource(moved)).unwrap();
-        assert_eq!(c.details.build().get("label_sector").and_then(Value::as_u64), Some(0));
+        assert_eq!(
+            c.details
+                .build()
+                .get("label_sector")
+                .and_then(Value::as_u64),
+            Some(0)
+        );
     }
 
     #[test]
@@ -812,15 +1007,31 @@ mod tests {
         assert_eq!(v.at(&["d", "1"]).and_then(Value::as_str), Some("x\"y"));
         assert_eq!(v.at(&["e", "f"]).and_then(Value::as_str), Some("bare_word"));
         assert_eq!(v.get("q k").and_then(Value::as_u64), Some(1));
-        for bad in ["a = ", "a {", "a = [1", "a = [1 2]", "}", "a b", "a = \"x", "= 1", "a = $"] {
+        for bad in [
+            "a = ",
+            "a {",
+            "a = [1",
+            "a = [1 2]",
+            "}",
+            "a b",
+            "a = \"x",
+            "= 1",
+            "a = $",
+        ] {
             assert!(parse_config(bad).is_err(), "accepted {bad:?}");
         }
         let deep = "a { ".repeat(100) + &"} ".repeat(100);
         assert!(parse_config(&deep).is_err());
         // RustAudit1 H2-02: arrays count toward the depth too, so deep '['
         // is an error and not a stack overflow.
-        assert_eq!(parse_config(&("a = ".to_string() + &"[".repeat(100_000))), Err("nested too deeply".to_string()));
-        assert_eq!(parse_config(&("vg { a = ".to_string() + &"[".repeat(1_000_000))), Err("nested too deeply".to_string()));
+        assert_eq!(
+            parse_config(&("a = ".to_string() + &"[".repeat(100_000))),
+            Err("nested too deeply".to_string())
+        );
+        assert_eq!(
+            parse_config(&("vg { a = ".to_string() + &"[".repeat(1_000_000))),
+            Err("nested too deeply".to_string())
+        );
         let arrays = |n: usize| format!("a = {}1{}", "[".repeat(n), "]".repeat(n));
         assert!(parse_config(&arrays(MAX_DEPTH)).is_ok());
         assert!(parse_config(&arrays(MAX_DEPTH + 1)).is_err());

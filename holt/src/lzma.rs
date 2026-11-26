@@ -40,7 +40,12 @@ impl<'a> Range<'a> {
         if code == u32::MAX {
             return Err("a corrupt LZMA stream (its first code is all ones)".into());
         }
-        Ok(Range { b, at: 5, range: u32::MAX, code })
+        Ok(Range {
+            b,
+            at: 5,
+            range: u32::MAX,
+            code,
+        })
     }
 
     fn byte(&mut self) -> Result<u8, String> {
@@ -120,7 +125,13 @@ struct Len {
 
 impl Len {
     fn new() -> Self {
-        Len { choice: PROB_INIT, choice2: PROB_INIT, low: vec![[PROB_INIT; 8]; 1 << POS_BITS_MAX], mid: vec![[PROB_INIT; 8]; 1 << POS_BITS_MAX], high: [PROB_INIT; 256] }
+        Len {
+            choice: PROB_INIT,
+            choice2: PROB_INIT,
+            low: vec![[PROB_INIT; 8]; 1 << POS_BITS_MAX],
+            mid: vec![[PROB_INIT; 8]; 1 << POS_BITS_MAX],
+            high: [PROB_INIT; 256],
+        }
     }
 
     fn decode(&mut self, rc: &mut Range, pos_state: usize) -> Result<usize, String> {
@@ -148,7 +159,9 @@ impl Len {
 /// bits), and when it ends before SIZE bytes.
 pub fn decode(b: &[u8], lc: u32, lp: u32, pb: u32, size: usize) -> Result<Vec<u8>, String> {
     if lc > 8 || lp > 4 || pb > 4 {
-        return Err(format!("LZMA properties lc={lc} lp={lp} pb={pb} out of range"));
+        return Err(format!(
+            "LZMA properties lc={lc} lp={lp} pb={pb} out of range"
+        ));
     }
     let mut rc = Range::new(b)?;
     let mut out: Vec<u8> = Vec::with_capacity(size);
@@ -174,7 +187,10 @@ pub fn decode(b: &[u8], lc: u32, lp: u32, pb: u32, size: usize) -> Result<Vec<u8
             let probs = &mut lit[0x300 * ls..0x300 * (ls + 1)];
             let mut sym = 1usize;
             if state >= 7 {
-                let mut mb = *out.get(out.len().wrapping_sub(rep0 + 1)).ok_or("a corrupt LZMA stream (a literal's match byte before the start)")? as usize;
+                let mut mb = *out
+                    .get(out.len().wrapping_sub(rep0 + 1))
+                    .ok_or("a corrupt LZMA stream (a literal's match byte before the start)")?
+                    as usize;
                 while sym < 0x100 {
                     let m = (mb >> 7) & 1;
                     mb <<= 1;
@@ -189,7 +205,13 @@ pub fn decode(b: &[u8], lc: u32, lp: u32, pb: u32, size: usize) -> Result<Vec<u8
                 sym = (sym << 1) | rc.bit(&mut probs[sym])? as usize;
             }
             out.push((sym - 0x100) as u8);
-            state = if state < 4 { 0 } else if state < 10 { state - 3 } else { state - 6 };
+            state = if state < 4 {
+                0
+            } else if state < 10 {
+                state - 3
+            } else {
+                state - 6
+            };
             continue;
         }
         let len;
@@ -200,7 +222,9 @@ pub fn decode(b: &[u8], lc: u32, lp: u32, pb: u32, size: usize) -> Result<Vec<u8
             if rc.bit(&mut is_rep_g0[state])? == 0 {
                 if rc.bit(&mut is_rep0_long[(state << POS_BITS_MAX) + pos_state])? == 0 {
                     state = if state < 7 { 9 } else { 11 };
-                    let c = *out.get(out.len().wrapping_sub(rep0 + 1)).ok_or("a corrupt LZMA stream (a short rep before the start)")?;
+                    let c = *out
+                        .get(out.len().wrapping_sub(rep0 + 1))
+                        .ok_or("a corrupt LZMA stream (a short rep before the start)")?;
                     out.push(c);
                     continue;
                 }
@@ -240,7 +264,8 @@ pub fn decode(b: &[u8], lc: u32, lp: u32, pb: u32, size: usize) -> Result<Vec<u8
                     let off = (base - slot) as usize;
                     base + rc.reverse(&mut pos_dec[off..], nd)?
                 } else {
-                    base.wrapping_add(rc.direct(nd - NUM_ALIGN_BITS as u32)? << NUM_ALIGN_BITS).wrapping_add(rc.reverse(&mut align, NUM_ALIGN_BITS as u32)?)
+                    base.wrapping_add(rc.direct(nd - NUM_ALIGN_BITS as u32)? << NUM_ALIGN_BITS)
+                        .wrapping_add(rc.reverse(&mut align, NUM_ALIGN_BITS as u32)?)
                 }
             };
             if dist == u32::MAX {
@@ -248,7 +273,11 @@ pub fn decode(b: &[u8], lc: u32, lp: u32, pb: u32, size: usize) -> Result<Vec<u8
             }
             rep0 = dist as usize;
             if rep0 >= out.len() {
-                return Err(format!("a corrupt LZMA stream (a match {} back at byte {})", rep0 + 1, out.len()));
+                return Err(format!(
+                    "a corrupt LZMA stream (a match {} back at byte {})",
+                    rep0 + 1,
+                    out.len()
+                ));
             }
         }
         let n = (len + MATCH_MIN_LEN).min(size - out.len());
@@ -259,7 +288,10 @@ pub fn decode(b: &[u8], lc: u32, lp: u32, pb: u32, size: usize) -> Result<Vec<u8
         }
     }
     if out.len() < size {
-        return Err(format!("the LZMA stream ends after {} of {size} bytes", out.len()));
+        return Err(format!(
+            "the LZMA stream ends after {} of {size} bytes",
+            out.len()
+        ));
     }
     Ok(out)
 }
@@ -276,7 +308,18 @@ mod tests {
             x = x.wrapping_mul(1103515245).wrapping_add(12345);
             (x >> 16) & 0x7fff
         };
-        let words = ["grub", "prefix", "(,gpt3)", "/@/boot/grub", "normal.mod", "biosdisk", "part_gpt", "btrfs", "\0\0\0\0", "mimg"];
+        let words = [
+            "grub",
+            "prefix",
+            "(,gpt3)",
+            "/@/boot/grub",
+            "normal.mod",
+            "biosdisk",
+            "part_gpt",
+            "btrfs",
+            "\0\0\0\0",
+            "mimg",
+        ];
         let mut out = Vec::new();
         while out.len() < 70000 {
             let r = next();
@@ -311,14 +354,22 @@ mod tests {
         // Fewer bytes asked: the first ones.
         assert_eq!(decode(RAW, 3, 0, 2, 1000).unwrap(), p[..1000]);
         // More: the end marker ends it, short.
-        assert!(decode(RAW, 3, 0, 2, p.len() + 1).unwrap_err().contains("ends after 70000"));
+        assert!(
+            decode(RAW, 3, 0, 2, p.len() + 1)
+                .unwrap_err()
+                .contains("ends after 70000")
+        );
     }
 
     #[test]
     fn refuses_what_is_cut_or_corrupt() {
         let p = plain();
         assert!(decode(&RAW[..RAW.len() / 2], 3, 0, 2, p.len()).is_err());
-        assert!(decode(&[1, 0, 0, 0, 0, 0], 3, 0, 2, 1).unwrap_err().contains("first byte"));
+        assert!(
+            decode(&[1, 0, 0, 0, 0, 0], 3, 0, 2, 1)
+                .unwrap_err()
+                .contains("first byte")
+        );
         assert!(decode(&[0, 0, 0], 3, 0, 2, 1).is_err());
         assert!(decode(RAW, 9, 0, 2, 1).is_err());
         // Bytes flipped: an Err or other bytes, never a panic.

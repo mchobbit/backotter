@@ -8,7 +8,7 @@
 //! dracut remakes the initramfs (the generic step); the "Qubes OS" NVRAM
 //! entry is made when the source's NVRAM had none.
 
-use super::commands::{efi_dedupe, Builder, Cmd};
+use super::commands::{Builder, Cmd, efi_dedupe};
 use crate::json::Value;
 
 fn s(v: &Value, k: &str) -> Option<String> {
@@ -39,21 +39,50 @@ impl Builder<'_> {
         if !self.is_qubes() {
             return;
         }
-        let ver = self.layout.str_at(&["os", "version_id"]).unwrap_or("").to_string();
+        let ver = self
+            .layout
+            .str_at(&["os", "version_id"])
+            .unwrap_or("")
+            .to_string();
         if !supported_version(&ver) {
-            self.problems.push(format!("Qubes OS {ver}: bko-holt load restores Qubes OS 4.3 and later only"));
+            self.problems.push(format!(
+                "Qubes OS {ver}: bko-holt load restores Qubes OS 4.3 and later only"
+            ));
         }
-        let root_btrfs = self.layout.arr(&["storage", "fstab"]).iter().any(|e| s(e, "file").as_deref() == Some("/") && s(e, "type").as_deref() == Some("btrfs"));
+        let root_btrfs = self.layout.arr(&["storage", "fstab"]).iter().any(|e| {
+            s(e, "file").as_deref() == Some("/") && s(e, "type").as_deref() == Some("btrfs")
+        });
         let pools = self.layout.arr(&["storage", "qubes", "pools"]).to_vec();
-        if root_btrfs || pools.iter().any(|p| s(p, "driver").as_deref() == Some("file-reflink")) {
+        if root_btrfs
+            || pools
+                .iter()
+                .any(|p| s(p, "driver").as_deref() == Some("file-reflink"))
+        {
             self.problems.push("Qubes OS on btrfs (the installer's btrfs layout, a file-reflink pool) isn't supported by bko-holt load; only its default LVM thin layout is".into());
         }
-        let vgs = self.layout.arr(&["storage", "lvm", "volume_groups"]).to_vec();
-        for p in pools.iter().filter(|p| s(p, "driver").as_deref() == Some("lvm_thin")) {
-            let (vg, tp) = (s(p, "volume_group").unwrap_or_default(), s(p, "thin_pool").unwrap_or_default());
+        let vgs = self
+            .layout
+            .arr(&["storage", "lvm", "volume_groups"])
+            .to_vec();
+        for p in pools
+            .iter()
+            .filter(|p| s(p, "driver").as_deref() == Some("lvm_thin"))
+        {
+            let (vg, tp) = (
+                s(p, "volume_group").unwrap_or_default(),
+                s(p, "thin_pool").unwrap_or_default(),
+            );
             let has = vgs.iter().any(|g| {
                 s(g, "name").as_deref() == Some(vg.as_str())
-                    && g.get("logical_volumes").and_then(Value::as_array).into_iter().flatten().any(|l| s(l, "name").as_deref() == Some(tp.as_str()) && l.at(&["segments", "0", "type"]).and_then(Value::as_str) == Some("thin-pool"))
+                    && g.get("logical_volumes")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .any(|l| {
+                            s(l, "name").as_deref() == Some(tp.as_str())
+                                && l.at(&["segments", "0", "type"]).and_then(Value::as_str)
+                                    == Some("thin-pool")
+                        })
             });
             if !has {
                 self.problems.push(format!("Qubes OS: qubes.xml's pool {} is the thin pool {vg}/{tp}, which isn't in the dump", s(p, "name").unwrap_or_default()));
@@ -78,8 +107,20 @@ impl Builder<'_> {
         }
         // rd.luks.uuid= names a LUKS container load makes with its UUID
         // kept; one that names none here would stop dom0's boot.
-        let luks: Vec<String> = self.layout.arr(&["storage", "dm_devices"]).iter().filter_map(|d| d.at(&["dm", "luks_uuid"]).and_then(Value::as_str).map(str::to_ascii_lowercase)).collect();
-        for w in s(&xen, "cmdline_linux").unwrap_or_default().split_whitespace() {
+        let luks: Vec<String> = self
+            .layout
+            .arr(&["storage", "dm_devices"])
+            .iter()
+            .filter_map(|d| {
+                d.at(&["dm", "luks_uuid"])
+                    .and_then(Value::as_str)
+                    .map(str::to_ascii_lowercase)
+            })
+            .collect();
+        for w in s(&xen, "cmdline_linux")
+            .unwrap_or_default()
+            .split_whitespace()
+        {
             if let Some(u) = w.strip_prefix("rd.luks.uuid=") {
                 let u = u.trim_start_matches("luks-").to_ascii_lowercase();
                 if !luks.contains(&u) {
@@ -97,10 +138,23 @@ impl Builder<'_> {
             Some(l) if !l.is_empty() => format!("LANG={l}.UTF-8"),
             _ => "LANG=C".to_string(),
         };
-        out.push(Cmd::new(&["sh", "-c", &off]).why("os-prober off: it would list the rescue system's disks"));
-        out.push(Cmd::new(&["chroot", t, "env", &lang, "grub2-mkconfig", "-o", &cfg]));
+        out.push(
+            Cmd::new(&["sh", "-c", &off])
+                .why("os-prober off: it would list the rescue system's disks"),
+        );
+        out.push(Cmd::new(&[
+            "chroot",
+            t,
+            "env",
+            &lang,
+            "grub2-mkconfig",
+            "-o",
+            &cfg,
+        ]));
         out.push(Cmd::new(&["sh", "-c", &on]));
-        out.push(Cmd::new(&["sh", "-c", &xen_check(t, &cfg)]).why("Qubes OS: the remade menu boots Xen"));
+        out.push(
+            Cmd::new(&["sh", "-c", &xen_check(t, &cfg)]).why("Qubes OS: the remade menu boots Xen"),
+        );
         out
     }
 
@@ -109,31 +163,92 @@ impl Builder<'_> {
     /// where the NVRAM isn't the source's).  Made last, so it comes first.
     pub(crate) fn qubes_entry(&mut self) -> Vec<Cmd> {
         let loader = format!("\\{}", LOADER.replace('/', "\\"));
-        let order: Vec<String> = self.layout.v.at(&["boot", "efi", "boot_order"]).and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
-        let on_layout = |part: &str| self.layout.disks.iter().any(|d| d.parts.iter().any(|p| p.name == part));
-        let made = self.layout.arr(&["boot", "efi", "entries"]).iter().any(|e| {
-            s(e, "number").is_some_and(|n| order.contains(&n))
-                && s(e, "file").is_some_and(|f| f.replace('/', "\\").trim_start_matches('\\').eq_ignore_ascii_case(&loader[1..]))
-                && e.at(&["partition", "device"]).and_then(Value::as_str).is_some_and(on_layout)
-        });
+        let order: Vec<String> = self
+            .layout
+            .v
+            .at(&["boot", "efi", "boot_order"])
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect();
+        let on_layout = |part: &str| {
+            self.layout
+                .disks
+                .iter()
+                .any(|d| d.parts.iter().any(|p| p.name == part))
+        };
+        let made = self
+            .layout
+            .arr(&["boot", "efi", "entries"])
+            .iter()
+            .any(|e| {
+                s(e, "number").is_some_and(|n| order.contains(&n))
+                    && s(e, "file").is_some_and(|f| {
+                        f.replace('/', "\\")
+                            .trim_start_matches('\\')
+                            .eq_ignore_ascii_case(&loader[1..])
+                    })
+                    && e.at(&["partition", "device"])
+                        .and_then(Value::as_str)
+                        .is_some_and(on_layout)
+            });
         if made {
             return Vec::new();
         }
-        let holds = |esp: &Value| esp.at(&["contents", "files"]).and_then(Value::as_array).is_some_and(|f| f.iter().any(|f| f.get("path").and_then(Value::as_str).is_some_and(|p| p.eq_ignore_ascii_case(LOADER))));
+        let holds = |esp: &Value| {
+            esp.at(&["contents", "files"])
+                .and_then(Value::as_array)
+                .is_some_and(|f| {
+                    f.iter().any(|f| {
+                        f.get("path")
+                            .and_then(Value::as_str)
+                            .is_some_and(|p| p.eq_ignore_ascii_case(LOADER))
+                    })
+                })
+        };
         let esps = self.layout.arr(&["boot", "esps"]).to_vec();
-        let Some(part) = esps.iter().find(|e| holds(e)).or_else(|| esps.first()).and_then(|e| s(e, "device")) else {
-            self.problems.push(format!("Qubes OS: the dump has no ESP, so there's nowhere for {LOADER}"));
+        let Some(part) = esps
+            .iter()
+            .find(|e| holds(e))
+            .or_else(|| esps.first())
+            .and_then(|e| s(e, "device"))
+        else {
+            self.problems.push(format!(
+                "Qubes OS: the dump has no ESP, so there's nowhere for {LOADER}"
+            ));
             return Vec::new();
         };
-        let Some((disk, num)) = self.layout.disks.iter().find_map(|d| d.parts.iter().find(|p| p.name == part).map(|p| (d.name.clone(), p.number))) else {
-            self.notes.push(format!("Qubes OS: its ESP {part} isn't on the layout's disks; no boot entry made"));
+        let Some((disk, num)) = self.layout.disks.iter().find_map(|d| {
+            d.parts
+                .iter()
+                .find(|p| p.name == part)
+                .map(|p| (d.name.clone(), p.number))
+        }) else {
+            self.notes.push(format!(
+                "Qubes OS: its ESP {part} isn't on the layout's disks; no boot entry made"
+            ));
             return Vec::new();
         };
-        let Some(tgt) = self.names.mapping.target_of(&disk) else { return Vec::new() };
+        let Some(tgt) = self.names.mapping.target_of(&disk) else {
+            return Vec::new();
+        };
         vec![
             efi_dedupe(&format!("/dev/{tgt}"), num, &loader),
-            Cmd::new(&["efibootmgr", "--quiet", "--create", "--disk", &format!("/dev/{tgt}"), "--part", &num.to_string(), "--label", ENTRY, "--loader", &loader])
-                .why("Qubes OS: the boot entry its installer makes (the dump's NVRAM had none for it)"),
+            Cmd::new(&[
+                "efibootmgr",
+                "--quiet",
+                "--create",
+                "--disk",
+                &format!("/dev/{tgt}"),
+                "--part",
+                &num.to_string(),
+                "--label",
+                ENTRY,
+                "--loader",
+                &loader,
+            ])
+            .why("Qubes OS: the boot entry its installer makes (the dump's NVRAM had none for it)"),
         ]
     }
 }
@@ -145,16 +260,27 @@ pub(crate) fn os_prober_off(t: &str) -> (String, String) {
     let q = super::shell_quote;
     let p = format!("{t}/usr/bin/os-prober");
     let qp = q(&p);
-    let off = format!("[ ! -e {qp} ] || mount --bind {} {qp}", q(&format!("{t}/usr/bin/true")));
-    let on = format!("! grep -q {} /proc/self/mountinfo || umount {qp}", q(&format!(" {p} ")));
+    let off = format!(
+        "[ ! -e {qp} ] || mount --bind {} {qp}",
+        q(&format!("{t}/usr/bin/true"))
+    );
+    let on = format!(
+        "! grep -q {} /proc/self/mountinfo || umount {qp}",
+        q(&format!(" {p} "))
+    );
     (off, on)
 }
 
 /// The `sh -c` script that fails unless T's grub.cfg CFG has a Xen entry.
 fn xen_check(t: &str, cfg: &str) -> String {
     let q = super::shell_quote;
-    let msg = format!("{cfg}: grub2-mkconfig made no Xen entry (20_linux_xen found no /boot/xen-*.gz?)");
-    format!("grep -q '^[[:space:]]*multiboot2[[:space:]].*/xen' {} || {{ echo {} >&2; exit 1; }}", q(&format!("{t}{cfg}")), q(&msg))
+    let msg =
+        format!("{cfg}: grub2-mkconfig made no Xen entry (20_linux_xen found no /boot/xen-*.gz?)");
+    format!(
+        "grep -q '^[[:space:]]*multiboot2[[:space:]].*/xen' {} || {{ echo {} >&2; exit 1; }}",
+        q(&format!("{t}{cfg}")),
+        q(&msg)
+    )
 }
 
 #[cfg(test)]
@@ -165,8 +291,14 @@ mod tests {
     #[test]
     fn scripts_for_a_plain_target() {
         let (off, on) = super::os_prober_off("/mnt/bko-target");
-        assert_eq!(off, "[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober");
-        assert_eq!(on, "! grep -q ' /mnt/bko-target/usr/bin/os-prober ' /proc/self/mountinfo || umount /mnt/bko-target/usr/bin/os-prober");
+        assert_eq!(
+            off,
+            "[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober"
+        );
+        assert_eq!(
+            on,
+            "! grep -q ' /mnt/bko-target/usr/bin/os-prober ' /proc/self/mountinfo || umount /mnt/bko-target/usr/bin/os-prober"
+        );
         assert_eq!(
             super::xen_check("/mnt/bko-target", "/boot/grub2/grub.cfg"),
             "grep -q '^[[:space:]]*multiboot2[[:space:]].*/xen' /mnt/bko-target/boot/grub2/grub.cfg || { echo '/boot/grub2/grub.cfg: grub2-mkconfig made no Xen entry (20_linux_xen found no /boot/xen-*.gz?)' >&2; exit 1; }"
@@ -180,7 +312,11 @@ mod tests {
         let tree = Tree::new("qubes-quote");
         let t = format!("{}/a b'c\"d$HOME`id`\ne", tree.root().display());
         let p = format!("{t}/usr/bin/os-prober");
-        for f in ["/usr/bin/os-prober", "/usr/bin/true", "/boot/grub2/grub.cfg"] {
+        for f in [
+            "/usr/bin/os-prober",
+            "/usr/bin/true",
+            "/boot/grub2/grub.cfg",
+        ] {
             let path = format!("{t}{f}");
             std::fs::create_dir_all(std::path::Path::new(&path).parent().unwrap()).unwrap();
             std::fs::write(&path, "menuentry 'Qubes' {\n\tmultiboot2 /xen-4.19.gz\n}\n").unwrap();
@@ -189,9 +325,17 @@ mod tests {
         let log = tree.p("/log");
         for c in ["mount", "umount", "grep"] {
             tree.file(&format!("/bin/{c}"), format!("#!/bin/sh\nfor a in \"$@\"; do printf '%s|' \"$a\"; done >> '{}'\necho >> '{}'\n", log.display(), log.display()));
-            std::process::Command::new("chmod").arg("755").arg(tree.p(&format!("/bin/{c}"))).status().unwrap();
+            std::process::Command::new("chmod")
+                .arg("755")
+                .arg(tree.p(&format!("/bin/{c}")))
+                .status()
+                .unwrap();
         }
-        let path = format!("{}:{}", tree.p("/bin").display(), std::env::var("PATH").unwrap_or_default());
+        let path = format!(
+            "{}:{}",
+            tree.p("/bin").display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
         let run = |script: &str, fake: bool| {
             let mut c = std::process::Command::new("sh");
             c.arg("-c").arg(script);
@@ -203,13 +347,23 @@ mod tests {
         let (off, on) = super::os_prober_off(&t);
         assert!(run(&off, true).status.success());
         assert!(run(&on, true).status.success());
-        assert_eq!(std::fs::read_to_string(&log).unwrap(), format!("--bind|{t}/usr/bin/true|{p}|\n-q| {p} |/proc/self/mountinfo|\n{p}|\n"));
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            format!("--bind|{t}/usr/bin/true|{p}|\n-q| {p} |/proc/self/mountinfo|\n{p}|\n")
+        );
         // The real grep: a menu with Xen passes; one without fails, saying so.
-        assert!(run(&super::xen_check(&t, "/boot/grub2/grub.cfg"), false).status.success());
+        assert!(
+            run(&super::xen_check(&t, "/boot/grub2/grub.cfg"), false)
+                .status
+                .success()
+        );
         std::fs::write(format!("{t}/boot/grub2/grub.cfg"), "menuentry 'Linux' {}\n").unwrap();
         let o = run(&super::xen_check(&t, "/boot/grub2/grub.cfg"), false);
         assert_eq!(o.status.code(), Some(1));
-        assert_eq!(String::from_utf8_lossy(&o.stderr), "/boot/grub2/grub.cfg: grub2-mkconfig made no Xen entry (20_linux_xen found no /boot/xen-*.gz?)\n");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stderr),
+            "/boot/grub2/grub.cfg: grub2-mkconfig made no Xen entry (20_linux_xen found no /boot/xen-*.gz?)\n"
+        );
     }
 
     #[test]

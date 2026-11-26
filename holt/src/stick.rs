@@ -131,7 +131,10 @@ pub fn main(args: &[String]) -> u8 {
         2
     };
     if let Some(e) = jsonout::schema_error(args, VALUE_FLAGS) {
-        return refuse(jsonout::ErrorCode::SchemaUnknown, format!("bko-holt stick: {e}"));
+        return refuse(
+            jsonout::ErrorCode::SchemaUnknown,
+            format!("bko-holt stick: {e}"),
+        );
     }
     let mut sysroot: Option<String> = None;
     let mut copy: Option<(String, String)> = None;
@@ -141,19 +144,48 @@ pub fn main(args: &[String]) -> u8 {
             a if jsonout::is_json_flag(a) => {}
             "--sysroot" => match it.next() {
                 Some(d) if std::path::Path::new(d).is_dir() => sysroot = Some(d.clone()),
-                Some(d) => return refuse(jsonout::ErrorCode::BadArgs, format!("bko-holt stick: --sysroot {d}: not a directory")),
-                None => return refuse(jsonout::ErrorCode::BadArgs, "bko-holt stick: --sysroot needs a directory".into()),
+                Some(d) => {
+                    return refuse(
+                        jsonout::ErrorCode::BadArgs,
+                        format!("bko-holt stick: --sysroot {d}: not a directory"),
+                    );
+                }
+                None => {
+                    return refuse(
+                        jsonout::ErrorCode::BadArgs,
+                        "bko-holt stick: --sysroot needs a directory".into(),
+                    );
+                }
             },
-            "--copy" if copy.is_some() => return refuse(jsonout::ErrorCode::BadArgs, "bko-holt stick: --copy is given twice".into()),
+            "--copy" if copy.is_some() => {
+                return refuse(
+                    jsonout::ErrorCode::BadArgs,
+                    "bko-holt stick: --copy is given twice".into(),
+                );
+            }
             "--copy" => match (it.next(), it.next()) {
-                (Some(id), Some(out)) if !out.starts_with('-') => copy = Some((id.clone(), out.clone())),
-                _ => return refuse(jsonout::ErrorCode::BadArgs, "bko-holt stick: --copy needs an install ID and the file to write".into()),
+                (Some(id), Some(out)) if !out.starts_with('-') => {
+                    copy = Some((id.clone(), out.clone()))
+                }
+                _ => {
+                    return refuse(
+                        jsonout::ErrorCode::BadArgs,
+                        "bko-holt stick: --copy needs an install ID and the file to write".into(),
+                    );
+                }
             },
-            other => return refuse(jsonout::ErrorCode::BadArgs, format!("bko-holt stick: unknown argument {other:?}")),
+            other => {
+                return refuse(
+                    jsonout::ErrorCode::BadArgs,
+                    format!("bko-holt stick: unknown argument {other:?}"),
+                );
+            }
         }
     }
     if !json {
-        eprint!("bko-holt stick: say --json: it writes the stick's config as JSON, for bko-rescue\n\n{USAGE}");
+        eprint!(
+            "bko-holt stick: say --json: it writes the stick's config as JSON, for bko-rescue\n\n{USAGE}"
+        );
         return 2;
     }
     if let Some((id, out)) = &copy {
@@ -163,15 +195,24 @@ pub fn main(args: &[String]) -> u8 {
             return refuse(jsonout::ErrorCode::BadArgs, "bko-holt stick --copy: INSTALL_ID isn't an install ID (a UUID, the name of its directory under backotter/machines/)".into());
         }
         if !std::path::Path::new(out).is_absolute() {
-            return refuse(jsonout::ErrorCode::OutUnsafe, "bko-holt stick --copy: OUT isn't an absolute path".into());
+            return refuse(
+                jsonout::ErrorCode::OutUnsafe,
+                "bko-holt stick --copy: OUT isn't an absolute path".into(),
+            );
         }
         if let Some(why) = crate::recoverycmd::out_unsafe(out) {
-            return refuse(jsonout::ErrorCode::OutUnsafe, format!("bko-holt stick --copy: {out}: {why}"));
+            return refuse(
+                jsonout::ErrorCode::OutUnsafe,
+                format!("bko-holt stick --copy: {out}: {why}"),
+            );
         }
     }
     let (sys, fam) = match sysroot {
         // A tree's files are images anyone may read: as root for the reads.
-        Some(d) => (Sys::new(d, Box::new(crate::sys::FakeRunner::default()), true), None),
+        Some(d) => (
+            Sys::new(d, Box::new(crate::sys::FakeRunner::default()), true),
+            None,
+        ),
         None => (Sys::host(), Family::current()),
     };
     let Some((id, out)) = copy else {
@@ -253,19 +294,39 @@ pub fn parse_marker(text: &str) -> Result<Marker, String> {
         return Err("its format isn't backotter-image".into());
     }
     let s = |k: &str| v.get_str(k).map(str::to_string);
-    let c = v.get("config_partition").ok_or("it has no config_partition")?;
-    let number = c.get_u64("number").and_then(|n| u32::try_from(n).ok()).filter(|n| (1..=128).contains(n)).ok_or("config_partition.number isn't a partition's number")?;
-    let sectors = c.get_u64("sectors").filter(|n| *n > 0).ok_or("config_partition.sectors isn't a size")?;
+    let c = v
+        .get("config_partition")
+        .ok_or("it has no config_partition")?;
+    let number = c
+        .get_u64("number")
+        .and_then(|n| u32::try_from(n).ok())
+        .filter(|n| (1..=128).contains(n))
+        .ok_or("config_partition.number isn't a partition's number")?;
+    let sectors = c
+        .get_u64("sectors")
+        .filter(|n| *n > 0)
+        .ok_or("config_partition.sectors isn't a size")?;
     Ok(Marker {
         image_id: s("image_id").ok_or("it has no image_id")?,
         platform: s("platform"),
         built: s("built"),
         number,
         sectors,
-        label: c.get_str("label").ok_or("config_partition.label is missing")?.to_string(),
-        fat_serial: c.get_str("fat_serial").ok_or("config_partition.fat_serial is missing")?.to_string(),
-        system_schemas: v.get_arr("system_schemas").map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default(),
-        dump_schemas: v.get_arr("dump_schemas").map(|a| a.iter().filter_map(Value::as_u64).collect()),
+        label: c
+            .get_str("label")
+            .ok_or("config_partition.label is missing")?
+            .to_string(),
+        fat_serial: c
+            .get_str("fat_serial")
+            .ok_or("config_partition.fat_serial is missing")?
+            .to_string(),
+        system_schemas: v
+            .get_arr("system_schemas")
+            .map(|a| a.iter().filter_map(Value::as_u64).collect())
+            .unwrap_or_default(),
+        dump_schemas: v
+            .get_arr("dump_schemas")
+            .map(|a| a.iter().filter_map(Value::as_u64).collect()),
     })
 }
 
@@ -277,7 +338,10 @@ struct NotOk {
 }
 
 fn not_ok(state: &'static str, why: impl Into<String>) -> NotOk {
-    NotOk { state, why: why.into() }
+    NotOk {
+        state,
+        why: why.into(),
+    }
 }
 
 /// The boot disk, and the config partition on it.
@@ -315,7 +379,19 @@ struct Scan {
 /// with the directory's name, and the rest are only counted: one machine's
 /// copy doesn't read every machine's system.json.
 fn scan(sys: &Sys, fam: Option<Family>, keep: Option<&str>) -> Scan {
-    let mut d = Doc { boot_disk: Value::Null, partition: None, label: None, dev: None, image: Value::Null, stick: Value::Null, machines: Vec::new(), notes: Vec::new(), keep: keep.map(str::to_string), kept: Vec::new(), others: 0 };
+    let mut d = Doc {
+        boot_disk: Value::Null,
+        partition: None,
+        label: None,
+        dev: None,
+        image: Value::Null,
+        stick: Value::Null,
+        machines: Vec::new(),
+        notes: Vec::new(),
+        keep: keep.map(str::to_string),
+        kept: Vec::new(),
+        others: 0,
+    };
     let r = read(sys, fam, &mut d);
     let (state, why) = match &r {
         Ok(()) => ("ok", None),
@@ -337,7 +413,12 @@ fn scan(sys: &Sys, fam: Option<Family>, keep: Option<&str>) -> Scan {
     for (k, m) in d.machines.iter_mut().enumerate() {
         m.put("this_computer", mine.len() == 1 && mine[0] == k);
     }
-    let config = Obj::new().set("state", state).set("partition", d.partition).set("label", d.label).set("why", why).set("dev", d.dev);
+    let config = Obj::new()
+        .set("state", state)
+        .set("partition", d.partition)
+        .set("label", d.label)
+        .set("why", why)
+        .set("dev", d.dev);
     let doc = jsonout::header("bko-holt-stick")
         .set("boot_disk", d.boot_disk)
         .set("config", config)
@@ -347,7 +428,12 @@ fn scan(sys: &Sys, fam: Option<Family>, keep: Option<&str>) -> Scan {
         .set("machines", d.machines)
         .set("notes", d.notes)
         .build();
-    Scan { doc, code: if state == "ok" { 0 } else { 1 }, kept: d.kept, others: d.others }
+    Scan {
+        doc,
+        code: if state == "ok" { 0 } else { 1 },
+        kept: d.kept,
+        others: d.others,
+    }
 }
 
 /// `stick --copy ID OUT`: the `bko-holt-stick-copy` document once machine
@@ -355,46 +441,129 @@ fn scan(sys: &Sys, fam: Option<Family>, keep: Option<&str>) -> Scan {
 /// private directory), else the refusal's code and line.  The layout is
 /// the system.json bytes whose checksum `scan` checked, held since and
 /// parsed, printed as dump prints it: the stick isn't read again.
-pub fn copy_layout(sys: &Sys, fam: Option<Family>, id: &str, out: &std::path::Path) -> Result<Value, (jsonout::ErrorCode, String)> {
+pub fn copy_layout(
+    sys: &Sys,
+    fam: Option<Family>,
+    id: &str,
+    out: &std::path::Path,
+) -> Result<Value, (jsonout::ErrorCode, String)> {
     use jsonout::ErrorCode as E;
     let say = |what: String| format!("bko-holt stick --copy: {what}");
-    let Scan { doc, code, kept, others } = scan(sys, fam, Some(id));
+    let Scan {
+        doc,
+        code,
+        kept,
+        others,
+    } = scan(sys, fam, Some(id));
     if code != 0 {
         let state = doc.str_at(&["config", "state"]).unwrap_or("unreadable");
         let why = doc.str_at(&["config", "why"]).unwrap_or("");
-        return Err((E::ConfigNotOk, say(format!("the config partition is {state}: {why}"))));
+        return Err((
+            E::ConfigNotOk,
+            say(format!("the config partition is {state}: {why}")),
+        ));
     }
-    let rows: Vec<&Value> = doc.arr_at(&["machines"]).iter().filter(|m| m.get_str("install_id").is_some_and(|x| x.eq_ignore_ascii_case(id))).collect();
+    let rows: Vec<&Value> = doc
+        .arr_at(&["machines"])
+        .iter()
+        .filter(|m| {
+            m.get_str("install_id")
+                .is_some_and(|x| x.eq_ignore_ascii_case(id))
+        })
+        .collect();
     let row = match rows.as_slice() {
         [r] => *r,
         [] => {
             let n = doc.arr_at(&["machines"]).len() + others;
-            let over = doc.arr_at(&["notes"]).iter().any(|x| x.get_str("code") == Some("machines_over_limit"));
-            let more = if over { format!(" (it lists the first {MACHINES_MAX} by name)") } else { String::new() };
-            return Err((E::NoSuchMachine, say(format!("the stick has no machine {id}: it has {n}{more}"))));
+            let over = doc
+                .arr_at(&["notes"])
+                .iter()
+                .any(|x| x.get_str("code") == Some("machines_over_limit"));
+            let more = if over {
+                format!(" (it lists the first {MACHINES_MAX} by name)")
+            } else {
+                String::new()
+            };
+            return Err((
+                E::NoSuchMachine,
+                say(format!("the stick has no machine {id}: it has {n}{more}")),
+            ));
         }
-        many => return Err((E::TwoMachines, say(format!("{} directories of {MACHINES}/ are named {id}, case aside: it can't tell which is the machine's", many.len())))),
+        many => {
+            return Err((
+                E::TwoMachines,
+                say(format!(
+                    "{} directories of {MACHINES}/ are named {id}, case aside: it can't tell which is the machine's",
+                    many.len()
+                )),
+            ));
+        }
     };
     let path = row.get_str("path").unwrap_or_default().to_string();
-    let host = row.get_str("hostname").map(|h| format!(" ({h})")).unwrap_or_default();
+    let host = row
+        .get_str("hostname")
+        .map(|h| format!(" ({h})"))
+        .unwrap_or_default();
     match row.get_str("state") {
         Some("ok") => {}
-        st => return Err((E::MachineNotOk, say(format!("machine {id}{host} is {}: {}", st.unwrap_or("unreadable"), row.get_str("why").unwrap_or(""))))),
+        st => {
+            return Err((
+                E::MachineNotOk,
+                say(format!(
+                    "machine {id}{host} is {}: {}",
+                    st.unwrap_or("unreadable"),
+                    row.get_str("why").unwrap_or("")
+                )),
+            ));
+        }
     }
     // Its row is ok: its bytes were kept, are JSON and passed the checksum.
-    let body = kept.into_iter().find(|(n, _)| n.eq_ignore_ascii_case(id)).and_then(|(_, b)| b).ok_or_else(|| (E::MachineNotOk, say(format!("{path} wasn't kept as it was read"))))?;
-    let v = std::str::from_utf8(&body).ok().and_then(|t| crate::json::parse(t).ok()).ok_or_else(|| (E::MachineNotOk, say(format!("{path} isn't JSON"))))?;
+    let body = kept
+        .into_iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(id))
+        .and_then(|(_, b)| b)
+        .ok_or_else(|| {
+            (
+                E::MachineNotOk,
+                say(format!("{path} wasn't kept as it was read")),
+            )
+        })?;
+    let v = std::str::from_utf8(&body)
+        .ok()
+        .and_then(|t| crate::json::parse(t).ok())
+        .ok_or_else(|| (E::MachineNotOk, say(format!("{path} isn't JSON"))))?;
     let layout = match v.get(LAYOUT_KEY) {
         Some(l @ Value::Obj(_)) => l,
-        Some(_) => return Err((E::NoLayout, say(format!("{path}'s \"{LAYOUT_KEY}\" isn't a bko-holt dump document: it carries no disk layout")))),
-        None => return Err((E::NoLayout, say(match left_out(&v) {
-            Some(why) => format!("{path} carries no disk layout: {why}. The backup holds the layout; this stick can't restore the machine's disks until it comes from the backup"),
-            None => format!("{path} carries no disk layout: it has no \"{LAYOUT_KEY}\", where the backup tool puts the bko-holt dump"),
-        }))),
+        Some(_) => {
+            return Err((
+                E::NoLayout,
+                say(format!(
+                    "{path}'s \"{LAYOUT_KEY}\" isn't a bko-holt dump document: it carries no disk layout"
+                )),
+            ));
+        }
+        None => {
+            return Err((
+                E::NoLayout,
+                say(match left_out(&v) {
+                    Some(why) => format!(
+                        "{path} carries no disk layout: {why}. The backup holds the layout; this stick can't restore the machine's disks until it comes from the backup"
+                    ),
+                    None => format!(
+                        "{path} carries no disk layout: it has no \"{LAYOUT_KEY}\", where the backup tool puts the bko-holt dump"
+                    ),
+                }),
+            ));
+        }
     };
     // Its own check: what load makes of a layout before it reads one.
     if let Err(e) = crate::load::layout::Layout::from_json(layout.clone()) {
-        return Err((E::LayoutRefused, say(format!("{path}'s {LAYOUT_KEY} isn't a layout bko-holt load takes: {e}"))));
+        return Err((
+            E::LayoutRefused,
+            say(format!(
+                "{path}'s {LAYOUT_KEY} isn't a layout bko-holt load takes: {e}"
+            )),
+        ));
     }
     // A dump that kept LUKS2 headers (an Ubuntu Core's encryption, or dump
     // --keep-luks-header) needs their files, which the backup holds and
@@ -403,13 +572,27 @@ pub fn copy_layout(sys: &Sys, fam: Option<Family>, id: &str, out: &std::path::Pa
     // list that couldn't be fetched is refused now, not by the first plan.
     let headers = match crate::luksfetch::entries(layout) {
         Ok(l) => l.len(),
-        Err(e) => return Err((E::LayoutRefused, say(format!("{path}'s {LAYOUT_KEY} kept LUKS2 headers bko-holt can't fetch from the backup: {e}")))),
+        Err(e) => {
+            return Err((
+                E::LayoutRefused,
+                say(format!(
+                    "{path}'s {LAYOUT_KEY} kept LUKS2 headers bko-holt can't fetch from the backup: {e}"
+                )),
+            ));
+        }
     };
     let text = layout.pretty();
     if let Err(e) = crate::recoverycmd::write_new(out, text.as_bytes()) {
         // O_EXCL: a file there now isn't this one's, and is left as it is.
-        let left = if e.kind() == std::io::ErrorKind::AlreadyExists { "something is there now, left as it is" } else { "nothing left there" };
-        return Err((E::CopyFailed, say(format!("{}: {e} ({left})", out.display()))));
+        let left = if e.kind() == std::io::ErrorKind::AlreadyExists {
+            "something is there now, left as it is"
+        } else {
+            "nothing left there"
+        };
+        return Err((
+            E::CopyFailed,
+            say(format!("{}: {e} ({left})", out.display())),
+        ));
     }
     Ok(jsonout::header("bko-holt-stick-copy")
         .set("install_id", row.get_str("install_id"))
@@ -430,7 +613,10 @@ fn left_out(v: &Value) -> Option<String> {
     let o = v.get(LAYOUT_LEFT_OUT_KEY)?;
     let code = o.get_str("code");
     // A file "over" the limit that isn't over it: its size isn't said.
-    let size = o.get_u64("bytes").filter(|&b| code != Some("system_too_big") || b > SYSTEM_MAX).map(|b| mib_tenths(b.into(), true));
+    let size = o
+        .get_u64("bytes")
+        .filter(|&b| code != Some("system_too_big") || b > SYSTEM_MAX)
+        .map(|b| mib_tenths(b.into(), true));
     Some(match (code, size) {
         (Some("system_too_big"), Some(n)) => format!("the backup tool left it out, as with it the file was {n}, over the {} a stick's bko-holt reads", mib_tenths(SYSTEM_MAX.into(), false)),
         (Some("system_too_big"), None) => format!("the backup tool left it out, as with it the file was over the {} a stick's bko-holt reads", mib_tenths(SYSTEM_MAX.into(), false)),
@@ -443,8 +629,18 @@ fn left_out(v: &Value) -> Option<String> {
 /// The rows of MACHINES backed up from this computer, whose DMI UUID is
 /// HERE: by the UUID (case aside), when it names one computer.
 fn this_computer(machines: &[Value], here: Option<&str>) -> Vec<usize> {
-    let Some(here) = here.filter(|h| dmi_uuid_names_one(h)) else { return Vec::new() };
-    machines.iter().enumerate().filter(|(_, m)| m.get_str("dmi_uuid").is_some_and(|u| u.eq_ignore_ascii_case(here))).map(|(k, _)| k).collect()
+    let Some(here) = here.filter(|h| dmi_uuid_names_one(h)) else {
+        return Vec::new();
+    };
+    machines
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| {
+            m.get_str("dmi_uuid")
+                .is_some_and(|u| u.eq_ignore_ascii_case(here))
+        })
+        .map(|(k, _)| k)
+        .collect()
 }
 
 /// Whether U is a DMI system UUID that tells one computer from another: a
@@ -459,7 +655,14 @@ pub fn dmi_uuid_names_one(u: &str) -> bool {
 /// Whether S has a UUID's shape: 8-4-4-4-12 hex digits (either case).
 pub fn is_uuid(s: &str) -> bool {
     let b = s.as_bytes();
-    b.len() == 36 && b.iter().enumerate().all(|(i, &c)| if matches!(i, 8 | 13 | 18 | 23) { c == b'-' } else { c.is_ascii_hexdigit() })
+    b.len() == 36
+        && b.iter().enumerate().all(|(i, &c)| {
+            if matches!(i, 8 | 13 | 18 | 23) {
+                c == b'-'
+            } else {
+                c.is_ascii_hexdigit()
+            }
+        })
 }
 
 /// What `read` fills in as it goes.
@@ -480,50 +683,125 @@ struct Doc {
 }
 
 fn note(code: &str, text: impl Into<String>) -> Value {
-    Obj::new().set("code", code).set("text", text.into()).build()
+    Obj::new()
+        .set("code", code)
+        .set("text", text.into())
+        .build()
 }
 
 fn read(sys: &Sys, fam: Option<Family>, d: &mut Doc) -> Result<(), NotOk> {
     let mpath = marker_path(fam);
     let text = match sys.read_bytes(mpath) {
-        Some(b) if b.len() as u64 > SMALL_MAX => return Err(not_ok("damaged", format!("{mpath}, the image's marker, is over {SMALL_MAX} bytes"))),
-        Some(b) => String::from_utf8(b).map_err(|_| not_ok("damaged", format!("{mpath}, the image's marker, isn't UTF-8")))?,
-        None => return Err(not_ok("missing", format!("this system wasn't started from a BackOtter rescue stick: it has no {mpath}"))),
+        Some(b) if b.len() as u64 > SMALL_MAX => {
+            return Err(not_ok(
+                "damaged",
+                format!("{mpath}, the image's marker, is over {SMALL_MAX} bytes"),
+            ));
+        }
+        Some(b) => String::from_utf8(b).map_err(|_| {
+            not_ok(
+                "damaged",
+                format!("{mpath}, the image's marker, isn't UTF-8"),
+            )
+        })?,
+        None => {
+            return Err(not_ok(
+                "missing",
+                format!(
+                    "this system wasn't started from a BackOtter rescue stick: it has no {mpath}"
+                ),
+            ));
+        }
     };
-    let m = parse_marker(&text).map_err(|e| not_ok("damaged", format!("{mpath}, the image's marker: {e}")))?;
+    let m = parse_marker(&text)
+        .map_err(|e| not_ok("damaged", format!("{mpath}, the image's marker: {e}")))?;
     d.partition = Some(m.number);
     d.label = Some(m.label.clone());
-    d.image = Obj::new().set("image_id", m.image_id.as_str()).set("platform", m.platform.clone()).set("built", m.built.clone()).set("system_schemas", m.system_schemas.clone()).set("dump_schemas", m.dump_schemas.clone()).build();
+    d.image = Obj::new()
+        .set("image_id", m.image_id.as_str())
+        .set("platform", m.platform.clone())
+        .set("built", m.built.clone())
+        .set("system_schemas", m.system_schemas.clone())
+        .set("dump_schemas", m.dump_schemas.clone())
+        .build();
     if !sys.privileged {
-        return Err(not_ok("unreadable", "the config partition is read off the stick's device: run bko-holt stick as root"));
+        return Err(not_ok(
+            "unreadable",
+            "the config partition is read off the stick's device: run bko-holt stick as root",
+        ));
     }
     let loc = match fam {
         None => locate_linux(sys, &m)?,
         Some(Family::Illumos) => locate_by_marker(sys, &m)?,
         Some(f) => locate_by_root(sys, f, &m)?,
     };
-    d.boot_disk = Obj::new().set("node", loc.node.as_str()).set("found_by", loc.found_by).build();
+    d.boot_disk = Obj::new()
+        .set("node", loc.node.as_str())
+        .set("found_by", loc.found_by)
+        .build();
     d.dev = loc.dev.clone();
-    let src = crate::other::open(sys, &loc.disk).ok_or_else(|| not_ok("unreadable", format!("{} can't be opened for reading", loc.disk.path)))?;
-    let part = OffsetSource { inner: &src, start: loc.start, len: loc.size };
+    let src = crate::other::open(sys, &loc.disk).ok_or_else(|| {
+        not_ok(
+            "unreadable",
+            format!("{} can't be opened for reading", loc.disk.path),
+        )
+    })?;
+    let part = OffsetSource {
+        inner: &src,
+        start: loc.start,
+        len: loc.size,
+    };
     let want = m.sectors.saturating_mul(512);
     if loc.size != want {
-        return Err(not_ok("damaged", format!("partition {} of {} is {} bytes, and the image made it {want}: the stick was repartitioned after it was written", m.number, loc.node, loc.size)));
+        return Err(not_ok(
+            "damaged",
+            format!(
+                "partition {} of {} is {} bytes, and the image made it {want}: the stick was repartitioned after it was written",
+                m.number, loc.node, loc.size
+            ),
+        ));
     }
     let vol = Volume::open(&part).map_err(|e| not_ok("damaged", format!("partition {} of {} isn't a FAT file system this can read ({e}): reformatted, or damaged", m.number, loc.node)))?;
-    check_identity(&vol, &m).map_err(|e| not_ok("damaged", format!("partition {} of {}: {e}: it was reformatted after the stick was written", m.number, loc.node)))?;
+    check_identity(&vol, &m).map_err(|e| {
+        not_ok(
+            "damaged",
+            format!(
+                "partition {} of {}: {e}: it was reformatted after the stick was written",
+                m.number, loc.node
+            ),
+        )
+    })?;
     read_config(&vol, &m, d)
 }
 
 /// Whether VOL is the partition the image made: its volume serial and label.
 fn check_identity(vol: &Volume, m: &Marker) -> Result<(), String> {
     let serial = vol.serial_text();
-    if !serial.as_deref().is_some_and(|s| s.eq_ignore_ascii_case(&m.fat_serial)) {
-        return Err(format!("its FAT serial is {}, not the image's {}", serial.as_deref().unwrap_or("missing"), m.fat_serial));
+    if !serial
+        .as_deref()
+        .is_some_and(|s| s.eq_ignore_ascii_case(&m.fat_serial))
+    {
+        return Err(format!(
+            "its FAT serial is {}, not the image's {}",
+            serial.as_deref().unwrap_or("missing"),
+            m.fat_serial
+        ));
     }
     let labels = [vol.boot_label.clone(), vol.dir_label()];
-    if !labels.iter().flatten().any(|l| l.eq_ignore_ascii_case(&m.label)) {
-        return Err(format!("its label is {}, not {}", labels.iter().flatten().next().map_or("missing", String::as_str), m.label));
+    if !labels
+        .iter()
+        .flatten()
+        .any(|l| l.eq_ignore_ascii_case(&m.label))
+    {
+        return Err(format!(
+            "its label is {}, not {}",
+            labels
+                .iter()
+                .flatten()
+                .next()
+                .map_or("missing", String::as_str),
+            m.label
+        ));
     }
     Ok(())
 }
@@ -531,21 +809,45 @@ fn check_identity(vol: &Volume, m: &Marker) -> Result<(), String> {
 /// stick.json, the note on settings.toml, and every machine.
 fn read_config(vol: &Volume, m: &Marker, d: &mut Doc) -> Result<(), NotOk> {
     let damaged = |e: String| not_ok("damaged", e);
-    let dir = vol.find(DIR).map_err(|e| damaged(format!("{DIR}/ can't be read: {e}")))?.filter(|e| e.dir).ok_or_else(|| damaged(format!("the config partition has no {DIR}/ directory")))?;
-    let entries = vol.read_dir(Some(&dir)).map_err(|e| damaged(format!("{DIR}/ can't be read: {e}")))?;
+    let dir = vol
+        .find(DIR)
+        .map_err(|e| damaged(format!("{DIR}/ can't be read: {e}")))?
+        .filter(|e| e.dir)
+        .ok_or_else(|| damaged(format!("the config partition has no {DIR}/ directory")))?;
+    let entries = vol
+        .read_dir(Some(&dir))
+        .map_err(|e| damaged(format!("{DIR}/ can't be read: {e}")))?;
     let find = |name: &str| entries.iter().find(|e| e.name.eq_ignore_ascii_case(name));
-    let sj = find("stick.json").filter(|e| !e.dir).ok_or_else(|| damaged(format!("{DIR}/stick.json is missing")))?;
-    let text = vol.read_file(sj, SMALL_MAX).map_err(|e| damaged(format!("{DIR}/stick.json can't be read: {e}")))?;
-    let v = std::str::from_utf8(&text).ok().and_then(|t| crate::json::parse(t).ok()).ok_or_else(|| damaged(format!("{DIR}/stick.json isn't JSON")))?;
+    let sj = find("stick.json")
+        .filter(|e| !e.dir)
+        .ok_or_else(|| damaged(format!("{DIR}/stick.json is missing")))?;
+    let text = vol
+        .read_file(sj, SMALL_MAX)
+        .map_err(|e| damaged(format!("{DIR}/stick.json can't be read: {e}")))?;
+    let v = std::str::from_utf8(&text)
+        .ok()
+        .and_then(|t| crate::json::parse(t).ok())
+        .ok_or_else(|| damaged(format!("{DIR}/stick.json isn't JSON")))?;
     if v.get_str("format") != Some("backotter-stick") {
-        return Err(damaged(format!("{DIR}/stick.json isn't a backotter-stick document")));
+        return Err(damaged(format!(
+            "{DIR}/stick.json isn't a backotter-stick document"
+        )));
     }
     match v.get_str("image_id") {
         Some(id) if id == m.image_id => {}
-        id => return Err(damaged(format!("{DIR}/stick.json is for image {}, and this image is {}", id.unwrap_or("(none)"), m.image_id))),
+        id => {
+            return Err(damaged(format!(
+                "{DIR}/stick.json is for image {}, and this image is {}",
+                id.unwrap_or("(none)"),
+                m.image_id
+            )));
+        }
     }
     // The name is settings.toml's, which isn't read yet.
-    d.stick = Obj::new().set("stick_id", v.get_str("stick_id")).set("name", Value::Null).build();
+    d.stick = Obj::new()
+        .set("stick_id", v.get_str("stick_id"))
+        .set("name", Value::Null)
+        .build();
     if find("settings.toml").is_some() {
         d.notes.push(note(
             "settings_ignored",
@@ -556,17 +858,28 @@ fn read_config(vol: &Volume, m: &Marker, d: &mut Doc) -> Result<(), NotOk> {
         return Ok(());
     };
     let mut ids: Vec<&Entry> = Vec::new();
-    let list = vol.read_dir(Some(mdir)).map_err(|e| damaged(format!("{MACHINES}/ can't be read: {e}")))?;
+    let list = vol
+        .read_dir(Some(mdir))
+        .map_err(|e| damaged(format!("{MACHINES}/ can't be read: {e}")))?;
     // A machine's directory is its install ID, a UUID (stick-config.md's
     // system.json): any other name is no machine, and never goes into a
     // path or an install_id (`../../etc`).
-    let (mut kids, others): (Vec<&Entry>, Vec<&Entry>) = list.iter().filter(|e| e.dir).partition(|e| is_uuid(&e.name));
+    let (mut kids, others): (Vec<&Entry>, Vec<&Entry>) = list
+        .iter()
+        .filter(|e| e.dir)
+        .partition(|e| is_uuid(&e.name));
     if !others.is_empty() {
         d.notes.push(note("machines_not_install_ids", format!("{} directories in {MACHINES}/ aren't named by an install ID (a UUID) and are left out", others.len())));
     }
     kids.sort_by(|a, b| a.name.cmp(&b.name));
     if kids.len() > MACHINES_MAX {
-        d.notes.push(note("machines_over_limit", format!("{MACHINES}/ has {} machines: the first {MACHINES_MAX} by name are listed", kids.len())));
+        d.notes.push(note(
+            "machines_over_limit",
+            format!(
+                "{MACHINES}/ has {} machines: the first {MACHINES_MAX} by name are listed",
+                kids.len()
+            ),
+        ));
     }
     ids.extend(kids.into_iter().take(MACHINES_MAX));
     for e in ids {
@@ -590,11 +903,19 @@ fn machine(vol: &Volume, e: &Entry, m: &Marker) -> (Value, Option<Vec<u8>>) {
     let path = format!("{MACHINES}/{id}/system.json");
     let o = Obj::new().set("install_id", id).set("path", path.as_str());
     let files = vol.read_dir(Some(e));
-    let find = |name: &str| files.as_ref().ok().and_then(|f| f.iter().find(|x| !x.dir && x.name.eq_ignore_ascii_case(name)).cloned());
+    let find = |name: &str| {
+        files.as_ref().ok().and_then(|f| {
+            f.iter()
+                .find(|x| !x.dir && x.name.eq_ignore_ascii_case(name))
+                .cloned()
+        })
+    };
     let body = match (&files, find("system.json")) {
         (Err(err), _) => Err(format!("{MACHINES}/{id}/ can't be read: {err}")),
         (Ok(_), None) => Err(format!("{path} is missing")),
-        (Ok(_), Some(f)) => vol.read_file(&f, SYSTEM_MAX).map_err(|err| format!("{path} can't be read: {err}")),
+        (Ok(_), Some(f)) => vol
+            .read_file(&f, SYSTEM_MAX)
+            .map_err(|err| format!("{path} can't be read: {err}")),
     };
     let body = match body {
         Ok(b) => b,
@@ -606,13 +927,32 @@ fn machine(vol: &Volume, e: &Entry, m: &Marker) -> (Value, Option<Vec<u8>>) {
 
 /// The row of machine ID, whose system.json at PATH is BODY and whose
 /// .sha256 is SUM.
-fn judge(vol: &Volume, o: Obj, id: &str, path: &str, body: &[u8], sum: Option<Entry>, m: &Marker) -> Value {
+fn judge(
+    vol: &Volume,
+    o: Obj,
+    id: &str,
+    path: &str,
+    body: &[u8],
+    sum: Option<Entry>,
+    m: &Marker,
+) -> Value {
     let (state, why) = match sum.map(|f| vol.read_file(&f, SMALL_MAX)) {
-        None => ("checksum_missing", Some(format!("{path}.sha256 is missing"))),
-        Some(Err(err)) => ("checksum_missing", Some(format!("{path}.sha256 can't be read: {err}"))),
+        None => (
+            "checksum_missing",
+            Some(format!("{path}.sha256 is missing")),
+        ),
+        Some(Err(err)) => (
+            "checksum_missing",
+            Some(format!("{path}.sha256 can't be read: {err}")),
+        ),
         Some(Ok(sum)) => match checksum_ok(&sum, body) {
             Ok(true) => ("ok", None),
-            Ok(false) => ("checksum_bad", Some(format!("{path} doesn't match its .sha256: damaged, or edited by hand"))),
+            Ok(false) => (
+                "checksum_bad",
+                Some(format!(
+                    "{path} doesn't match its .sha256: damaged, or edited by hand"
+                )),
+            ),
             Err(err) => ("checksum_bad", Some(format!("{path}.sha256 {err}"))),
         },
     };
@@ -622,14 +962,46 @@ fn judge(vol: &Volume, o: Obj, id: &str, path: &str, body: &[u8], sum: Option<En
         _ => return fields(o, "unreadable", Some(format!("{path} isn't JSON")), None, m),
     };
     if v.get_str("format") != Some("backotter-system") {
-        return fields(o, if state == "ok" { "unreadable" } else { state }, why.or(Some(format!("{path} isn't a backotter-system document"))), None, m);
+        return fields(
+            o,
+            if state == "ok" { "unreadable" } else { state },
+            why.or(Some(format!("{path} isn't a backotter-system document"))),
+            None,
+            m,
+        );
     }
     match v.str_at(&["machine", "install_id"]) {
         Some(x) if x == id => {}
         // Named only when it is one: a long or odd string stays out.
-        Some(x) if is_uuid(x) => return fields(o, "unreadable", Some(format!("{path} names install ID {x}, not its directory's")), None, m),
-        Some(_) => return fields(o, "unreadable", Some(format!("{path} names an install ID that isn't a UUID, not its directory's")), None, m),
-        None => return fields(o, "unreadable", Some(format!("{path} names no install ID (machine.install_id)")), None, m),
+        Some(x) if is_uuid(x) => {
+            return fields(
+                o,
+                "unreadable",
+                Some(format!("{path} names install ID {x}, not its directory's")),
+                None,
+                m,
+            );
+        }
+        Some(_) => {
+            return fields(
+                o,
+                "unreadable",
+                Some(format!(
+                    "{path} names an install ID that isn't a UUID, not its directory's"
+                )),
+                None,
+                m,
+            );
+        }
+        None => {
+            return fields(
+                o,
+                "unreadable",
+                Some(format!("{path} names no install ID (machine.install_id)")),
+                None,
+                m,
+            );
+        }
     }
     fields(o, state, why, Some(&v), m)
 }
@@ -638,7 +1010,8 @@ fn judge(vol: &Volume, o: Obj, id: &str, path: &str, body: &[u8], sum: Option<En
 /// schema this stick or bko-holt can't read), and what system.json V says.
 fn fields(o: Obj, state: &str, why: Option<String>, v: Option<&Value>, m: &Marker) -> Value {
     let schema = v.and_then(|v| v.get_u64("schema"));
-    let known = schema.is_some_and(|s| SYSTEM_SCHEMAS.contains(&s) && m.system_schemas.contains(&s));
+    let known =
+        schema.is_some_and(|s| SYSTEM_SCHEMAS.contains(&s) && m.system_schemas.contains(&s));
     let (mut state, mut why) = (state.to_string(), why);
     if state == "ok" && !known {
         state = "schema_unknown".into();
@@ -660,10 +1033,21 @@ fn fields(o: Obj, state: &str, why: Option<String>, v: Option<&Value>, m: &Marke
         }
     };
     let hostname = s("hostname", &["machine", "hostname"]);
-    let os = Obj::new().set("id", s("os.id", &["os", "id"])).set("version_id", s("os.version_id", &["os", "version_id"])).build();
+    let os = Obj::new()
+        .set("id", s("os.id", &["os", "id"]))
+        .set("version_id", s("os.version_id", &["os", "version_id"]))
+        .build();
     let written = s("written", &["written"]);
     let dmi = s("dmi_uuid", &["machine", "dmi", "system_uuid"]);
-    let repo = v.and_then(|v| v.at(&["backup", "repository"])).map(|_| Obj::new().set("kind", s("repository.kind", &["backup", "repository", "kind"])).set("url", s("repository.url", &["backup", "repository", "url"])).build());
+    let repo = v.and_then(|v| v.at(&["backup", "repository"])).map(|_| {
+        Obj::new()
+            .set(
+                "kind",
+                s("repository.kind", &["backup", "repository", "kind"]),
+            )
+            .set("url", s("repository.url", &["backup", "repository", "url"]))
+            .build()
+    });
     let repo_id = s("repository_id", &["backup", "repository_id"]);
     let hint = s(HINT_KEY, &[HINT_KEY]);
     let mut big: Option<&str> = None;
@@ -685,7 +1069,9 @@ fn fields(o: Obj, state: &str, why: Option<String>, v: Option<&Value>, m: &Marke
             why = Some(format!("its {f} is longer than {FIELD_MAX} bytes"));
         } else if let Some(k) = big {
             state = "unreadable".into();
-            why = Some(format!("its {k} section is bigger than {SECTION_MAX} bytes"));
+            why = Some(format!(
+                "its {k} section is bigger than {SECTION_MAX} bytes"
+            ));
         }
     }
     o.set("state", state)
@@ -724,7 +1110,13 @@ pub struct StickWarning {
 /// check.  Only the schema is checked, not the dump's `format`.  The backup tool isn't
 /// built: this is the check it calls, here where the marker is read.
 pub fn schema_warnings(m: &Marker, system: &Value) -> Vec<StickWarning> {
-    let list = |l: &[u64]| if l.is_empty() { "none".to_string() } else { l.iter().map(u64::to_string).collect::<Vec<_>>().join(", ") };
+    let list = |l: &[u64]| {
+        if l.is_empty() {
+            "none".to_string()
+        } else {
+            l.iter().map(u64::to_string).collect::<Vec<_>>().join(", ")
+        }
+    };
     let mut w = Vec::new();
     let schema = system.get_u64("schema");
     if !schema.is_some_and(|s| m.system_schemas.contains(&s)) {
@@ -737,8 +1129,14 @@ pub fn schema_warnings(m: &Marker, system: &Value) -> Vec<StickWarning> {
         let read = m.dump_schemas_read();
         let is = layout.get_u64("schema");
         if !is.is_some_and(|s| read.contains(&s)) {
-            let is = is.map_or("has no schema".to_string(), |s| format!("is dump schema {s}"));
-            let from = if m.dump_schemas.is_none() { " (its marker is from before images named them)" } else { "" };
+            let is = is.map_or("has no schema".to_string(), |s| {
+                format!("is dump schema {s}")
+            });
+            let from = if m.dump_schemas.is_none() {
+                " (its marker is from before images named them)"
+            } else {
+                ""
+            };
             w.push(StickWarning { code: "dump_schema_unread", text: format!("this stick's image reads dump schema {}{from}, and this machine's layout {is}: the stick's restore would refuse it (layout_refused); write a newer image to the stick", list(read)) });
         }
     }
@@ -801,7 +1199,9 @@ pub struct StickRefusal {
 /// S with its first letter in upper case.
 fn cap_first(s: &str) -> String {
     let mut c = s.chars();
-    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+    c.next()
+        .map(|f| f.to_uppercase().chain(c).collect())
+        .unwrap_or_default()
 }
 
 /// N bytes in MiB to a tenth, rounded down (UP false) or up: a need is
@@ -829,16 +1229,35 @@ fn mib_tenths(n: u128, up: bool) -> String {
 /// one.  The backup tool isn't built: `stick_write` is what it calls, which
 /// calls this for the whole file and, on a refusal, for the file without
 /// its layout (holt-json.md's open question 16).
-pub fn room_check(m: &Marker, system_len: u64, r: &Room) -> Result<Vec<StickWarning>, StickRefusal> {
+pub fn room_check(
+    m: &Marker,
+    system_len: u64,
+    r: &Room,
+) -> Result<Vec<StickWarning>, StickRefusal> {
     let image = if u128::from(m.sectors) * 512 < u128::from(CONFIG_BYTES) {
-        format!(", or write a newer image to it (this one's config partition is {}, a newer one's 256 MiB)", mib_tenths(u128::from(m.sectors) * 512, false))
+        format!(
+            ", or write a newer image to it (this one's config partition is {}, a newer one's 256 MiB)",
+            mib_tenths(u128::from(m.sectors) * 512, false)
+        )
     } else {
         String::new()
     };
-    let base = if r.others { "remove other machines' folders from the stick" } else { "free room on the stick's config partition (old bug reports in backotter/reports can go)" };
+    let base = if r.others {
+        "remove other machines' folders from the stick"
+    } else {
+        "free room on the stick's config partition (old bug reports in backotter/reports can go)"
+    };
     let remedy = format!("{base}{image}");
     if system_len > SYSTEM_MAX {
-        return Err(StickRefusal { code: "system_too_big", text: format!("this machine's system.json is {}, over the {} a stick's bko-holt reads", mib_tenths(system_len.into(), true), mib_tenths(SYSTEM_MAX.into(), false)), remedy: String::new() });
+        return Err(StickRefusal {
+            code: "system_too_big",
+            text: format!(
+                "this machine's system.json is {}, over the {} a stick's bko-holt reads",
+                mib_tenths(system_len.into(), true),
+                mib_tenths(SYSTEM_MAX.into(), false)
+            ),
+            remedy: String::new(),
+        });
     }
     let cl = u128::from(r.cluster.max(1));
     let up = |n: u64| u128::from(n).div_ceil(cl) * cl;
@@ -851,12 +1270,26 @@ pub fn room_check(m: &Marker, system_len: u64, r: &Room) -> Result<Vec<StickWarn
         (Some(_), Some(p)) => up(p) + if r.prev_sum { sum } else { 0 },
         _ => 0,
     };
-    let full = |text: String| Err(StickRefusal { code: "stick_full", text, remedy: remedy.clone() });
+    let full = |text: String| {
+        Err(StickRefusal {
+            code: "stick_full",
+            text,
+            remedy: remedy.clone(),
+        })
+    };
     if free < new {
-        return full(format!("this machine's system.json needs {} while the stick still holds its two older copies, and the stick's config partition has {} free", mib_tenths(new, true), mib_tenths(free, false)));
+        return full(format!(
+            "this machine's system.json needs {} while the stick still holds its two older copies, and the stick's config partition has {} free",
+            mib_tenths(new, true),
+            mib_tenths(free, false)
+        ));
     }
     if free + freed < new + sum {
-        return full(format!("this machine's system.json and its checksum need {}, and the stick's config partition has {} once its oldest copy goes", mib_tenths(new + sum, true), mib_tenths(free + freed, false)));
+        return full(format!(
+            "this machine's system.json and its checksum need {}, and the stick's config partition has {} once its oldest copy goes",
+            mib_tenths(new + sum, true),
+            mib_tenths(free + freed, false)
+        ));
     }
     let after = free + freed - new - sum;
     let (logs, logs_dir) = match &r.logs {
@@ -894,13 +1327,23 @@ pub enum StickWrite {
     /// the tool removes them first, as for `RemoveOld` but keeping the
     /// folder, then writes BODY (with no system.json there, nothing
     /// becomes system.prev.json).
-    WithoutLayout { body: String, refused: StickRefusal, warnings: Vec<StickWarning>, text: String, remove_old: bool },
+    WithoutLayout {
+        body: String,
+        refused: StickRefusal,
+        warnings: Vec<StickWarning>,
+        text: String,
+        remove_old: bool,
+    },
     /// Nothing is written.  BARE is why even BODY didn't fit, even once
     /// the older copies are gone.  The tool removes the machine's
     /// `system.json`, `system.prev.json`, their `.sha256` files and a
     /// `system.json.new`, then its folder when nothing else is in it (its
     /// `restore-logs/` stay); TEXT the words.
-    RemoveOld { refused: StickRefusal, bare: StickRefusal, text: String },
+    RemoveOld {
+        refused: StickRefusal,
+        bare: StickRefusal,
+        text: String,
+    },
 }
 
 /// SYSTEM without its `layout`, its `layout_left_out` saying CODE and
@@ -911,7 +1354,10 @@ pub fn without_layout(system: &Value, code: &str, bytes: u64) -> Value {
     if let Value::Obj(kv) = &mut v {
         kv.retain(|(k, _)| k != LAYOUT_KEY && k != LAYOUT_LEFT_OUT_KEY);
     }
-    v.put(LAYOUT_LEFT_OUT_KEY, Obj::new().set("code", code).set("bytes", bytes).build());
+    v.put(
+        LAYOUT_LEFT_OUT_KEY,
+        Obj::new().set("code", code).set("bytes", bytes).build(),
+    );
     v
 }
 
@@ -933,12 +1379,24 @@ pub fn stick_write(m: &Marker, system: &Value, len: u64, r: &Room) -> StickWrite
         Err(e) => e,
     };
     let body = without_layout(system, refused.code, len).pretty();
-    let todo = |remedy: &str| if remedy.is_empty() { String::new() } else { format!(" To keep the layout on the stick: {remedy}, then back the machine up again.") };
+    let todo = |remedy: &str| {
+        if remedy.is_empty() {
+            String::new()
+        } else {
+            format!(" To keep the layout on the stick: {remedy}, then back the machine up again.")
+        }
+    };
     let gets = "the stick gets this machine's system.json without its disk layout: the stick still finds the backup, but it can't restore this machine's disks until the layout comes from the backup, which bko-rescue can't do yet. The backup keeps the whole file.";
     let bare = match room_check(m, body.len() as u64, r) {
         Ok(warnings) => {
             let text = format!("{}. So {gets}{}", refused.text, todo(&refused.remedy));
-            return StickWrite::WithoutLayout { body, refused, warnings, text, remove_old: false };
+            return StickWrite::WithoutLayout {
+                body,
+                refused,
+                warnings,
+                text,
+                remove_old: false,
+            };
         }
         Err(bare) => bare,
     };
@@ -946,17 +1404,42 @@ pub fn stick_write(m: &Marker, system: &Value, len: u64, r: &Room) -> StickWrite
     // The older copies go either way: BODY may fit once they have.
     if let (Some(copies), Some(after)) = (copies, without_old(r)) {
         if let Ok(warnings) = room_check(m, body.len() as u64, &after) {
-            let text = format!("{}. Even without its disk layout, {}. So {copies} removed from the stick first, then {gets}{}", refused.text, bare.text, todo(&refused.remedy));
-            return StickWrite::WithoutLayout { body, refused, warnings, text, remove_old: true };
+            let text = format!(
+                "{}. Even without its disk layout, {}. So {copies} removed from the stick first, then {gets}{}",
+                refused.text,
+                bare.text,
+                todo(&refused.remedy)
+            );
+            return StickWrite::WithoutLayout {
+                body,
+                refused,
+                warnings,
+                text,
+                remove_old: true,
+            };
         }
     }
     let what = match copies {
         Some(c) => format!("{c} removed from the stick, so no restore plans onto an older layout: this stick can no longer find this machine's backup or restore it"),
         None => "nothing is written to the stick for this machine: this stick can't find its backup or restore it".to_string(),
     };
-    let then = if bare.remedy.is_empty() { String::new() } else { format!(" {}, then back the machine up again.", cap_first(&bare.remedy)) };
-    let text = format!("{}. Even without its disk layout, {}. So {what}.{then}", refused.text, bare.text);
-    StickWrite::RemoveOld { refused, bare, text }
+    let then = if bare.remedy.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " {}, then back the machine up again.",
+            cap_first(&bare.remedy)
+        )
+    };
+    let text = format!(
+        "{}. Even without its disk layout, {}. So {what}.{then}",
+        refused.text, bare.text
+    );
+    StickWrite::RemoveOld {
+        refused,
+        bare,
+        text,
+    }
 }
 
 /// The machine's older copies on the stick R describes, in words with
@@ -980,14 +1463,35 @@ fn without_old(r: &Room) -> Option<Room> {
     }
     let cl = u128::from(r.cluster.max(1));
     let up = |n: Option<u64>| n.map_or(0, |n| u128::from(n).div_ceil(cl) * cl);
-    let freed = up(r.current) + up(r.prev) + if r.prev.is_some() && r.prev_sum { cl } else { 0 };
+    let freed = up(r.current)
+        + up(r.prev)
+        + if r.prev.is_some() && r.prev_sum {
+            cl
+        } else {
+            0
+        };
     let free = u64::try_from(u128::from(r.free) + freed).unwrap_or(u64::MAX);
-    Some(Room { free, folder: true, current: None, prev: None, prev_sum: false, ..r.clone() })
+    Some(Room {
+        free,
+        folder: true,
+        current: None,
+        prev: None,
+        prev_sum: false,
+        ..r.clone()
+    })
 }
 
 fn schemas_text(m: &Marker) -> String {
-    let both: Vec<String> = SYSTEM_SCHEMAS.iter().filter(|s| m.system_schemas.contains(s)).map(u64::to_string).collect();
-    if both.is_empty() { "none".into() } else { both.join(", ") }
+    let both: Vec<String> = SYSTEM_SCHEMAS
+        .iter()
+        .filter(|s| m.system_schemas.contains(s))
+        .map(u64::to_string)
+        .collect();
+    if both.is_empty() {
+        "none".into()
+    } else {
+        both.join(", ")
+    }
 }
 
 /// Whether BODY's SHA-256 is the one SUM (`sha256sum`'s line:
@@ -995,13 +1499,21 @@ fn schemas_text(m: &Marker) -> String {
 /// isn't such a line.
 pub fn checksum_ok(sum: &[u8], body: &[u8]) -> Result<bool, String> {
     let t = std::str::from_utf8(sum).map_err(|_| "isn't text".to_string())?;
-    let line = t.trim_start_matches('\u{feff}').lines().next().unwrap_or("").trim_end_matches('\r');
+    let line = t
+        .trim_start_matches('\u{feff}')
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('\r');
     let mut w = line.splitn(2, char::is_whitespace);
     let hex = w.next().unwrap_or("");
     if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("isn't sha256sum's line (64 hex digits, then the file's name)".into());
     }
-    let name = w.next().map(|n| n.trim_start().trim_start_matches('*').trim()).unwrap_or("");
+    let name = w
+        .next()
+        .map(|n| n.trim_start().trim_start_matches('*').trim())
+        .unwrap_or("");
     if !name.is_empty() && name != "system.json" {
         return Err(format!("names {name}, not system.json"));
     }
@@ -1014,20 +1526,33 @@ fn dmi_uuid_here(sys: &Sys, fam: Option<Family>) -> Option<String> {
     if fam.is_some() {
         return None;
     }
-    sys.read_trim("/sys/class/dmi/id/product_uuid").filter(|u| !u.is_empty())
+    sys.read_trim("/sys/class/dmi/id/product_uuid")
+        .filter(|u| !u.is_empty())
 }
 
 /// Linux: the disk casper mounted at /cdrom, and its partition N, as the
 /// kernel numbers them (stick/linux/config-checks.sh does the same).
 fn locate_linux(sys: &Sys, m: &Marker) -> Result<Located, NotOk> {
     let missing = |why: String| not_ok("missing", why);
-    let mounts = crate::mounts::parse_mountinfo(&sys.read("/proc/self/mountinfo").unwrap_or_default());
+    let mounts =
+        crate::mounts::parse_mountinfo(&sys.read("/proc/self/mountinfo").unwrap_or_default());
     let src = mounts.iter().find(|x| x.target == "/cdrom").map(|x| x.source.clone()).ok_or_else(|| missing("nothing is mounted on /cdrom: this system wasn't started from a BackOtter rescue stick".into()))?;
     let name = src.strip_prefix("/dev/").unwrap_or(&src).to_string();
     let disk = if sys.is_dir(&format!("/sys/block/{name}")) {
         name.clone()
     } else {
-        sys.list("/sys/block").into_iter().find(|d| !name.is_empty() && !name.contains('/') && sys.is_dir(&format!("/sys/block/{d}/{name}"))).ok_or_else(|| missing(format!("/cdrom is {src}, which is on no disk this system lists")))?
+        sys.list("/sys/block")
+            .into_iter()
+            .find(|d| {
+                !name.is_empty()
+                    && !name.contains('/')
+                    && sys.is_dir(&format!("/sys/block/{d}/{name}"))
+            })
+            .ok_or_else(|| {
+                missing(format!(
+                    "/cdrom is {src}, which is on no disk this system lists"
+                ))
+            })?
     };
     let base = format!("/sys/block/{disk}");
     let part = sys
@@ -1036,16 +1561,36 @@ fn locate_linux(sys: &Sys, m: &Marker) -> Result<Located, NotOk> {
         .find(|c| sys.read_u64(&format!("{base}/{c}/partition")) == Some(u64::from(m.number)))
         .ok_or_else(|| missing(format!("{disk} (where /cdrom is) has no partition {}: the image was copied by a tool that copies files (Rufus in ISO mode, Ventoy), not written raw, or it was started from a CD", m.number)))?;
     let sectors = |p: &str| sys.read_u64(&format!("{p}/size"));
-    let (start, size) = match (sys.read_u64(&format!("{base}/{part}/start")), sectors(&format!("{base}/{part}"))) {
+    let (start, size) = match (
+        sys.read_u64(&format!("{base}/{part}/start")),
+        sectors(&format!("{base}/{part}")),
+    ) {
         (Some(a), Some(b)) => (a * 512, b * 512),
-        _ => return Err(not_ok("unreadable", format!("{disk}'s partition {} has no start or size in sysfs", m.number))),
+        _ => {
+            return Err(not_ok(
+                "unreadable",
+                format!(
+                    "{disk}'s partition {} has no start or size in sysfs",
+                    m.number
+                ),
+            ));
+        }
     };
     let disk_size = sectors(&base).unwrap_or(0) * 512;
-    let sector = sys.read_u64(&format!("{base}/queue/logical_block_size")).unwrap_or(512);
+    let sector = sys
+        .read_u64(&format!("{base}/queue/logical_block_size"))
+        .unwrap_or(512);
     Ok(Located {
         node: disk.clone(),
         found_by: "cdrom_mount",
-        disk: RawDisk { name: disk.clone(), path: format!("/dev/{disk}"), size: disk_size, sector, model: None, serial: None },
+        disk: RawDisk {
+            name: disk.clone(),
+            path: format!("/dev/{disk}"),
+            size: disk_size,
+            sector,
+            model: None,
+            serial: None,
+        },
         start,
         size,
         dev: Some(format!("/dev/{part}")),
@@ -1053,10 +1598,18 @@ fn locate_linux(sys: &Sys, m: &Marker) -> Result<Located, NotOk> {
 }
 
 /// Partition N of disk D through its table: offset and size in bytes.
-fn table_extent(src: &dyn ByteSource, d: &RawDisk, n: u32) -> Option<(u64, u64, crate::parttable::Table)> {
+fn table_extent(
+    src: &dyn ByteSource,
+    d: &RawDisk,
+    n: u32,
+) -> Option<(u64, u64, crate::parttable::Table)> {
     let t = crate::parttable::read_table(src, d.sector)?;
     let (_, start, sectors) = t.extents().into_iter().find(|(k, _, _)| *k == n)?;
-    Some((start.checked_mul(d.sector)?, sectors.checked_mul(d.sector)?, t))
+    Some((
+        start.checked_mul(d.sector)?,
+        sectors.checked_mul(d.sector)?,
+        t,
+    ))
 }
 
 /// illumos: the disks whose partition N has the marker's size, label and
@@ -1064,24 +1617,58 @@ fn table_extent(src: &dyn ByteSource, d: &RawDisk, n: u32) -> Option<(u64, u64, 
 fn locate_by_marker(sys: &Sys, m: &Marker) -> Result<Located, NotOk> {
     let mut hits = Vec::new();
     for d in crate::other::load::raw_disks(sys, Family::Illumos) {
-        let Some(src) = crate::other::open(sys, &d) else { continue };
-        let Some((start, size, _)) = table_extent(&src, &d, m.number) else { continue };
+        let Some(src) = crate::other::open(sys, &d) else {
+            continue;
+        };
+        let Some((start, size, _)) = table_extent(&src, &d, m.number) else {
+            continue;
+        };
         if size != m.sectors.saturating_mul(512) {
             continue;
         }
-        let Some(b) = src.read_exact_at(start, 512) else { continue };
+        let Some(b) = src.read_exact_at(start, 512) else {
+            continue;
+        };
         // As check_identity: FAT12/16's or FAT32's record, case aside.
         let (serial, label) = crate::fatfs::boot_ids(&b);
         let serial = serial.map(|s| format!("{:04X}-{:04X}", s >> 16, s & 0xffff));
-        if serial.is_some_and(|s| s.eq_ignore_ascii_case(&m.fat_serial)) && label.is_some_and(|l| l.eq_ignore_ascii_case(&m.label)) {
-            let dev = format!("/dev/dsk/{}", crate::other::illumos::slice_name(&d.name, m.number));
-            hits.push(Located { node: d.name.clone(), found_by: "marker_scan", disk: d, start, size, dev: Some(dev) });
+        if serial.is_some_and(|s| s.eq_ignore_ascii_case(&m.fat_serial))
+            && label.is_some_and(|l| l.eq_ignore_ascii_case(&m.label))
+        {
+            let dev = format!(
+                "/dev/dsk/{}",
+                crate::other::illumos::slice_name(&d.name, m.number)
+            );
+            hits.push(Located {
+                node: d.name.clone(),
+                found_by: "marker_scan",
+                disk: d,
+                start,
+                size,
+                dev: Some(dev),
+            });
         }
     }
     match hits.len() {
-        0 => Err(not_ok("missing", format!("no disk has a partition {} of {} sectors labelled {}, serial {}: the stick's config partition is missing or was reformatted", m.number, m.sectors, m.label, m.fat_serial))),
+        0 => Err(not_ok(
+            "missing",
+            format!(
+                "no disk has a partition {} of {} sectors labelled {}, serial {}: the stick's config partition is missing or was reformatted",
+                m.number, m.sectors, m.label, m.fat_serial
+            ),
+        )),
         1 => Ok(hits.remove(0)),
-        _ => Err(not_ok("two_sticks", format!("{} disks are sticks written from this image ({}): remove all but the one this system was started from", hits.len(), hits.iter().map(|h| h.node.as_str()).collect::<Vec<_>>().join(", ")))),
+        _ => Err(not_ok(
+            "two_sticks",
+            format!(
+                "{} disks are sticks written from this image ({}): remove all but the one this system was started from",
+                hits.len(),
+                hits.iter()
+                    .map(|h| h.node.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )),
     }
 }
 
@@ -1090,22 +1677,62 @@ fn locate_by_marker(sys: &Sys, m: &Marker) -> Result<Located, NotOk> {
 fn locate_by_root(sys: &Sys, fam: Family, m: &Marker) -> Result<Located, NotOk> {
     let missing = |why: String| not_ok("missing", why);
     let disks = crate::other::load::raw_disks(sys, fam);
-    let (mp, spec) = root_spec(sys, fam).ok_or_else(|| missing("can't tell which device the root file system is on".into()))?;
-    let name = disk_of(sys, fam, &spec, &disks).ok_or_else(|| missing(format!("{mp} is on {spec}, which is on no disk this system lists")))?;
-    let d = disks.iter().find(|d| d.name == name).cloned().ok_or_else(|| missing(format!("{mp} is on {name}, which this system doesn't list")))?;
-    let src = crate::other::open(sys, &d).ok_or_else(|| not_ok("unreadable", format!("{} can't be opened for reading", d.path)))?;
+    let (mp, spec) = root_spec(sys, fam)
+        .ok_or_else(|| missing("can't tell which device the root file system is on".into()))?;
+    let name = disk_of(sys, fam, &spec, &disks).ok_or_else(|| {
+        missing(format!(
+            "{mp} is on {spec}, which is on no disk this system lists"
+        ))
+    })?;
+    let d = disks
+        .iter()
+        .find(|d| d.name == name)
+        .cloned()
+        .ok_or_else(|| missing(format!("{mp} is on {name}, which this system doesn't list")))?;
+    let src = crate::other::open(sys, &d).ok_or_else(|| {
+        not_ok(
+            "unreadable",
+            format!("{} can't be opened for reading", d.path),
+        )
+    })?;
     let (start, size, t) = table_extent(&src, &d, m.number).ok_or_else(|| missing(format!("{name} (where {mp} is) has no partition {}: the image was copied by a tool that copies files, not written raw", m.number)))?;
     let dev = part_dev(sys, fam, &d, m.number, start, &t);
-    Ok(Located { node: name, found_by: if fam == Family::Haiku { "boot_mount" } else { "root_mount" }, disk: d, start, size, dev })
+    Ok(Located {
+        node: name,
+        found_by: if fam == Family::Haiku {
+            "boot_mount"
+        } else {
+            "root_mount"
+        },
+        disk: d,
+        start,
+        size,
+        dev,
+    })
 }
 
 /// The mount point the boot disk is told by, and the device mounted there.
 fn root_spec(sys: &Sys, fam: Family) -> Option<(&'static str, String)> {
     match fam {
-        Family::Haiku => crate::other::haiku::parse_df(&sys.run("df", &[])?).into_iter().find(|x| x.0 == "/boot").map(|x| ("/boot", x.2)),
-        Family::NetBsd => sys.run("sysctl", &["-n", "kern.root_device"]).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).map(|s| ("/", format!("/dev/{s}"))),
-        Family::OpenBsd => sys.run("mount", &[])?.lines().filter_map(crate::other::bsdlabel::parse_mount_line).find(|x| x.1 == "/").map(|x| ("/", x.0)),
-        _ => crate::mounts::parse_fstab(&sys.run("mount", &["-p"])?).into_iter().find(|x| x.file == "/").map(|x| ("/", x.spec)),
+        Family::Haiku => crate::other::haiku::parse_df(&sys.run("df", &[])?)
+            .into_iter()
+            .find(|x| x.0 == "/boot")
+            .map(|x| ("/boot", x.2)),
+        Family::NetBsd => sys
+            .run("sysctl", &["-n", "kern.root_device"])
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .map(|s| ("/", format!("/dev/{s}"))),
+        Family::OpenBsd => sys
+            .run("mount", &[])?
+            .lines()
+            .filter_map(crate::other::bsdlabel::parse_mount_line)
+            .find(|x| x.1 == "/")
+            .map(|x| ("/", x.0)),
+        _ => crate::mounts::parse_fstab(&sys.run("mount", &["-p"])?)
+            .into_iter()
+            .find(|x| x.file == "/")
+            .map(|x| ("/", x.spec)),
     }
 }
 
@@ -1113,8 +1740,15 @@ fn root_spec(sys: &Sys, fam: Family) -> Option<(&'static str, String)> {
 fn disk_of(sys: &Sys, fam: Family, spec: &str, disks: &[RawDisk]) -> Option<String> {
     let by_name = |n: &str| -> Option<String> {
         let n = n.trim_start_matches("/dev/");
-        let n = n.strip_prefix('r').filter(|x| disks.iter().any(|d| x.starts_with(d.name.as_str()))).unwrap_or(n);
-        disks.iter().filter(|d| inside(fam, n, &d.name)).max_by_key(|d| d.name.len()).map(|d| d.name.clone())
+        let n = n
+            .strip_prefix('r')
+            .filter(|x| disks.iter().any(|d| x.starts_with(d.name.as_str())))
+            .unwrap_or(n);
+        disks
+            .iter()
+            .filter(|d| inside(fam, n, &d.name))
+            .max_by_key(|d| d.name.len())
+            .map(|d| d.name.clone())
     };
     match fam {
         // /dev/disk/usb/0/0/2: the directory above it is the disk's.
@@ -1126,12 +1760,25 @@ fn disk_of(sys: &Sys, fam: Family, spec: &str, disks: &[RawDisk]) -> Option<Stri
         // A wedge (dk1): the disk dkctl says it's on.
         Family::NetBsd if spec.trim_start_matches("/dev/").starts_with("dk") => {
             let dk = spec.trim_start_matches("/dev/");
-            disks.iter().find(|d| crate::other::labelled::parse_wedges(&sys.run("dkctl", &[&d.name, "listwedges"]).unwrap_or_default()).iter().any(|w| w.0 == dk)).map(|d| d.name.clone())
+            disks
+                .iter()
+                .find(|d| {
+                    crate::other::labelled::parse_wedges(
+                        &sys.run("dkctl", &[&d.name, "listwedges"])
+                            .unwrap_or_default(),
+                    )
+                    .iter()
+                    .any(|w| w.0 == dk)
+                })
+                .map(|d| d.name.clone())
         }
         // A DUID (0123456789abcdef.a): the disk with it.
         Family::OpenBsd if !spec.starts_with('/') => {
             let duid = spec.split('.').next()?;
-            disks.iter().find(|d| d.serial.as_deref() == Some(duid)).map(|d| d.name.clone())
+            disks
+                .iter()
+                .find(|d| d.serial.as_deref() == Some(duid))
+                .map(|d| d.name.clone())
         }
         // A GEOM label (/dev/ufs/BKOROOT): glabel's provider.
         Family::FreeBsd if by_name(spec).is_none() => {
@@ -1161,7 +1808,9 @@ fn disk_of(sys: &Sys, fam: Family, spec: &str, disks: &[RawDisk]) -> Option<Stri
 /// Whether device name N (no /dev/) is DISK or one of its partitions:
 /// DISK then a slice or partition (s2, p3, s2a) or a disklabel letter.
 fn inside(fam: Family, n: &str, disk: &str) -> bool {
-    let Some(rest) = n.strip_prefix(disk) else { return false };
+    let Some(rest) = n.strip_prefix(disk) else {
+        return false;
+    };
     if rest.is_empty() {
         return true;
     }
@@ -1181,7 +1830,9 @@ fn same_device(sys: &Sys, spec: &str, disks: &[RawDisk]) -> Option<String> {
     }
     for d in disks {
         for e in sys.list("/dev") {
-            if e.starts_with(&d.name) && std::fs::metadata(sys.p(&format!("/dev/{e}"))).is_ok_and(|m| m.rdev() == want) {
+            if e.starts_with(&d.name)
+                && std::fs::metadata(sys.p(&format!("/dev/{e}"))).is_ok_and(|m| m.rdev() == want)
+            {
                 return Some(d.name.clone());
             }
         }
@@ -1190,19 +1841,41 @@ fn same_device(sys: &Sys, spec: &str, disks: &[RawDisk]) -> Option<String> {
 }
 
 /// Partition N's own device, as FAM names it, when it names one.
-fn part_dev(sys: &Sys, fam: Family, d: &RawDisk, n: u32, start: u64, t: &crate::parttable::Table) -> Option<String> {
+fn part_dev(
+    sys: &Sys,
+    fam: Family,
+    d: &RawDisk,
+    n: u32,
+    start: u64,
+    t: &crate::parttable::Table,
+) -> Option<String> {
     let sector = d.sector.max(1);
     match fam {
-        Family::FreeBsd => Some(format!("/dev/{}", crate::other::freebsd::part_name(&d.name, n, t))),
+        Family::FreeBsd => Some(format!(
+            "/dev/{}",
+            crate::other::freebsd::part_name(&d.name, n, t)
+        )),
         Family::DragonFly => Some(format!("/dev/{}s{n}", d.name)),
         Family::Haiku => Some(crate::other::haiku::part_path(&d.name, n)),
-        Family::Illumos => Some(format!("/dev/dsk/{}", crate::other::illumos::slice_name(&d.name, n))),
-        Family::NetBsd => crate::other::labelled::parse_wedges(&sys.run("dkctl", &[&d.name, "listwedges"]).unwrap_or_default()).into_iter().find(|w| w.2 * sector == start).map(|w| format!("/dev/{}", w.0)),
+        Family::Illumos => Some(format!(
+            "/dev/dsk/{}",
+            crate::other::illumos::slice_name(&d.name, n)
+        )),
+        Family::NetBsd => crate::other::labelled::parse_wedges(
+            &sys.run("dkctl", &[&d.name, "listwedges"])
+                .unwrap_or_default(),
+        )
+        .into_iter()
+        .find(|w| w.2 * sector == start)
+        .map(|w| format!("/dev/{}", w.0)),
         // The disklabel's partition at the MBR slot's place.
         Family::OpenBsd => {
             let l = crate::other::bsdlabel::parse(&sys.run_any("disklabel", &[&d.name])?);
             let bps = l.bytes_per_sector.max(512);
-            l.parts.iter().find(|p| p.offset * bps == start && p.fstype.eq_ignore_ascii_case("msdos")).map(|p| format!("/dev/{}{}", d.name, p.letter))
+            l.parts
+                .iter()
+                .find(|p| p.offset * bps == start && p.fstype.eq_ignore_ascii_case("msdos"))
+                .map(|p| format!("/dev/{}{}", d.name, p.letter))
         }
         Family::Redox | Family::Genode => None,
     }
@@ -1212,7 +1885,7 @@ fn part_dev(sys: &Sys, fam: Family, d: &RawDisk, n: u32, start: u64, t: &crate::
 /// Not cfg(test): tests/json_cli.rs runs `bko-holt stick` on them too.
 #[doc(hidden)]
 pub mod sample {
-    use crate::fatfs::testimg::{dir, fat16, file, Node};
+    use crate::fatfs::testimg::{Node, dir, fat16, file};
     use crate::testutil::Tree;
 
     pub const IMAGE_ID: &str = "6f1c2c1e-5b0e-4a51-9d8e-2a3c8f4e7b10";
@@ -1234,7 +1907,10 @@ pub mod sample {
     }
 
     pub fn sum(body: &str) -> String {
-        format!("{}  system.json\n", crate::bytes::sha256_hex(body.as_bytes()))
+        format!(
+            "{}  system.json\n",
+            crate::bytes::sha256_hex(body.as_bytes())
+        )
     }
 
     pub fn machine_dir(id: &str, body: &str, sha: Option<&str>) -> Node {
@@ -1246,12 +1922,32 @@ pub mod sample {
     }
 
     pub fn stick_json() -> String {
-        format!("{{\n  \"format\": \"backotter-stick\",\n  \"schema\": 1,\n  \"image_id\": \"{IMAGE_ID}\",\n  \"stick_id\": \"9d8c7b6a-0000-4000-8000-000000000001\"\n}}\n")
+        format!(
+            "{{\n  \"format\": \"backotter-stick\",\n  \"schema\": 1,\n  \"image_id\": \"{IMAGE_ID}\",\n  \"stick_id\": \"9d8c7b6a-0000-4000-8000-000000000001\"\n}}\n"
+        )
     }
 
     /// A config partition image holding MACHINES.
     pub fn config(machines: Vec<Node>) -> Vec<u8> {
-        fat16(32768, 0x3f2a_9c71, "BACKOTTER", &[dir("backotter", vec![file("stick.json", stick_json()), file("settings.toml", "format = \"backotter-settings\"\nschema = 1\n"), dir("machines", machines)]), file("README.txt", "BackOtter\n")])
+        fat16(
+            32768,
+            0x3f2a_9c71,
+            "BACKOTTER",
+            &[
+                dir(
+                    "backotter",
+                    vec![
+                        file("stick.json", stick_json()),
+                        file(
+                            "settings.toml",
+                            "format = \"backotter-settings\"\nschema = 1\n",
+                        ),
+                        dir("machines", machines),
+                    ],
+                ),
+                file("README.txt", "BackOtter\n"),
+            ],
+        )
     }
 
     /// A stick disk sdc with a GPT whose partition 3 is CONFIG, in a tree
@@ -1302,15 +1998,37 @@ pub mod sample {
     /// host named babbage-host), with good checksums.
     pub fn two_with_layouts() -> Vec<Node> {
         let a = system(LOVELACE, "lovelace", "", &with_layout(DUMP));
-        let b = system(BABBAGE, "babbage", "", &with_layout(&DUMP.replace("\"hostname\": \"t\"", "\"hostname\": \"babbage-host\"")));
-        vec![machine_dir(LOVELACE, &a, Some(&sum(&a))), machine_dir(BABBAGE, &b, Some(&sum(&b)))]
+        let b = system(
+            BABBAGE,
+            "babbage",
+            "",
+            &with_layout(&DUMP.replace("\"hostname\": \"t\"", "\"hostname\": \"babbage-host\"")),
+        );
+        vec![
+            machine_dir(LOVELACE, &a, Some(&sum(&a))),
+            machine_dir(BABBAGE, &b, Some(&sum(&b))),
+        ]
     }
 
     pub fn three() -> Vec<Node> {
-        let a = system(LOVELACE, "lovelace", "4C4C4544-0000-1111-2222-333344445555", ", \"password_hint\": \"the boat's name\"");
-        let b = system(BABBAGE, "babbage", "11111111-2222-3333-4444-555555555555", "");
+        let a = system(
+            LOVELACE,
+            "lovelace",
+            "4C4C4544-0000-1111-2222-333344445555",
+            ", \"password_hint\": \"the boat's name\"",
+        );
+        let b = system(
+            BABBAGE,
+            "babbage",
+            "11111111-2222-3333-4444-555555555555",
+            "",
+        );
         let c = system("2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6", "hopper", "", "");
-        vec![machine_dir(LOVELACE, &a, Some(&sum(&a))), machine_dir(BABBAGE, &b, Some(&sum(&b))), machine_dir("2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6", &c, Some(&sum(&c)))]
+        vec![
+            machine_dir(LOVELACE, &a, Some(&sum(&a))),
+            machine_dir(BABBAGE, &b, Some(&sum(&b))),
+            machine_dir("2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6", &c, Some(&sum(&c))),
+        ]
     }
 }
 
@@ -1322,12 +2040,18 @@ mod tests {
     use crate::testutil::Tree;
 
     fn doc(t: &Tree) -> (Value, u8) {
-        document(&Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), true), None)
+        document(
+            &Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), true),
+            None,
+        )
     }
 
     #[test]
     fn reads_the_machines_off_the_boot_disk() {
-        let t = linux_tree(&config(three()), Some("4c4c4544-0000-1111-2222-333344445555"));
+        let t = linux_tree(
+            &config(three()),
+            Some("4c4c4544-0000-1111-2222-333344445555"),
+        );
         let (v, code) = doc(&t);
         assert_eq!(code, 0, "{}", v.pretty());
         assert_eq!(v.str_at(&["config", "state"]), Some("ok"));
@@ -1335,24 +2059,47 @@ mod tests {
         assert_eq!(v.str_at(&["config", "dev"]), Some("/dev/sdc3"));
         assert_eq!(v.str_at(&["boot_disk", "node"]), Some("sdc"));
         assert_eq!(v.str_at(&["boot_disk", "found_by"]), Some("cdrom_mount"));
-        assert_eq!(v.str_at(&["stick", "stick_id"]), Some("9d8c7b6a-0000-4000-8000-000000000001"));
+        assert_eq!(
+            v.str_at(&["stick", "stick_id"]),
+            Some("9d8c7b6a-0000-4000-8000-000000000001")
+        );
         assert_eq!(v.str_at(&["image", "image_id"]), Some(IMAGE_ID));
         let ms = v.arr_at(&["machines"]);
         let names: Vec<&str> = ms.iter().filter_map(|m| m.get_str("hostname")).collect();
         assert_eq!(names, ["lovelace", "babbage", "hopper"]);
-        assert!(ms.iter().all(|m| m.get_str("state") == Some("ok") && m.get_bool("known_schema") == Some(true)));
+        assert!(
+            ms.iter()
+                .all(|m| m.get_str("state") == Some("ok")
+                    && m.get_bool("known_schema") == Some(true))
+        );
         assert_eq!(ms[0].get_bool("this_computer"), Some(true));
         assert_eq!(ms[1].get_bool("this_computer"), Some(false));
         assert_eq!(ms[0].get_str("password_hint"), Some("the boat's name"));
         assert!(ms[1].get("password_hint").is_some_and(Value::is_null));
-        assert_eq!(ms[0].str_at(&["repository", "url"]), Some("sftp://nas.local/backotter/lovelace"));
+        assert_eq!(
+            ms[0].str_at(&["repository", "url"]),
+            Some("sftp://nas.local/backotter/lovelace")
+        );
         assert_eq!(ms[0].get_u64("sequence"), Some(42));
-        assert_eq!(ms[0].get_str("path"), Some(format!("backotter/machines/{LOVELACE}/system.json").as_str()));
+        assert_eq!(
+            ms[0].get_str("path"),
+            Some(format!("backotter/machines/{LOVELACE}/system.json").as_str())
+        );
         // Not yet in system.json: null, never made up.
-        assert!(ms[0].get("keyboard").is_some_and(Value::is_null) && ms[0].get("time").is_some_and(Value::is_null));
-        let notes: Vec<&str> = v.arr_at(&["notes"]).iter().filter_map(|n| n.get_str("code")).collect();
+        assert!(
+            ms[0].get("keyboard").is_some_and(Value::is_null)
+                && ms[0].get("time").is_some_and(Value::is_null)
+        );
+        let notes: Vec<&str> = v
+            .arr_at(&["notes"])
+            .iter()
+            .filter_map(|n| n.get_str("code"))
+            .collect();
         assert_eq!(notes, ["settings_ignored"]);
-        assert_eq!(v.str_at(&["here", "dmi_uuid"]), Some("4c4c4544-0000-1111-2222-333344445555"));
+        assert_eq!(
+            v.str_at(&["here", "dmi_uuid"]),
+            Some("4c4c4544-0000-1111-2222-333344445555")
+        );
         crate::testutil::golden_json("stick-json", "three", &v);
     }
 
@@ -1361,14 +2108,32 @@ mod tests {
         // Every stick built before 2026-11-26: image.dump_schemas is null,
         // never made up as [1] or [] (holt-json.md's stick --json).
         let t = linux_tree(&config(three()), None);
-        t.file("/cdrom/.disk/backotter.json", marker(3).replace("  \"dump_schemas\": [1],\n", ""));
+        t.file(
+            "/cdrom/.disk/backotter.json",
+            marker(3).replace("  \"dump_schemas\": [1],\n", ""),
+        );
         let (v, code) = doc(&t);
         assert_eq!(code, 0, "{}", v.pretty());
-        assert!(v.at(&["image", "dump_schemas"]).is_some_and(Value::is_null), "{}", v.pretty());
-        assert_eq!(v.at(&["image", "system_schemas"]).and_then(Value::as_array).map(Vec::len), Some(1));
+        assert!(
+            v.at(&["image", "dump_schemas"]).is_some_and(Value::is_null),
+            "{}",
+            v.pretty()
+        );
+        assert_eq!(
+            v.at(&["image", "system_schemas"])
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1)
+        );
         // A new one names its list.
         let (v, _) = doc(&linux_tree(&config(three()), None));
-        let l: Vec<u64> = v.at(&["image", "dump_schemas"]).and_then(Value::as_array).unwrap().iter().filter_map(Value::as_u64).collect();
+        let l: Vec<u64> = v
+            .at(&["image", "dump_schemas"])
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_u64)
+            .collect();
         assert_eq!(l, [1]);
     }
 
@@ -1384,14 +2149,35 @@ mod tests {
             machine_dir(LOVELACE, &edited, Some(&sum(&good))),
             machine_dir(BABBAGE, &two, Some(&sum(&two))),
             machine_dir("c0000000-0000-0000-0000-000000000000", &c0, None),
-            machine_dir("d0000000-0000-0000-0000-000000000000", "not json", Some(&sum("not json"))),
-            machine_dir("e0000000-0000-0000-0000-000000000000", &other, Some(&sum(&other))),
-            machine_dir("f0000000-0000-0000-0000-000000000000", &f0, Some("cafe  system.json\n")),
+            machine_dir(
+                "d0000000-0000-0000-0000-000000000000",
+                "not json",
+                Some(&sum("not json")),
+            ),
+            machine_dir(
+                "e0000000-0000-0000-0000-000000000000",
+                &other,
+                Some(&sum(&other)),
+            ),
+            machine_dir(
+                "f0000000-0000-0000-0000-000000000000",
+                &f0,
+                Some("cafe  system.json\n"),
+            ),
         ];
         let t = linux_tree(&config(ms), None);
         let (v, code) = doc(&t);
         assert_eq!(code, 0);
-        let st: Vec<(&str, &str)> = v.arr_at(&["machines"]).iter().map(|m| (m.get_str("install_id").unwrap(), m.get_str("state").unwrap())).collect();
+        let st: Vec<(&str, &str)> = v
+            .arr_at(&["machines"])
+            .iter()
+            .map(|m| {
+                (
+                    m.get_str("install_id").unwrap(),
+                    m.get_str("state").unwrap(),
+                )
+            })
+            .collect();
         assert_eq!(
             st,
             [
@@ -1407,10 +2193,16 @@ mod tests {
         // A damaged copy still says what it can: the name it was written with.
         assert_eq!(ms[0].get_str("hostname"), Some("lovelace2"));
         assert!(ms[0].get_str("why").unwrap().contains("doesn't match"));
-        assert_eq!((ms[1].get_u64("schema"), ms[1].get_bool("known_schema")), (Some(2), Some(false)));
+        assert_eq!(
+            (ms[1].get_u64("schema"), ms[1].get_bool("known_schema")),
+            (Some(2), Some(false))
+        );
         assert!(ms[4].get_str("why").unwrap().contains("names install ID"));
         assert!(ms[5].get_str("why").unwrap().contains("64 hex digits"));
-        assert!(ms.iter().all(|m| m.get_bool("this_computer") == Some(false)));
+        assert!(
+            ms.iter()
+                .all(|m| m.get_bool("this_computer") == Some(false))
+        );
         assert!(v.get("here").unwrap().get("dmi_uuid").unwrap().is_null());
         crate::testutil::golden_json("stick-json", "failing", &v);
     }
@@ -1418,7 +2210,8 @@ mod tests {
     #[test]
     fn a_directory_or_install_id_that_is_no_uuid() {
         let good = system(LOVELACE, "lovelace", "", "");
-        let none = system(BABBAGE, "babbage", "", "").replace(&format!("\"install_id\": \"{BABBAGE}\", "), "");
+        let none = system(BABBAGE, "babbage", "", "")
+            .replace(&format!("\"install_id\": \"{BABBAGE}\", "), "");
         let odd_id = "x".repeat(200_000);
         let odd = system(&odd_id, "hopper", "", "");
         let hopper = "2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6";
@@ -1433,14 +2226,44 @@ mod tests {
         let (v, code) = doc(&t);
         assert_eq!(code, 0, "{}", v.pretty());
         let ms = v.arr_at(&["machines"]);
-        let st: Vec<(&str, &str)> = ms.iter().map(|m| (m.get_str("install_id").unwrap(), m.get_str("state").unwrap())).collect();
-        assert_eq!(st, [(LOVELACE, "ok"), (BABBAGE, "unreadable"), (hopper, "unreadable")]);
-        assert!(ms.iter().all(|m| !m.get_str("path").unwrap().contains("..")));
-        assert!(ms[1].get_str("why").unwrap().contains("names no install ID"));
+        let st: Vec<(&str, &str)> = ms
+            .iter()
+            .map(|m| {
+                (
+                    m.get_str("install_id").unwrap(),
+                    m.get_str("state").unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            st,
+            [
+                (LOVELACE, "ok"),
+                (BABBAGE, "unreadable"),
+                (hopper, "unreadable")
+            ]
+        );
+        assert!(
+            ms.iter()
+                .all(|m| !m.get_str("path").unwrap().contains(".."))
+        );
+        assert!(
+            ms[1]
+                .get_str("why")
+                .unwrap()
+                .contains("names no install ID")
+        );
         let why = ms[2].get_str("why").unwrap();
-        assert!(why.contains("isn't a UUID") && !why.contains("xxx"), "{why}");
+        assert!(
+            why.contains("isn't a UUID") && !why.contains("xxx"),
+            "{why}"
+        );
         assert!(jsonout::line(&v).len() < 8192);
-        let notes: Vec<&str> = v.arr_at(&["notes"]).iter().filter_map(|n| n.get_str("code")).collect();
+        let notes: Vec<&str> = v
+            .arr_at(&["notes"])
+            .iter()
+            .filter_map(|n| n.get_str("code"))
+            .collect();
         assert_eq!(notes, ["settings_ignored", "machines_not_install_ids"]);
         assert!(!jsonout::line(&v).contains("etc"));
         crate::testutil::golden_json("stick-json", "not-install-ids", &v);
@@ -1452,30 +2275,66 @@ mod tests {
         let mk = |dmis: [&str; 3]| {
             let ids = [LOVELACE, BABBAGE, "2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6"];
             let names = ["lovelace", "babbage", "hopper"];
-            config((0..3).map(|k| {
-                let b = system(ids[k], names[k], dmis[k], "");
-                machine_dir(ids[k], &b, Some(&sum(&b)))
-            }).collect())
+            config(
+                (0..3)
+                    .map(|k| {
+                        let b = system(ids[k], names[k], dmis[k], "");
+                        machine_dir(ids[k], &b, Some(&sum(&b)))
+                    })
+                    .collect(),
+            )
         };
-        let mine = |v: &Value| v.arr_at(&["machines"]).iter().map(|m| m.get_bool("this_computer").unwrap()).collect::<Vec<_>>();
-        let codes = |v: &Value| v.arr_at(&["notes"]).iter().filter_map(|n| n.get_str("code").map(str::to_string)).collect::<Vec<_>>();
+        let mine = |v: &Value| {
+            v.arr_at(&["machines"])
+                .iter()
+                .map(|m| m.get_bool("this_computer").unwrap())
+                .collect::<Vec<_>>()
+        };
+        let codes = |v: &Value| {
+            v.arr_at(&["notes"])
+                .iter()
+                .filter_map(|n| n.get_str("code").map(str::to_string))
+                .collect::<Vec<_>>()
+        };
         // One match: that row.
-        let (v, _) = doc(&linux_tree(&mk([lv, "11111111-2222-3333-4444-555555555555", ""]), Some(&lv.to_uppercase())));
+        let (v, _) = doc(&linux_tree(
+            &mk([lv, "11111111-2222-3333-4444-555555555555", ""]),
+            Some(&lv.to_uppercase()),
+        ));
         assert_eq!(mine(&v), [true, false, false]);
         // Two: cloned, or reinstalled under a new install ID: neither, said so.
         let (v, _) = doc(&linux_tree(&mk([lv, lv, ""]), Some(lv)));
         assert_eq!(mine(&v), [false, false, false]);
         assert_eq!(codes(&v), ["settings_ignored", "this_computer_ambiguous"]);
-        assert!(v.arr_at(&["notes"])[1].get_str("text").unwrap().contains("2 machines"));
+        assert!(
+            v.arr_at(&["notes"])[1]
+                .get_str("text")
+                .unwrap()
+                .contains("2 machines")
+        );
         // Firmware's placeholders name no computer, here or on the stick.
-        for p in ["00000000-0000-0000-0000-000000000000", "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF", "03000200-0400-0500-0006-000700080009", "Not Settable"] {
+        for p in [
+            "00000000-0000-0000-0000-000000000000",
+            "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF",
+            "03000200-0400-0500-0006-000700080009",
+            "Not Settable",
+        ] {
             let (v, _) = doc(&linux_tree(&mk([p, lv, ""]), Some(p)));
             assert_eq!(mine(&v), [false, false, false], "{p}");
             assert_eq!(codes(&v), ["settings_ignored"], "{p}");
             assert_eq!(v.str_at(&["here", "dmi_uuid"]), Some(p));
         }
-        assert!(dmi_uuid_names_one(lv) && !dmi_uuid_names_one("") && !dmi_uuid_names_one("12345678-1234-5678-90AB-CDDEEFAABBCC"));
-        assert!(is_uuid(LOVELACE) && is_uuid(&LOVELACE.to_uppercase()) && !is_uuid("../../etc") && !is_uuid(&LOVELACE.replace('-', "_")));
+        assert!(
+            dmi_uuid_names_one(lv)
+                && !dmi_uuid_names_one("")
+                && !dmi_uuid_names_one("12345678-1234-5678-90AB-CDDEEFAABBCC")
+        );
+        assert!(
+            is_uuid(LOVELACE)
+                && is_uuid(&LOVELACE.to_uppercase())
+                && !is_uuid("../../etc")
+                && !is_uuid(&LOVELACE.replace('-', "_"))
+        );
     }
 
     #[test]
@@ -1485,7 +2344,11 @@ mod tests {
         t.file("/proc/self/mountinfo", "");
         let (v, code) = doc(&t);
         assert_eq!((code, v.str_at(&["config", "state"])), (1, Some("missing")));
-        assert!(v.str_at(&["config", "why"]).unwrap().contains("/cdrom/.disk/backotter.json"));
+        assert!(
+            v.str_at(&["config", "why"])
+                .unwrap()
+                .contains("/cdrom/.disk/backotter.json")
+        );
         assert!(v.get("boot_disk").unwrap().is_null() && v.get("stick").unwrap().is_null());
         crate::testutil::golden_json("stick-json", "missing", &v);
         // Copied by a file-copying tool: no partition 3.
@@ -1493,13 +2356,23 @@ mod tests {
         std::fs::remove_dir_all(t.p("/sys/block/sdc/sdc3")).unwrap();
         let (v, code) = doc(&t);
         assert_eq!((code, v.str_at(&["config", "state"])), (1, Some("missing")));
-        assert!(v.str_at(&["config", "why"]).unwrap().contains("written raw"));
+        assert!(
+            v.str_at(&["config", "why"])
+                .unwrap()
+                .contains("written raw")
+        );
         // Reformatted: another serial.
         let mut c = config(three());
         c[39] ^= 1;
         let (v, code) = doc(&linux_tree(&c, None));
         assert_eq!((code, v.str_at(&["config", "state"])), (1, Some("damaged")));
-        assert!(v.str_at(&["config", "why"]).unwrap().contains("reformatted"), "{}", v.pretty());
+        assert!(
+            v.str_at(&["config", "why"])
+                .unwrap()
+                .contains("reformatted"),
+            "{}",
+            v.pretty()
+        );
         crate::testutil::golden_json("stick-json", "reformatted", &v);
         assert!(v.arr_at(&["machines"]).is_empty());
         // Not FAT any more.
@@ -1510,16 +2383,41 @@ mod tests {
         t.file("/sys/block/sdc/sdc3/size", "30000\n");
         let (v, _) = doc(&t);
         assert_eq!(v.str_at(&["config", "state"]), Some("damaged"));
-        assert!(v.str_at(&["config", "why"]).unwrap().contains("repartitioned"));
+        assert!(
+            v.str_at(&["config", "why"])
+                .unwrap()
+                .contains("repartitioned")
+        );
         // A stick.json from another image.
-        let c = fat16(32768, 0x3f2a_9c71, "BACKOTTER", &[dir("backotter", vec![file("stick.json", stick_json().replace(IMAGE_ID, "00000000-0000-0000-0000-000000000000"))])]);
+        let c = fat16(
+            32768,
+            0x3f2a_9c71,
+            "BACKOTTER",
+            &[dir(
+                "backotter",
+                vec![file(
+                    "stick.json",
+                    stick_json().replace(IMAGE_ID, "00000000-0000-0000-0000-000000000000"),
+                )],
+            )],
+        );
         let (v, _) = doc(&linux_tree(&c, None));
         assert_eq!(v.str_at(&["config", "state"]), Some("damaged"));
-        assert!(v.str_at(&["config", "why"]).unwrap().contains("is for image"));
+        assert!(
+            v.str_at(&["config", "why"])
+                .unwrap()
+                .contains("is for image")
+        );
         // Not root: unreadable, said so.
         let t = linux_tree(&config(three()), None);
-        let (v, code) = document(&Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), false), None);
-        assert_eq!((code, v.str_at(&["config", "state"])), (1, Some("unreadable")));
+        let (v, code) = document(
+            &Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), false),
+            None,
+        );
+        assert_eq!(
+            (code, v.str_at(&["config", "state"])),
+            (1, Some("unreadable"))
+        );
     }
 
     #[test]
@@ -1531,148 +2429,386 @@ mod tests {
         let a = system(LOVELACE, &long, "", "");
         let big = format!(", \"time\": {{\"zone\": \"{}\"}}", "z".repeat(SECTION_MAX));
         let b = system(BABBAGE, "babbage", "", &big);
-        let kb = ", \"keyboard\": {\"canonical\": {\"layout\": \"de\", \"variant\": \"nodeadkeys\"}}";
+        let kb =
+            ", \"keyboard\": {\"canonical\": {\"layout\": \"de\", \"variant\": \"nodeadkeys\"}}";
         let c = system("2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6", "hopper", "", kb);
-        let (v, _) = doc(&linux_tree(&config(vec![machine_dir(LOVELACE, &a, Some(&sum(&a))), machine_dir(BABBAGE, &b, Some(&sum(&b))), machine_dir("2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6", &c, Some(&sum(&c)))]), None));
+        let (v, _) = doc(&linux_tree(
+            &config(vec![
+                machine_dir(LOVELACE, &a, Some(&sum(&a))),
+                machine_dir(BABBAGE, &b, Some(&sum(&b))),
+                machine_dir("2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6", &c, Some(&sum(&c))),
+            ]),
+            None,
+        ));
         let ms = v.arr_at(&["machines"]);
         assert_eq!(ms[0].get_str("state"), Some("unreadable"));
-        assert!(ms[0].get("hostname").unwrap().is_null() && ms[0].get_str("why").unwrap().contains("hostname"));
+        assert!(
+            ms[0].get("hostname").unwrap().is_null()
+                && ms[0].get_str("why").unwrap().contains("hostname")
+        );
         assert_eq!(ms[1].get_str("state"), Some("unreadable"));
         assert!(ms[1].get_str("why").unwrap().contains("time section"));
         assert_eq!(ms[2].get_str("state"), Some("ok"));
-        assert_eq!(ms[2].str_at(&["keyboard", "canonical", "layout"]), Some("de"));
+        assert_eq!(
+            ms[2].str_at(&["keyboard", "canonical", "layout"]),
+            Some("de")
+        );
     }
 
     #[test]
     fn checksum_lines() {
         let h = crate::bytes::sha256_hex(b"x");
-        assert_eq!(checksum_ok(format!("{h}  system.json\n").as_bytes(), b"x"), Ok(true));
-        assert_eq!(checksum_ok(format!("{} *system.json\r\n", h.to_uppercase()).as_bytes(), b"x"), Ok(true));
+        assert_eq!(
+            checksum_ok(format!("{h}  system.json\n").as_bytes(), b"x"),
+            Ok(true)
+        );
+        assert_eq!(
+            checksum_ok(
+                format!("{} *system.json\r\n", h.to_uppercase()).as_bytes(),
+                b"x"
+            ),
+            Ok(true)
+        );
         assert_eq!(checksum_ok(format!("{h}\n").as_bytes(), b"x"), Ok(true));
-        assert_eq!(checksum_ok(format!("{h}  system.json\n").as_bytes(), b"y"), Ok(false));
-        assert!(checksum_ok(format!("{h}  other.json\n").as_bytes(), b"x").unwrap_err().contains("other.json"));
+        assert_eq!(
+            checksum_ok(format!("{h}  system.json\n").as_bytes(), b"y"),
+            Ok(false)
+        );
+        assert!(
+            checksum_ok(format!("{h}  other.json\n").as_bytes(), b"x")
+                .unwrap_err()
+                .contains("other.json")
+        );
         assert!(checksum_ok(b"", b"x").is_err());
     }
 
     #[test]
     fn write_time_schema_check() {
         let m = parse_marker(&marker(3)).unwrap();
-        let sys = |extra: &str| crate::json::parse(&system(LOVELACE, "lovelace", "4c4c4544-0000", extra)).unwrap();
-        let codes = |m: &Marker, v: &Value| schema_warnings(m, v).iter().map(|w| w.code).collect::<Vec<_>>();
+        let sys = |extra: &str| {
+            crate::json::parse(&system(LOVELACE, "lovelace", "4c4c4544-0000", extra)).unwrap()
+        };
+        let codes = |m: &Marker, v: &Value| {
+            schema_warnings(m, v)
+                .iter()
+                .map(|w| w.code)
+                .collect::<Vec<_>>()
+        };
         // Readable, with a layout and without one (no dump to check).
-        assert!(schema_warnings(&m, &sys(", \"layout\": {\"format\": \"bko-holt\", \"schema\": 1}")).is_empty());
+        assert!(
+            schema_warnings(
+                &m,
+                &sys(", \"layout\": {\"format\": \"bko-holt\", \"schema\": 1}")
+            )
+            .is_empty()
+        );
         assert!(schema_warnings(&m, &sys("")).is_empty());
         // A layout that isn't an object is no dump (stick --copy's no_layout), not a schema to name.
         assert!(schema_warnings(&m, &sys(", \"layout\": null")).is_empty());
         assert!(schema_warnings(&m, &sys(", \"layout\": \"x\"")).is_empty());
         // A dump schema the stick's bko-holt doesn't read: a warning, named.
-        let w = schema_warnings(&m, &sys(", \"layout\": {\"format\": \"bko-holt\", \"schema\": 2}"));
+        let w = schema_warnings(
+            &m,
+            &sys(", \"layout\": {\"format\": \"bko-holt\", \"schema\": 2}"),
+        );
         assert_eq!(w.len(), 1);
         assert_eq!(w[0].code, "dump_schema_unread");
-        assert_eq!(w[0].text, "this stick's image reads dump schema 1, and this machine's layout is dump schema 2: the stick's restore would refuse it (layout_refused); write a newer image to the stick");
-        assert_eq!(codes(&m, &sys(", \"layout\": {\"format\": \"bko-holt\"}")), ["dump_schema_unread"]);
-        assert!(schema_warnings(&m, &sys(", \"layout\": {\"schema\": \"1\"}"))[0].text.contains("layout has no schema"));
+        assert_eq!(
+            w[0].text,
+            "this stick's image reads dump schema 1, and this machine's layout is dump schema 2: the stick's restore would refuse it (layout_refused); write a newer image to the stick"
+        );
+        assert_eq!(
+            codes(&m, &sys(", \"layout\": {\"format\": \"bko-holt\"}")),
+            ["dump_schema_unread"]
+        );
+        assert!(
+            schema_warnings(&m, &sys(", \"layout\": {\"schema\": \"1\"}"))[0]
+                .text
+                .contains("layout has no schema")
+        );
         // A newer stick that reads both.
-        let both = parse_marker(&marker(3).replace("\"dump_schemas\": [1]", "\"dump_schemas\": [1, 2]")).unwrap();
+        let both =
+            parse_marker(&marker(3).replace("\"dump_schemas\": [1]", "\"dump_schemas\": [1, 2]"))
+                .unwrap();
         assert!(schema_warnings(&both, &sys(", \"layout\": {\"schema\": 2}")).is_empty());
         // A marker from before dump_schemas reads dump schema 1, and says so.
         let old = parse_marker(&marker(3).replace("  \"dump_schemas\": [1],\n", "")).unwrap();
         assert!(schema_warnings(&old, &sys(", \"layout\": {\"schema\": 1}")).is_empty());
         let w = schema_warnings(&old, &sys(", \"layout\": {\"schema\": 2}"));
-        assert_eq!(w[0].text, "this stick's image reads dump schema 1 (its marker is from before images named them), and this machine's layout is dump schema 2: the stick's restore would refuse it (layout_refused); write a newer image to the stick");
+        assert_eq!(
+            w[0].text,
+            "this stick's image reads dump schema 1 (its marker is from before images named them), and this machine's layout is dump schema 2: the stick's restore would refuse it (layout_refused); write a newer image to the stick"
+        );
         // system.json's own schema, against system_schemas, as before; both warn at once.
-        let v2 = crate::json::parse(&system(LOVELACE, "lovelace", "4c4c4544-0000", ", \"layout\": {\"schema\": 2}").replacen("\"schema\": 1", "\"schema\": 2", 1)).unwrap();
+        let v2 = crate::json::parse(
+            &system(
+                LOVELACE,
+                "lovelace",
+                "4c4c4544-0000",
+                ", \"layout\": {\"schema\": 2}",
+            )
+            .replacen("\"schema\": 1", "\"schema\": 2", 1),
+        )
+        .unwrap();
         let w = schema_warnings(&m, &v2);
-        assert_eq!(w.iter().map(|w| w.code).collect::<Vec<_>>(), ["system_schema_unread", "dump_schema_unread"]);
-        assert_eq!(w[0].text, "this stick's image reads system.json schema 1, and this machine's system.json is schema 2: the stick can't restore it; write a newer image to the stick");
-        let none = parse_marker(&marker(3).replace("\"system_schemas\": [1]", "\"system_schemas\": []")).unwrap();
-        assert!(schema_warnings(&none, &sys(""))[0].text.starts_with("this stick's image reads system.json schema none,"));
+        assert_eq!(
+            w.iter().map(|w| w.code).collect::<Vec<_>>(),
+            ["system_schema_unread", "dump_schema_unread"]
+        );
+        assert_eq!(
+            w[0].text,
+            "this stick's image reads system.json schema 1, and this machine's system.json is schema 2: the stick can't restore it; write a newer image to the stick"
+        );
+        let none =
+            parse_marker(&marker(3).replace("\"system_schemas\": [1]", "\"system_schemas\": []"))
+                .unwrap();
+        assert!(
+            schema_warnings(&none, &sys(""))[0]
+                .text
+                .starts_with("this stick's image reads system.json schema none,")
+        );
     }
 
     #[test]
     fn write_time_room_check() {
         const MIB: u64 = 1 << 20;
-        let big = parse_marker(&marker(3).replace("\"sectors\": 32768", "\"sectors\": 524288")).unwrap();
+        let big =
+            parse_marker(&marker(3).replace("\"sectors\": 32768", "\"sectors\": 524288")).unwrap();
         // An older BSD, illumos or Haiku image's: 32 MiB.
-        let small = parse_marker(&marker(3).replace("\"sectors\": 32768", "\"sectors\": 65536")).unwrap();
+        let small =
+            parse_marker(&marker(3).replace("\"sectors\": 32768", "\"sectors\": 65536")).unwrap();
         // The machine's folder is there when anything of it is; each .sha256 with its file.
-        let room = |free: u64, current: Option<u64>, prev: Option<u64>, logs: Option<Vec<u64>>| Room {
-            free,
-            cluster: 4096,
-            folder: current.is_some() || prev.is_some() || logs.is_some(),
-            current,
-            prev,
-            prev_sum: prev.is_some(),
-            logs,
-            others: true,
-        };
+        let room =
+            |free: u64, current: Option<u64>, prev: Option<u64>, logs: Option<Vec<u64>>| Room {
+                free,
+                cluster: 4096,
+                folder: current.is_some() || prev.is_some() || logs.is_some(),
+                current,
+                prev,
+                prev_sum: prev.is_some(),
+                logs,
+                others: true,
+            };
         let codes = |r: Result<Vec<StickWarning>, StickRefusal>| match r {
             Ok(w) => w.iter().map(|w| w.code).collect::<Vec<_>>().join(","),
             Err(e) => format!("refused {}", e.code),
         };
         // A new stick with room: nothing to say.
-        assert_eq!(room_check(&big, 3 * MIB, &room(250 * MIB, None, None, None)), Ok(vec![]));
+        assert_eq!(
+            room_check(&big, 3 * MIB, &room(250 * MIB, None, None, None)),
+            Ok(vec![])
+        );
         // SYSTEM_MAX is read; a byte more isn't, whatever the room, and its
         // size is rounded up, so it never prints as the limit.
-        assert_eq!(codes(room_check(&big, SYSTEM_MAX, &room(250 * MIB, None, None, None))), "");
+        assert_eq!(
+            codes(room_check(
+                &big,
+                SYSTEM_MAX,
+                &room(250 * MIB, None, None, None)
+            )),
+            ""
+        );
         let e = room_check(&big, SYSTEM_MAX + 1, &room(250 * MIB, None, None, None)).unwrap_err();
         assert_eq!(e.code, "system_too_big");
-        assert_eq!(e.text, "this machine's system.json is 64.1 MiB, over the 64.0 MiB a stick's bko-holt reads");
+        assert_eq!(
+            e.text,
+            "this machine's system.json is 64.1 MiB, over the 64.0 MiB a stick's bko-holt reads"
+        );
         assert_eq!(e.remedy, "", "no stick takes it");
         // No room for the file: refused, and an older image's smaller
         // partition named.  A new machine's folder takes a cluster too.
         let e = room_check(&small, 2 * MIB, &room(MIB, None, None, None)).unwrap_err();
         assert_eq!(e.code, "stick_full");
-        assert_eq!(e.text, "this machine's system.json needs 2.1 MiB while the stick still holds its two older copies, and the stick's config partition has 1.0 MiB free");
-        assert_eq!(e.remedy, "remove other machines' folders from the stick, or write a newer image to it (this one's config partition is 32.0 MiB, a newer one's 256 MiB)");
-        assert!(!room_check(&big, 2 * MIB, &room(MIB, None, None, None)).unwrap_err().remedy.contains("image"));
+        assert_eq!(
+            e.text,
+            "this machine's system.json needs 2.1 MiB while the stick still holds its two older copies, and the stick's config partition has 1.0 MiB free"
+        );
+        assert_eq!(
+            e.remedy,
+            "remove other machines' folders from the stick, or write a newer image to it (this one's config partition is 32.0 MiB, a newer one's 256 MiB)"
+        );
+        assert!(
+            !room_check(&big, 2 * MIB, &room(MIB, None, None, None))
+                .unwrap_err()
+                .remedy
+                .contains("image")
+        );
         // The only machine on the stick: no other folders to remove.
-        let alone = Room { others: false, ..room(MIB, None, None, None) };
-        assert_eq!(room_check(&big, 2 * MIB, &alone).unwrap_err().remedy, "free room on the stick's config partition (old bug reports in backotter/reports can go)");
+        let alone = Room {
+            others: false,
+            ..room(MIB, None, None, None)
+        };
+        assert_eq!(
+            room_check(&big, 2 * MIB, &alone).unwrap_err().remedy,
+            "free room on the stick's config partition (old bug reports in backotter/reports can go)"
+        );
         // The new file is written while the old two stand: the old prev's
         // room comes too late for it, and the words give the room it has then.
         let (cur, prev) = (Some(5 * MIB), Some(5 * MIB));
         let e = room_check(&big, 5 * MIB, &room(5 * MIB - 1, cur, prev, Some(vec![]))).unwrap_err();
         assert_eq!(e.code, "stick_full");
-        assert_eq!(e.text, "this machine's system.json needs 5.0 MiB while the stick still holds its two older copies, and the stick's config partition has 4.9 MiB free");
+        assert_eq!(
+            e.text,
+            "this machine's system.json needs 5.0 MiB while the stick still holds its two older copies, and the stick's config partition has 4.9 MiB free"
+        );
         // Its .sha256 comes after the old prev is gone: 5 MiB free is enough, then.
         let need = 22 * MIB;
-        assert_eq!(codes(room_check(&big, 5 * MIB, &room(5 * MIB, cur, prev, Some(vec![])))), "stick_room_short");
+        assert_eq!(
+            codes(room_check(
+                &big,
+                5 * MIB,
+                &room(5 * MIB, cur, prev, Some(vec![]))
+            )),
+            "stick_room_short"
+        );
         // Without a current system.json, the old prev isn't replaced, so frees nothing.
         let e = room_check(&big, 5 * MIB, &room(5 * MIB, None, prev, Some(vec![]))).unwrap_err();
         assert_eq!(e.code, "stick_full");
-        assert_eq!(e.text, "this machine's system.json and its checksum need 5.1 MiB, and the stick's config partition has 5.0 MiB once its oldest copy goes");
+        assert_eq!(
+            e.text,
+            "this machine's system.json and its checksum need 5.1 MiB, and the stick's config partition has 5.0 MiB once its oldest copy goes"
+        );
         // The old prev's .sha256 frees its cluster only when it is there.
         let r = room(4096, Some(4096), Some(0), Some(vec![]));
         assert_eq!(codes(room_check(&big, 4096, &r)), "stick_room_short");
-        assert_eq!(codes(room_check(&big, 4096, &Room { prev_sum: false, ..r })), "refused stick_full");
+        assert_eq!(
+            codes(room_check(
+                &big,
+                4096,
+                &Room {
+                    prev_sum: false,
+                    ..r
+                }
+            )),
+            "refused stick_full"
+        );
         // Each file takes whole clusters: one byte takes 4 KiB, its .sha256
         // another, and a new machine's folder a third.
-        assert_eq!(codes(room_check(&big, 1, &room(12287, None, None, None))), "refused stick_full");
-        assert_eq!(codes(room_check(&big, 1, &room(12288, None, None, None))), "stick_room_short");
-        assert_eq!(codes(room_check(&big, 1, &room(8192, None, None, Some(vec![])))), "stick_room_short");
+        assert_eq!(
+            codes(room_check(&big, 1, &room(12287, None, None, None))),
+            "refused stick_full"
+        );
+        assert_eq!(
+            codes(room_check(&big, 1, &room(12288, None, None, None))),
+            "stick_room_short"
+        );
+        assert_eq!(
+            codes(room_check(&big, 1, &room(8192, None, None, Some(vec![])))),
+            "stick_room_short"
+        );
         // The logs: 11 of 2 MiB (the 10 kept and the one being written), less
         // what is there.  The words round room down and need up.
         let free = |logs_room: u64| 4 * MIB + 4096 + logs_room;
-        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(need), None, None, Some(vec![])))), "");
-        let w = room_check(&big, 4 * MIB, &room(free(need - 4096), None, None, Some(vec![]))).unwrap();
+        assert_eq!(
+            codes(room_check(
+                &big,
+                4 * MIB,
+                &room(free(need), None, None, Some(vec![]))
+            )),
+            ""
+        );
+        let w = room_check(
+            &big,
+            4 * MIB,
+            &room(free(need - 4096), None, None, Some(vec![])),
+        )
+        .unwrap();
         assert_eq!(w[0].code, "stick_room_short");
-        assert_eq!(w[0].text, "once this machine's system.json is written, the stick's config partition has 21.9 MiB free, and its restore logs may need 22.0 MiB: a restore may not keep its log on the stick. Remove other machines' folders from the stick");
+        assert_eq!(
+            w[0].text,
+            "once this machine's system.json is written, the stick's config partition has 21.9 MiB free, and its restore logs may need 22.0 MiB: a restore may not keep its log on the stick. Remove other machines' folders from the stick"
+        );
         // No restore-logs/ yet: the first log makes it, a cluster more.
         let first = |logs_room: u64| free(logs_room) + 4096;
-        assert_eq!(codes(room_check(&big, 4 * MIB, &room(first(need + 4096), None, None, None))), "");
-        assert_eq!(codes(room_check(&big, 4 * MIB, &room(first(need), None, None, None))), "stick_room_short");
+        assert_eq!(
+            codes(room_check(
+                &big,
+                4 * MIB,
+                &room(first(need + 4096), None, None, None)
+            )),
+            ""
+        );
+        assert_eq!(
+            codes(room_check(
+                &big,
+                4 * MIB,
+                &room(first(need), None, None, None)
+            )),
+            "stick_room_short"
+        );
         let ten = vec![2 * MIB; 10];
-        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(2 * MIB), None, None, Some(ten.clone())))), "");
-        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(2 * MIB - 4096), None, None, Some(ten)))), "stick_room_short");
+        assert_eq!(
+            codes(room_check(
+                &big,
+                4 * MIB,
+                &room(free(2 * MIB), None, None, Some(ten.clone()))
+            )),
+            ""
+        );
+        assert_eq!(
+            codes(room_check(
+                &big,
+                4 * MIB,
+                &room(free(2 * MIB - 4096), None, None, Some(ten))
+            )),
+            "stick_room_short"
+        );
         // Logs take whole clusters too: ten of one byte take 40 KiB.
-        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(22 * MIB - 10 * 4096), None, None, Some(vec![1; 10])))), "");
-        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(22 * MIB - 10 * 4096 - 1), None, None, Some(vec![1; 10])))), "stick_room_short");
+        assert_eq!(
+            codes(room_check(
+                &big,
+                4 * MIB,
+                &room(free(22 * MIB - 10 * 4096), None, None, Some(vec![1; 10]))
+            )),
+            ""
+        );
+        assert_eq!(
+            codes(room_check(
+                &big,
+                4 * MIB,
+                &room(
+                    free(22 * MIB - 10 * 4096 - 1),
+                    None,
+                    None,
+                    Some(vec![1; 10])
+                )
+            )),
+            "stick_room_short"
+        );
         // A cluster of 0 (no statvfs) counts bytes, a folder as one.
-        let bytes = Room { free: 11, cluster: 0, folder: true, current: None, prev: None, prev_sum: false, logs: Some(vec![]), others: true };
+        let bytes = Room {
+            free: 11,
+            cluster: 0,
+            folder: true,
+            current: None,
+            prev: None,
+            prev_sum: false,
+            logs: Some(vec![]),
+            others: true,
+        };
         assert_eq!(codes(room_check(&big, 10, &bytes)), "stick_room_short");
-        assert_eq!(codes(room_check(&big, 10, &Room { free: 10, ..bytes.clone() })), "refused stick_full");
-        assert_eq!(codes(room_check(&big, 10, &Room { folder: false, ..bytes })), "refused stick_full");
+        assert_eq!(
+            codes(room_check(
+                &big,
+                10,
+                &Room {
+                    free: 10,
+                    ..bytes.clone()
+                }
+            )),
+            "refused stick_full"
+        );
+        assert_eq!(
+            codes(room_check(
+                &big,
+                10,
+                &Room {
+                    folder: false,
+                    ..bytes
+                }
+            )),
+            "refused stick_full"
+        );
     }
 
     #[test]
@@ -1680,9 +2816,17 @@ mod tests {
         // holt-json.md's open question 16: the whole file, else one without
         // its layout, else nothing and the older copies removed.
         const MIB: u64 = 1 << 20;
-        let big = parse_marker(&marker(3).replace("\"sectors\": 32768", "\"sectors\": 524288")).unwrap();
-        let small = parse_marker(&marker(3).replace("\"sectors\": 32768", "\"sectors\": 65536")).unwrap();
-        let sys = crate::json::parse(&system(LOVELACE, "lovelace", "4c4c4544-0000", &with_layout(DUMP))).unwrap();
+        let big =
+            parse_marker(&marker(3).replace("\"sectors\": 32768", "\"sectors\": 524288")).unwrap();
+        let small =
+            parse_marker(&marker(3).replace("\"sectors\": 32768", "\"sectors\": 65536")).unwrap();
+        let sys = crate::json::parse(&system(
+            LOVELACE,
+            "lovelace",
+            "4c4c4544-0000",
+            &with_layout(DUMP),
+        ))
+        .unwrap();
         let room = |free: u64, current: Option<u64>, prev: Option<u64>, others: bool| Room {
             free,
             cluster: 4096,
@@ -1694,92 +2838,250 @@ mod tests {
             others,
         };
         // It fits: the whole file, with room_check's warnings.
-        assert_eq!(stick_write(&big, &sys, 3 * MIB, &room(250 * MIB, None, None, true)), StickWrite::Whole { warnings: vec![] });
-        let StickWrite::Whole { warnings } = stick_write(&big, &sys, 3 * MIB, &room(4 * MIB, None, None, true)) else { panic!("whole") };
-        assert_eq!(warnings.iter().map(|w| w.code).collect::<Vec<_>>(), ["stick_room_short"]);
+        assert_eq!(
+            stick_write(&big, &sys, 3 * MIB, &room(250 * MIB, None, None, true)),
+            StickWrite::Whole { warnings: vec![] }
+        );
+        let StickWrite::Whole { warnings } =
+            stick_write(&big, &sys, 3 * MIB, &room(4 * MIB, None, None, true))
+        else {
+            panic!("whole")
+        };
+        assert_eq!(
+            warnings.iter().map(|w| w.code).collect::<Vec<_>>(),
+            ["stick_room_short"]
+        );
         // Too big for any stick: the file without its layout, which says why.
-        let w = stick_write(&big, &sys, SYSTEM_MAX + 1, &room(250 * MIB, Some(5 * MIB), Some(5 * MIB), true));
-        let StickWrite::WithoutLayout { body, refused, warnings, text, remove_old } = w else { panic!("{w:?}") };
+        let w = stick_write(
+            &big,
+            &sys,
+            SYSTEM_MAX + 1,
+            &room(250 * MIB, Some(5 * MIB), Some(5 * MIB), true),
+        );
+        let StickWrite::WithoutLayout {
+            body,
+            refused,
+            warnings,
+            text,
+            remove_old,
+        } = w
+        else {
+            panic!("{w:?}")
+        };
         assert_eq!(refused.code, "system_too_big");
-        assert!(!remove_old, "the older copies stay while it fits beside them");
+        assert!(
+            !remove_old,
+            "the older copies stay while it fits beside them"
+        );
         assert!(warnings.is_empty(), "{warnings:?}");
         let v = crate::json::parse(&body).unwrap();
         assert!(v.get(LAYOUT_KEY).is_none(), "no layout");
-        assert_eq!(v.at(&[LAYOUT_LEFT_OUT_KEY, "code"]).and_then(Value::as_str), Some("system_too_big"));
-        assert_eq!(v.u64_at(&[LAYOUT_LEFT_OUT_KEY, "bytes"]), Some(SYSTEM_MAX + 1));
+        assert_eq!(
+            v.at(&[LAYOUT_LEFT_OUT_KEY, "code"]).and_then(Value::as_str),
+            Some("system_too_big")
+        );
+        assert_eq!(
+            v.u64_at(&[LAYOUT_LEFT_OUT_KEY, "bytes"]),
+            Some(SYSTEM_MAX + 1)
+        );
         // Everything else is as it was: the stick still finds the backup.
-        assert_eq!(v.str_at(&["backup", "repository", "url"]), Some("sftp://nas.local/backotter/lovelace"));
+        assert_eq!(
+            v.str_at(&["backup", "repository", "url"]),
+            Some("sftp://nas.local/backotter/lovelace")
+        );
         assert_eq!(v.u64_at(&["sequence"]), Some(42));
-        assert_eq!(body, without_layout(&sys, "system_too_big", SYSTEM_MAX + 1).pretty());
+        assert_eq!(
+            body,
+            without_layout(&sys, "system_too_big", SYSTEM_MAX + 1).pretty()
+        );
         assert!(body.len() < 4096, "a few KiB: {}", body.len());
         // The schema warnings are of BODY: it has no dump for an older
         // image to refuse, so only system.json's own schema is checked.
-        let old = parse_marker(&marker(3).replace("\"dump_schemas\": [1]", "\"dump_schemas\": [2]")).unwrap();
-        assert_eq!(schema_warnings(&old, &sys).iter().map(|w| w.code).collect::<Vec<_>>(), ["dump_schema_unread"]);
-        assert!(schema_warnings(&old, &v).is_empty(), "no layout on the stick to refuse");
-        assert_eq!(text, "this machine's system.json is 64.1 MiB, over the 64.0 MiB a stick's bko-holt reads. So the stick gets this machine's system.json without its disk layout: the stick still finds the backup, but it can't restore this machine's disks until the layout comes from the backup, which bko-rescue can't do yet. The backup keeps the whole file.");
+        let old =
+            parse_marker(&marker(3).replace("\"dump_schemas\": [1]", "\"dump_schemas\": [2]"))
+                .unwrap();
+        assert_eq!(
+            schema_warnings(&old, &sys)
+                .iter()
+                .map(|w| w.code)
+                .collect::<Vec<_>>(),
+            ["dump_schema_unread"]
+        );
+        assert!(
+            schema_warnings(&old, &v).is_empty(),
+            "no layout on the stick to refuse"
+        );
+        assert_eq!(
+            text,
+            "this machine's system.json is 64.1 MiB, over the 64.0 MiB a stick's bko-holt reads. So the stick gets this machine's system.json without its disk layout: the stick still finds the backup, but it can't restore this machine's disks until the layout comes from the backup, which bko-rescue can't do yet. The backup keeps the whole file."
+        );
         // No room for the whole file, room for one without: the remedy is said.
-        let w = stick_write(&small, &sys, 20 * MIB, &room(MIB, Some(5 * MIB), Some(5 * MIB), true));
-        let StickWrite::WithoutLayout { refused, warnings, text, remove_old, .. } = w else { panic!("{w:?}") };
+        let w = stick_write(
+            &small,
+            &sys,
+            20 * MIB,
+            &room(MIB, Some(5 * MIB), Some(5 * MIB), true),
+        );
+        let StickWrite::WithoutLayout {
+            refused,
+            warnings,
+            text,
+            remove_old,
+            ..
+        } = w
+        else {
+            panic!("{w:?}")
+        };
         assert_eq!(refused.code, "stick_full");
         assert!(!remove_old);
-        assert_eq!(warnings.iter().map(|w| w.code).collect::<Vec<_>>(), ["stick_room_short"], "its own write's warning");
+        assert_eq!(
+            warnings.iter().map(|w| w.code).collect::<Vec<_>>(),
+            ["stick_room_short"],
+            "its own write's warning"
+        );
         assert!(text.starts_with("this machine's system.json needs 20.0 MiB while the stick still holds its two older copies, and the stick's config partition has 1.0 MiB free. So the stick gets this machine's system.json without its disk layout: "), "{text}");
         assert!(text.ends_with("The backup keeps the whole file. To keep the layout on the stick: remove other machines' folders from the stick, or write a newer image to it (this one's config partition is 32.0 MiB, a newer one's 256 MiB), then back the machine up again."), "{text}");
         // A layout_left_out that was there is replaced, not doubled.
         let again = without_layout(&without_layout(&sys, "stick_full", 9), "system_too_big", 7);
-        assert_eq!(again.as_object().unwrap().iter().filter(|(k, _)| k == LAYOUT_LEFT_OUT_KEY).count(), 1);
+        assert_eq!(
+            again
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter(|(k, _)| k == LAYOUT_LEFT_OUT_KEY)
+                .count(),
+            1
+        );
         assert_eq!(again.u64_at(&[LAYOUT_LEFT_OUT_KEY, "bytes"]), Some(7));
         // Not even that fits beside the older copies, but it does once they
         // are gone, as they would be anyway: removed first, then written.
-        let w = stick_write(&big, &sys, 20 * MIB, &room(4095, Some(5 * MIB), Some(5 * MIB), false));
-        let StickWrite::WithoutLayout { refused, warnings, text, remove_old, body } = w else { panic!("{w:?}") };
+        let w = stick_write(
+            &big,
+            &sys,
+            20 * MIB,
+            &room(4095, Some(5 * MIB), Some(5 * MIB), false),
+        );
+        let StickWrite::WithoutLayout {
+            refused,
+            warnings,
+            text,
+            remove_old,
+            body,
+        } = w
+        else {
+            panic!("{w:?}")
+        };
         assert!(remove_old, "the older copies go first");
         assert_eq!(refused.code, "stick_full");
-        assert_eq!(warnings.iter().map(|w| w.code).collect::<Vec<_>>(), ["stick_room_short"], "BODY's own write, in the room once they are gone");
+        assert_eq!(
+            warnings.iter().map(|w| w.code).collect::<Vec<_>>(),
+            ["stick_room_short"],
+            "BODY's own write, in the room once they are gone"
+        );
         assert!(crate::json::parse(&body).unwrap().get(LAYOUT_KEY).is_none());
-        assert_eq!(text, "this machine's system.json needs 20.0 MiB while the stick still holds its two older copies, and the stick's config partition has 0.0 MiB free. Even without its disk layout, this machine's system.json needs 0.1 MiB while the stick still holds its two older copies, and the stick's config partition has 0.0 MiB free. So this machine's older copies (system.json and system.prev.json) are removed from the stick first, then the stick gets this machine's system.json without its disk layout: the stick still finds the backup, but it can't restore this machine's disks until the layout comes from the backup, which bko-rescue can't do yet. The backup keeps the whole file. To keep the layout on the stick: free room on the stick's config partition (old bug reports in backotter/reports can go), then back the machine up again.");
+        assert_eq!(
+            text,
+            "this machine's system.json needs 20.0 MiB while the stick still holds its two older copies, and the stick's config partition has 0.0 MiB free. Even without its disk layout, this machine's system.json needs 0.1 MiB while the stick still holds its two older copies, and the stick's config partition has 0.0 MiB free. So this machine's older copies (system.json and system.prev.json) are removed from the stick first, then the stick gets this machine's system.json without its disk layout: the stick still finds the backup, but it can't restore this machine's disks until the layout comes from the backup, which bko-rescue can't do yet. The backup keeps the whole file. To keep the layout on the stick: free room on the stick's config partition (old bug reports in backotter/reports can go), then back the machine up again."
+        );
         // Only a system.prev.json (a write that failed half-way): named alone.
         let w = stick_write(&big, &sys, 20 * MIB, &room(0, None, Some(1), true));
-        let StickWrite::WithoutLayout { text, remove_old: true, .. } = w else { panic!("{w:?}") };
+        let StickWrite::WithoutLayout {
+            text,
+            remove_old: true,
+            ..
+        } = w
+        else {
+            panic!("{w:?}")
+        };
         assert!(text.contains("So this machine's older copy (system.prev.json) is removed from the stick first, then "), "{text}");
         // The room once they are gone is what decides: a 1-byte system.json
         // frees one cluster (its .sha256 isn't in Room, so isn't counted),
         // and BODY and its .sha256 need two.
-        assert!(matches!(stick_write(&big, &sys, 20 * MIB, &room(4096, Some(1), None, true)), StickWrite::WithoutLayout { remove_old: true, .. }));
+        assert!(matches!(
+            stick_write(&big, &sys, 20 * MIB, &room(4096, Some(1), None, true)),
+            StickWrite::WithoutLayout {
+                remove_old: true,
+                ..
+            }
+        ));
         let w = stick_write(&big, &sys, 20 * MIB, &room(4095, Some(1), None, true));
-        let StickWrite::RemoveOld { refused, bare, text } = w else { panic!("{w:?}") };
+        let StickWrite::RemoveOld {
+            refused,
+            bare,
+            text,
+        } = w
+        else {
+            panic!("{w:?}")
+        };
         assert_eq!((refused.code, bare.code), ("stick_full", "stick_full"));
         assert!(text.contains("So this machine's older copy (system.json) is removed from the stick, so no restore plans onto an older layout: this stick can no longer find this machine's backup or restore it. Remove other machines' folders from the stick, then back the machine up again."), "{text}");
         // A new machine has none to remove: the words say nothing is written.
         let w = stick_write(&big, &sys, 20 * MIB, &room(4095, None, None, true));
-        let StickWrite::RemoveOld { text, .. } = w else { panic!("{w:?}") };
+        let StickWrite::RemoveOld { text, .. } = w else {
+            panic!("{w:?}")
+        };
         assert!(text.contains("So nothing is written to the stick for this machine: this stick can't find its backup or restore it. Remove other machines' folders from the stick, then back the machine up again."), "{text}");
         // The decision follows room_check at the edge: the bare file's own
         // need (folder, file and .sha256 in clusters) is what decides.
         let bare = without_layout(&sys, "stick_full", 20 * MIB).pretty().len() as u64;
         let need = 4096 + bare.div_ceil(4096) * 4096 + 4096;
-        assert!(matches!(stick_write(&big, &sys, 20 * MIB, &Room { logs: None, ..room(need, None, None, true) }), StickWrite::WithoutLayout { .. }));
-        assert!(matches!(stick_write(&big, &sys, 20 * MIB, &Room { logs: None, ..room(need - 1, None, None, true) }), StickWrite::RemoveOld { .. }));
+        assert!(matches!(
+            stick_write(
+                &big,
+                &sys,
+                20 * MIB,
+                &Room {
+                    logs: None,
+                    ..room(need, None, None, true)
+                }
+            ),
+            StickWrite::WithoutLayout { .. }
+        ));
+        assert!(matches!(
+            stick_write(
+                &big,
+                &sys,
+                20 * MIB,
+                &Room {
+                    logs: None,
+                    ..room(need - 1, None, None, true)
+                }
+            ),
+            StickWrite::RemoveOld { .. }
+        ));
     }
 
     #[test]
     fn markers() {
         let m = parse_marker(&marker(4)).unwrap();
-        assert_eq!((m.number, m.sectors, m.label.as_str(), m.fat_serial.as_str()), (4, 32768, "BACKOTTER", "3F2A-9C71"));
+        assert_eq!(
+            (m.number, m.sectors, m.label.as_str(), m.fat_serial.as_str()),
+            (4, 32768, "BACKOTTER", "3F2A-9C71")
+        );
         assert_eq!(m.system_schemas, [1]);
         assert_eq!(m.dump_schemas.as_deref(), Some(&[1u64][..]));
         // A marker from before dump_schemas: its image reads dump schema 1.
         let old = parse_marker(&marker(4).replace("  \"dump_schemas\": [1],\n", "")).unwrap();
         assert_eq!(old.dump_schemas, None);
         assert_eq!(old.dump_schemas_read(), [1]);
-        assert_eq!(parse_marker(&marker(4).replace("\"dump_schemas\": [1]", "\"dump_schemas\": [1, 2]")).unwrap().dump_schemas_read(), [1, 2]);
+        assert_eq!(
+            parse_marker(&marker(4).replace("\"dump_schemas\": [1]", "\"dump_schemas\": [1, 2]"))
+                .unwrap()
+                .dump_schemas_read(),
+            [1, 2]
+        );
         assert!(parse_marker("{}").unwrap_err().contains("backotter-image"));
         let e = crate::json::parse("{").unwrap_err();
-        assert_eq!(parse_marker("{").unwrap_err(), format!("not JSON ({} at byte {})", e.message, e.offset));
+        assert_eq!(
+            parse_marker("{").unwrap_err(),
+            format!("not JSON ({} at byte {})", e.message, e.offset)
+        );
         assert!(parse_marker(&marker(0)).unwrap_err().contains("number"));
         assert_eq!(marker_path(None), "/cdrom/.disk/backotter.json");
-        assert_eq!(marker_path(Some(Family::Haiku)), "/boot/.disk/backotter.json");
+        assert_eq!(
+            marker_path(Some(Family::Haiku)),
+            "/boot/.disk/backotter.json"
+        );
         assert_eq!(marker_path(Some(Family::OpenBsd)), "/.disk/backotter.json");
     }
 
@@ -1801,27 +3103,53 @@ mod tests {
         let stick = mbr_disk(2, &config(three()));
         let mut decoy = stick.clone();
         decoy[2048 * 512 + 39] ^= 1;
-        t.file("/dev/da0", &decoy).file("/dev/da1", &stick).file("/.disk/backotter.json", marker(3));
-        let info = |n: usize| format!("da{n}\t# Disk name\n512\t# sectorsize\n{}\t# mediasize in bytes\n\t# Disk descr.\n\t# Disk ident.\n", stick.len());
+        t.file("/dev/da0", &decoy)
+            .file("/dev/da1", &stick)
+            .file("/.disk/backotter.json", marker(3));
+        let info = |n: usize| {
+            format!(
+                "da{n}\t# Disk name\n512\t# sectorsize\n{}\t# mediasize in bytes\n\t# Disk descr.\n\t# Disk ident.\n",
+                stick.len()
+            )
+        };
         let r = crate::sys::FakeRunner::default()
             .with("sysctl -n kern.disks", "da1 da0 cd0")
             .with("diskinfo -v da0", &info(0))
             .with("diskinfo -v da1", &info(1))
-            .with("mount -p", "/dev/ufs/BKOROOT\t/\tufs\tro\t1\t1\ntmpfs\t/tmp\ttmpfs\trw\t0\t0\n")
+            .with(
+                "mount -p",
+                "/dev/ufs/BKOROOT\t/\tufs\tro\t1\t1\ntmpfs\t/tmp\ttmpfs\trw\t0\t0\n",
+            )
             .with("glabel status -s", "ufs/BKOROOT  N/A  da1s2a\n");
-        let (v, code) = document(&Sys::new(t.root(), Box::new(r), true), Some(Family::FreeBsd));
+        let (v, code) = document(
+            &Sys::new(t.root(), Box::new(r), true),
+            Some(Family::FreeBsd),
+        );
         assert_eq!(code, 0, "{}", v.pretty());
-        assert_eq!((v.str_at(&["boot_disk", "node"]), v.str_at(&["boot_disk", "found_by"])), (Some("da1"), Some("root_mount")));
+        assert_eq!(
+            (
+                v.str_at(&["boot_disk", "node"]),
+                v.str_at(&["boot_disk", "found_by"])
+            ),
+            (Some("da1"), Some("root_mount"))
+        );
         assert_eq!(v.str_at(&["config", "dev"]), Some("/dev/da1s3"));
         assert_eq!(v.arr_at(&["machines"]).len(), 3);
         // Here, no DMI UUID yet (as the plan document's here off Linux).
-        assert!(v.arr_at(&["machines"]).iter().all(|m| m.get_bool("this_computer") == Some(false)));
+        assert!(
+            v.arr_at(&["machines"])
+                .iter()
+                .all(|m| m.get_bool("this_computer") == Some(false))
+        );
         // The root on the decoy's disk: its serial isn't the image's.
         let r = crate::sys::FakeRunner::default()
             .with("sysctl -n kern.disks", "da0")
             .with("diskinfo -v da0", &info(0))
             .with("mount -p", "/dev/da0s2a\t/\tufs\tro\t1\t1\n");
-        let (v, code) = document(&Sys::new(t.root(), Box::new(r), true), Some(Family::FreeBsd));
+        let (v, code) = document(
+            &Sys::new(t.root(), Box::new(r), true),
+            Some(Family::FreeBsd),
+        );
         assert_eq!((code, v.str_at(&["config", "state"])), (1, Some("damaged")));
     }
 
@@ -1834,10 +3162,38 @@ mod tests {
             &crate::parttable::build::GptSpec {
                 disk_guid: "11111111-2222-3333-4444-555555555555",
                 parts: vec![
-                    ("c12a7328-f81f-11d2-ba4b-00a0c93ec93b", "00000000-0000-0000-0000-000000000001", 64, 1087, 0, "esp"),
-                    ("6a85cf4d-1dd2-11b2-99a6-080020736631", "00000000-0000-0000-0000-000000000002", 1088, 2111, 0, "boot"),
-                    ("6a85cf4d-1dd2-11b2-99a6-080020736631", "00000000-0000-0000-0000-000000000003", 2112, 4095, 0, "root"),
-                    ("ebd0a0a2-b9e5-4433-87c0-68b6b72699c7", "00000000-0000-0000-0000-000000000004", 4096, 4096 + 32767, 0, "BACKOTTER"),
+                    (
+                        "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+                        "00000000-0000-0000-0000-000000000001",
+                        64,
+                        1087,
+                        0,
+                        "esp",
+                    ),
+                    (
+                        "6a85cf4d-1dd2-11b2-99a6-080020736631",
+                        "00000000-0000-0000-0000-000000000002",
+                        1088,
+                        2111,
+                        0,
+                        "boot",
+                    ),
+                    (
+                        "6a85cf4d-1dd2-11b2-99a6-080020736631",
+                        "00000000-0000-0000-0000-000000000003",
+                        2112,
+                        4095,
+                        0,
+                        "root",
+                    ),
+                    (
+                        "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
+                        "00000000-0000-0000-0000-000000000004",
+                        4096,
+                        4096 + 32767,
+                        0,
+                        "BACKOTTER",
+                    ),
                 ],
             },
         );
@@ -1847,38 +3203,131 @@ mod tests {
         // check_identity has it.
         gpt[4096 * 512 + 43..4096 * 512 + 52].copy_from_slice(b"backotter");
         let t = Tree::new("stick");
-        t.file("/dev/rdsk/c1t0d0p0", vec![0u8; 1 << 20]).file("/dev/rdsk/c2t0d0p0", &gpt).file("/.disk/backotter.json", marker(4));
-        let list = |n: &[&str]| n.iter().map(|d| format!("USB\t{d}\tKingston\tDT\t{}\tyes\tno\n", gpt.len())).collect::<String>();
-        let r = crate::sys::FakeRunner::default().with("diskinfo -Hp", &list(&["c1t0d0", "c2t0d0"]));
-        let (v, code) = document(&Sys::new(t.root(), Box::new(r), true), Some(Family::Illumos));
+        t.file("/dev/rdsk/c1t0d0p0", vec![0u8; 1 << 20])
+            .file("/dev/rdsk/c2t0d0p0", &gpt)
+            .file("/.disk/backotter.json", marker(4));
+        let list = |n: &[&str]| {
+            n.iter()
+                .map(|d| format!("USB\t{d}\tKingston\tDT\t{}\tyes\tno\n", gpt.len()))
+                .collect::<String>()
+        };
+        let r =
+            crate::sys::FakeRunner::default().with("diskinfo -Hp", &list(&["c1t0d0", "c2t0d0"]));
+        let (v, code) = document(
+            &Sys::new(t.root(), Box::new(r), true),
+            Some(Family::Illumos),
+        );
         assert_eq!(code, 0, "{}", v.pretty());
-        assert_eq!((v.str_at(&["boot_disk", "node"]), v.str_at(&["boot_disk", "found_by"])), (Some("c2t0d0"), Some("marker_scan")));
+        assert_eq!(
+            (
+                v.str_at(&["boot_disk", "node"]),
+                v.str_at(&["boot_disk", "found_by"])
+            ),
+            (Some("c2t0d0"), Some("marker_scan"))
+        );
         assert_eq!(v.str_at(&["config", "dev"]), Some("/dev/dsk/c2t0d0s3"));
         // A second stick from the same image: it can't tell which.
         t.file("/dev/rdsk/c3t0d0p0", &gpt);
-        let r = crate::sys::FakeRunner::default().with("diskinfo -Hp", &list(&["c1t0d0", "c2t0d0", "c3t0d0"]));
-        let (v, code) = document(&Sys::new(t.root(), Box::new(r), true), Some(Family::Illumos));
-        assert_eq!((code, v.str_at(&["config", "state"])), (1, Some("two_sticks")));
-        assert!(v.str_at(&["config", "why"]).unwrap().contains("c2t0d0, c3t0d0"));
+        let r = crate::sys::FakeRunner::default()
+            .with("diskinfo -Hp", &list(&["c1t0d0", "c2t0d0", "c3t0d0"]));
+        let (v, code) = document(
+            &Sys::new(t.root(), Box::new(r), true),
+            Some(Family::Illumos),
+        );
+        assert_eq!(
+            (code, v.str_at(&["config", "state"])),
+            (1, Some("two_sticks"))
+        );
+        assert!(
+            v.str_at(&["config", "why"])
+                .unwrap()
+                .contains("c2t0d0, c3t0d0")
+        );
         crate::testutil::golden_json("stick-json", "two-sticks", &v);
     }
 
     #[test]
     fn device_names_inside_disks() {
-        let disks: Vec<RawDisk> = ["da0", "da1", "da10"].iter().map(|n| RawDisk { name: n.to_string(), path: format!("/dev/{n}"), size: 0, sector: 512, model: None, serial: None }).collect();
-        let sys = Sys::new(Tree::new("stick").root(), Box::new(crate::sys::FakeRunner::default()), true);
-        assert_eq!(disk_of(&sys, Family::FreeBsd, "/dev/da10s2a", &disks).as_deref(), Some("da10"));
-        assert_eq!(disk_of(&sys, Family::FreeBsd, "/dev/da1p3", &disks).as_deref(), Some("da1"));
+        let disks: Vec<RawDisk> = ["da0", "da1", "da10"]
+            .iter()
+            .map(|n| RawDisk {
+                name: n.to_string(),
+                path: format!("/dev/{n}"),
+                size: 0,
+                sector: 512,
+                model: None,
+                serial: None,
+            })
+            .collect();
+        let sys = Sys::new(
+            Tree::new("stick").root(),
+            Box::new(crate::sys::FakeRunner::default()),
+            true,
+        );
+        assert_eq!(
+            disk_of(&sys, Family::FreeBsd, "/dev/da10s2a", &disks).as_deref(),
+            Some("da10")
+        );
+        assert_eq!(
+            disk_of(&sys, Family::FreeBsd, "/dev/da1p3", &disks).as_deref(),
+            Some("da1")
+        );
         assert_eq!(disk_of(&sys, Family::FreeBsd, "/dev/da2s1", &disks), None);
-        let fb = Sys::new(Tree::new("stick").root(), Box::new(crate::sys::FakeRunner::default().with("glabel status -s", "ufs/BKOROOT  N/A  da1s2a\n")), true);
-        assert_eq!(disk_of(&fb, Family::FreeBsd, "/dev/ufs/BKOROOT", &disks).as_deref(), Some("da1"));
-        let sd: Vec<RawDisk> = ["sd0", "sd1"].iter().map(|n| RawDisk { name: n.to_string(), path: format!("/dev/r{n}c"), size: 0, sector: 512, model: None, serial: Some(format!("{n}0123456789abcd")) }).collect();
-        assert_eq!(disk_of(&sys, Family::OpenBsd, "/dev/sd1a", &sd).as_deref(), Some("sd1"));
-        assert_eq!(disk_of(&sys, Family::OpenBsd, "sd10123456789abcd.a", &sd).as_deref(), Some("sd1"));
-        let nb = Sys::new(Tree::new("stick").root(), Box::new(crate::sys::FakeRunner::default().with("dkctl sd1 listwedges", "/dev/rsd1: 3 wedges:\ndk3: root, 2097152 blocks at 64, type: ffs\n")), true);
-        assert_eq!(disk_of(&nb, Family::NetBsd, "/dev/dk3", &sd).as_deref(), Some("sd1"));
-        let hk: Vec<RawDisk> = vec![RawDisk { name: "usb_0_0".into(), path: "/dev/disk/usb/0/0/raw".into(), size: 0, sector: 512, model: None, serial: None }];
-        assert_eq!(disk_of(&sys, Family::Haiku, "/dev/disk/usb/0/0/0", &hk).as_deref(), Some("usb_0_0"));
+        let fb = Sys::new(
+            Tree::new("stick").root(),
+            Box::new(
+                crate::sys::FakeRunner::default()
+                    .with("glabel status -s", "ufs/BKOROOT  N/A  da1s2a\n"),
+            ),
+            true,
+        );
+        assert_eq!(
+            disk_of(&fb, Family::FreeBsd, "/dev/ufs/BKOROOT", &disks).as_deref(),
+            Some("da1")
+        );
+        let sd: Vec<RawDisk> = ["sd0", "sd1"]
+            .iter()
+            .map(|n| RawDisk {
+                name: n.to_string(),
+                path: format!("/dev/r{n}c"),
+                size: 0,
+                sector: 512,
+                model: None,
+                serial: Some(format!("{n}0123456789abcd")),
+            })
+            .collect();
+        assert_eq!(
+            disk_of(&sys, Family::OpenBsd, "/dev/sd1a", &sd).as_deref(),
+            Some("sd1")
+        );
+        assert_eq!(
+            disk_of(&sys, Family::OpenBsd, "sd10123456789abcd.a", &sd).as_deref(),
+            Some("sd1")
+        );
+        let nb = Sys::new(
+            Tree::new("stick").root(),
+            Box::new(crate::sys::FakeRunner::default().with(
+                "dkctl sd1 listwedges",
+                "/dev/rsd1: 3 wedges:\ndk3: root, 2097152 blocks at 64, type: ffs\n",
+            )),
+            true,
+        );
+        assert_eq!(
+            disk_of(&nb, Family::NetBsd, "/dev/dk3", &sd).as_deref(),
+            Some("sd1")
+        );
+        let hk: Vec<RawDisk> = vec![RawDisk {
+            name: "usb_0_0".into(),
+            path: "/dev/disk/usb/0/0/raw".into(),
+            size: 0,
+            sector: 512,
+            model: None,
+            serial: None,
+        }];
+        assert_eq!(
+            disk_of(&sys, Family::Haiku, "/dev/disk/usb/0/0/0", &hk).as_deref(),
+            Some("usb_0_0")
+        );
     }
     // ---- --copy (open question 8) ----
 
@@ -1894,11 +3343,20 @@ mod tests {
     }
 
     /// An error as main writes it: its document, for a golden.
-    fn refused(r: Result<Value, (jsonout::ErrorCode, String)>, want: jsonout::ErrorCode) -> (Value, String) {
+    fn refused(
+        r: Result<Value, (jsonout::ErrorCode, String)>,
+        want: jsonout::ErrorCode,
+    ) -> (Value, String) {
         let (code, line) = r.expect_err("a refusal");
         assert_eq!(code, want, "{line}");
-        assert!(line.starts_with("bko-holt stick --copy: ") && !line.contains('\n'), "{line}");
-        (crate::json::parse(&jsonout::error_doc(1, code, &line)).unwrap(), line)
+        assert!(
+            line.starts_with("bko-holt stick --copy: ") && !line.contains('\n'),
+            "{line}"
+        );
+        (
+            crate::json::parse(&jsonout::error_doc(1, code, &line)).unwrap(),
+            line,
+        )
     }
 
     #[test]
@@ -1911,22 +3369,72 @@ mod tests {
         let v = copy_layout(&sys_of(&t), None, BABBAGE, &out).unwrap();
         let text = std::fs::read_to_string(&out).unwrap();
         // The dump babbage's system.json carries, whole, as dump prints it.
-        let b = system(BABBAGE, "babbage", "", &with_layout(&DUMP.replace("\"hostname\": \"t\"", "\"hostname\": \"babbage-host\"")));
-        let carried = crate::json::parse(&b).unwrap().get(LAYOUT_KEY).unwrap().clone();
+        let b = system(
+            BABBAGE,
+            "babbage",
+            "",
+            &with_layout(&DUMP.replace("\"hostname\": \"t\"", "\"hostname\": \"babbage-host\"")),
+        );
+        let carried = crate::json::parse(&b)
+            .unwrap()
+            .get(LAYOUT_KEY)
+            .unwrap()
+            .clone();
         assert_eq!(crate::json::parse(&text).unwrap(), carried);
         assert_eq!(text, carried.pretty());
-        assert_eq!(crate::json::parse(&text).unwrap().str_at(&["host", "hostname"]), Some("babbage-host"));
+        assert_eq!(
+            crate::json::parse(&text)
+                .unwrap()
+                .str_at(&["host", "hostname"]),
+            Some("babbage-host")
+        );
         // load takes it as it takes a dump.
         assert!(crate::load::layout::Layout::from_json(crate::json::parse(&text).unwrap()).is_ok());
-        assert_eq!(std::fs::metadata(&out).unwrap().permissions().mode() & 0o7777, 0o600);
+        assert_eq!(
+            std::fs::metadata(&out).unwrap().permissions().mode() & 0o7777,
+            0o600
+        );
         assert_eq!(v.get_str("format"), Some("bko-holt-stick-copy"));
-        assert_eq!((v.get_str("install_id"), v.get_str("path")), (Some(BABBAGE), Some(format!("{MACHINES}/{BABBAGE}/system.json").as_str())));
+        assert_eq!(
+            (v.get_str("install_id"), v.get_str("path")),
+            (
+                Some(BABBAGE),
+                Some(format!("{MACHINES}/{BABBAGE}/system.json").as_str())
+            )
+        );
         assert_eq!(v.get_u64("bytes"), Some(text.len() as u64));
-        assert_eq!(v.get_str("sha256"), Some(crate::bytes::sha256_hex(text.as_bytes()).as_str()));
-        assert_eq!(v.get_str("system_sha256"), Some(crate::bytes::sha256_hex(b.as_bytes()).as_str()));
+        assert_eq!(
+            v.get_str("sha256"),
+            Some(crate::bytes::sha256_hex(text.as_bytes()).as_str())
+        );
+        assert_eq!(
+            v.get_str("system_sha256"),
+            Some(crate::bytes::sha256_hex(b.as_bytes()).as_str())
+        );
         assert_eq!(v.get_str("out"), Some(out.to_str().unwrap()));
-        let keys: Vec<&str> = v.as_object().unwrap().iter().map(|(k, _)| k.as_str()).collect();
-        assert_eq!(keys, ["format", "schema", "version", "generated", "dry_run", "install_id", "path", "out", "bytes", "sha256", "system_sha256", "luks_headers"]);
+        let keys: Vec<&str> = v
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(k, _)| k.as_str())
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "format",
+                "schema",
+                "version",
+                "generated",
+                "dry_run",
+                "install_id",
+                "path",
+                "out",
+                "bytes",
+                "sha256",
+                "system_sha256",
+                "luks_headers"
+            ]
+        );
         let mut g = v.clone();
         g.put("out", "OUT");
         crate::testutil::golden_json("stick-copy-json", "ok", &g);
@@ -1934,10 +3442,21 @@ mod tests {
         let out2 = d.path().join("again.json");
         let v = copy_layout(&sys_of(&t), None, &LOVELACE.to_uppercase(), &out2).unwrap();
         assert_eq!(v.get_str("install_id"), Some(LOVELACE));
-        assert_eq!(crate::json::parse(&std::fs::read_to_string(&out2).unwrap()).unwrap(), crate::json::parse(DUMP).unwrap());
+        assert_eq!(
+            crate::json::parse(&std::fs::read_to_string(&out2).unwrap()).unwrap(),
+            crate::json::parse(DUMP).unwrap()
+        );
         // OUT there already: refused, and the file there left as it is.
-        let (_, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), jsonout::ErrorCode::CopyFailed);
-        assert!(line.contains("layout.json") && line.contains("left as it is") && !line.contains("nothing left"), "{line}");
+        let (_, line) = refused(
+            copy_layout(&sys_of(&t), None, LOVELACE, &out),
+            jsonout::ErrorCode::CopyFailed,
+        );
+        assert!(
+            line.contains("layout.json")
+                && line.contains("left as it is")
+                && !line.contains("nothing left"),
+            "{line}"
+        );
         assert_eq!(std::fs::read_to_string(&out).unwrap(), text);
     }
 
@@ -1949,37 +3468,89 @@ mod tests {
         let gone = |out: &std::path::Path| assert!(!out.exists(), "{} written", out.display());
         // No such machine.
         let t = linux_tree(&config(two_with_layouts()), None);
-        let (_, line) = refused(copy_layout(&sys_of(&t), None, "2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6", &out), E::NoSuchMachine);
+        let (_, line) = refused(
+            copy_layout(
+                &sys_of(&t),
+                None,
+                "2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6",
+                &out,
+            ),
+            E::NoSuchMachine,
+        );
         assert!(line.contains("it has 2"), "{line}");
         gone(&out);
         // Two directories named by it, case aside.
         let up = LOVELACE.to_uppercase();
         let a = system(LOVELACE, "lovelace", "", &with_layout(DUMP));
         let b = system(&up, "lovelace", "", &with_layout(DUMP));
-        let t = linux_tree(&config(vec![machine_dir(LOVELACE, &a, Some(&sum(&a))), machine_dir(&up, &b, Some(&sum(&b)))]), None);
+        let t = linux_tree(
+            &config(vec![
+                machine_dir(LOVELACE, &a, Some(&sum(&a))),
+                machine_dir(&up, &b, Some(&sum(&b))),
+            ]),
+            None,
+        );
         let (dv, _) = document(&sys_of(&t), None);
         assert_eq!(dv.arr_at(&["machines"]).len(), 2, "{}", dv.pretty());
-        let (_, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), E::TwoMachines);
+        let (_, line) = refused(
+            copy_layout(&sys_of(&t), None, LOVELACE, &out),
+            E::TwoMachines,
+        );
         assert!(line.contains("2 directories"), "{line}");
         gone(&out);
         // A checksum that doesn't match: not copied, said why.
         let edited = a.replace("\"vda1\"", "\"vda9\"");
-        let t = linux_tree(&config(vec![machine_dir(LOVELACE, &edited, Some(&sum(&a)))]), None);
-        let (v, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), E::MachineNotOk);
-        assert!(line.contains("(lovelace) is checksum_bad: ") && line.contains("doesn't match its .sha256"), "{line}");
+        let t = linux_tree(
+            &config(vec![machine_dir(LOVELACE, &edited, Some(&sum(&a)))]),
+            None,
+        );
+        let (v, line) = refused(
+            copy_layout(&sys_of(&t), None, LOVELACE, &out),
+            E::MachineNotOk,
+        );
+        assert!(
+            line.contains("(lovelace) is checksum_bad: ")
+                && line.contains("doesn't match its .sha256"),
+            "{line}"
+        );
         crate::testutil::golden_json("stick-copy-json", "checksum-bad", &v);
         gone(&out);
         // Damaged: no .sha256, or not JSON.
-        let t = linux_tree(&config(vec![machine_dir(LOVELACE, &a, None), machine_dir(BABBAGE, "{\"format\": \"backot", Some(&sum("{\"format\": \"backot")))]), None);
-        let (_, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), E::MachineNotOk);
+        let t = linux_tree(
+            &config(vec![
+                machine_dir(LOVELACE, &a, None),
+                machine_dir(
+                    BABBAGE,
+                    "{\"format\": \"backot",
+                    Some(&sum("{\"format\": \"backot")),
+                ),
+            ]),
+            None,
+        );
+        let (_, line) = refused(
+            copy_layout(&sys_of(&t), None, LOVELACE, &out),
+            E::MachineNotOk,
+        );
         assert!(line.contains("checksum_missing"), "{line}");
-        let (_, line) = refused(copy_layout(&sys_of(&t), None, BABBAGE, &out), E::MachineNotOk);
-        assert!(line.contains("unreadable") && line.contains("isn't JSON"), "{line}");
+        let (_, line) = refused(
+            copy_layout(&sys_of(&t), None, BABBAGE, &out),
+            E::MachineNotOk,
+        );
+        assert!(
+            line.contains("unreadable") && line.contains("isn't JSON"),
+            "{line}"
+        );
         gone(&out);
         // Today's system.json, with no layout in it; or one that isn't a document.
         let plain = system(LOVELACE, "lovelace", "", "");
         let odd = system(BABBAGE, "babbage", "", ", \"layout\": \"see the backup\"");
-        let t = linux_tree(&config(vec![machine_dir(LOVELACE, &plain, Some(&sum(&plain))), machine_dir(BABBAGE, &odd, Some(&sum(&odd)))]), None);
+        let t = linux_tree(
+            &config(vec![
+                machine_dir(LOVELACE, &plain, Some(&sum(&plain))),
+                machine_dir(BABBAGE, &odd, Some(&sum(&odd))),
+            ]),
+            None,
+        );
         let (v, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), E::NoLayout);
         assert!(line.contains("carries no disk layout"), "{line}");
         crate::testutil::golden_json("stick-copy-json", "no-layout", &v);
@@ -1988,45 +3559,141 @@ mod tests {
         gone(&out);
         // One the backup tool wrote without its layout, saying why (open
         // question 16): still no_layout, in words that say the backup holds it.
-        let sys = |id: &str, host: &str, extra: &str| crate::json::parse(&system(id, host, "", extra)).unwrap();
-        let full = without_layout(&sys(LOVELACE, "lovelace", &with_layout(DUMP)), "stick_full", 20 << 20).pretty();
-        let huge = without_layout(&sys(BABBAGE, "babbage", ""), "system_too_big", SYSTEM_MAX + 1).pretty();
-        let odd = system("2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6", "hopper", "", ", \"layout_left_out\": {\"code\": \"x\\u001b[2J\", \"bytes\": \"many\"}");
-        let t = linux_tree(&config(vec![machine_dir(LOVELACE, &full, Some(&sum(&full))), machine_dir(BABBAGE, &huge, Some(&sum(&huge))), machine_dir("2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6", &odd, Some(&sum(&odd)))]), None);
-        assert_eq!(doc(&t).1, 0, "each machine is ok: only the layout is missing");
+        let sys = |id: &str, host: &str, extra: &str| {
+            crate::json::parse(&system(id, host, "", extra)).unwrap()
+        };
+        let full = without_layout(
+            &sys(LOVELACE, "lovelace", &with_layout(DUMP)),
+            "stick_full",
+            20 << 20,
+        )
+        .pretty();
+        let huge = without_layout(
+            &sys(BABBAGE, "babbage", ""),
+            "system_too_big",
+            SYSTEM_MAX + 1,
+        )
+        .pretty();
+        let odd = system(
+            "2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6",
+            "hopper",
+            "",
+            ", \"layout_left_out\": {\"code\": \"x\\u001b[2J\", \"bytes\": \"many\"}",
+        );
+        let t = linux_tree(
+            &config(vec![
+                machine_dir(LOVELACE, &full, Some(&sum(&full))),
+                machine_dir(BABBAGE, &huge, Some(&sum(&huge))),
+                machine_dir(
+                    "2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6",
+                    &odd,
+                    Some(&sum(&odd)),
+                ),
+            ]),
+            None,
+        );
+        assert_eq!(
+            doc(&t).1,
+            0,
+            "each machine is ok: only the layout is missing"
+        );
         let (v, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), E::NoLayout);
-        assert_eq!(line, format!("bko-holt stick --copy: backotter/machines/{LOVELACE}/system.json carries no disk layout: the backup tool left it out, as the stick had no room for it at this machine's last backup (with it, the file was 20.0 MiB). The backup holds the layout; this stick can't restore the machine's disks until it comes from the backup"));
+        assert_eq!(
+            line,
+            format!(
+                "bko-holt stick --copy: backotter/machines/{LOVELACE}/system.json carries no disk layout: the backup tool left it out, as the stick had no room for it at this machine's last backup (with it, the file was 20.0 MiB). The backup holds the layout; this stick can't restore the machine's disks until it comes from the backup"
+            )
+        );
         crate::testutil::golden_json("stick-copy-json", "layout-left-out", &v);
         let (_, line) = refused(copy_layout(&sys_of(&t), None, BABBAGE, &out), E::NoLayout);
         assert!(line.contains("carries no disk layout: the backup tool left it out, as with it the file was 64.1 MiB, over the 64.0 MiB a stick's bko-holt reads. The backup holds the layout;"), "{line}");
         // A code it doesn't know isn't repeated, nor a size that isn't one.
-        let (_, line) = refused(copy_layout(&sys_of(&t), None, "2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6", &out), E::NoLayout);
+        let (_, line) = refused(
+            copy_layout(
+                &sys_of(&t),
+                None,
+                "2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6",
+                &out,
+            ),
+            E::NoLayout,
+        );
         assert!(line.ends_with("system.json carries no disk layout: the backup tool left it out. The backup holds the layout; this stick can't restore the machine's disks until it comes from the backup"), "{line}");
         // A system_too_big at or under the limit doesn't say a size "over" it.
-        let said = |code: &str, bytes: u64| left_out(&crate::json::parse(&format!("{{\"{LAYOUT_LEFT_OUT_KEY}\": {{\"code\": \"{code}\", \"bytes\": {bytes}}}}}")).unwrap()).unwrap();
-        assert_eq!(said("system_too_big", 1 << 20), "the backup tool left it out, as with it the file was over the 64.0 MiB a stick's bko-holt reads");
-        assert_eq!(said("system_too_big", SYSTEM_MAX), said("system_too_big", 1 << 20));
+        let said = |code: &str, bytes: u64| {
+            left_out(
+                &crate::json::parse(&format!(
+                    "{{\"{LAYOUT_LEFT_OUT_KEY}\": {{\"code\": \"{code}\", \"bytes\": {bytes}}}}}"
+                ))
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            said("system_too_big", 1 << 20),
+            "the backup tool left it out, as with it the file was over the 64.0 MiB a stick's bko-holt reads"
+        );
+        assert_eq!(
+            said("system_too_big", SYSTEM_MAX),
+            said("system_too_big", 1 << 20)
+        );
         assert!(said("system_too_big", SYSTEM_MAX + 1).contains("the file was 64.1 MiB, over"));
-        assert!(said("stick_full", 1 << 20).ends_with("(with it, the file was 1.0 MiB)"), "any size for stick_full");
+        assert!(
+            said("stick_full", 1 << 20).ends_with("(with it, the file was 1.0 MiB)"),
+            "any size for stick_full"
+        );
         gone(&out);
         // A layout load wouldn't take: another format, an OS it doesn't support.
-        let other = system(LOVELACE, "lovelace", "", &with_layout(&DUMP.replace("\"bko-holt\"", "\"other\"")));
-        let os = system(BABBAGE, "babbage", "", &with_layout(&DUMP.replace("\"debian\"", "\"plan9\"")));
-        let t = linux_tree(&config(vec![machine_dir(LOVELACE, &other, Some(&sum(&other))), machine_dir(BABBAGE, &os, Some(&sum(&os)))]), None);
-        let (_, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), E::LayoutRefused);
+        let other = system(
+            LOVELACE,
+            "lovelace",
+            "",
+            &with_layout(&DUMP.replace("\"bko-holt\"", "\"other\"")),
+        );
+        let os = system(
+            BABBAGE,
+            "babbage",
+            "",
+            &with_layout(&DUMP.replace("\"debian\"", "\"plan9\"")),
+        );
+        let t = linux_tree(
+            &config(vec![
+                machine_dir(LOVELACE, &other, Some(&sum(&other))),
+                machine_dir(BABBAGE, &os, Some(&sum(&os))),
+            ]),
+            None,
+        );
+        let (_, line) = refused(
+            copy_layout(&sys_of(&t), None, LOVELACE, &out),
+            E::LayoutRefused,
+        );
         assert!(line.contains("not a bko-holt dump"), "{line}");
-        let (_, line) = refused(copy_layout(&sys_of(&t), None, BABBAGE, &out), E::LayoutRefused);
+        let (_, line) = refused(
+            copy_layout(&sys_of(&t), None, BABBAGE, &out),
+            E::LayoutRefused,
+        );
         assert!(line.contains("plan9"), "{line}");
         gone(&out);
         // A dump that kept LUKS2 headers: copied, the document counting
         // them, for bko-rescue to fetch from the backup (open question 12).
-        let one = format!("{{\"device\": \"vda1\", \"file\": \"luks2-header-1111.img\", \"bytes\": 16777216, \"sha256\": \"{}\"}}", "ab".repeat(32));
-        let kept = DUMP.replace("\"fstab\":", &format!("\"luks_headers\": [{one}],\n    \"fstab\":"));
+        let one = format!(
+            "{{\"device\": \"vda1\", \"file\": \"luks2-header-1111.img\", \"bytes\": 16777216, \"sha256\": \"{}\"}}",
+            "ab".repeat(32)
+        );
+        let kept = DUMP.replace(
+            "\"fstab\":",
+            &format!("\"luks_headers\": [{one}],\n    \"fstab\":"),
+        );
         assert!(crate::load::layout::Layout::from_json(crate::json::parse(&kept).unwrap()).is_ok());
         let none = DUMP.replace("\"fstab\":", "\"luks_headers\": [],\n    \"fstab\":");
         let a = system(LOVELACE, "lovelace", "", &with_layout(&kept));
         let b = system(BABBAGE, "babbage", "", &with_layout(&none));
-        let t = linux_tree(&config(vec![machine_dir(LOVELACE, &a, Some(&sum(&a))), machine_dir(BABBAGE, &b, Some(&sum(&b)))]), None);
+        let t = linux_tree(
+            &config(vec![
+                machine_dir(LOVELACE, &a, Some(&sum(&a))),
+                machine_dir(BABBAGE, &b, Some(&sum(&b))),
+            ]),
+            None,
+        );
         let v = copy_layout(&sys_of(&t), None, LOVELACE, &out).expect("a kept header: copied");
         assert_eq!(v.get_u64("luks_headers"), Some(1));
         std::fs::remove_file(&out).unwrap();
@@ -2034,28 +3701,69 @@ mod tests {
         assert_eq!(v.get_u64("luks_headers"), Some(0));
         std::fs::remove_file(&out).unwrap();
         // One that couldn't be fetched (a file name dump never makes): said now.
-        let bad = DUMP.replace("\"fstab\":", &format!("\"luks_headers\": [{}],\n    \"fstab\":", one.replace("luks2-header-1111.img", "../../etc/shadow")));
+        let bad = DUMP.replace(
+            "\"fstab\":",
+            &format!(
+                "\"luks_headers\": [{}],\n    \"fstab\":",
+                one.replace("luks2-header-1111.img", "../../etc/shadow")
+            ),
+        );
         let c = system(LOVELACE, "lovelace", "", &with_layout(&bad));
-        let t = linux_tree(&config(vec![machine_dir(LOVELACE, &c, Some(&sum(&c)))]), None);
-        let (_, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), E::LayoutRefused);
-        assert!(line.contains("can't fetch from the backup") && line.contains("isn't a header file's name"), "{line}");
+        let t = linux_tree(
+            &config(vec![machine_dir(LOVELACE, &c, Some(&sum(&c)))]),
+            None,
+        );
+        let (_, line) = refused(
+            copy_layout(&sys_of(&t), None, LOVELACE, &out),
+            E::LayoutRefused,
+        );
+        assert!(
+            line.contains("can't fetch from the backup")
+                && line.contains("isn't a header file's name"),
+            "{line}"
+        );
         gone(&out);
         // The config partition itself: missing, or reformatted.
         let t = Tree::new("stick");
         t.file("/proc/self/mountinfo", "");
-        let (_, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), E::ConfigNotOk);
+        let (_, line) = refused(
+            copy_layout(&sys_of(&t), None, LOVELACE, &out),
+            E::ConfigNotOk,
+        );
         assert!(line.contains("is missing: "), "{line}");
         let mut c = config(two_with_layouts());
         c[39] ^= 1;
-        let (_, line) = refused(copy_layout(&sys_of(&linux_tree(&c, None)), None, LOVELACE, &out), E::ConfigNotOk);
-        assert!(line.contains("is damaged: ") && line.contains("reformatted"), "{line}");
+        let (_, line) = refused(
+            copy_layout(&sys_of(&linux_tree(&c, None)), None, LOVELACE, &out),
+            E::ConfigNotOk,
+        );
+        assert!(
+            line.contains("is damaged: ") && line.contains("reformatted"),
+            "{line}"
+        );
         // Not root.
         let t = linux_tree(&config(two_with_layouts()), None);
-        let (_, line) = refused(copy_layout(&Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), false), None, LOVELACE, &out), E::ConfigNotOk);
+        let (_, line) = refused(
+            copy_layout(
+                &Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), false),
+                None,
+                LOVELACE,
+                &out,
+            ),
+            E::ConfigNotOk,
+        );
         assert!(line.contains("is unreadable: "), "{line}");
         gone(&out);
         // OUT in a directory that isn't there: nothing left behind.
-        let (_, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &d.path().join("no/such/layout.json")), E::CopyFailed);
+        let (_, line) = refused(
+            copy_layout(
+                &sys_of(&t),
+                None,
+                LOVELACE,
+                &d.path().join("no/such/layout.json"),
+            ),
+            E::CopyFailed,
+        );
         assert!(line.contains("nothing left there"), "{line}");
     }
 
@@ -2067,22 +3775,39 @@ mod tests {
         assert_eq!(s.code, 0);
         assert!(s.kept.is_empty() && s.others == 0);
         assert_eq!(s.doc.arr_at(&["machines"]).len(), 2);
-        assert!(!jsonout::line(&s.doc).contains("ext4") && !jsonout::line(&s.doc).contains("\"layout\""));
+        assert!(
+            !jsonout::line(&s.doc).contains("ext4")
+                && !jsonout::line(&s.doc).contains("\"layout\"")
+        );
         // --copy reads the machine asked for only; the other is counted.
         let s = scan(&sys_of(&t), None, Some(BABBAGE));
         assert_eq!(s.kept.len(), 1);
         assert_eq!(s.kept[0].0, BABBAGE);
         assert_eq!(s.others, 1);
-        let rows: Vec<&str> = s.doc.arr_at(&["machines"]).iter().filter_map(|m| m.get_str("install_id")).collect();
+        let rows: Vec<&str> = s
+            .doc
+            .arr_at(&["machines"])
+            .iter()
+            .filter_map(|m| m.get_str("install_id"))
+            .collect();
         assert_eq!(rows, [BABBAGE]);
     }
 
     #[test]
     fn copy_values_are_never_flags() {
         let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(without_copy_values(&a(&["--copy", "ID", "-h", "--json"])), a(&["--copy", "--json"]));
-        assert_eq!(without_copy_values(&a(&["--json", "--copy", "--help", "/o"])), a(&["--json", "--copy"]));
-        assert_eq!(without_copy_values(&a(&["--", "--copy", "x", "y"])), a(&["--", "--copy", "x", "y"]));
+        assert_eq!(
+            without_copy_values(&a(&["--copy", "ID", "-h", "--json"])),
+            a(&["--copy", "--json"])
+        );
+        assert_eq!(
+            without_copy_values(&a(&["--json", "--copy", "--help", "/o"])),
+            a(&["--json", "--copy"])
+        );
+        assert_eq!(
+            without_copy_values(&a(&["--", "--copy", "x", "y"])),
+            a(&["--", "--copy", "x", "y"])
+        );
         assert_eq!(without_copy_values(&a(&["--copy"])), a(&["--copy"]));
     }
 }

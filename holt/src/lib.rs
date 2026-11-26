@@ -5,7 +5,6 @@
 //! backup and to rebuild the machine from.  Both sides share the on-disk
 //! parsers: `load` checks every stage by reading the disks back with them.
 
-
 #![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
 
 pub(crate) mod abroot;
@@ -63,7 +62,12 @@ pub fn timestamp() -> String {
     let secs = std::env::var("SOURCE_DATE_EPOCH")
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
-        .unwrap_or_else(|| SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));
+        .unwrap_or_else(|| {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        });
     report::rfc3339(secs)
 }
 
@@ -80,7 +84,11 @@ pub fn dump_only(sys: &sys::Sys, only: &[String]) -> Result<json::Value, String>
 
 /// `bko-holt dump` with --keep-luks-header and --luks-header-dir
 /// (crate::luksheader).
-pub fn dump_with(sys: &sys::Sys, only: &[String], luks: &luksheader::Options) -> Result<json::Value, String> {
+pub fn dump_with(
+    sys: &sys::Sys,
+    only: &[String],
+    luks: &luksheader::Options,
+) -> Result<json::Value, String> {
     if let Some(fam) = other::Family::current() {
         if !only.is_empty() {
             return Err("--only-disk works on Linux only".to_string());

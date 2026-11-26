@@ -42,7 +42,16 @@ impl BackupSource {
             .set("fstype", self.fstype.as_str())
             .set("source", self.source.as_str())
             .set("subvol", self.subvol.clone())
-            .set_some("mount", self.mount.as_ref().map(|m| Obj::new().set("device", m.device.as_str()).set("fstype", m.fstype.as_str()).set("options", m.options.as_str()).build()))
+            .set_some(
+                "mount",
+                self.mount.as_ref().map(|m| {
+                    Obj::new()
+                        .set("device", m.device.as_str())
+                        .set("fstype", m.fstype.as_str())
+                        .set("options", m.options.as_str())
+                        .build()
+                }),
+            )
             .set_some("note", self.note.clone())
             .build()
     }
@@ -59,7 +68,12 @@ impl BackupSource {
 /// the mount's own target.  When two mounts share a path, the later one
 /// (the one on top) wins.  `fstab` is each entry with the device it
 /// resolves to.
-pub fn backup_sources(mounts: &[&Mount], device: &dyn Fn(&Mount) -> Option<String>, fstab: &[(&mounts::FstabEntry, Option<String>)], ostree: bool) -> Vec<BackupSource> {
+pub fn backup_sources(
+    mounts: &[&Mount],
+    device: &dyn Fn(&Mount) -> Option<String>,
+    fstab: &[(&mounts::FstabEntry, Option<String>)],
+    ostree: bool,
+) -> Vec<BackupSource> {
     let norm = |s: &str| s.trim_matches('/').to_string();
     let mut out: BTreeMap<String, BackupSource> = BTreeMap::new();
     for m in mounts {
@@ -78,18 +92,44 @@ pub fn backup_sources(mounts: &[&Mount], device: &dyn Fn(&Mount) -> Option<Strin
                 if m.fstype != "btrfs" {
                     return m.root == "/";
                 }
-                let opt = |k: &str| e.options.split(',').find_map(|o| o.strip_prefix(k)).map(str::to_string);
+                let opt = |k: &str| {
+                    e.options
+                        .split(',')
+                        .find_map(|o| o.strip_prefix(k))
+                        .map(str::to_string)
+                };
                 match (opt("subvol="), opt("subvolid=")) {
                     (Some(sv), _) => Some(norm(&sv)) == subvol.as_deref().map(norm),
-                    (None, Some(id)) => m.super_options.split(',').any(|o| o.strip_prefix("subvolid=") == Some(id.as_str())),
+                    (None, Some(id)) => m
+                        .super_options
+                        .split(',')
+                        .any(|o| o.strip_prefix("subvolid=") == Some(id.as_str())),
                     // The default subvolume, the top level unless set.
                     (None, None) => subvol.as_deref().map(norm).as_deref() == Some(""),
                 }
             });
-            found.map(|(e, _)| e.file.clone()).unwrap_or_else(|| m.target.clone())
+            found
+                .map(|(e, _)| e.file.clone())
+                .unwrap_or_else(|| m.target.clone())
         };
-        let path = if path.len() > 1 { path.trim_end_matches('/').to_string() } else { path };
-        out.insert(path.clone(), BackupSource { path, from: Some(m.target.clone()), device: dev, fstype: m.fstype.clone(), source: m.source.clone(), subvol, mount: None, note: None });
+        let path = if path.len() > 1 {
+            path.trim_end_matches('/').to_string()
+        } else {
+            path
+        };
+        out.insert(
+            path.clone(),
+            BackupSource {
+                path,
+                from: Some(m.target.clone()),
+                device: dev,
+                fstype: m.fstype.clone(),
+                source: m.source.clone(),
+                subvol,
+                mount: None,
+                note: None,
+            },
+        );
     }
     out.into_values().collect()
 }
@@ -99,8 +139,17 @@ pub fn backup_sources(mounts: &[&Mount], device: &dyn Fn(&Mount) -> Option<Strin
 /// filesystem) whose mount point no source took, as `FILE (SPEC -> DEVICE)`.
 /// On an ostree system each is a mount that stays at its running path (or a
 /// filesystem that isn't mounted), so the backup's tree isn't fstab's.
-pub fn unmatched_fstab(sources: &[BackupSource], fstab: &[(&mounts::FstabEntry, Option<String>)]) -> Vec<String> {
-    let trim = |p: &str| if p.len() > 1 { p.trim_end_matches('/').to_string() } else { p.to_string() };
+pub fn unmatched_fstab(
+    sources: &[BackupSource],
+    fstab: &[(&mounts::FstabEntry, Option<String>)],
+) -> Vec<String> {
+    let trim = |p: &str| {
+        if p.len() > 1 {
+            p.trim_end_matches('/').to_string()
+        } else {
+            p.to_string()
+        }
+    };
     fstab
         .iter()
         .filter(|(e, _)| {
@@ -108,10 +157,19 @@ pub fn unmatched_fstab(sources: &[BackupSource], fstab: &[(&mounts::FstabEntry, 
             e.file.starts_with('/')
                 && e.vfstype != "swap"
                 && !mounts::PSEUDO.contains(&e.vfstype.as_str())
-                && !opts.iter().any(|o| matches!(*o, "noauto" | "bind" | "rbind"))
+                && !opts
+                    .iter()
+                    .any(|o| matches!(*o, "noauto" | "bind" | "rbind"))
                 && !sources.iter().any(|s| s.path == trim(&e.file))
         })
-        .map(|(e, r)| format!("{} ({} -> {})", e.file, e.spec, r.as_deref().unwrap_or("unresolved")))
+        .map(|(e, r)| {
+            format!(
+                "{} ({} -> {})",
+                e.file,
+                e.spec,
+                r.as_deref().unwrap_or("unresolved")
+            )
+        })
         .collect()
 }
 
@@ -129,12 +187,24 @@ pub fn unmatched_fstab(sources: &[BackupSource], fstab: &[(&mounts::FstabEntry, 
 ///     out, and otherwise asks for --key-file), so the old key isn't backed
 ///     up, nor restored into the root's /run.  Such a mount anywhere else
 ///     (a .mount unit at /keys) is backed up.
-pub fn not_backed_up(sources: &mut Vec<BackupSource>, only_disk: bool, zfs_tools: &Value, fstab: &[(&mounts::FstabEntry, Option<String>)]) {
+pub fn not_backed_up(
+    sources: &mut Vec<BackupSource>,
+    only_disk: bool,
+    zfs_tools: &Value,
+    fstab: &[(&mounts::FstabEntry, Option<String>)],
+) {
     fn trim_slash(p: &str) -> &str {
         let t = p.trim_end_matches('/');
-        if t.is_empty() && p.starts_with('/') { "/" } else { t }
+        if t.is_empty() && p.starts_with('/') {
+            "/"
+        } else {
+            t
+        }
     }
-    let all_paths: Vec<String> = sources.iter().map(|s| trim_slash(&s.path).to_string()).collect();
+    let all_paths: Vec<String> = sources
+        .iter()
+        .map(|s| trim_slash(&s.path).to_string())
+        .collect();
     if only_disk {
         sources.retain(|s| s.device.is_some() || !s.source.starts_with("/dev/"));
     }
@@ -146,7 +216,10 @@ pub fn not_backed_up(sources: &mut Vec<BackupSource>, only_disk: bool, zfs_tools
         .filter(|d| {
             d.get("encryptionroot").is_some()
                 && d.get("encryptionroot") == d.get("name")
-                && matches!(d.get("keyformat").and_then(Value::as_str), Some("raw" | "hex") | None)
+                && matches!(
+                    d.get("keyformat").and_then(Value::as_str),
+                    Some("raw" | "hex") | None
+                )
         })
         .filter_map(|d| d.get("keylocation")?.as_str()?.strip_prefix("file://"))
         .filter(|k| k.starts_with('/') && !k.contains('\0') && !k.split('/').any(|c| c == ".."))
@@ -162,7 +235,11 @@ pub fn not_backed_up(sources: &mut Vec<BackupSource>, only_disk: bool, zfs_tools
                 .max_by_key(|p| p.len())
         })
         .collect();
-    let in_fstab = |p: &str| fstab.iter().any(|(e, _)| trim_slash(&e.file) == trim_slash(p));
+    let in_fstab = |p: &str| {
+        fstab
+            .iter()
+            .any(|(e, _)| trim_slash(&e.file) == trim_slash(p))
+    };
     sources.retain(|s| {
         let p = trim_slash(&s.path);
         let is_runtime_keystore = s.device.is_some()
@@ -186,10 +263,17 @@ pub fn zfs_mounted_twice(sources: &mut Vec<BackupSource>) {
             continue;
         }
         let ds = s.source.clone();
-        let others: Vec<String> = sources[i + 1..].iter().filter(|o| o.fstype == "zfs" && o.from.is_some() && o.source == ds).map(|o| o.path.clone()).collect();
+        let others: Vec<String> = sources[i + 1..]
+            .iter()
+            .filter(|o| o.fstype == "zfs" && o.from.is_some() && o.source == ds)
+            .map(|o| o.path.clone())
+            .collect();
         if !others.is_empty() {
             sources.retain(|o| !(o.fstype == "zfs" && o.source == ds && others.contains(&o.path)));
-            sources[i].note = Some(format!("ZFS dataset {ds} is also mounted at {}: backed up here only, once", others.join(", ")));
+            sources[i].note = Some(format!(
+                "ZFS dataset {ds} is also mounted at {}: backed up here only, once",
+                others.join(", ")
+            ));
         }
         i += 1;
     }

@@ -19,20 +19,26 @@
 //! SELinux label; and ends as every Linux boot stage does, the read-only
 //! flags last.
 
-use super::commands::{atimes_cmd, Builder, Cmd};
+use super::commands::{Builder, Cmd, atimes_cmd};
 use super::layout::all_devices;
-use super::{shell_quote, RUN_DIR};
+use super::{RUN_DIR, shell_quote};
 use crate::json::Value;
 
 /// The layout's boot.transactional, when the source is a transactional-update
 /// system (crate::transactional).
 pub fn of(layout: &Value) -> Option<&Value> {
-    layout.at(&["boot", "transactional"]).filter(|v| v.as_object().is_some())
+    layout
+        .at(&["boot", "transactional"])
+        .filter(|v| v.as_object().is_some())
 }
 
 /// The slot the source had booted at `/`: what the backup's `/` holds.
 pub fn booted_root(layout: &Value) -> Option<String> {
-    of(layout)?.at(&["booted", "path"]).and_then(Value::as_str).map(|p| p.trim_matches('/').to_string()).filter(|p| !p.is_empty())
+    of(layout)?
+        .at(&["booted", "path"])
+        .and_then(Value::as_str)
+        .map(|p| p.trim_matches('/').to_string())
+        .filter(|p| !p.is_empty())
 }
 
 /// The shell function both scripts use: whether a path is a btrfs
@@ -232,7 +238,11 @@ pub fn bls_counter(file: &str) -> (String, Option<(u64, u64)>) {
     let stem = file.strip_suffix(".conf").unwrap_or(file);
     let parsed = stem.rsplit_once('+').and_then(|(id, c)| {
         let (left, done) = c.split_once('-').unwrap_or((c, "0"));
-        let n = |x: &str| (!x.is_empty() && x.bytes().all(|b| b.is_ascii_digit())).then(|| x.parse::<u64>().ok()).flatten();
+        let n = |x: &str| {
+            (!x.is_empty() && x.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| x.parse::<u64>().ok())
+                .flatten()
+        };
         Some((id.to_string(), (n(left)?, n(done)?)))
     });
     match parsed {
@@ -271,10 +281,18 @@ pub fn vercmp(a: &str, b: &str) -> std::cmp::Ordering {
             (None, _) => return Less,
             (_, None) => return Greater,
             (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
-                let run = |s: &[u8], k: usize| s[k..].iter().take_while(|c| c.is_ascii_digit()).count();
+                let run =
+                    |s: &[u8], k: usize| s[k..].iter().take_while(|c| c.is_ascii_digit()).count();
                 let (ni, nj) = (run(a, i), run(b, j));
                 let (da, db) = (&a[i..i + ni], &b[j..j + nj]);
-                let (ta, tb) = (std::str::from_utf8(da).unwrap_or("0").trim_start_matches('0'), std::str::from_utf8(db).unwrap_or("0").trim_start_matches('0'));
+                let (ta, tb) = (
+                    std::str::from_utf8(da)
+                        .unwrap_or("0")
+                        .trim_start_matches('0'),
+                    std::str::from_utf8(db)
+                        .unwrap_or("0")
+                        .trim_start_matches('0'),
+                );
                 let o = ta.len().cmp(&tb.len()).then_with(|| ta.cmp(tb));
                 if o != Equal {
                     return o;
@@ -282,7 +300,9 @@ pub fn vercmp(a: &str, b: &str) -> std::cmp::Ordering {
                 i += ni;
                 j += nj;
             }
-            (Some(x), Some(y)) if x.is_ascii_digit() != y.is_ascii_digit() => return if x.is_ascii_digit() { Greater } else { Less },
+            (Some(x), Some(y)) if x.is_ascii_digit() != y.is_ascii_digit() => {
+                return if x.is_ascii_digit() { Greater } else { Less };
+            }
             (Some(x), Some(y)) => {
                 if x != y {
                     return x.cmp(y);
@@ -302,21 +322,33 @@ pub fn vercmp(a: &str, b: &str) -> std::cmp::Ordering {
 pub fn bls_sorted(entries: &[Value]) -> Vec<&Value> {
     let key = |e: &Value| {
         let (id, c) = bls_counter(&s(e, "file").unwrap_or_default());
-        (id, c, s(e, "sort-key"), s(e, "machine-id").unwrap_or_default(), s(e, "version").unwrap_or_default())
+        (
+            id,
+            c,
+            s(e, "sort-key"),
+            s(e, "machine-id").unwrap_or_default(),
+            s(e, "version").unwrap_or_default(),
+        )
     };
     let mut v: Vec<&Value> = entries.iter().collect();
     v.sort_by(|a, b| {
         let (ia, ca, sa, ma, va) = key(a);
         let (ib, cb, sb, mb, vb) = key(b);
         let bad = |c: &Option<(u64, u64)>| c.is_some_and(|(l, _)| l == 0);
-        let mut o = bad(&ca).cmp(&bad(&cb)).then_with(|| sa.is_none().cmp(&sb.is_none()));
+        let mut o = bad(&ca)
+            .cmp(&bad(&cb))
+            .then_with(|| sa.is_none().cmp(&sb.is_none()));
         if let (Some(x), Some(y)) = (&sa, &sb) {
-            o = o.then_with(|| x.cmp(y)).then_with(|| ma.cmp(&mb)).then_with(|| vercmp(&vb, &va));
+            o = o
+                .then_with(|| x.cmp(y))
+                .then_with(|| ma.cmp(&mb))
+                .then_with(|| vercmp(&vb, &va));
         }
-        o.then_with(|| vercmp(&ib, &ia)).then_with(|| match (ca, cb) {
-            (Some((la, da)), Some((lb, db))) => lb.cmp(&la).then(da.cmp(&db)),
-            _ => std::cmp::Ordering::Equal,
-        })
+        o.then_with(|| vercmp(&ib, &ia))
+            .then_with(|| match (ca, cb) {
+                (Some((la, da)), Some((lb, db))) => lb.cmp(&la).then(da.cmp(&db)),
+                _ => std::cmp::Ordering::Equal,
+            })
     });
     v
 }
@@ -325,8 +357,17 @@ impl Builder<'_> {
     /// The UUIDs load makes filesystems and LUKS containers with: every
     /// content's, and each btrfs's.
     fn kept_uuids(&self) -> Vec<String> {
-        let mut have: Vec<String> = all_devices(&self.layout.v).filter_map(|x| x.at(&["content", "uuid"]).and_then(Value::as_str)).map(str::to_ascii_lowercase).collect();
-        have.extend(self.layout.arr(&["storage", "btrfs"]).iter().filter_map(|f| s(f, "uuid")).map(|u| u.to_ascii_lowercase()));
+        let mut have: Vec<String> = all_devices(&self.layout.v)
+            .filter_map(|x| x.at(&["content", "uuid"]).and_then(Value::as_str))
+            .map(str::to_ascii_lowercase)
+            .collect();
+        have.extend(
+            self.layout
+                .arr(&["storage", "btrfs"])
+                .iter()
+                .filter_map(|f| s(f, "uuid"))
+                .map(|u| u.to_ascii_lowercase()),
+        );
         have.sort();
         have.dedup();
         have
@@ -340,11 +381,19 @@ impl Builder<'_> {
         if let Some(n) = self.btrfs.get(uuid).and_then(|p| p.new_id_of_path(path)) {
             return Some(n);
         }
-        let fs = self.layout.arr(&["storage", "btrfs"]).iter().find(|f| s(f, "uuid").as_deref() == Some(uuid))?.clone();
+        let fs = self
+            .layout
+            .arr(&["storage", "btrfs"])
+            .iter()
+            .find(|f| s(f, "uuid").as_deref() == Some(uuid))?
+            .clone();
         fs.get("subvolumes")
             .and_then(Value::as_array)?
             .iter()
-            .find(|v| s(v, "path").is_some_and(|p| p.trim_start_matches("<FS_TREE>/").trim_matches('/') == path))
+            .find(|v| {
+                s(v, "path")
+                    .is_some_and(|p| p.trim_start_matches("<FS_TREE>/").trim_matches('/') == path)
+            })
             .and_then(|v| v.get("id").and_then(Value::as_u64))
     }
 
@@ -352,8 +401,16 @@ impl Builder<'_> {
     /// what the plan should say (notes).
     fn transactional_problems(&mut self, x: &Value) {
         let uuid = s(x, "filesystem").unwrap_or_default();
-        let slot = |k: &str| x.at(&[k, "path"]).and_then(Value::as_str).map(str::to_string);
-        let num = |k: &str| x.at(&[k, "snapshot"]).and_then(Value::as_u64).map_or_else(|| "?".to_string(), |n| n.to_string());
+        let slot = |k: &str| {
+            x.at(&[k, "path"])
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
+        let num = |k: &str| {
+            x.at(&[k, "snapshot"])
+                .and_then(Value::as_u64)
+                .map_or_else(|| "?".to_string(), |n| n.to_string())
+        };
         match s(x, "etc").as_deref() {
             Some("subvolume") => {}
             Some("overlay") => self.problems.push("transactional-update: /etc is an overlay (a system from before transactional-update 5.0, with /var/lib/overlay): bko-holt load restores only systems whose /etc is a subvolume in each snapshot (docs/design/aeon.md, decision 6)".into()),
@@ -362,18 +419,32 @@ impl Builder<'_> {
         if !self.opts.reformats.is_empty() {
             self.problems.push("transactional-update: --reformat would rewrite /etc/fstab and the kernel command lines inside read-only snapshots, and drop the snapshots that are the system; not supported".into());
         }
-        if self.layout.arr(&["storage", "btrfs"]).iter().all(|f| s(f, "uuid").as_deref() != Some(uuid.as_str())) {
-            self.problems.push(format!("transactional-update: the root filesystem {uuid} isn't one of the layout's btrfs"));
+        if self
+            .layout
+            .arr(&["storage", "btrfs"])
+            .iter()
+            .all(|f| s(f, "uuid").as_deref() != Some(uuid.as_str()))
+        {
+            self.problems.push(format!(
+                "transactional-update: the root filesystem {uuid} isn't one of the layout's btrfs"
+            ));
         }
         let mode = s(x, "loader_mode").unwrap_or_default();
         if !matches!(mode.as_str(), "grub" | "bls") {
-            self.problems.push(format!("transactional-update: loader mode {mode:?}, not grub or bls"));
+            self.problems.push(format!(
+                "transactional-update: loader mode {mode:?}, not grub or bls"
+            ));
         }
         // The dump's own GRUB config: its searches name filesystems load
         // keeps (the boot stage checks the restored files again).
         let kept = self.kept_uuids();
         if mode == "grub" {
-            for u in self.layout.arr(&["boot", "grub", "grub_cfg", "search_uuids"]).iter().filter_map(Value::as_str) {
+            for u in self
+                .layout
+                .arr(&["boot", "grub", "grub_cfg", "search_uuids"])
+                .iter()
+                .filter_map(Value::as_str)
+            {
                 if !kept.contains(&u.to_ascii_lowercase()) {
                     self.problems.push(format!("transactional-update: grub.cfg searches for the filesystem {u}, which no filesystem in the layout has; nothing is regenerated, so the restored GRUB couldn't find it"));
                 }
@@ -393,7 +464,13 @@ impl Builder<'_> {
         }
         if let Some(hc) = x.get("health_check_state").filter(|v| !v.is_null()) {
             let path = s(hc, "last_working_snapshot");
-            let old = hc.get("last_working_btrfs_id").and_then(Value::as_u64).map_or_else(|| s(hc, "last_working_btrfs_id_raw").unwrap_or_else(|| "none".into()), |n| n.to_string());
+            let old = hc
+                .get("last_working_btrfs_id")
+                .and_then(Value::as_u64)
+                .map_or_else(
+                    || s(hc, "last_working_btrfs_id_raw").unwrap_or_else(|| "none".into()),
+                    |n| n.to_string(),
+                );
             match path.as_deref().map(|p| (p, self.planned_id(&uuid, p))) {
                 Some((p, Some(new))) if new.to_string() == old => self.notes.push(format!(
                     "health-checker: {}'s LAST_WORKING_BTRFS_ID={old} names {p} (LAST_WORKING_SNAPSHOT); that subvolume is ID {new} here too, as planned: the boot stage reads it back with btrfs subvolume show and keeps the file as it is unless the ID differs",
@@ -410,7 +487,10 @@ impl Builder<'_> {
                 None => self.problems.push(format!("health-checker: {} has no LAST_WORKING_SNAPSHOT to rewrite its LAST_WORKING_BTRFS_ID={old} from", crate::transactional::HC_STATE)),
             }
         } else if mode == "grub" {
-            self.notes.push(format!("health-checker: the source has no {}, so there is no subvolume ID to rewrite", crate::transactional::HC_STATE));
+            self.notes.push(format!(
+                "health-checker: the source has no {}, so there is no subvolume ID to rewrite",
+                crate::transactional::HC_STATE
+            ));
         } else if mode == "bls" {
             self.notes.push(format!(
                 "health-checker: on the BLS path (systemd-boot with sdbootutil) the source has no {} and keeps no subvolume IDs: its verdicts are systemd-bless-boot's boot counters in the entries' names and sdbootutil's default entry, which come back as they were; nothing to rewrite",
@@ -423,7 +503,10 @@ impl Builder<'_> {
         self.fde_notes(x);
         let mut written = vec!["/var/log/bko-holt (this restore's log)".to_string()];
         if x.get("health_check_state").is_some_and(|v| !v.is_null()) {
-            written.insert(0, format!("{} (its ID, if it changed)", crate::transactional::HC_STATE));
+            written.insert(
+                0,
+                format!("{} (its ID, if it changed)", crate::transactional::HC_STATE),
+            );
         }
         self.notes.push(format!(
             "transactional-update: what the boot stage writes into the restored root: {}, both in @/var; nothing in a snapshot or its /etc, whose fstab is the restored one (the target's layout is the source's)",
@@ -438,9 +521,19 @@ impl Builder<'_> {
     /// slot without one, boot counters and the default systemd-boot picks on
     /// a new machine (notes).
     fn bls_problems(&mut self, x: &Value, uuid: &str) {
-        let entries = self.layout.arr(&["boot", "systemd_boot", "entries"]).to_vec();
-        let slot = |k: &str| x.at(&[k, "path"]).and_then(Value::as_str).map(|p| p.trim_matches('/').to_string());
-        let num = |p: &str| crate::load::shared::snapper_slot(p).map_or_else(|| "?".to_string(), |(_, n)| n.to_string());
+        let entries = self
+            .layout
+            .arr(&["boot", "systemd_boot", "entries"])
+            .to_vec();
+        let slot = |k: &str| {
+            x.at(&[k, "path"])
+                .and_then(Value::as_str)
+                .map(|p| p.trim_matches('/').to_string())
+        };
+        let num = |p: &str| {
+            crate::load::shared::snapper_slot(p)
+                .map_or_else(|| "?".to_string(), |(_, n)| n.to_string())
+        };
         let (def, booted) = (slot("default"), slot("booted"));
         if entries.is_empty() {
             self.problems.push("transactional-update (BLS): the dump has no loader entry (boot.systemd_boot.entries): nothing is regenerated (no sdbootutil), so the restored machine would have nothing to boot".into());
@@ -450,7 +543,12 @@ impl Builder<'_> {
             .layout
             .arr(&["boot", "esps"])
             .iter()
-            .flat_map(|e| e.at(&["contents", "files"]).and_then(Value::as_array).cloned().unwrap_or_default())
+            .flat_map(|e| {
+                e.at(&["contents", "files"])
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default()
+            })
             .filter_map(|f| s(&f, "path").map(|p| p.to_ascii_lowercase()))
             .collect();
         let mut counted = Vec::new();
@@ -462,10 +560,18 @@ impl Builder<'_> {
             // Every initrd line (initrds, when the entry has several; an
             // older dump has only the last one's, initrd).
             let initrds: Vec<String> = match e.get("initrds").and_then(Value::as_array) {
-                Some(a) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),
+                Some(a) => a
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect(),
                 None => s(e, "initrd").into_iter().collect(),
             };
-            for (k, p) in s(e, "linux").map(|p| ("linux", p)).into_iter().chain(initrds.into_iter().map(|p| ("initrd", p))) {
+            for (k, p) in s(e, "linux")
+                .map(|p| ("linux", p))
+                .into_iter()
+                .chain(initrds.into_iter().map(|p| ("initrd", p)))
+            {
                 if !esp.contains(&p.trim_start_matches('/').to_ascii_lowercase()) {
                     self.problems.push(format!("transactional-update (BLS): {file}'s {k} {p} isn't on the source's ESP (boot.esps' files): nothing is regenerated, so the restored entry would boot nothing"));
                 }
@@ -479,7 +585,13 @@ impl Builder<'_> {
                 counted.push(format!("{file} ({l} tries left, {d} done)"));
             }
         }
-        let of = |p: &Option<String>| -> Vec<String> { entries.iter().filter(|e| entry_slot(&s(e, "options").unwrap_or_default()) == *p).filter_map(|e| s(e, "file")).collect() };
+        let of = |p: &Option<String>| -> Vec<String> {
+            entries
+                .iter()
+                .filter(|e| entry_slot(&s(e, "options").unwrap_or_default()) == *p)
+                .filter_map(|e| s(e, "file"))
+                .collect()
+        };
         let (def_entries, booted_entries) = (of(&def), of(&booted));
         if let Some(d) = &def {
             if def_entries.is_empty() {
@@ -497,7 +609,10 @@ impl Builder<'_> {
                 counted.join(", ")
             ));
         }
-        if let Some(bad) = def_entries.iter().find(|f| bls_counter(f).1.is_some_and(|(l, _)| l == 0)) {
+        if let Some(bad) = def_entries
+            .iter()
+            .find(|f| bls_counter(f).1.is_some_and(|(l, _)| l == 0))
+        {
             self.notes.push(format!("systemd-boot: the default slot's entry {bad} has no tries left (systemd-boot found its boots bad on the source): it sorts it last and boots another first, as the source would have"));
         }
         if !self.layout.uefi() {
@@ -506,20 +621,37 @@ impl Builder<'_> {
         // The default systemd-boot boots: LoaderEntryDefault (an EFI
         // variable, which sdbootutil set-default-snapshot sets), else
         // loader.conf's default, else the first in its order.
-        let led = self.layout.str_at(&["boot", "efi", "loader_interface", "loader_entry_default"]).map(str::to_string);
-        let conf = self.layout.str_at(&["boot", "systemd_boot", "loader_conf", "default"]).map(str::to_string);
-        let first = bls_sorted(&entries).first().map(|e| (s(e, "file").unwrap_or_default(), entry_slot(&s(e, "options").unwrap_or_default())));
+        let led = self
+            .layout
+            .str_at(&["boot", "efi", "loader_interface", "loader_entry_default"])
+            .map(str::to_string);
+        let conf = self
+            .layout
+            .str_at(&["boot", "systemd_boot", "loader_conf", "default"])
+            .map(str::to_string);
+        let first = bls_sorted(&entries).first().map(|e| {
+            (
+                s(e, "file").unwrap_or_default(),
+                entry_slot(&s(e, "options").unwrap_or_default()),
+            )
+        });
         let source = match &led {
             Some(l) => format!("the source's is {l}"),
             None => "the source had none set".into(),
         };
         let fallback = match (&conf, &first) {
             (Some(c), _) => format!("loader.conf's `default {c}` (restored) picks the entry"),
-            (None, Some((f, Some(p)))) if Some(p) == def.as_ref() => format!("it boots the entry it sorts first, {f}, which boots the default slot (snapshot {}), as on the source", num(p)),
+            (None, Some((f, Some(p)))) if Some(p) == def.as_ref() => format!(
+                "it boots the entry it sorts first, {f}, which boots the default slot (snapshot {}), as on the source",
+                num(p)
+            ),
             (None, Some((f, p))) => {
                 let p = p.clone().unwrap_or_default();
                 let fix = def.as_deref().map(|d| format!(": `sdbootutil set-default-snapshot {}` on the restored machine puts it right", num(d))).unwrap_or_default();
-                format!("it boots the entry it sorts first, {f}, which boots snapshot {} ({p}), not the default slot{fix}", num(&p))
+                format!(
+                    "it boots the entry it sorts first, {f}, which boots snapshot {} ({p}), not the default slot{fix}",
+                    num(&p)
+                )
             }
             (None, None) => "it boots the entry it sorts first".into(),
         };
@@ -534,20 +666,38 @@ impl Builder<'_> {
     /// `dump --keep-luks-header DEV`): notes only, nothing written.
     fn fde_notes(&mut self, x: &Value) {
         let pcrs = match x.get("fde_seal_pcr_list").and_then(Value::as_str) {
-            Some(p) => format!("PCRs {p}, FDE_SEAL_PCR_LIST in {}", crate::transactional::FDE_TOOLS),
+            Some(p) => format!(
+                "PCRs {p}, FDE_SEAL_PCR_LIST in {}",
+                crate::transactional::FDE_TOOLS
+            ),
             None => format!("the PCRs {} names", crate::transactional::FDE_TOOLS),
         };
         let mut any = false;
         let layout = self.layout;
-        for p in all_devices(&layout.v).filter(|p| p.at(&["content", "type"]).and_then(Value::as_str) == Some("crypto_LUKS")) {
-            let types: Vec<String> = p.at(&["content", "tokens"]).and_then(Value::as_array).into_iter().flatten().filter_map(|t| s(t, "type")).collect();
-            let (tpm, rec) = (types.iter().any(|t| t == "systemd-tpm2"), types.iter().any(|t| t == "systemd-recovery"));
+        for p in all_devices(&layout.v)
+            .filter(|p| p.at(&["content", "type"]).and_then(Value::as_str) == Some("crypto_LUKS"))
+        {
+            let types: Vec<String> = p
+                .at(&["content", "tokens"])
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|t| s(t, "type"))
+                .collect();
+            let (tpm, rec) = (
+                types.iter().any(|t| t == "systemd-tpm2"),
+                types.iter().any(|t| t == "systemd-recovery"),
+            );
             if !tpm && !rec {
                 continue;
             }
             any = true;
             let dev = s(p, "name").unwrap_or_default();
-            let label = p.at(&["content", "label"]).and_then(Value::as_str).map(|l| format!(" ({l})")).unwrap_or_default();
+            let label = p
+                .at(&["content", "label"])
+                .and_then(Value::as_str)
+                .map(|l| format!(" ({l})"))
+                .unwrap_or_default();
             let has = match (tpm, rec) {
                 (true, true) => "a systemd-tpm2 token and a systemd-recovery one",
                 (true, false) => "a systemd-tpm2 token",
@@ -557,13 +707,19 @@ impl Builder<'_> {
                 .layout
                 .arr(&["storage", "dm_devices"])
                 .iter()
-                .find(|m| m.get("slaves").and_then(Value::as_array).is_some_and(|sl| sl.iter().any(|x| x.as_str() == Some(dev.as_str()))))
+                .find(|m| {
+                    m.get("slaves")
+                        .and_then(Value::as_array)
+                        .is_some_and(|sl| sl.iter().any(|x| x.as_str() == Some(dev.as_str())))
+                })
                 .and_then(|m| m.at(&["dm", "dm_name"]).and_then(Value::as_str))
                 .map(str::to_string)
                 .unwrap_or_else(|| dev.clone());
             if crate::luksheader::kept(&self.layout.v, &dev).is_some() {
                 let tpm_part = if tpm {
-                    format!(" The TPM2 token is sealed to the source machine's TPM (systemd-pcrlock; {pcrs}): on a new machine, or after a change in the measured boot chain (PCR 5 measures the partition table), it doesn't unseal, and the restored system asks for the recovery key (or a passphrase slot's) until it is enrolled again: `sdbootutil unenroll --method=tpm2`, then `sdbootutil enroll --method=tpm2`.")
+                    format!(
+                        " The TPM2 token is sealed to the source machine's TPM (systemd-pcrlock; {pcrs}): on a new machine, or after a change in the measured boot chain (PCR 5 measures the partition table), it doesn't unseal, and the restored system asks for the recovery key (or a passphrase slot's) until it is enrolled again: `sdbootutil unenroll --method=tpm2`, then `sdbootutil enroll --method=tpm2`."
+                    )
                 } else {
                     String::new()
                 };
@@ -577,7 +733,9 @@ impl Builder<'_> {
                     _ => "the recovery key is",
                 };
                 let enroll = match (tpm, rec) {
-                    (true, true) => "`sdbootutil enroll --method=tpm2` (and `--method=recovery-key`) is",
+                    (true, true) => {
+                        "`sdbootutil enroll --method=tpm2` (and `--method=recovery-key`) is"
+                    }
                     (true, false) => "`sdbootutil enroll --method=tpm2` is",
                     _ => "`sdbootutil enroll --method=recovery-key` is",
                 };
@@ -601,24 +759,57 @@ impl Builder<'_> {
         let t = self.opts.target.clone();
         let uuid = s(x, "filesystem").unwrap_or_default();
         let mode = s(x, "loader_mode").unwrap_or_else(|| "grub".into());
-        let mut out = vec![Cmd::note(format!("refuses to start unless {t}/etc/fstab is the restored system's (its / matches the layout's)"))];
+        let mut out = vec![Cmd::note(format!(
+            "refuses to start unless {t}/etc/fstab is the restored system's (its / matches the layout's)"
+        ))];
         out.extend(self.restored_key_files(&t));
         out.push(Cmd::new(&["sh", "-c", &atimes_cmd(&t, "if-missing", &self.ro_shared())]).why("the restored atimes (the restore stage lists them), to put back after this stage's reads"));
         out.push(Cmd::note("transactional-update: no initramfs, grub2-mkconfig, grub2-install, shim-install, sdbootutil or relabel of the root, and no chroot"));
-        let fs = self.layout.arr(&["storage", "btrfs"]).iter().find(|f| s(f, "uuid").is_some_and(|u| u.eq_ignore_ascii_case(&uuid))).cloned();
-        let Some(dev) = self.btrfs_dev(&uuid, fs.as_ref()) else { return out };
+        let fs = self
+            .layout
+            .arr(&["storage", "btrfs"])
+            .iter()
+            .find(|f| s(f, "uuid").is_some_and(|u| u.eq_ignore_ascii_case(&uuid)))
+            .cloned();
+        let Some(dev) = self.btrfs_dev(&uuid, fs.as_ref()) else {
+            return out;
+        };
         let top = format!("{RUN_DIR}/btrfs/{uuid}");
         out.push(Cmd::new(&["mkdir", "-p", &top]));
-        out.push(Cmd::new(&["mount", "-t", "btrfs", "-o", "subvolid=5,noatime", &dev, &top]).why(format!("btrfs {uuid}: its subvolumes, by path, for the checks and health-checker's ID")));
+        out.push(
+            Cmd::new(&[
+                "mount",
+                "-t",
+                "btrfs",
+                "-o",
+                "subvolid=5,noatime",
+                &dev,
+                &top,
+            ])
+            .why(format!(
+                "btrfs {uuid}: its subvolumes, by path, for the checks and health-checker's ID"
+            )),
+        );
         let kept = self.kept_uuids();
         let why = if mode == "bls" {
             "each BLS entry's kernel, initrd and rootflags=subvol= are in the restored tree, and every filesystem UUID it names is one load made"
         } else {
             "the ESP's stub, the booted slot's grub.cfg and each grub-snapshot.cfg lead to restored kernels and subvolumes, and every filesystem UUID they name is one load made"
         };
-        out.push(Cmd::new(&["sh", "-c", &check_script(&t, &top, &mode, &kept)]).why(why).warns());
+        out.push(
+            Cmd::new(&["sh", "-c", &check_script(&t, &top, &mode, &kept)])
+                .why(why)
+                .warns(),
+        );
         if mode == "bls" {
-            let (def, booted) = (x.at(&["default", "path"]).and_then(Value::as_str).unwrap_or(""), x.at(&["booted", "path"]).and_then(Value::as_str).unwrap_or(""));
+            let (def, booted) = (
+                x.at(&["default", "path"])
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+                x.at(&["booted", "path"])
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+            );
             out.push(Cmd::new(&["sh", "-c", &bls_slots_script(&t, &top, def, booted)]).why("an entry boots the default slot (whatever its boot counter), and each entry's kernel has its modules in the slot it boots").warns());
         }
         if x.get("health_check_state").is_some_and(|v| !v.is_null()) {
@@ -630,14 +821,26 @@ impl Builder<'_> {
                 .layout
                 .arr(&["storage", "fstab"])
                 .iter()
-                .filter(|e| s(e, "type").is_some_and(|t| t != "swap" && t != "none") && !s(e, "options").unwrap_or_default().split(',').any(|o| o == "bind"))
+                .filter(|e| {
+                    s(e, "type").is_some_and(|t| t != "swap" && t != "none")
+                        && !s(e, "options")
+                            .unwrap_or_default()
+                            .split(',')
+                            .any(|o| o == "bind")
+                })
                 .filter_map(|e| s(e, "file"))
                 .filter(|f| f.starts_with('/') && f != "/")
                 .collect();
             mps.sort();
             mps.dedup();
             if !mps.is_empty() {
-                let mut args = vec!["python3".to_string(), "-c".into(), MP_LABEL_PY.into(), format!("{top}/{b}"), t.clone()];
+                let mut args = vec![
+                    "python3".to_string(),
+                    "-c".into(),
+                    MP_LABEL_PY.into(),
+                    format!("{top}/{b}"),
+                    t.clone(),
+                ];
                 args.extend(mps);
                 let refs: Vec<&str> = args.iter().map(String::as_str).collect();
                 out.push(Cmd::new(&refs).why("the SELinux label of each mount point in the booted slot, which the backup's / hides under its mounts and load made bare: another slot's, else the mounted file system's root's"));
@@ -677,7 +880,10 @@ else echo \"transactional: neither the source nor the rescue system has a grub-b
         }
         let log = format!("{t}/var/log/bko-holt");
         out.push(Cmd::new(&["mkdir", "-p", &log]));
-        out.push(Cmd::new(&["cp", "-a", &format!("{RUN_DIR}/log/."), &format!("{log}/")]).why("this restore's log, on the restored system (in @/var)"));
+        out.push(
+            Cmd::new(&["cp", "-a", &format!("{RUN_DIR}/log/."), &format!("{log}/")])
+                .why("this restore's log, on the restored system (in @/var)"),
+        );
         out.push(
             Cmd::new(&["python3", "-c", super::ostree::LABEL_PY, "security.selinux", &format!("{t}/var/log"), &log])
                 .why("the log's SELinux label: /var/log's (every other file kept its own from the backup; nothing in a snapshot is relabelled)"),
@@ -690,10 +896,10 @@ else echo \"transactional: neither the source nor the rescue system has a grub-b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::load::Stage;
     use crate::load::commands::build;
     use crate::load::layout::Layout;
     use crate::load::target::Mapping;
-    use crate::load::Stage;
 
     /// The microos guest's dump (bko-holt dump of the fresh guest under
     /// `vm-run --snapshot` on chopin, 2026-11-14, redacted): slots 1 and 2,
@@ -717,7 +923,10 @@ mod tests {
             crate::load::Parsed::Run(o) => o,
             _ => unreachable!(),
         };
-        let m = Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() };
+        let m = Mapping {
+            pairs: vec![("vda".into(), "vdb".into())],
+            ..Mapping::default()
+        };
         build(&l, &o, &m)
     }
 
@@ -756,13 +965,34 @@ mod tests {
     /// The source's subvolume list, its default and boot.transactional's
     /// slots, with SUBS added (a pending update's slot 3).
     fn with_subvolumes(v: &mut Value, subs: &[&str]) {
-        let mut list = v.at(&["storage", "btrfs", "0", "subvolumes"]).and_then(Value::as_array).cloned().unwrap();
+        let mut list = v
+            .at(&["storage", "btrfs", "0", "subvolumes"])
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap();
         list.extend(subs.iter().map(|s| j(s)));
-        set_at(v, &["storage", "btrfs", "0", "subvolumes"], Value::Arr(list));
+        set_at(
+            v,
+            &["storage", "btrfs", "0", "subvolumes"],
+            Value::Arr(list),
+        );
     }
 
     fn uuid_of(v: &Value, path: &str) -> String {
-        v.at(&["storage", "btrfs", "0", "subvolumes"]).and_then(Value::as_array).unwrap().iter().find(|s| s.get("path").and_then(Value::as_str).map(|p| p.trim_start_matches("<FS_TREE>/")) == Some(path)).and_then(|s| s.get("uuid")).and_then(Value::as_str).unwrap().to_string()
+        v.at(&["storage", "btrfs", "0", "subvolumes"])
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .find(|s| {
+                s.get("path")
+                    .and_then(Value::as_str)
+                    .map(|p| p.trim_start_matches("<FS_TREE>/"))
+                    == Some(path)
+            })
+            .and_then(|s| s.get("uuid"))
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string()
     }
 
     #[test]
@@ -773,50 +1003,142 @@ mod tests {
         let b = plan(&v, &["--repo", "/srv/repo"]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let has = |n: &str| b.notes.iter().any(|x| x.contains(n));
-        assert!(has("transactional-update: nothing is regenerated in a snapshot"), "{:?}", b.notes);
-        assert!(has("health-checker: /var/lib/misc/health-check.state's LAST_WORKING_BTRFS_ID=269 names @/.snapshots/2/snapshot (LAST_WORKING_SNAPSHOT); that subvolume is ID 269 here too"), "{:?}", b.notes);
-        assert!(has("what the boot stage writes into the restored root: /var/lib/misc/health-check.state (its ID, if it changed) and /var/log/bko-holt"), "{:?}", b.notes);
+        assert!(
+            has("transactional-update: nothing is regenerated in a snapshot"),
+            "{:?}",
+            b.notes
+        );
+        assert!(
+            has(
+                "health-checker: /var/lib/misc/health-check.state's LAST_WORKING_BTRFS_ID=269 names @/.snapshots/2/snapshot (LAST_WORKING_SNAPSHOT); that subvolume is ID 269 here too"
+            ),
+            "{:?}",
+            b.notes
+        );
+        assert!(
+            has(
+                "what the boot stage writes into the restored root: /var/lib/misc/health-check.state (its ID, if it changed) and /var/log/bko-holt"
+            ),
+            "{:?}",
+            b.notes
+        );
         assert!(!has("an update was pending"), "{:?}", b.notes);
         // / is the booted slot, named; fstab's ro=vfs left out.
         let m = text(b.stage(Stage::Mount));
-        assert!(m.contains("mount -t btrfs -o subvol=@/.snapshots/2/snapshot /dev/vdb3 /mnt/bko-target\n"), "{m}");
-        assert!(!m.contains("ro=vfs") && !m.contains(" /mnt/bko-target/etc\n"), "{m}");
+        assert!(
+            m.contains(
+                "mount -t btrfs -o subvol=@/.snapshots/2/snapshot /dev/vdb3 /mnt/bko-target\n"
+            ),
+            "{m}"
+        );
+        assert!(
+            !m.contains("ro=vfs") && !m.contains(" /mnt/bko-target/etc\n"),
+            "{m}"
+        );
         // Boot: nothing regenerated, nothing chrooted, nothing relabelled
         // but the log.
         let bt = text(b.stage(Stage::Boot));
-        let run: String = bt.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("\n");
-        for no in ["chroot", "dracut", "mkinitrd", "grub2-mkconfig", "grub2-install", "grub-install", "shim-install", "sdbootutil", "bootctl", "setfiles", "restorecon", "--rbind", "os-prober", "update-grub"] {
+        let run: String = bt
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for no in [
+            "chroot",
+            "dracut",
+            "mkinitrd",
+            "grub2-mkconfig",
+            "grub2-install",
+            "grub-install",
+            "shim-install",
+            "sdbootutil",
+            "bootctl",
+            "setfiles",
+            "restorecon",
+            "--rbind",
+            "os-prober",
+            "update-grub",
+        ] {
             assert!(!run.contains(no), "{no}: {bt}");
         }
         let t = top();
         let listed = pos(&bt, "atimes.before");
-        let mount = pos(&bt, &format!("mount -t btrfs -o subvolid=5,noatime /dev/vdb3 {t}\n"));
+        let mount = pos(
+            &bt,
+            &format!("mount -t btrfs -o subvolid=5,noatime /dev/vdb3 {t}\n"),
+        );
         let check = pos(&bt, "/.snapshots/*/grub-snapshot.cfg");
-        assert!(bt.contains(&format!("kept='\\'' bc00-0001 {UUID} '\\''")), "{bt}");
+        assert!(
+            bt.contains(&format!("kept='\\'' bc00-0001 {UUID} '\\''")),
+            "{bt}"
+        );
         let hc = pos(&bt, "f=/mnt/bko-target/var/lib/misc/health-check.state");
-        let label_mps = pos(&bt, &format!("{t}/@/.snapshots/2/snapshot /mnt/bko-target /.snapshots /boot/efi /boot/grub2/i386-pc /boot/grub2/x86_64-efi /boot/writable /home /opt /root /srv /usr/local /var\n"));
+        let label_mps = pos(
+            &bt,
+            &format!(
+                "{t}/@/.snapshots/2/snapshot /mnt/bko-target /.snapshots /boot/efi /boot/grub2/i386-pc /boot/grub2/x86_64-efi /boot/writable /home /opt /root /srv /usr/local /var\n"
+            ),
+        );
         let umount = pos(&bt, &format!("umount {t}\n"));
         assert!(hc < label_mps && label_mps < umount, "{bt}");
-        let log = pos(&bt, &format!("cp -a {RUN_DIR}/log/. /mnt/bko-target/var/log/bko-holt/\n"));
-        let label = pos(&bt, "security.selinux /mnt/bko-target/var/log /mnt/bko-target/var/log/bko-holt\n");
+        let log = pos(
+            &bt,
+            &format!("cp -a {RUN_DIR}/log/. /mnt/bko-target/var/log/bko-holt/\n"),
+        );
+        let label = pos(
+            &bt,
+            "security.selinux /mnt/bko-target/var/log /mnt/bko-target/var/log/bko-holt\n",
+        );
         let back = pos(&bt, "atimes.after");
-        let ro = pos(&bt, &format!("btrfs property set -ts {t}/@/.snapshots/2/snapshot ro true\n"));
-        assert!(listed < mount && mount < check && check < hc && hc < umount && umount < log && log < label && label < back && back < ro, "{bt}");
+        let ro = pos(
+            &bt,
+            &format!("btrfs property set -ts {t}/@/.snapshots/2/snapshot ro true\n"),
+        );
+        assert!(
+            listed < mount
+                && mount < check
+                && check < hc
+                && hc < umount
+                && umount < log
+                && log < label
+                && label < back
+                && back < ro,
+            "{bt}"
+        );
         // The image boots by BIOS too: its own boot.img and core.img,
         // restored in the writable @/boot/grub2/i386-pc, written to the MBR
         // and BIOS boot partition by its own grub2-bios-setup (run by its
         // own loader, no chroot) or else the rescue's, after the checks.
-        let bios = pos(&bt, "d=/mnt/bko-target/boot/grub2/i386-pc; t=/mnt/bko-target; [ -f \"$d/boot.img\" ] && [ -f \"$d/core.img\" ]");
-        assert!(bt[bios..].contains("\"$t/usr/sbin/grub2-bios-setup\" --directory=\"$d\" /dev/vdb\n"), "{bt}");
-        assert!(bt[bios..].contains("grub-bios-setup --directory=\"$d\" /dev/vdb\nelse"), "{bt}");
+        let bios = pos(
+            &bt,
+            "d=/mnt/bko-target/boot/grub2/i386-pc; t=/mnt/bko-target; [ -f \"$d/boot.img\" ] && [ -f \"$d/core.img\" ]",
+        );
+        assert!(
+            bt[bios..].contains("\"$t/usr/sbin/grub2-bios-setup\" --directory=\"$d\" /dev/vdb\n"),
+            "{bt}"
+        );
+        assert!(
+            bt[bios..].contains("grub-bios-setup --directory=\"$d\" /dev/vdb\nelse"),
+            "{bt}"
+        );
         assert!(umount < bios && bios < log, "{bt}");
         assert_eq!(bt.matches("t=/mnt/bko-target; [ -f").count(), 1, "{bt}");
         // A disk without GRUB's core in its BIOS boot partition: none, a note.
         let mut v3 = v.clone();
-        set_at(&mut v3, &["storage", "disks", "0", "boot_code"], j(r#"{"kind": "none"}"#));
+        set_at(
+            &mut v3,
+            &["storage", "disks", "0", "boot_code"],
+            j(r#"{"kind": "none"}"#),
+        );
         let b3 = plan(&v3, &["--repo", "/srv/repo"]);
         assert!(!text(b3.stage(Stage::Boot)).contains("grub-bios-setup"));
-        assert!(b3.notes.iter().any(|n| n.starts_with("vda has a BIOS boot partition, but the dump records no GRUB core in it")), "{:?}", b3.notes);
+        assert!(
+            b3.notes.iter().any(|n| n.starts_with(
+                "vda has a BIOS boot partition, but the dump records no GRUB core in it"
+            )),
+            "{:?}",
+            b3.notes
+        );
         // Its only NVRAM entry has no file (the firmware's own for the
         // disk): the restored disk boots EFI/BOOT's shim, as the source.
         assert!(!bt.contains("efibootmgr"), "{bt}");
@@ -824,10 +1146,19 @@ mod tests {
         assert!(!bt.contains("@/.snapshots/1/snapshot ro true"), "{bt}");
         // No health-check.state: no rewrite, a note.
         let mut v2 = v.clone();
-        set_at(&mut v2, &["boot", "transactional", "health_check_state"], Value::Null);
+        set_at(
+            &mut v2,
+            &["boot", "transactional", "health_check_state"],
+            Value::Null,
+        );
         let b2 = plan(&v2, &["--repo", "/srv/repo"]);
         assert!(!text(b2.stage(Stage::Boot)).contains("health-check.state"));
-        assert!(b2.notes.iter().any(|n| n.starts_with("health-checker: the source has no /var/lib/misc/health-check.state")), "{:?}", b2.notes);
+        assert!(
+            b2.notes.iter().any(|n| n
+                .starts_with("health-checker: the source has no /var/lib/misc/health-check.state")),
+            "{:?}",
+            b2.notes
+        );
     }
 
     /// The image's protective MBR has a disk signature (KIWI's), which
@@ -840,10 +1171,28 @@ mod tests {
         let sig = pos(&p, "\\330\\234\\053\\222");
         assert!(p[sig..].starts_with("\\330\\234\\053\\222'\\'' | dd of=/dev/vdb bs=1 seek=440 count=4 conv=notrunc status=none"), "{p}");
         assert!(sfdisk < sig, "{p}");
-        assert!(p.contains("# the protective MBR's disk signature, 922b9cd8, as the source's"), "{p}");
+        assert!(
+            p.contains("# the protective MBR's disk signature, 922b9cd8, as the source's"),
+            "{p}"
+        );
         let mut v = microos();
-        set_at(&mut v, &["storage", "disks", "0", "partition_table", "protective_mbr", "entries", "0", "uuid"], Value::from("00000000-01"));
-        assert!(!text(plan(&v, &["--repo", "/srv/repo"]).stage(Stage::Partition)).contains("seek=440"));
+        set_at(
+            &mut v,
+            &[
+                "storage",
+                "disks",
+                "0",
+                "partition_table",
+                "protective_mbr",
+                "entries",
+                "0",
+                "uuid",
+            ],
+            Value::from("00000000-01"),
+        );
+        assert!(
+            !text(plan(&v, &["--repo", "/srv/repo"]).stage(Stage::Partition)).contains("seek=440")
+        );
     }
 
     /// Slot 1 and its /etc are made after the main restore: 1 a snapshot
@@ -856,35 +1205,80 @@ mod tests {
         let t = top();
         let f = text(b.stage(Stage::Format));
         assert!(!f.contains("@/.snapshots/1/snapshot"), "{f}");
-        let two = pos(&f, &format!("btrfs subvolume create {t}/@/.snapshots/2/snapshot\n"));
-        let etc = pos(&f, &format!("btrfs subvolume create {t}/@/.snapshots/2/snapshot/etc\n"));
-        assert!(two < etc && !f.contains("rmdir") && !f.contains("ro true"), "{f}");
+        let two = pos(
+            &f,
+            &format!("btrfs subvolume create {t}/@/.snapshots/2/snapshot\n"),
+        );
+        let etc = pos(
+            &f,
+            &format!("btrfs subvolume create {t}/@/.snapshots/2/snapshot/etc\n"),
+        );
+        assert!(
+            two < etc && !f.contains("rmdir") && !f.contains("ro true"),
+            "{f}"
+        );
         assert!(b.notes.iter().any(|n| n.ends_with("@/.snapshots/2/snapshot/etc was a snapshot of @/.snapshots/1/snapshot/etc, which is made after the restore; it's made as a plain subvolume")), "{:?}", b.notes);
         assert!(b.notes.iter().any(|n| n.ends_with("@/.snapshots/1/snapshot/etc: ID 268 on the source, 274 here (a subvolume made after it on the source is made first here)")), "{:?}", b.notes);
         let r = text(b.stage(Stage::Restore));
-        assert!(r.contains("!/.snapshots/2/snapshot/**\n!/.snapshots/1/snapshot/**\n"), "{r}");
-        let main = pos(&r, &format!("--glob-file {RUN_DIR}/restore.globs latest /mnt/bko-target\n"));
-        let slot = pos(&r, &format!("btrfs subvolume snapshot {t}/@/.snapshots/2/snapshot \"$d\" && "));
+        assert!(
+            r.contains("!/.snapshots/2/snapshot/**\n!/.snapshots/1/snapshot/**\n"),
+            "{r}"
+        );
+        let main = pos(
+            &r,
+            &format!("--glob-file {RUN_DIR}/restore.globs latest /mnt/bko-target\n"),
+        );
+        let slot = pos(
+            &r,
+            &format!("btrfs subvolume snapshot {t}/@/.snapshots/2/snapshot \"$d\" && "),
+        );
         // The slot's immutable and append-only entries lose those flags
         // before rm -rf and the restore, the child's once it's made
         // (load/unflag.rs); the restore gives back the backup's.
         let exe = crate::load::shell_quote(&std::env::current_exe().unwrap().to_string_lossy());
         assert!(r.contains(&format!("btrfs subvolume snapshot {t}/@/.snapshots/2/snapshot \"$d\" && {exe} clear-restricting-flags \"$d\" && rm -rf")), "{r}");
-        let unflag = pos(&r, &format!("{exe} clear-restricting-flags \"$d\" && rm -rf"));
-        let gone = pos(&r, "rm -rf -- \"$d\"/etc && mkdir -p \"$(dirname \"$d\"/etc)\" && ");
-        let child = pos(&r, &format!("btrfs subvolume snapshot {t}/@/.snapshots/2/snapshot/etc \"$d\"/etc && {exe} clear-restricting-flags \"$d\"/etc && RUSTIC_STRICT_EXIT=true "));
+        let unflag = pos(
+            &r,
+            &format!("{exe} clear-restricting-flags \"$d\" && rm -rf"),
+        );
+        let gone = pos(
+            &r,
+            "rm -rf -- \"$d\"/etc && mkdir -p \"$(dirname \"$d\"/etc)\" && ",
+        );
+        let child = pos(
+            &r,
+            &format!(
+                "btrfs subvolume snapshot {t}/@/.snapshots/2/snapshot/etc \"$d\"/etc && {exe} clear-restricting-flags \"$d\"/etc && RUSTIC_STRICT_EXIT=true "
+            ),
+        );
         assert!(slot < unflag && unflag < gone, "{r}");
         // Made empty, nothing to clear.
-        assert!(r.contains("else btrfs subvolume create \"$d\" && mkdir -p"), "{r}");
-        let exact = pos(&r, &format!("restore --numeric-id --exact --clone-from /={t}/@/.snapshots/2/snapshot latest:/.snapshots/1/snapshot {t}/@/.snapshots/1/snapshot"));
-        let ro = pos(&r, &format!("btrfs property set -ts {t}/@/.snapshots/1/snapshot ro true\n"));
-        assert!(main < slot && slot < gone && gone < child && child < exact && exact < ro, "{r}");
+        assert!(
+            r.contains("else btrfs subvolume create \"$d\" && mkdir -p"),
+            "{r}"
+        );
+        let exact = pos(
+            &r,
+            &format!(
+                "restore --numeric-id --exact --clone-from /={t}/@/.snapshots/2/snapshot latest:/.snapshots/1/snapshot {t}/@/.snapshots/1/snapshot"
+            ),
+        );
+        let ro = pos(
+            &r,
+            &format!("btrfs property set -ts {t}/@/.snapshots/1/snapshot ro true\n"),
+        );
+        assert!(
+            main < slot && slot < gone && gone < child && child < exact && exact < ro,
+            "{r}"
+        );
         // Not in the backup: both made empty, the child in its slot.
         assert!(r.contains("else btrfs subvolume create \"$d\" && mkdir -p \"$(dirname \"$d\"/etc)\" && btrfs subvolume create \"$d\"/etc && echo"), "{r}");
         assert!(r.contains("cid=$(btrfs inspect-internal rootid \"$d\"/etc) && [ \"$cid\" = 274 ] || echo \"@/.snapshots/1/snapshot/etc: ID $cid here, 274 in the plan\""), "{r}");
         assert!(r.contains("; etc nested in it before the restore (a snapshot of @/.snapshots/2/snapshot/etc, ID 274; 268 on the source)"), "{r}");
         // /etc stays writable: no ro for either /etc.
-        assert!(!r.contains("/etc ro true") && !text(b.stage(Stage::Boot)).contains("/etc ro true"));
+        assert!(
+            !r.contains("/etc ro true") && !text(b.stage(Stage::Boot)).contains("/etc ro true")
+        );
     }
 
     /// --btrfs-snapshots copy: format makes every slot, 2 as a snapshot of
@@ -892,15 +1286,37 @@ mod tests {
     /// before 2's /etc (a snapshot of 1's) is made there.
     #[test]
     fn microos_copy_rmdirs_the_empty_etc() {
-        let b = plan(&microos(), &["--repo", "/srv/repo", "--btrfs-snapshots", "copy"]);
+        let b = plan(
+            &microos(),
+            &["--repo", "/srv/repo", "--btrfs-snapshots", "copy"],
+        );
         let t = top();
         let f = text(b.stage(Stage::Format));
-        let one = pos(&f, &format!("btrfs subvolume create {t}/@/.snapshots/1/snapshot\n"));
-        let one_etc = pos(&f, &format!("btrfs subvolume create {t}/@/.snapshots/1/snapshot/etc\n"));
-        let two = pos(&f, &format!("btrfs subvolume snapshot {t}/@/.snapshots/1/snapshot {t}/@/.snapshots/2/snapshot\n"));
+        let one = pos(
+            &f,
+            &format!("btrfs subvolume create {t}/@/.snapshots/1/snapshot\n"),
+        );
+        let one_etc = pos(
+            &f,
+            &format!("btrfs subvolume create {t}/@/.snapshots/1/snapshot/etc\n"),
+        );
+        let two = pos(
+            &f,
+            &format!(
+                "btrfs subvolume snapshot {t}/@/.snapshots/1/snapshot {t}/@/.snapshots/2/snapshot\n"
+            ),
+        );
         let rm = pos(&f, &format!("rmdir {t}/@/.snapshots/2/snapshot/etc\n"));
-        let two_etc = pos(&f, &format!("btrfs subvolume snapshot {t}/@/.snapshots/1/snapshot/etc {t}/@/.snapshots/2/snapshot/etc\n"));
-        assert!(one < one_etc && one_etc < two && two < rm && rm < two_etc, "{f}");
+        let two_etc = pos(
+            &f,
+            &format!(
+                "btrfs subvolume snapshot {t}/@/.snapshots/1/snapshot/etc {t}/@/.snapshots/2/snapshot/etc\n"
+            ),
+        );
+        assert!(
+            one < one_etc && one_etc < two && two < rm && rm < two_etc,
+            "{f}"
+        );
         assert_eq!(f.matches("rmdir").count(), 1, "{f}");
         assert!(f.contains("# @/.snapshots/2/snapshot, a snapshot of @/.snapshots/1/snapshot, has an empty directory where @/.snapshots/1/snapshot/etc is nested: @/.snapshots/2/snapshot/etc is made in its place\n"), "{f}");
         // Read-only on both slots, last, in boot.
@@ -916,31 +1332,69 @@ mod tests {
     #[test]
     fn microos_pending_update() {
         let mut v = microos();
-        let (u2, u2e) = (uuid_of(&v, "@/.snapshots/2/snapshot"), uuid_of(&v, "@/.snapshots/2/snapshot/etc"));
+        let (u2, u2e) = (
+            uuid_of(&v, "@/.snapshots/2/snapshot"),
+            uuid_of(&v, "@/.snapshots/2/snapshot/etc"),
+        );
         with_subvolumes(
             &mut v,
             &[
-                &format!(r#"{{"id": 273, "gen": 95, "parent": 257, "top_level": 257, "parent_uuid": "{u2}", "uuid": "bc000000-0000-4000-8000-0000000000f3", "path": "<FS_TREE>/@/.snapshots/3/snapshot", "readonly": true, "properties": {{"ro": "true"}}}}"#),
-                &format!(r#"{{"id": 274, "gen": 96, "parent": 273, "top_level": 273, "parent_uuid": "{u2e}", "uuid": "bc000000-0000-4000-8000-0000000000f4", "path": "<FS_TREE>/@/.snapshots/3/snapshot/etc", "readonly": false, "properties": {{"ro": "false"}}}}"#),
+                &format!(
+                    r#"{{"id": 273, "gen": 95, "parent": 257, "top_level": 257, "parent_uuid": "{u2}", "uuid": "bc000000-0000-4000-8000-0000000000f3", "path": "<FS_TREE>/@/.snapshots/3/snapshot", "readonly": true, "properties": {{"ro": "true"}}}}"#
+                ),
+                &format!(
+                    r#"{{"id": 274, "gen": 96, "parent": 273, "top_level": 273, "parent_uuid": "{u2e}", "uuid": "bc000000-0000-4000-8000-0000000000f4", "path": "<FS_TREE>/@/.snapshots/3/snapshot/etc", "readonly": false, "properties": {{"ro": "false"}}}}"#
+                ),
             ],
         );
-        set_at(&mut v, &["storage", "btrfs", "0", "default_subvolume"], j(r#"{"id": 273, "gen": 95, "top_level": 257, "path": "@/.snapshots/3/snapshot"}"#));
-        set_at(&mut v, &["boot", "transactional", "default"], j(r#"{"path": "@/.snapshots/3/snapshot", "id": 273, "snapshot": 3}"#));
-        set_at(&mut v, &["boot", "transactional", "pending_update"], Value::Bool(true));
+        set_at(
+            &mut v,
+            &["storage", "btrfs", "0", "default_subvolume"],
+            j(r#"{"id": 273, "gen": 95, "top_level": 257, "path": "@/.snapshots/3/snapshot"}"#),
+        );
+        set_at(
+            &mut v,
+            &["boot", "transactional", "default"],
+            j(r#"{"path": "@/.snapshots/3/snapshot", "id": 273, "snapshot": 3}"#),
+        );
+        set_at(
+            &mut v,
+            &["boot", "transactional", "pending_update"],
+            Value::Bool(true),
+        );
         let b = plan(&v, &["--repo", "/srv/repo"]);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         assert!(b.notes.iter().any(|n| n.starts_with("transactional-update: an update was pending on the source: its default is snapshot 3 (@/.snapshots/3/snapshot), not the booted 2 (@/.snapshots/2/snapshot); the backup's / is @/.snapshots/2/snapshot, and the restored machine boots @/.snapshots/3/snapshot")), "{:?}", b.notes);
         let t = top();
         let m = text(b.stage(Stage::Mount));
-        assert!(m.contains("mount -t btrfs -o subvol=@/.snapshots/2/snapshot /dev/vdb3 /mnt/bko-target\n"), "{m}");
+        assert!(
+            m.contains(
+                "mount -t btrfs -o subvol=@/.snapshots/2/snapshot /dev/vdb3 /mnt/bko-target\n"
+            ),
+            "{m}"
+        );
         let f = text(b.stage(Stage::Format));
-        assert!(!f.contains("set-default") && !f.contains("@/.snapshots/3/snapshot"), "{f}");
+        assert!(
+            !f.contains("set-default") && !f.contains("@/.snapshots/3/snapshot"),
+            "{f}"
+        );
         let r = text(b.stage(Stage::Restore));
         assert!(r.contains("!/.snapshots/2/snapshot/**\n!/.snapshots/1/snapshot/**\n!/.snapshots/3/snapshot/**\n"), "{r}");
         let exe = crate::load::shell_quote(&std::env::current_exe().unwrap().to_string_lossy());
-        let three = pos(&r, &format!("btrfs subvolume snapshot {t}/@/.snapshots/1/snapshot \"$d\" && {exe} clear-restricting-flags \"$d\" && rm -rf -- \"$d\"/etc && mkdir -p \"$(dirname \"$d\"/etc)\" && btrfs subvolume snapshot {t}/@/.snapshots/1/snapshot/etc \"$d\"/etc && {exe} clear-restricting-flags \"$d\"/etc"));
-        let ro3 = pos(&r, &format!("btrfs property set -ts {t}/@/.snapshots/3/snapshot ro true\n"));
-        let default = pos(&r, &format!("btrfs subvolume set-default {t}/@/.snapshots/3/snapshot\n"));
+        let three = pos(
+            &r,
+            &format!(
+                "btrfs subvolume snapshot {t}/@/.snapshots/1/snapshot \"$d\" && {exe} clear-restricting-flags \"$d\" && rm -rf -- \"$d\"/etc && mkdir -p \"$(dirname \"$d\"/etc)\" && btrfs subvolume snapshot {t}/@/.snapshots/1/snapshot/etc \"$d\"/etc && {exe} clear-restricting-flags \"$d\"/etc"
+            ),
+        );
+        let ro3 = pos(
+            &r,
+            &format!("btrfs property set -ts {t}/@/.snapshots/3/snapshot ro true\n"),
+        );
+        let default = pos(
+            &r,
+            &format!("btrfs subvolume set-default {t}/@/.snapshots/3/snapshot\n"),
+        );
         assert!(three < ro3 && ro3 < default, "{r}");
     }
 
@@ -949,10 +1403,25 @@ mod tests {
     #[test]
     fn health_check_ids() {
         let mut v = microos();
-        set_at(&mut v, &["boot", "transactional", "health_check_state"], j(r#"{"last_working_btrfs_id": 258, "last_working_btrfs_id_raw": "258", "last_working_snapshot": "@/.snapshots/1/snapshot"}"#));
+        set_at(
+            &mut v,
+            &["boot", "transactional", "health_check_state"],
+            j(
+                r#"{"last_working_btrfs_id": 258, "last_working_btrfs_id_raw": "258", "last_working_snapshot": "@/.snapshots/1/snapshot"}"#,
+            ),
+        );
         let b = plan(&v, &["--repo", "/srv/repo"]);
         assert!(b.notes.iter().any(|n| n.starts_with("health-checker: /var/lib/misc/health-check.state's LAST_WORKING_BTRFS_ID=258 names @/.snapshots/1/snapshot (LAST_WORKING_SNAPSHOT), which is ID 273 here, as planned: the boot stage rewrites the ID from the path, read back with btrfs subvolume show (258 -> 273)")), "{:?}", b.notes);
-        set_at(&mut v, &["boot", "transactional", "health_check_state", "last_working_snapshot"], Value::from("@/.snapshots/9/snapshot"));
+        set_at(
+            &mut v,
+            &[
+                "boot",
+                "transactional",
+                "health_check_state",
+                "last_working_snapshot",
+            ],
+            Value::from("@/.snapshots/9/snapshot"),
+        );
         let b = plan(&v, &["--repo", "/srv/repo"]);
         assert!(b.problems.iter().any(|p| p.starts_with("health-checker: /var/lib/misc/health-check.state's LAST_WORKING_SNAPSHOT=@/.snapshots/9/snapshot isn't a subvolume in the layout")), "{:?}", b.problems);
     }
@@ -960,16 +1429,36 @@ mod tests {
     #[test]
     fn problems() {
         let mut v = microos();
-        set_at(&mut v, &["boot", "transactional", "etc"], Value::from("overlay"));
+        set_at(
+            &mut v,
+            &["boot", "transactional", "etc"],
+            Value::from("overlay"),
+        );
         let b = plan(&v, &["--repo", "/srv/repo"]);
-        assert!(b.problems.iter().any(|p| p.starts_with("transactional-update: /etc is an overlay")), "{:?}", b.problems);
+        assert!(
+            b.problems
+                .iter()
+                .any(|p| p.starts_with("transactional-update: /etc is an overlay")),
+            "{:?}",
+            b.problems
+        );
         let b = plan(&microos(), &["--repo", "/srv/repo", "--reformat", "/=xfs"]);
         assert!(b.problems.iter().any(|p| p.starts_with("transactional-update: --reformat would rewrite /etc/fstab")), "{:?}", b.problems);
         // grub.cfg searching for a filesystem the layout doesn't have.
         let mut v = microos();
-        set_at(&mut v, &["boot", "grub", "grub_cfg", "search_uuids"], j(r#"["11111111-2222-3333-4444-555555555555"]"#));
+        set_at(
+            &mut v,
+            &["boot", "grub", "grub_cfg", "search_uuids"],
+            j(r#"["11111111-2222-3333-4444-555555555555"]"#),
+        );
         let b = plan(&v, &["--repo", "/srv/repo"]);
-        assert!(b.problems.iter().any(|p| p.contains("grub.cfg searches for the filesystem 11111111-2222-3333-4444-555555555555")), "{:?}", b.problems);
+        assert!(
+            b.problems.iter().any(|p| p.contains(
+                "grub.cfg searches for the filesystem 11111111-2222-3333-4444-555555555555"
+            )),
+            "{:?}",
+            b.problems
+        );
     }
 
     /// Without boot.transactional (Tumbleweed's and Leap's writable root),
@@ -980,26 +1469,66 @@ mod tests {
     fn tumbleweed_and_leap_keep_their_arms() {
         let mut v = microos();
         set_at(&mut v, &["boot", "transactional"], Value::Null);
-        set_at(&mut v, &["storage", "fstab", "0", "options"], Value::from("defaults"));
+        set_at(
+            &mut v,
+            &["storage", "fstab", "0", "options"],
+            Value::from("defaults"),
+        );
         set_at(&mut v, &["boot", "loader", "name"], Value::from("grub"));
         let b = plan(&v, &["--repo", "/srv/repo"]);
         let bt = text(b.stage(Stage::Boot));
-        for want in ["dracut --force", "grub2-mkconfig -o /boot/grub2/grub.cfg", "setfiles", "mount --rbind"] {
+        for want in [
+            "dracut --force",
+            "grub2-mkconfig -o /boot/grub2/grub.cfg",
+            "setfiles",
+            "mount --rbind",
+        ] {
             assert!(bt.contains(want), "{want}: {bt}");
         }
-        assert!(!bt.contains("grub-snapshot.cfg") && !bt.contains("health-check.state"), "{bt}");
-        assert!(b.notes.iter().any(|n| n.starts_with("UEFI GRUB 2 through shim")), "{:?}", b.notes);
-        assert!(text(b.stage(Stage::Mount)).contains("mount -t btrfs -o defaults /dev/vdb3 /mnt/bko-target\n"));
+        assert!(
+            !bt.contains("grub-snapshot.cfg") && !bt.contains("health-check.state"),
+            "{bt}"
+        );
+        assert!(
+            b.notes
+                .iter()
+                .any(|n| n.starts_with("UEFI GRUB 2 through shim")),
+            "{:?}",
+            b.notes
+        );
+        assert!(
+            text(b.stage(Stage::Mount))
+                .contains("mount -t btrfs -o defaults /dev/vdb3 /mnt/bko-target\n")
+        );
         // Tumbleweed's systemd-boot through shim (sdbootutil).
-        set_at(&mut v, &["boot", "loader", "name"], Value::from("systemd-boot"));
+        set_at(
+            &mut v,
+            &["boot", "loader", "name"],
+            Value::from("systemd-boot"),
+        );
         let b = plan(&v, &["--repo", "/srv/repo"]);
-        assert!(b.notes.iter().any(|n| n.starts_with("systemd-boot through shim")), "{:?}", b.notes);
+        assert!(
+            b.notes
+                .iter()
+                .any(|n| n.starts_with("systemd-boot through shim")),
+            "{:?}",
+            b.notes
+        );
         assert!(text(b.stage(Stage::Boot)).contains("dracut --force"));
     }
 
     fn sh(script: &str, path: &str) -> (bool, String, String) {
-        let o = std::process::Command::new("sh").arg("-c").arg(script).env("PATH", path).output().unwrap();
-        (o.status.success(), String::from_utf8_lossy(&o.stdout).into_owned(), String::from_utf8_lossy(&o.stderr).into_owned())
+        let o = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .env("PATH", path)
+            .output()
+            .unwrap();
+        (
+            o.status.success(),
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        )
     }
 
     /// A fake `btrfs subvolume show`: a directory with a .subvol file
@@ -1011,7 +1540,11 @@ mod tests {
         std::fs::write(&f, "#!/bin/sh\n[ \"$1 $2\" = \"subvolume show\" ] && [ -f \"$3/.subvol\" ] || { echo \"ERROR: Not a Btrfs subvolume: $3\" >&2; exit 1; }\nprintf '@\\n\\tName: \\t\\t\\tx\\n\\tSubvolume ID: \\t\\t%s\\n' \"$(cat \"$3/.subvol\")\"\n").unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
-        format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default())
+        format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        )
     }
 
     const RU: &str = "a534a4d5-21d8-64fa-7aa4-eb6434980056";
@@ -1020,16 +1553,27 @@ mod tests {
     /// both slots' grub-snapshot.cfg (grub2-snapper-plugin's) and grub.cfg.
     fn grub_tree() -> (crate::testutil::Tree, String, String) {
         let t = crate::testutil::Tree::new("tu-check");
-        let cfg = format!("set btrfs_relative_path=\"y\"\nmenuentry 'openSUSE MicroOS' {{\n\tinsmod btrfs\n\tsearch --no-floppy --fs-uuid --set=root {RU}\n\tlinux\t/boot/vmlinuz-7.3.3-1-default root=UUID={RU}  ${{extra_cmdline}} quiet\n\tinitrd\t/boot/initrd-7.3.3-1-default\n}}\n");
+        let cfg = format!(
+            "set btrfs_relative_path=\"y\"\nmenuentry 'openSUSE MicroOS' {{\n\tinsmod btrfs\n\tsearch --no-floppy --fs-uuid --set=root {RU}\n\tlinux\t/boot/vmlinuz-7.3.3-1-default root=UUID={RU}  ${{extra_cmdline}} quiet\n\tinitrd\t/boot/initrd-7.3.3-1-default\n}}\n"
+        );
         t.file("/t/boot/efi/EFI/BOOT/grub.cfg", format!("set btrfs_relative_path=\"yes\"\nsearch --no-floppy --fs-uuid --set=root {RU}\nset prefix=(${{root}})/boot/grub2\nsource \"${{prefix}}/grub.cfg\"\n"));
         t.file("/t/boot/grub2/grub.cfg", &cfg);
         for n in [1, 2] {
-            t.file(&format!("/t/.snapshots/{n}/snapshot/boot/grub2/grub.cfg"), &cfg);
+            t.file(
+                &format!("/t/.snapshots/{n}/snapshot/boot/grub2/grub.cfg"),
+                &cfg,
+            );
             t.file(&format!("/t/.snapshots/{n}/grub-snapshot.cfg"), format!("\n  if [ -f \"/.snapshots/{n}/snapshot/boot/grub2/grub.cfg\" ]; then\n    snapshot_found=true\n    menuentry  \" openSUSE MicroOS  (7.3.3-1,2026-11-14T11:34,Snapshot Update of #1)\" \"/.snapshots/{n}/snapshot\" \"/@/.snapshots/{n}/snapshot\" {{\n        btrfs_subvol=\"$3\"\n        configfile \"$2/boot/grub2/grub.cfg\"\n      }}\n  fi\n"));
-            t.file(&format!("/top/@/.snapshots/{n}/snapshot/.subvol"), (267 + n).to_string());
+            t.file(
+                &format!("/top/@/.snapshots/{n}/snapshot/.subvol"),
+                (267 + n).to_string(),
+            );
         }
         t.file("/t/.snapshots/grub-snapshot.cfg", "if [ -z \"$extra_cmdline\" ]; then\n  submenu  \"Start bootloader from a read-only snapshot\" {\n    source \"/.snapshots/2/grub-snapshot.cfg\"\n  }\nfi\n");
-        let (tt, top) = (t.p("/t").display().to_string(), t.p("/top").display().to_string());
+        let (tt, top) = (
+            t.p("/t").display().to_string(),
+            t.p("/top").display().to_string(),
+        );
         (t, tt, top)
     }
 
@@ -1038,14 +1582,33 @@ mod tests {
         let (t, tt, top) = grub_tree();
         let path = fake_btrfs(&t);
         let kept = vec!["BC00-0001".to_string(), RU.to_uppercase()];
-        let script = check_script(&tt, &top, "grub", &kept).replace(&format!("{RUN_DIR}/"), &format!("{}/", t.p("/").display()));
+        let script = check_script(&tt, &top, "grub", &kept)
+            .replace(&format!("{RUN_DIR}/"), &format!("{}/", t.p("/").display()));
         let (ok, out, err) = sh(&script, &path);
         assert!(ok, "{out}{err}");
-        assert!(out.contains("transactional: grub: 2 snapshot entries lead to restored kernels and subvolumes") && err.is_empty(), "{out}{err}");
+        assert!(
+            out.contains(
+                "transactional: grub: 2 snapshot entries lead to restored kernels and subvolumes"
+            ) && err.is_empty(),
+            "{out}{err}"
+        );
         // Another UUID (once per file), a slot's grub.cfg gone, a slot not
         // a subvolume, no grub.cfg at all.
-        let (ok, _, err) = sh(&check_script(&tt, &top, "grub", &["bc00-0001".to_string()]).replace(&format!("{RUN_DIR}/"), &format!("{}/", t.p("/").display())), &path);
-        assert!(!ok && err.matches("boot/grub2/grub.cfg names the filesystem").count() == 3 && err.contains(&format!("boot/efi/EFI/BOOT/grub.cfg names the filesystem {RU}, which load doesn't make")), "{err}");
+        let (ok, _, err) = sh(
+            &check_script(&tt, &top, "grub", &["bc00-0001".to_string()])
+                .replace(&format!("{RUN_DIR}/"), &format!("{}/", t.p("/").display())),
+            &path,
+        );
+        assert!(
+            !ok && err
+                .matches("boot/grub2/grub.cfg names the filesystem")
+                .count()
+                == 3
+                && err.contains(&format!(
+                    "boot/efi/EFI/BOOT/grub.cfg names the filesystem {RU}, which load doesn't make"
+                )),
+            "{err}"
+        );
         std::fs::remove_file(t.p("/t/.snapshots/1/snapshot/boot/grub2/grub.cfg")).unwrap();
         std::fs::remove_file(t.p("/top/@/.snapshots/2/snapshot/.subvol")).unwrap();
         std::fs::remove_file(t.p("/t/boot/grub2/grub.cfg")).unwrap();
@@ -1068,41 +1631,94 @@ mod tests {
     fn bls_check_runs() {
         let t = crate::testutil::Tree::new("tu-bls");
         let lu = "c0000000-1111-2222-3333-444444444444";
-        let e = |n: u32| format!("title Aeon 20261111\nversion {n}_7.3.3-1-default\nsort-key aeon\noptions root=/dev/mapper/aeon_root root=UUID={RU} rd.luks.uuid=luks-{lu} rootflags=subvol=@/.snapshots/{n}/snapshot quiet\nlinux /aeon/7.3.3-1-default/linux-abc\ninitrd /aeon/7.3.3-1-default/initrd-{n}\n");
-        t.file("/t/boot/efi/loader/entries/aeon-7.3.3-1-default-1.conf", e(1)).file("/t/boot/efi/loader/entries/aeon-7.3.3-1-default-2+3.conf", e(2));
-        t.file("/t/boot/efi/aeon/7.3.3-1-default/linux-abc", "k").file("/t/boot/efi/aeon/7.3.3-1-default/initrd-1", "i").file("/t/boot/efi/aeon/7.3.3-1-default/initrd-2", "i");
-        t.file("/top/@/.snapshots/1/snapshot/.subvol", "258").file("/top/@/.snapshots/2/snapshot/.subvol", "269");
+        let e = |n: u32| {
+            format!(
+                "title Aeon 20261111\nversion {n}_7.3.3-1-default\nsort-key aeon\noptions root=/dev/mapper/aeon_root root=UUID={RU} rd.luks.uuid=luks-{lu} rootflags=subvol=@/.snapshots/{n}/snapshot quiet\nlinux /aeon/7.3.3-1-default/linux-abc\ninitrd /aeon/7.3.3-1-default/initrd-{n}\n"
+            )
+        };
+        t.file(
+            "/t/boot/efi/loader/entries/aeon-7.3.3-1-default-1.conf",
+            e(1),
+        )
+        .file(
+            "/t/boot/efi/loader/entries/aeon-7.3.3-1-default-2+3.conf",
+            e(2),
+        );
+        t.file("/t/boot/efi/aeon/7.3.3-1-default/linux-abc", "k")
+            .file("/t/boot/efi/aeon/7.3.3-1-default/initrd-1", "i")
+            .file("/t/boot/efi/aeon/7.3.3-1-default/initrd-2", "i");
+        t.file("/top/@/.snapshots/1/snapshot/.subvol", "258")
+            .file("/top/@/.snapshots/2/snapshot/.subvol", "269");
         for n in [1, 2] {
-            std::fs::create_dir_all(t.p(&format!("/top/@/.snapshots/{n}/snapshot/usr/lib/modules/7.3.3-1-default"))).unwrap();
+            std::fs::create_dir_all(t.p(&format!(
+                "/top/@/.snapshots/{n}/snapshot/usr/lib/modules/7.3.3-1-default"
+            )))
+            .unwrap();
         }
         let path = fake_btrfs(&t);
-        let (tt, top) = (t.p("/t").display().to_string(), t.p("/top").display().to_string());
+        let (tt, top) = (
+            t.p("/t").display().to_string(),
+            t.p("/top").display().to_string(),
+        );
         let (s1, s2) = ("@/.snapshots/1/snapshot", "@/.snapshots/2/snapshot");
-        let (ok, out, err) = sh(&check_script(&tt, &top, "bls", &[RU.into(), lu.into()]), &path);
-        assert!(ok && out.contains("transactional: bls: 2 snapshot entries") && err.is_empty(), "{out}{err}");
+        let (ok, out, err) = sh(
+            &check_script(&tt, &top, "bls", &[RU.into(), lu.into()]),
+            &path,
+        );
+        assert!(
+            ok && out.contains("transactional: bls: 2 snapshot entries") && err.is_empty(),
+            "{out}{err}"
+        );
         let slots = |d: &str, b: &str| sh(&bls_slots_script(&tt, &top, d, b), &path);
         let (ok, out, err) = slots(s1, s1);
-        assert!(ok && out.contains("the default slot @/.snapshots/1/snapshot is booted by aeon-7.3.3-1-default-1\n") && out.contains("each entry's kernel has its modules") && err.is_empty(), "{out}{err}");
+        assert!(
+            ok && out.contains(
+                "the default slot @/.snapshots/1/snapshot is booted by aeon-7.3.3-1-default-1\n"
+            ) && out.contains("each entry's kernel has its modules")
+                && err.is_empty(),
+            "{out}{err}"
+        );
         // The default (and booted) slot's entry still counting: matched with
         // its counter stripped.
         let (ok, out, err) = slots(&format!("/{s2}"), s2);
-        assert!(ok && out.contains("the default slot @/.snapshots/2/snapshot is booted by aeon-7.3.3-1-default-2\n") && err.is_empty(), "{out}{err}");
+        assert!(
+            ok && out.contains(
+                "the default slot @/.snapshots/2/snapshot is booted by aeon-7.3.3-1-default-2\n"
+            ) && err.is_empty(),
+            "{out}{err}"
+        );
         // No entry boots the default slot: a mismatch; none for the booted
         // one only said.
         let (ok, _, err) = slots("@/.snapshots/3/snapshot", "@/.snapshots/4/snapshot");
         assert!(!ok && err.contains("transactional: no BLS entry on the restored ESP boots the default slot @/.snapshots/3/snapshot") && err.contains("transactional: 1 mismatches between the restored BLS entries and slots"), "{err}");
         assert!(err.contains("transactional: bls: no BLS entry on the restored ESP boots @/.snapshots/4/snapshot, the slot the source had booted"), "{err}");
         let (ok, _, err) = slots(s1, "@/.snapshots/4/snapshot");
-        assert!(ok && err.contains("no BLS entry on the restored ESP boots @/.snapshots/4/snapshot"), "{err}");
+        assert!(
+            ok && err.contains("no BLS entry on the restored ESP boots @/.snapshots/4/snapshot"),
+            "{err}"
+        );
         // Slot 2 without its kernel's modules (the ESP's kernel isn't its).
-        std::fs::remove_dir(t.p("/top/@/.snapshots/2/snapshot/usr/lib/modules/7.3.3-1-default")).unwrap();
+        std::fs::remove_dir(t.p("/top/@/.snapshots/2/snapshot/usr/lib/modules/7.3.3-1-default"))
+            .unwrap();
         let (ok, _, err) = slots(s1, s1);
         assert!(!ok && err.contains("aeon-7.3.3-1-default-2+3.conf: its kernel is 7.3.3-1-default (linux /.../7.3.3-1-default/linux-*), and @/.snapshots/2/snapshot has no usr/lib/modules/7.3.3-1-default") && err.contains("transactional: 1 mismatches"), "{err}");
         // A kernel outside sdbootutil's /DIR/KVER/ (no KVER to tell): not checked.
-        t.file("/t/boot/efi/loader/entries/aeon-7.3.3-1-default-2+3.conf", e(2).replace("linux /aeon/7.3.3-1-default/linux-abc", "linux /vmlinuz-7.3.3-1-default"));
+        t.file(
+            "/t/boot/efi/loader/entries/aeon-7.3.3-1-default-2+3.conf",
+            e(2).replace(
+                "linux /aeon/7.3.3-1-default/linux-abc",
+                "linux /vmlinuz-7.3.3-1-default",
+            ),
+        );
         assert!(slots(s1, s1).0);
-        t.file("/t/boot/efi/loader/entries/aeon-7.3.3-1-default-2+3.conf", e(2));
-        std::fs::create_dir_all(t.p("/top/@/.snapshots/2/snapshot/usr/lib/modules/7.3.3-1-default")).unwrap();
+        t.file(
+            "/t/boot/efi/loader/entries/aeon-7.3.3-1-default-2+3.conf",
+            e(2),
+        );
+        std::fs::create_dir_all(
+            t.p("/top/@/.snapshots/2/snapshot/usr/lib/modules/7.3.3-1-default"),
+        )
+        .unwrap();
         // An initrd gone, a slot gone, the LUKS UUID not kept.
         std::fs::remove_file(t.p("/t/boot/efi/aeon/7.3.3-1-default/initrd-2")).unwrap();
         std::fs::remove_file(t.p("/top/@/.snapshots/1/snapshot/.subvol")).unwrap();
@@ -1111,17 +1727,32 @@ mod tests {
         for want in [
             "aeon-7.3.3-1-default-2+3.conf: /aeon/7.3.3-1-default/initrd-2 isn't on the restored ESP",
             "aeon-7.3.3-1-default-1.conf: rootflags=subvol=@/.snapshots/1/snapshot isn't a subvolume of the restored filesystem",
-            &format!("boot/efi/loader/entries/aeon-7.3.3-1-default-1.conf names the filesystem {lu}, which load doesn't make"),
+            &format!(
+                "boot/efi/loader/entries/aeon-7.3.3-1-default-1.conf names the filesystem {lu}, which load doesn't make"
+            ),
             "transactional: 4 mismatches",
         ] {
             assert!(err.contains(want), "{want}: {err}");
         }
         // No entries at all.
         let empty = crate::testutil::Tree::new("tu-bls-none");
-        let (ok, _, err) = sh(&check_script(&empty.p("/").display().to_string(), &top, "bls", &[]), &path);
-        assert!(!ok && err.contains("boot/efi/loader/entries isn't on the restored ESP") && err.contains("no BLS entry"), "{err}");
-        let (ok, _, err) = sh(&bls_slots_script(&empty.p("/").display().to_string(), &top, s1, s1), &path);
-        assert!(!ok && err.contains("boots the default slot @/.snapshots/1/snapshot"), "{err}");
+        let (ok, _, err) = sh(
+            &check_script(&empty.p("/").display().to_string(), &top, "bls", &[]),
+            &path,
+        );
+        assert!(
+            !ok && err.contains("boot/efi/loader/entries isn't on the restored ESP")
+                && err.contains("no BLS entry"),
+            "{err}"
+        );
+        let (ok, _, err) = sh(
+            &bls_slots_script(&empty.p("/").display().to_string(), &top, s1, s1),
+            &path,
+        );
+        assert!(
+            !ok && err.contains("boots the default slot @/.snapshots/1/snapshot"),
+            "{err}"
+        );
     }
 
     /// The ID rewritten from the path, the rest of the file byte for byte
@@ -1131,29 +1762,52 @@ mod tests {
     fn health_check_rewrite_runs() {
         let t = crate::testutil::Tree::new("tu-hc");
         let f = crate::transactional::HC_STATE;
-        t.file(&format!("/t{f}"), "LAST_WORKING_BTRFS_ID=269\nLAST_WORKING_SNAPSHOT=@/.snapshots/2/snapshot\nX=y");
+        t.file(
+            &format!("/t{f}"),
+            "LAST_WORKING_BTRFS_ID=269\nLAST_WORKING_SNAPSHOT=@/.snapshots/2/snapshot\nX=y",
+        );
         t.file("/top/@/.snapshots/2/snapshot/.subvol", "281");
         std::fs::create_dir_all(t.p("/run")).unwrap();
         let path = fake_btrfs(&t);
-        let (tt, top) = (t.p("/t").display().to_string(), t.p("/top").display().to_string());
-        let script = hc_script(&tt, &top).replace(&format!("{RUN_DIR}/"), &format!("{}/", t.p("/run").display()));
+        let (tt, top) = (
+            t.p("/t").display().to_string(),
+            t.p("/top").display().to_string(),
+        );
+        let script = hc_script(&tt, &top).replace(
+            &format!("{RUN_DIR}/"),
+            &format!("{}/", t.p("/run").display()),
+        );
         let file = t.p(&format!("/t{f}"));
         let mtime = |p: &std::path::Path| std::fs::metadata(p).unwrap().modified().unwrap();
         let before = mtime(&file);
         std::thread::sleep(std::time::Duration::from_millis(20));
         let (ok, out, err) = sh(&script, &path);
         assert!(ok, "{out}{err}");
-        assert!(out.contains("LAST_WORKING_BTRFS_ID 269 -> 281 (@/.snapshots/2/snapshot's ID here)"), "{out}");
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), "LAST_WORKING_BTRFS_ID=281\nLAST_WORKING_SNAPSHOT=@/.snapshots/2/snapshot\nX=y");
+        assert!(
+            out.contains("LAST_WORKING_BTRFS_ID 269 -> 281 (@/.snapshots/2/snapshot's ID here)"),
+            "{out}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "LAST_WORKING_BTRFS_ID=281\nLAST_WORKING_SNAPSHOT=@/.snapshots/2/snapshot\nX=y"
+        );
         assert_eq!(mtime(&file), before);
         let (ok, out, _) = sh(&script, &path);
-        assert!(ok && out.contains("LAST_WORKING_BTRFS_ID=281 is @/.snapshots/2/snapshot's ID here too; kept"), "{out}");
+        assert!(
+            ok && out.contains(
+                "LAST_WORKING_BTRFS_ID=281 is @/.snapshots/2/snapshot's ID here too; kept"
+            ),
+            "{out}"
+        );
         std::fs::remove_file(t.p("/top/@/.snapshots/2/snapshot/.subvol")).unwrap();
         let (ok, _, err) = sh(&script, &path);
         assert!(!ok && err.contains("LAST_WORKING_SNAPSHOT=@/.snapshots/2/snapshot isn't a subvolume of the restored filesystem"), "{err}");
         std::fs::remove_file(&file).unwrap();
         let (ok, _, err) = sh(&script, &path);
-        assert!(!ok && err.contains("health-check.state isn't in the restored /var"), "{err}");
+        assert!(
+            !ok && err.contains("health-check.state isn't in the restored /var"),
+            "{err}"
+        );
     }
 
     /// The aeon guest's layout, SYNTHETIC: tests/fixtures/aeon-synthetic.json
@@ -1187,29 +1841,92 @@ mod tests {
     fn aeon_plan() {
         let v = aeon();
         assert_eq!(booted_root(&v).as_deref(), Some("@/.snapshots/1/snapshot"));
-        let b = plan(&v, &["--repo", "/srv/repo", "--key-file", "aeon_root=/run/pw"]);
+        let b = plan(
+            &v,
+            &["--repo", "/srv/repo", "--key-file", "aeon_root=/run/pw"],
+        );
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let n = &b.notes;
-        assert!(has(n, "transactional-update: nothing is regenerated in a snapshot"), "{n:?}");
-        assert!(!has(n, "systemd-boot through shim") && !has(n, "an update was pending"), "{n:?}");
-        assert!(has(n, "health-checker: on the BLS path (systemd-boot with sdbootutil) the source has no /var/lib/misc/health-check.state and keeps no subvolume IDs"), "{n:?}");
-        assert!(has(n, "what the boot stage writes into the restored root: /var/log/bko-holt (this restore's log), both in @/var"), "{n:?}");
+        assert!(
+            has(
+                n,
+                "transactional-update: nothing is regenerated in a snapshot"
+            ),
+            "{n:?}"
+        );
+        assert!(
+            !has(n, "systemd-boot through shim") && !has(n, "an update was pending"),
+            "{n:?}"
+        );
+        assert!(
+            has(
+                n,
+                "health-checker: on the BLS path (systemd-boot with sdbootutil) the source has no /var/lib/misc/health-check.state and keeps no subvolume IDs"
+            ),
+            "{n:?}"
+        );
+        assert!(
+            has(
+                n,
+                "what the boot stage writes into the restored root: /var/log/bko-holt (this restore's log), both in @/var"
+            ),
+            "{n:?}"
+        );
         assert!(!has(n, "boot counting"), "{n:?}");
-        assert!(has(n, "systemd-boot (sdbootutil): its default entry is the EFI variable LoaderEntryDefault (the source had none set), which `sdbootutil set-default-snapshot` sets and load doesn't restore; the same machine's firmware keeps it, but on a new machine (or any whose NVRAM lacks it; --no-nvram writes none either) it boots the entry it sorts first, aeon-7.3.3-1-default-1.conf, which boots the default slot (snapshot 1), as on the source"), "{n:?}");
-        assert!(has(n, "LUKS2 on vda2 (luks-root-x86-64) has a systemd-tpm2 token and a systemd-recovery one, and the dump didn't keep its header (dump's default): load makes a new one (the same UUID, label and cipher), so TPM2 unlocking and the recovery key are not restored, and the passphrase load gives it (--key-file aeon_root=FILE, or typed) is its only key until `sdbootutil enroll --method=tpm2` (and `--method=recovery-key`) is run on the restored system; to keep them, dump with --keep-luks-header vda2"), "{n:?}");
-        assert!(has(n, "fde-tools and sdbootutil: /etc/sysconfig/fde-tools and /etc/kernel/cmdline, entry-token and tries come back as they were"), "{n:?}");
-        assert!(has(n, "LUKS2 on /dev/vdb2: every keyslot of the source is a token's"), "{n:?}");
+        assert!(
+            has(
+                n,
+                "systemd-boot (sdbootutil): its default entry is the EFI variable LoaderEntryDefault (the source had none set), which `sdbootutil set-default-snapshot` sets and load doesn't restore; the same machine's firmware keeps it, but on a new machine (or any whose NVRAM lacks it; --no-nvram writes none either) it boots the entry it sorts first, aeon-7.3.3-1-default-1.conf, which boots the default slot (snapshot 1), as on the source"
+            ),
+            "{n:?}"
+        );
+        assert!(
+            has(
+                n,
+                "LUKS2 on vda2 (luks-root-x86-64) has a systemd-tpm2 token and a systemd-recovery one, and the dump didn't keep its header (dump's default): load makes a new one (the same UUID, label and cipher), so TPM2 unlocking and the recovery key are not restored, and the passphrase load gives it (--key-file aeon_root=FILE, or typed) is its only key until `sdbootutil enroll --method=tpm2` (and `--method=recovery-key`) is run on the restored system; to keep them, dump with --keep-luks-header vda2"
+            ),
+            "{n:?}"
+        );
+        assert!(
+            has(
+                n,
+                "fde-tools and sdbootutil: /etc/sysconfig/fde-tools and /etc/kernel/cmdline, entry-token and tries come back as they were"
+            ),
+            "{n:?}"
+        );
+        assert!(
+            has(
+                n,
+                "LUKS2 on /dev/vdb2: every keyslot of the source is a token's"
+            ),
+            "{n:?}"
+        );
         // LUKS2 anew: the source's UUID, label and cipher; the passphrase's
         // keyslot not with the token slots' PBKDF2 at 1000 iterations.
         let asm = text(b.stage(Stage::Assemble));
-        let fmt = asm.lines().find(|l| l.starts_with("cryptsetup luksFormat")).unwrap_or_else(|| panic!("{asm}"));
-        for want in ["--type=luks2", "--cipher=aes-xts-plain64", "--key-size=512", "--offset=32768", "--label=luks-root-x86-64", "--uuid=bc000000-0000-4000-8000-000000000004", "--key-file=/run/pw", "/dev/vdb2"] {
+        let fmt = asm
+            .lines()
+            .find(|l| l.starts_with("cryptsetup luksFormat"))
+            .unwrap_or_else(|| panic!("{asm}"));
+        for want in [
+            "--type=luks2",
+            "--cipher=aes-xts-plain64",
+            "--key-size=512",
+            "--offset=32768",
+            "--label=luks-root-x86-64",
+            "--uuid=bc000000-0000-4000-8000-000000000004",
+            "--key-file=/run/pw",
+            "/dev/vdb2",
+        ] {
             assert!(fmt.contains(want), "{want}: {fmt}");
         }
         for no in ["--pbkdf", "1000", "sha512"] {
             assert!(!fmt.contains(no), "{no}: {fmt}");
         }
-        assert!(asm.contains("cryptsetup open --key-file=/run/pw /dev/vdb2 aeon_root\n"), "{asm}");
+        assert!(
+            asm.contains("cryptsetup open --key-file=/run/pw /dev/vdb2 aeon_root\n"),
+            "{asm}"
+        );
         assert!(!asm.contains("luksHeaderRestore"), "{asm}");
         // / is slot 1, named, on the opened container; ro=vfs left out.
         let m = text(b.stage(Stage::Mount));
@@ -1219,28 +1936,103 @@ mod tests {
         // default and booted slot; the NVRAM entry for shim; no BIOS GRUB,
         // no health-check.state.
         let bt = text(b.stage(Stage::Boot));
-        let run: String = bt.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("\n");
-        for no in ["chroot", "dracut", "mkinitrd", "grub2-mkconfig", "grub2-install", "grub-install", "shim-install", "sdbootutil", "bootctl", "setfiles", "restorecon", "--rbind", "grub-bios-setup", "health-check.state", "luksAddKey", "cryptenroll"] {
+        let run: String = bt
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for no in [
+            "chroot",
+            "dracut",
+            "mkinitrd",
+            "grub2-mkconfig",
+            "grub2-install",
+            "grub-install",
+            "shim-install",
+            "sdbootutil",
+            "bootctl",
+            "setfiles",
+            "restorecon",
+            "--rbind",
+            "grub-bios-setup",
+            "health-check.state",
+            "luksAddKey",
+            "cryptenroll",
+        ] {
             assert!(!run.contains(no), "{no}: {bt}");
         }
         let t = format!("{RUN_DIR}/btrfs/{AEON_FS}");
-        let mount = pos(&bt, &format!("mount -t btrfs -o subvolid=5,noatime /dev/mapper/aeon_root {t}\n"));
+        let mount = pos(
+            &bt,
+            &format!("mount -t btrfs -o subvolid=5,noatime /dev/mapper/aeon_root {t}\n"),
+        );
         let check = pos(&bt, "if [ bls = bls ]; then");
-        let slots = pos(&bt, "def=@/.snapshots/1/snapshot; boot=@/.snapshots/1/snapshot;");
-        assert!(check < slots && bt[slots..].contains("usr/lib/modules/$kv"), "{bt}");
-        assert!(bt.contains(&format!("kept='\\'' bc00-0001 bc000000-0000-4000-8000-000000000004 {AEON_FS} '\\''")), "{bt}");
-        let efi = pos(&bt, "--label 'Aeon Boot Manager' --loader '\\EFI\\systemd\\shim.efi'");
-        let ro = pos(&bt, &format!("btrfs property set -ts {t}/@/.snapshots/1/snapshot ro true\n"));
+        let slots = pos(
+            &bt,
+            "def=@/.snapshots/1/snapshot; boot=@/.snapshots/1/snapshot;",
+        );
+        assert!(
+            check < slots && bt[slots..].contains("usr/lib/modules/$kv"),
+            "{bt}"
+        );
+        assert!(
+            bt.contains(&format!(
+                "kept='\\'' bc00-0001 bc000000-0000-4000-8000-000000000004 {AEON_FS} '\\''"
+            )),
+            "{bt}"
+        );
+        let efi = pos(
+            &bt,
+            "--label 'Aeon Boot Manager' --loader '\\EFI\\systemd\\shim.efi'",
+        );
+        let ro = pos(
+            &bt,
+            &format!("btrfs property set -ts {t}/@/.snapshots/1/snapshot ro true\n"),
+        );
         assert!(mount < check && slots < efi && efi < ro, "{bt}");
         // --no-nvram: no entry made, the same note.
-        let b = plan(&v, &["--repo", "/srv/repo", "--key-file", "aeon_root=/run/pw", "--no-nvram"]);
-        assert!(!text(b.stage(Stage::Boot)).contains("efibootmgr") && has(&b.notes, "--no-nvram writes none either"), "{:?}", b.notes);
+        let b = plan(
+            &v,
+            &[
+                "--repo",
+                "/srv/repo",
+                "--key-file",
+                "aeon_root=/run/pw",
+                "--no-nvram",
+            ],
+        );
+        assert!(
+            !text(b.stage(Stage::Boot)).contains("efibootmgr")
+                && has(&b.notes, "--no-nvram writes none either"),
+            "{:?}",
+            b.notes
+        );
         // A health-check.state on the BLS path after all: rewritten as on GRUB.
         let mut v2 = v.clone();
-        set_at(&mut v2, &["boot", "transactional", "health_check_state"], j(r#"{"last_working_btrfs_id": 258, "last_working_btrfs_id_raw": "258", "last_working_snapshot": "@/.snapshots/1/snapshot"}"#));
-        let b2 = plan(&v2, &["--repo", "/srv/repo", "--key-file", "aeon_root=/run/pw"]);
-        assert!(!has(&b2.notes, "health-checker: on the BLS path") && has(&b2.notes, "LAST_WORKING_BTRFS_ID=258 names @/.snapshots/1/snapshot"), "{:?}", b2.notes);
-        assert!(text(b2.stage(Stage::Boot)).contains("f=/mnt/bko-target/var/lib/misc/health-check.state"));
+        set_at(
+            &mut v2,
+            &["boot", "transactional", "health_check_state"],
+            j(
+                r#"{"last_working_btrfs_id": 258, "last_working_btrfs_id_raw": "258", "last_working_snapshot": "@/.snapshots/1/snapshot"}"#,
+            ),
+        );
+        let b2 = plan(
+            &v2,
+            &["--repo", "/srv/repo", "--key-file", "aeon_root=/run/pw"],
+        );
+        assert!(
+            !has(&b2.notes, "health-checker: on the BLS path")
+                && has(
+                    &b2.notes,
+                    "LAST_WORKING_BTRFS_ID=258 names @/.snapshots/1/snapshot"
+                ),
+            "{:?}",
+            b2.notes
+        );
+        assert!(
+            text(b2.stage(Stage::Boot))
+                .contains("f=/mnt/bko-target/var/lib/misc/health-check.state")
+        );
     }
 
     /// The same layout, not transactional (boot.transactional gone, / in
@@ -1250,10 +2042,21 @@ mod tests {
     fn aeon_before_the_via_shim_arm() {
         let mut v = aeon();
         set_at(&mut v, &["boot", "transactional"], Value::Null);
-        set_at(&mut v, &["storage", "fstab", "0", "options"], Value::from("compress=zstd:1"));
-        let b = plan(&v, &["--repo", "/srv/repo", "--key-file", "aeon_root=/run/pw"]);
+        set_at(
+            &mut v,
+            &["storage", "fstab", "0", "options"],
+            Value::from("compress=zstd:1"),
+        );
+        let b = plan(
+            &v,
+            &["--repo", "/srv/repo", "--key-file", "aeon_root=/run/pw"],
+        );
         assert!(has(&b.notes, "systemd-boot through shim"), "{:?}", b.notes);
-        assert!(!has(&b.notes, "transactional-update") && !has(&b.notes, "LoaderEntryDefault"), "{:?}", b.notes);
+        assert!(
+            !has(&b.notes, "transactional-update") && !has(&b.notes, "LoaderEntryDefault"),
+            "{:?}",
+            b.notes
+        );
         assert!(!text(b.stage(Stage::Boot)).contains("if [ bls = bls ]"));
     }
 
@@ -1277,18 +2080,71 @@ mod tests {
                 crate::bytes::sha256_hex(&hdr)
             )),
         );
-        let b = plan(&v, &["--repo", "/srv/repo", "--luks-header-dir", &hdir, "--key-file", "aeon_root=/run/recovery-key"]);
+        let b = plan(
+            &v,
+            &[
+                "--repo",
+                "/srv/repo",
+                "--luks-header-dir",
+                &hdir,
+                "--key-file",
+                "aeon_root=/run/recovery-key",
+            ],
+        );
         assert!(b.problems.is_empty(), "{:?}", b.problems);
-        assert!(has(&b.notes, "LUKS2 on vda2 (luks-root-x86-64) has a systemd-tpm2 token and a systemd-recovery one, and the dump kept its header: the restored disk has the source's LUKS2 header, its volume key, recovery keyslot and tokens. The TPM2 token is sealed to the source machine's TPM (systemd-pcrlock; PCRs 4,5,7,9, FDE_SEAL_PCR_LIST in /etc/sysconfig/fde-tools): on a new machine, or after a change in the measured boot chain (PCR 5 measures the partition table), it doesn't unseal"), "{:?}", b.notes);
-        assert!(has(&b.notes, "`sdbootutil unenroll --method=tpm2`, then `sdbootutil enroll --method=tpm2`. load's --key-file aeon_root=FILE opens it with a key it already has: the recovery key as typed (its dashes too), without a newline"), "{:?}", b.notes);
-        assert!(!has(&b.notes, "didn't keep its header") && !has(&b.notes, "every keyslot of the source is a token's"), "{:?}", b.notes);
+        assert!(
+            has(
+                &b.notes,
+                "LUKS2 on vda2 (luks-root-x86-64) has a systemd-tpm2 token and a systemd-recovery one, and the dump kept its header: the restored disk has the source's LUKS2 header, its volume key, recovery keyslot and tokens. The TPM2 token is sealed to the source machine's TPM (systemd-pcrlock; PCRs 4,5,7,9, FDE_SEAL_PCR_LIST in /etc/sysconfig/fde-tools): on a new machine, or after a change in the measured boot chain (PCR 5 measures the partition table), it doesn't unseal"
+            ),
+            "{:?}",
+            b.notes
+        );
+        assert!(
+            has(
+                &b.notes,
+                "`sdbootutil unenroll --method=tpm2`, then `sdbootutil enroll --method=tpm2`. load's --key-file aeon_root=FILE opens it with a key it already has: the recovery key as typed (its dashes too), without a newline"
+            ),
+            "{:?}",
+            b.notes
+        );
+        assert!(
+            !has(&b.notes, "didn't keep its header")
+                && !has(&b.notes, "every keyslot of the source is a token's"),
+            "{:?}",
+            b.notes
+        );
         let asm = text(b.stage(Stage::Assemble));
         assert!(asm.contains(&format!("cryptsetup luksHeaderRestore --batch-mode /dev/vdb2 --header-backup-file {hdir}/{file}\n")), "{asm}");
-        assert!(asm.contains("cryptsetup open --key-file=/run/recovery-key /dev/vdb2 aeon_root\n"), "{asm}");
-        let cmds: String = asm.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("\n");
-        assert!(!cmds.contains("luksFormat") && !cmds.contains("luksAddKey"), "{asm}");
+        assert!(
+            asm.contains("cryptsetup open --key-file=/run/recovery-key /dev/vdb2 aeon_root\n"),
+            "{asm}"
+        );
+        let cmds: String = asm
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !cmds.contains("luksFormat") && !cmds.contains("luksAddKey"),
+            "{asm}"
+        );
         // Its label names it too.
-        assert!(plan(&v, &["--repo", "/srv/repo", "--luks-header-dir", &hdir, "--key-file", "luks-root-x86-64=/run/rk"]).problems.is_empty());
+        assert!(
+            plan(
+                &v,
+                &[
+                    "--repo",
+                    "/srv/repo",
+                    "--luks-header-dir",
+                    &hdir,
+                    "--key-file",
+                    "luks-root-x86-64=/run/rk"
+                ]
+            )
+            .problems
+            .is_empty()
+        );
         let p = plan(&v, &["--repo", "/srv/repo", "--luks-header-dir", &hdir]).problems;
         assert!(p.iter().any(|x| x.contains("vda2: its LUKS2 header is kept, so it opens only with a key it already has: give --key-file luks-root-x86-64=FILE")), "{p:?}");
     }
@@ -1298,26 +2154,71 @@ mod tests {
     /// the default), 1 booted.
     fn aeon_slots(default: u64) -> Value {
         let mut v = aeon();
-        let (u1, u1e) = (uuid_of(&v, "@/.snapshots/1/snapshot"), uuid_of(&v, "@/.snapshots/1/snapshot/etc"));
+        let (u1, u1e) = (
+            uuid_of(&v, "@/.snapshots/1/snapshot"),
+            uuid_of(&v, "@/.snapshots/1/snapshot/etc"),
+        );
         let mut subs = Vec::new();
         for (n, id) in [(2u64, 270u64), (3, 272)] {
             subs.push(format!(r#"{{"id": {id}, "gen": 300, "parent": 257, "top_level": 257, "parent_uuid": "{u1}", "uuid": "bc000000-0000-4000-8000-0000000000f{n}", "path": "<FS_TREE>/@/.snapshots/{n}/snapshot", "readonly": true, "properties": {{"ro": "true"}}}}"#));
             subs.push(format!(r#"{{"id": {}, "gen": 301, "parent": {id}, "top_level": {id}, "parent_uuid": "{u1e}", "uuid": "bc000000-0000-4000-8000-0000000000e{n}", "path": "<FS_TREE>/@/.snapshots/{n}/snapshot/etc", "readonly": false, "properties": {{"ro": "false"}}}}"#, id + 1));
         }
         with_subvolumes(&mut v, &subs.iter().map(String::as_str).collect::<Vec<_>>());
-        let did = if default == 3 { 272 } else if default == 2 { 270 } else { 258 };
-        set_at(&mut v, &["storage", "btrfs", "0", "default_subvolume"], j(&format!(r#"{{"id": {did}, "gen": 302, "top_level": 257, "path": "@/.snapshots/{default}/snapshot"}}"#)));
-        set_at(&mut v, &["boot", "transactional", "default"], j(&format!(r#"{{"path": "@/.snapshots/{default}/snapshot", "id": {did}, "snapshot": {default}}}"#)));
-        set_at(&mut v, &["boot", "transactional", "pending_update"], Value::Bool(default != 1));
-        let mut entries = v.at(&["boot", "systemd_boot", "entries"]).and_then(Value::as_array).cloned().unwrap();
-        let mut files = v.at(&["boot", "esps", "0", "contents", "files"]).and_then(Value::as_array).cloned().unwrap();
+        let did = if default == 3 {
+            272
+        } else if default == 2 {
+            270
+        } else {
+            258
+        };
+        set_at(
+            &mut v,
+            &["storage", "btrfs", "0", "default_subvolume"],
+            j(&format!(
+                r#"{{"id": {did}, "gen": 302, "top_level": 257, "path": "@/.snapshots/{default}/snapshot"}}"#
+            )),
+        );
+        set_at(
+            &mut v,
+            &["boot", "transactional", "default"],
+            j(&format!(
+                r#"{{"path": "@/.snapshots/{default}/snapshot", "id": {did}, "snapshot": {default}}}"#
+            )),
+        );
+        set_at(
+            &mut v,
+            &["boot", "transactional", "pending_update"],
+            Value::Bool(default != 1),
+        );
+        let mut entries = v
+            .at(&["boot", "systemd_boot", "entries"])
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap();
+        let mut files = v
+            .at(&["boot", "esps", "0", "contents", "files"])
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap();
         for (n, k, ctr) in [(2, "7.4.0-1-default", "+0-3"), (3, "7.4.1-1-default", "+3")] {
             entries.push(j(&format!(r#"{{"file": "aeon-{k}-{n}{ctr}.conf", "title": "Aeon 20261120 (Snapshot Update of #{})", "version": "{n}_{k}", "sort-key": "aeon", "options": "console=tty0 root=/dev/mapper/aeon_root root=UUID={AEON_FS} rootflags=subvol=@/.snapshots/{n}/snapshot", "linux": "/aeon/{k}/linux-{n}", "initrd": "/aeon/{k}/initrd-{n}"}}"#, n - 1)));
-            files.push(j(&format!(r#"{{"path": "aeon/{k}/linux-{n}", "size": 1}}"#)));
-            files.push(j(&format!(r#"{{"path": "aeon/{k}/initrd-{n}", "size": 1}}"#)));
+            files.push(j(&format!(
+                r#"{{"path": "aeon/{k}/linux-{n}", "size": 1}}"#
+            )));
+            files.push(j(&format!(
+                r#"{{"path": "aeon/{k}/initrd-{n}", "size": 1}}"#
+            )));
         }
-        set_at(&mut v, &["boot", "systemd_boot", "entries"], Value::Arr(entries));
-        set_at(&mut v, &["boot", "esps", "0", "contents", "files"], Value::Arr(files));
+        set_at(
+            &mut v,
+            &["boot", "systemd_boot", "entries"],
+            Value::Arr(entries),
+        );
+        set_at(
+            &mut v,
+            &["boot", "esps", "0", "contents", "files"],
+            Value::Arr(files),
+        );
         v
     }
 
@@ -1328,28 +2229,85 @@ mod tests {
         let b = plan(&aeon_slots(3), &key);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let n = &b.notes;
-        assert!(has(n, "transactional-update: an update was pending on the source: its default is snapshot 3 (@/.snapshots/3/snapshot), not the booted 1"), "{n:?}");
-        assert!(has(n, "systemd-boot's boot counting: aeon-7.4.0-1-default-2+0-3.conf (0 tries left, 3 done), aeon-7.4.1-1-default-3+3.conf (3 tries left, 0 done) come back as restored"), "{n:?}");
-        assert!(has(n, "it boots the entry it sorts first, aeon-7.4.1-1-default-3+3.conf, which boots the default slot (snapshot 3), as on the source"), "{n:?}");
-        assert!(!has(n, "has no tries left") && !has(n, "the slot the source had booted"), "{n:?}");
+        assert!(
+            has(
+                n,
+                "transactional-update: an update was pending on the source: its default is snapshot 3 (@/.snapshots/3/snapshot), not the booted 1"
+            ),
+            "{n:?}"
+        );
+        assert!(
+            has(
+                n,
+                "systemd-boot's boot counting: aeon-7.4.0-1-default-2+0-3.conf (0 tries left, 3 done), aeon-7.4.1-1-default-3+3.conf (3 tries left, 0 done) come back as restored"
+            ),
+            "{n:?}"
+        );
+        assert!(
+            has(
+                n,
+                "it boots the entry it sorts first, aeon-7.4.1-1-default-3+3.conf, which boots the default slot (snapshot 3), as on the source"
+            ),
+            "{n:?}"
+        );
+        assert!(
+            !has(n, "has no tries left") && !has(n, "the slot the source had booted"),
+            "{n:?}"
+        );
         let bt = text(b.stage(Stage::Boot));
-        assert!(bt.contains("def=@/.snapshots/3/snapshot; boot=@/.snapshots/1/snapshot;"), "{bt}");
+        assert!(
+            bt.contains("def=@/.snapshots/3/snapshot; boot=@/.snapshots/1/snapshot;"),
+            "{bt}"
+        );
         // 2 the default, its entry out of tries: sorted last, so a new
         // machine boots 3's; the note says how to put it right.
         let b = plan(&aeon_slots(2), &key);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
         let n = &b.notes;
-        assert!(has(n, "systemd-boot: the default slot's entry aeon-7.4.0-1-default-2+0-3.conf has no tries left"), "{n:?}");
-        assert!(has(n, "it boots the entry it sorts first, aeon-7.4.1-1-default-3+3.conf, which boots snapshot 3 (@/.snapshots/3/snapshot), not the default slot: `sdbootutil set-default-snapshot 2` on the restored machine puts it right"), "{n:?}");
+        assert!(
+            has(
+                n,
+                "systemd-boot: the default slot's entry aeon-7.4.0-1-default-2+0-3.conf has no tries left"
+            ),
+            "{n:?}"
+        );
+        assert!(
+            has(
+                n,
+                "it boots the entry it sorts first, aeon-7.4.1-1-default-3+3.conf, which boots snapshot 3 (@/.snapshots/3/snapshot), not the default slot: `sdbootutil set-default-snapshot 2` on the restored machine puts it right"
+            ),
+            "{n:?}"
+        );
         // 1 the default (a rollback: sdbootutil set LoaderEntryDefault),
         // 3's entry sorted first.
         let mut v = aeon_slots(1);
-        set_at(&mut v, &["boot", "efi", "loader_interface", "loader_entry_default"], Value::from("aeon-7.3.3-1-default-1.conf"));
+        set_at(
+            &mut v,
+            &["boot", "efi", "loader_interface", "loader_entry_default"],
+            Value::from("aeon-7.3.3-1-default-1.conf"),
+        );
         let b = plan(&v, &key);
-        assert!(has(&b.notes, "LoaderEntryDefault (the source's is aeon-7.3.3-1-default-1.conf)") && has(&b.notes, "which boots snapshot 3 (@/.snapshots/3/snapshot), not the default slot: `sdbootutil set-default-snapshot 1`"), "{:?}", b.notes);
+        assert!(
+            has(
+                &b.notes,
+                "LoaderEntryDefault (the source's is aeon-7.3.3-1-default-1.conf)"
+            ) && has(
+                &b.notes,
+                "which boots snapshot 3 (@/.snapshots/3/snapshot), not the default slot: `sdbootutil set-default-snapshot 1`"
+            ),
+            "{:?}",
+            b.notes
+        );
         // loader.conf's default instead of the order.
-        set_at(&mut v, &["boot", "systemd_boot", "loader_conf"], j(r#"{"default": "aeon-*"}"#));
-        assert!(has(&plan(&v, &key).notes, "loader.conf's `default aeon-*` (restored) picks the entry"));
+        set_at(
+            &mut v,
+            &["boot", "systemd_boot", "loader_conf"],
+            j(r#"{"default": "aeon-*"}"#),
+        );
+        assert!(has(
+            &plan(&v, &key).notes,
+            "loader.conf's `default aeon-*` (restored) picks the entry"
+        ));
     }
 
     /// What load can't restore without regenerating: the default slot with
@@ -1359,58 +2317,145 @@ mod tests {
     fn aeon_problems() {
         let key = ["--repo", "/srv/repo", "--key-file", "aeon_root=/run/pw"];
         let mut v = aeon_slots(3);
-        let mut entries = v.at(&["boot", "systemd_boot", "entries"]).and_then(Value::as_array).cloned().unwrap();
-        entries.retain(|e| !e.get("file").and_then(Value::as_str).unwrap().contains("-3+3"));
-        set_at(&mut v, &["boot", "systemd_boot", "entries"], Value::Arr(entries.clone()));
+        let mut entries = v
+            .at(&["boot", "systemd_boot", "entries"])
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap();
+        entries.retain(|e| {
+            !e.get("file")
+                .and_then(Value::as_str)
+                .unwrap()
+                .contains("-3+3")
+        });
+        set_at(
+            &mut v,
+            &["boot", "systemd_boot", "entries"],
+            Value::Arr(entries.clone()),
+        );
         let p = plan(&v, &key).problems;
         assert!(p.iter().any(|x| x == "transactional-update (BLS): no loader entry boots the default slot, snapshot 3 (@/.snapshots/3/snapshot; no rootflags=subvol= names it): nothing is regenerated (no sdbootutil), so the restored machine couldn't boot it"), "{p:?}");
         // Booted 1 without its entry: a note (the restored machine boots
         // the default), not a problem.
         let mut w = aeon_slots(3);
-        let mut e2 = w.at(&["boot", "systemd_boot", "entries"]).and_then(Value::as_array).cloned().unwrap();
+        let mut e2 = w
+            .at(&["boot", "systemd_boot", "entries"])
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap();
         e2.remove(0);
         set_at(&mut w, &["boot", "systemd_boot", "entries"], Value::Arr(e2));
         let b = plan(&w, &key);
         assert!(b.problems.is_empty(), "{:?}", b.problems);
-        assert!(has(&b.notes, "transactional-update (BLS): no loader entry boots snapshot 1 (@/.snapshots/1/snapshot), the slot the source had booted"), "{:?}", b.notes);
+        assert!(
+            has(
+                &b.notes,
+                "transactional-update (BLS): no loader entry boots snapshot 1 (@/.snapshots/1/snapshot), the slot the source had booted"
+            ),
+            "{:?}",
+            b.notes
+        );
         // A kernel not on the ESP, a slot not in the layout.
         let mut v = aeon();
-        set_at(&mut v, &["boot", "systemd_boot", "entries", "0", "linux"], Value::from("/aeon/7.3.3-1-default/linux-gone"));
+        set_at(
+            &mut v,
+            &["boot", "systemd_boot", "entries", "0", "linux"],
+            Value::from("/aeon/7.3.3-1-default/linux-gone"),
+        );
         let p = plan(&v, &key).problems;
         assert!(p.iter().any(|x| x == "transactional-update (BLS): aeon-7.3.3-1-default-1.conf's linux /aeon/7.3.3-1-default/linux-gone isn't on the source's ESP (boot.esps' files): nothing is regenerated, so the restored entry would boot nothing"), "{p:?}");
         // RustAudit1 H4-03: every initrd line (initrds) is checked, not
         // only the last (initrd); without initrds, initrd alone.
         let mut v = aeon();
-        let last = v.at(&["boot", "systemd_boot", "entries", "0", "initrd"]).and_then(Value::as_str).unwrap().to_string();
-        set_at(&mut v, &["boot", "systemd_boot", "entries", "0", "initrds"], Value::from(vec!["/aeon/ucode-gone.img", last.as_str()]));
-        let p: Vec<String> = plan(&v, &key).problems.into_iter().filter(|x| x.contains("'s initrd ")).collect();
+        let last = v
+            .at(&["boot", "systemd_boot", "entries", "0", "initrd"])
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+        set_at(
+            &mut v,
+            &["boot", "systemd_boot", "entries", "0", "initrds"],
+            Value::from(vec!["/aeon/ucode-gone.img", last.as_str()]),
+        );
+        let p: Vec<String> = plan(&v, &key)
+            .problems
+            .into_iter()
+            .filter(|x| x.contains("'s initrd "))
+            .collect();
         assert_eq!(p, vec!["transactional-update (BLS): aeon-7.3.3-1-default-1.conf's initrd /aeon/ucode-gone.img isn't on the source's ESP (boot.esps' files): nothing is regenerated, so the restored entry would boot nothing".to_string()]);
         let mut v = aeon();
-        set_at(&mut v, &["boot", "systemd_boot", "entries", "0", "initrd"], Value::from("/aeon/initrd-gone"));
+        set_at(
+            &mut v,
+            &["boot", "systemd_boot", "entries", "0", "initrd"],
+            Value::from("/aeon/initrd-gone"),
+        );
         let p = plan(&v, &key).problems;
         assert!(p.iter().any(|x| x.starts_with("transactional-update (BLS): aeon-7.3.3-1-default-1.conf's initrd /aeon/initrd-gone isn't on")), "{p:?}");
         let mut v = aeon();
-        let o = v.at(&["boot", "systemd_boot", "entries", "0", "options"]).and_then(Value::as_str).unwrap().replace("rootflags=subvol=@/.snapshots/1/snapshot", "rootflags=subvol=@/.snapshots/9/snapshot");
-        set_at(&mut v, &["boot", "systemd_boot", "entries", "0", "options"], Value::from(o));
+        let o = v
+            .at(&["boot", "systemd_boot", "entries", "0", "options"])
+            .and_then(Value::as_str)
+            .unwrap()
+            .replace(
+                "rootflags=subvol=@/.snapshots/1/snapshot",
+                "rootflags=subvol=@/.snapshots/9/snapshot",
+            );
+        set_at(
+            &mut v,
+            &["boot", "systemd_boot", "entries", "0", "options"],
+            Value::from(o),
+        );
         let p = plan(&v, &key).problems;
         assert!(p.iter().any(|x| x == "transactional-update (BLS): aeon-7.3.3-1-default-1.conf boots rootflags=subvol=@/.snapshots/9/snapshot, which isn't a subvolume in the layout"), "{p:?}");
-        assert!(p.iter().any(|x| x.starts_with("transactional-update (BLS): no loader entry boots the default slot, snapshot 1")), "{p:?}");
+        assert!(
+            p.iter().any(|x| x.starts_with(
+                "transactional-update (BLS): no loader entry boots the default slot, snapshot 1"
+            )),
+            "{p:?}"
+        );
         set_at(&mut v, &["boot", "systemd_boot", "entries"], j("[]"));
-        assert!(plan(&v, &key).problems.iter().any(|x| x.starts_with("transactional-update (BLS): the dump has no loader entry")));
+        assert!(
+            plan(&v, &key)
+                .problems
+                .iter()
+                .any(|x| x.starts_with("transactional-update (BLS): the dump has no loader entry"))
+        );
     }
 
     #[test]
     fn bls_helpers() {
-        assert_eq!(bls_counter("aeon-7.3.3-1-default-1.conf"), ("aeon-7.3.3-1-default-1".into(), None));
-        assert_eq!(bls_counter("aeon-7.3.3-1-default-1+3.conf"), ("aeon-7.3.3-1-default-1".into(), Some((3, 0))));
-        assert_eq!(bls_counter("aeon-7.3.3-1-default-1+0-3.conf"), ("aeon-7.3.3-1-default-1".into(), Some((0, 3))));
+        assert_eq!(
+            bls_counter("aeon-7.3.3-1-default-1.conf"),
+            ("aeon-7.3.3-1-default-1".into(), None)
+        );
+        assert_eq!(
+            bls_counter("aeon-7.3.3-1-default-1+3.conf"),
+            ("aeon-7.3.3-1-default-1".into(), Some((3, 0)))
+        );
+        assert_eq!(
+            bls_counter("aeon-7.3.3-1-default-1+0-3.conf"),
+            ("aeon-7.3.3-1-default-1".into(), Some((0, 3)))
+        );
         assert_eq!(bls_counter("x+y.conf"), ("x+y".into(), None));
         assert_eq!(bls_counter("+3.conf"), ("+3".into(), None));
-        assert_eq!(entry_slot("root=UUID=x rootflags=subvol=/@/.snapshots/2/snapshot/ quiet").as_deref(), Some("@/.snapshots/2/snapshot"));
-        assert_eq!(entry_slot("rootflags=compress=zstd,subvol=@/a rootflags=subvol=@/b").as_deref(), Some("@/b"));
+        assert_eq!(
+            entry_slot("root=UUID=x rootflags=subvol=/@/.snapshots/2/snapshot/ quiet").as_deref(),
+            Some("@/.snapshots/2/snapshot")
+        );
+        assert_eq!(
+            entry_slot("rootflags=compress=zstd,subvol=@/a rootflags=subvol=@/b").as_deref(),
+            Some("@/b")
+        );
         assert_eq!(entry_slot("rootflags=compress=zstd root=UUID=x"), None);
         use std::cmp::Ordering::*;
-        for (a, b, o) in [("10_7.3.3-1-default", "9_7.3.3-1-default", Greater), ("1_7.3.3", "1_7.3.10", Less), ("1_7.3.3", "1_7.3.3", Equal), ("1.0~rc1", "1.0", Less), ("007", "7", Equal), ("1a", "1", Greater)] {
+        for (a, b, o) in [
+            ("10_7.3.3-1-default", "9_7.3.3-1-default", Greater),
+            ("1_7.3.3", "1_7.3.10", Less),
+            ("1_7.3.3", "1_7.3.3", Equal),
+            ("1.0~rc1", "1.0", Less),
+            ("007", "7", Equal),
+            ("1a", "1", Greater),
+        ] {
             assert_eq!(vercmp(a, b), o, "{a} {b}");
         }
         let e = |f: &str, v: &str, k: Option<&str>| {
@@ -1420,8 +2465,26 @@ mod tests {
             }
             o.build()
         };
-        let list = vec![e("a-1.conf", "1_7", Some("aeon")), e("a-3+0-3.conf", "3_7", Some("aeon")), e("a-2+3.conf", "2_7", Some("aeon")), e("old.conf", "9", None), e("a-10.conf", "10_7", Some("aeon"))];
-        let order: Vec<&str> = bls_sorted(&list).iter().filter_map(|x| x.get("file").and_then(Value::as_str)).collect();
-        assert_eq!(order, vec!["a-10.conf", "a-2+3.conf", "a-1.conf", "old.conf", "a-3+0-3.conf"]);
+        let list = vec![
+            e("a-1.conf", "1_7", Some("aeon")),
+            e("a-3+0-3.conf", "3_7", Some("aeon")),
+            e("a-2+3.conf", "2_7", Some("aeon")),
+            e("old.conf", "9", None),
+            e("a-10.conf", "10_7", Some("aeon")),
+        ];
+        let order: Vec<&str> = bls_sorted(&list)
+            .iter()
+            .filter_map(|x| x.get("file").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                "a-10.conf",
+                "a-2+3.conf",
+                "a-1.conf",
+                "old.conf",
+                "a-3+0-3.conf"
+            ]
+        );
     }
 }

@@ -29,12 +29,22 @@ pub struct Why {
 
 /// A fit_refused for REASON.
 fn why(reason: &'static str, text: String) -> Why {
-    Why { code: ProblemCode::FitRefused, reason, text, fields: vec![] }
+    Why {
+        code: ProblemCode::FitRefused,
+        reason,
+        text,
+        fields: vec![],
+    }
 }
 
 impl Why {
     fn coded(code: ProblemCode, text: String) -> Why {
-        Why { code, reason: "", text, fields: vec![] }
+        Why {
+            code,
+            reason: "",
+            text,
+            fields: vec![],
+        }
     }
 
     fn with(mut self, k: &str, v: impl Into<Value>) -> Why {
@@ -45,7 +55,9 @@ impl Why {
     /// The problem it makes for the pair T: WHO's prefix on its text, the
     /// source disk and the target, and its reason or figures.
     fn problem(self, who: &str, t: &Target) -> Problem {
-        let mut p = Problem::new(self.code, format!("{who}: {}", self.text)).with("disk", &t.disk).with("target", t.path.trim_start_matches("/dev/"));
+        let mut p = Problem::new(self.code, format!("{who}: {}", self.text))
+            .with("disk", &t.disk)
+            .with("target", t.path.trim_start_matches("/dev/"));
         if self.code == ProblemCode::FitRefused {
             p = p.with("reason", self.reason);
         }
@@ -103,17 +115,37 @@ fn ext_has_super(g: u64, feats: &[&str]) -> bool {
 /// doesn't give what it takes (or for bigalloc, whose groups count
 /// clusters); Err where no group would be left.
 fn ext_resized(c: &Value, blocks: u64) -> Result<Option<ExtResized>, String> {
-    let feats: Vec<&str> = c.get("features").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
-    let (Some(bs), Some(bpg), Some(ipg), Some(isz), Some(old)) = (u(c, "block_size"), u(c, "blocks_per_group"), u(c, "inodes_per_group"), u(c, "inode_size"), u(c, "blocks")) else {
+    let feats: Vec<&str> = c
+        .get("features")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    let (Some(bs), Some(bpg), Some(ipg), Some(isz), Some(old)) = (
+        u(c, "block_size"),
+        u(c, "blocks_per_group"),
+        u(c, "inodes_per_group"),
+        u(c, "inode_size"),
+        u(c, "blocks"),
+    ) else {
         return Ok(None);
     };
     if bs == 0 || bpg == 0 || ipg == 0 || feats.contains(&"bigalloc") {
         return Ok(None);
     }
     let first = u(c, "first_data_block").unwrap_or(u64::from(bs == 1024));
-    let desc = if feats.contains(&"64bit") { u(c, "descriptor_size").filter(|&d| d >= 32).unwrap_or(64) } else { 32 };
+    let desc = if feats.contains(&"64bit") {
+        u(c, "descriptor_size").filter(|&d| d >= 32).unwrap_or(64)
+    } else {
+        32
+    };
     let gdpb = (bs / desc).max(1);
-    let rsv = if feats.contains(&"resize_inode") { u(c, "reserved_gdt_blocks").unwrap_or(0) } else { 0 };
+    let rsv = if feats.contains(&"resize_inode") {
+        u(c, "reserved_gdt_blocks").unwrap_or(0)
+    } else {
+        0
+    };
     let old_db = old.saturating_sub(first).div_ceil(bpg).div_ceil(gdpb);
     let itb = (ipg * isz).div_ceil(bs);
     let mut n = blocks;
@@ -129,7 +161,9 @@ fn ext_resized(c: &Value, blocks: u64) -> Result<Option<ExtResized>, String> {
         }
         let rem = (n - first) % bpg;
         if groups == 1 && rem != 0 && rem < over {
-            return Err(format!("would be one block group of {rem} blocks, too few for its own {over}"));
+            return Err(format!(
+                "would be one block group of {rem} blocks, too few for its own {over}"
+            ));
         }
         if groups > 1 && rem != 0 && rem < over + 50 {
             n -= rem;
@@ -145,10 +179,21 @@ fn ext_resized(c: &Value, blocks: u64) -> Result<Option<ExtResized>, String> {
         }
         break (groups, db);
     };
-    let reserved_gdt_blocks = feats.contains(&"resize_inode").then(|| (rsv + old_db).saturating_sub(db).min(bs / 4));
+    let reserved_gdt_blocks = feats
+        .contains(&"resize_inode")
+        .then(|| (rsv + old_db).saturating_sub(db).min(bs / 4));
     // resize2fs's own arithmetic, in doubles.
-    let reserved_blocks = u(c, "reserved_blocks").filter(|_| old > 0).map(|r| ((r as f64 * 100.0) / old as f64 * n as f64 / 100.0) as u64);
-    Ok(Some(ExtResized { blocks: n, groups, ipg, inodes: groups * ipg, reserved_gdt_blocks, reserved_blocks }))
+    let reserved_blocks = u(c, "reserved_blocks")
+        .filter(|_| old > 0)
+        .map(|r| ((r as f64 * 100.0) / old as f64 * n as f64 / 100.0) as u64);
+    Ok(Some(ExtResized {
+        blocks: n,
+        groups,
+        ipg,
+        inodes: groups * ipg,
+        reserved_gdt_blocks,
+        reserved_blocks,
+    }))
 }
 
 /// Every start and size the fit chooses is a whole one of these.
@@ -267,11 +312,19 @@ impl Fit {
                 };
                 out.push(format!(
                     "  {} ({}) {word} by {}: {} -> {} sectors",
-                    p.name, p.what, human(by), p.old_sectors, p.new_sectors
+                    p.name,
+                    p.what,
+                    human(by),
+                    p.old_sectors,
+                    p.new_sectors
                 ));
             }
             for (n, by) in &d.moved {
-                out.push(format!("  partition {n} moves {} by {}", if *by < 0 { "down" } else { "up" }, human(by.unsigned_abs() * d.sector)));
+                out.push(format!(
+                    "  partition {n} moves {} by {}",
+                    if *by < 0 { "down" } else { "up" },
+                    human(by.unsigned_abs() * d.sector)
+                ));
             }
             for f in &d.fits {
                 out.push(format!(
@@ -322,12 +375,17 @@ fn set_path(v: &mut Value, p: &[String], x: Value) -> Result<(), String> {
     };
     match v {
         Value::Arr(a) => {
-            let i: usize = key.parse().map_err(|_| format!("{key} isn't an array index"))?;
+            let i: usize = key
+                .parse()
+                .map_err(|_| format!("{key} isn't an array index"))?;
             let e = a.get_mut(i).ok_or_else(|| format!("no element {key}"))?;
             set_path(e, rest, x)
         }
         Value::Obj(kv) => {
-            let i = kv.iter().position(|(k, _)| k == key).ok_or_else(|| format!("no key {key}"))?;
+            let i = kv
+                .iter()
+                .position(|(k, _)| k == key)
+                .ok_or_else(|| format!("no key {key}"))?;
             set_path(&mut kv[i].1, rest, x)
         }
         _ => Err(format!("{key}: not an object or an array")),
@@ -345,16 +403,32 @@ pub fn fit(v: &Value, targets: &[Target], pct: u64) -> Fit {
             Ok(Outcome::Same) => {}
             Ok(Outcome::Unused(note)) => {
                 f.new_end.push(t.disk.clone());
-                f.notes.push(Note::new(NoteCode::TargetBigger, note).with("disk", &t.disk).with("target", t.path.trim_start_matches("/dev/")).with("bytes", t.size_bytes.saturating_sub(source_size(v, &t.disk))));
+                f.notes.push(
+                    Note::new(NoteCode::TargetBigger, note)
+                        .with("disk", &t.disk)
+                        .with("target", t.path.trim_start_matches("/dev/"))
+                        .with(
+                            "bytes",
+                            t.size_bytes.saturating_sub(source_size(v, &t.disk)),
+                        ),
+                );
             }
             Ok(Outcome::Fitted(d)) => {
                 for (p, x) in &d.edits {
                     if let Err(e) = set_path(&mut out, p, x.clone()) {
                         f.problems.push(
-                            Problem::new(ProblemCode::FitRefused, format!("{} -> {}: --fit-largest can't rewrite {}: {e}", d.disk, d.target, p.join(".")))
-                                .with("disk", &d.disk)
-                                .with("target", d.target.trim_start_matches("/dev/"))
-                                .with("reason", "other"),
+                            Problem::new(
+                                ProblemCode::FitRefused,
+                                format!(
+                                    "{} -> {}: --fit-largest can't rewrite {}: {e}",
+                                    d.disk,
+                                    d.target,
+                                    p.join(".")
+                                ),
+                            )
+                            .with("disk", &d.disk)
+                            .with("target", d.target.trim_start_matches("/dev/"))
+                            .with("reason", "other"),
                         );
                     }
                 }
@@ -371,7 +445,13 @@ pub fn fit(v: &Value, targets: &[Target], pct: u64) -> Fit {
 
 /// The size the dump gives source disk DISK (0 when it doesn't).
 fn source_size(v: &Value, disk: &str) -> u64 {
-    v.at(&["storage", "disks"]).and_then(Value::as_array).into_iter().flatten().find(|x| s(x, "name").as_deref() == Some(disk)).and_then(|x| u(x, "size_bytes")).unwrap_or(0)
+    v.at(&["storage", "disks"])
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|x| s(x, "name").as_deref() == Some(disk))
+        .and_then(|x| u(x, "size_bytes"))
+        .unwrap_or(0)
 }
 
 /// Whether the table HAVE, found on a target of T's size, is one a fit of
@@ -382,9 +462,13 @@ fn source_size(v: &Value, disk: &str) -> u64 {
 pub fn wrote(v: &Value, t: &Target, have: &[(u32, u64, u64)]) -> Option<(u32, i64)> {
     for pct in 1..=super::FIT_MAX {
         let f = fit(v, std::slice::from_ref(t), pct);
-        let (Some(out), Some(d)) = (&f.v, f.disks.first()) else { continue };
+        let (Some(out), Some(d)) = (&f.v, f.disks.first()) else {
+            continue;
+        };
         let Some(p) = &d.part else { continue };
-        let Some(g) = geometry(out, &t.disk) else { continue };
+        let Some(g) = geometry(out, &t.disk) else {
+            continue;
+        };
         if g.len() == have.len() && g.iter().all(|x| have.contains(x)) {
             return Some((p.number, p.new_sectors as i64 - p.old_sectors as i64));
         }
@@ -396,11 +480,22 @@ pub fn wrote(v: &Value, t: &Target, have: &[(u32, u64, u64)]) -> Option<(u32, i6
 /// a device-mapper device or an md array.
 fn device<'a>(v: &'a Value, name: &str) -> Option<&'a Value> {
     for sect in ["disks", "dm_devices", "md_arrays"] {
-        for d in v.at(&["storage", sect]).and_then(Value::as_array).into_iter().flatten() {
+        for d in v
+            .at(&["storage", sect])
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             if s(d, "name").as_deref() == Some(name) {
                 return Some(d);
             }
-            if let Some(p) = d.get("partitions").and_then(Value::as_array).into_iter().flatten().find(|p| s(p, "name").as_deref() == Some(name)) {
+            if let Some(p) = d
+                .get("partitions")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find(|p| s(p, "name").as_deref() == Some(name))
+            {
                 return Some(p);
             }
         }
@@ -412,13 +507,35 @@ fn device<'a>(v: &'a Value, name: &str) -> Option<&'a Value> {
 /// slaves, md arrays by their members.
 fn above(v: &Value, devs: &[String]) -> Vec<String> {
     let mut out = Vec::new();
-    for d in v.at(&["storage", "dm_devices"]).and_then(Value::as_array).into_iter().flatten() {
-        if d.get("slaves").and_then(Value::as_array).is_some_and(|sl| sl.iter().any(|x| x.as_str().is_some_and(|x| devs.iter().any(|d| d == x)))) {
+    for d in v
+        .at(&["storage", "dm_devices"])
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if d.get("slaves").and_then(Value::as_array).is_some_and(|sl| {
+            sl.iter()
+                .any(|x| x.as_str().is_some_and(|x| devs.iter().any(|d| d == x)))
+        }) {
             out.extend(s(d, "name"));
         }
     }
-    for d in v.at(&["storage", "md_arrays"]).and_then(Value::as_array).into_iter().flatten() {
-        if d.at(&["md", "members"]).and_then(Value::as_array).is_some_and(|m| m.iter().any(|x| x.get("device").and_then(Value::as_str).is_some_and(|x| devs.iter().any(|d| d == x)))) {
+    for d in v
+        .at(&["storage", "md_arrays"])
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if d.at(&["md", "members"])
+            .and_then(Value::as_array)
+            .is_some_and(|m| {
+                m.iter().any(|x| {
+                    x.get("device")
+                        .and_then(Value::as_str)
+                        .is_some_and(|x| devs.iter().any(|d| d == x))
+                })
+            })
+        {
             out.extend(s(d, "name"));
         }
     }
@@ -429,10 +546,18 @@ fn above(v: &Value, devs: &[String]) -> Vec<String> {
 /// sits on it (a LUKS mapping, an LV, an array), nearest first and the
 /// shortest mount point of those: None where nothing on it was mounted.
 fn mount_entry<'a>(v: &'a Value, dev: &str) -> Option<&'a Value> {
-    let mounts: Vec<&Value> = v.at(&["storage", "mounts"]).and_then(Value::as_array).into_iter().flatten().collect();
+    let mounts: Vec<&Value> = v
+        .at(&["storage", "mounts"])
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .collect();
     let mut level = vec![dev.to_string()];
     for _ in 0..5 {
-        let here = mounts.iter().filter(|m| s(m, "device").is_some_and(|d| level.contains(&d))).min_by_key(|m| s(m, "target").map_or(usize::MAX, |t| t.len()));
+        let here = mounts
+            .iter()
+            .filter(|m| s(m, "device").is_some_and(|d| level.contains(&d)))
+            .min_by_key(|m| s(m, "target").map_or(usize::MAX, |t| t.len()));
         if let Some(m) = here {
             return Some(m);
         }
@@ -455,7 +580,12 @@ pub fn holds(v: &Value, dev: &str) -> Option<String> {
     let mut out: Vec<String> = Vec::new();
     let mut cur = dev.to_string();
     for _ in 0..5 {
-        let Some(c) = device(v, &cur).and_then(|d| d.get("content")).filter(|c| !c.is_null()) else { break };
+        let Some(c) = device(v, &cur)
+            .and_then(|d| d.get("content"))
+            .filter(|c| !c.is_null())
+        else {
+            break;
+        };
         let kind = s(c, "type").unwrap_or_default();
         match kind.as_str() {
             "crypto_LUKS" => {
@@ -484,16 +614,29 @@ pub fn holds(v: &Value, dev: &str) -> Option<String> {
 /// size in bytes; None where there's no one largest (no table, no
 /// partition, a tie).
 pub fn largest(v: &Value, disk: &str) -> Option<(String, u32, u64)> {
-    let d = v.at(&["storage", "disks"]).and_then(Value::as_array)?.iter().find(|x| s(x, "name").as_deref() == Some(disk))?;
+    let d = v
+        .at(&["storage", "disks"])
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|x| s(x, "name").as_deref() == Some(disk))?;
     d.get("partition_table").filter(|t| !t.is_null())?;
     let sector = u(d, "logical_sector_size").unwrap_or(512).max(512);
     let mut parts: Vec<(String, u32, u64)> = Vec::new();
-    for p in d.get("partitions").and_then(Value::as_array).into_iter().flatten() {
+    for p in d
+        .get("partitions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
         if p.get("extended").and_then(Value::as_bool) == Some(true) {
             continue;
         }
         let sectors = u(p, "sectors").or_else(|| u(p, "size_bytes").map(|b| b / sector))?;
-        parts.push((s(p, "name").unwrap_or_default(), u(p, "number")? as u32, sectors * sector));
+        parts.push((
+            s(p, "name").unwrap_or_default(),
+            u(p, "number")? as u32,
+            sectors * sector,
+        ));
     }
     let most = parts.iter().map(|p| p.2).max()?;
     let mut big = parts.into_iter().filter(|p| p.2 == most);
@@ -563,9 +706,21 @@ fn change_pct(old: u64, new: u64) -> Option<f64> {
 /// bytes: one() for the single pair at increasing percentages (fit's own
 /// rule, so the plan that follows agrees), the figures fit computes.
 pub fn verdict(v: &Value, disk: &str, node: &str, size_bytes: u64) -> Verdict {
-    let t = Target { disk: disk.to_string(), path: format!("/dev/{node}"), size_bytes };
-    let d = v.at(&["storage", "disks"]).and_then(Value::as_array).into_iter().flatten().find(|x| s(x, "name").as_deref() == Some(disk));
-    let sector = d.and_then(|d| u(d, "logical_sector_size")).unwrap_or(512).max(512);
+    let t = Target {
+        disk: disk.to_string(),
+        path: format!("/dev/{node}"),
+        size_bytes,
+    };
+    let d = v
+        .at(&["storage", "disks"])
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|x| s(x, "name").as_deref() == Some(disk));
+    let sector = d
+        .and_then(|d| u(d, "logical_sector_size"))
+        .unwrap_or(512)
+        .max(512);
     let (src, new) = (source_size(v, disk), size_bytes - size_bytes % sector);
     let big = largest(v, disk);
     let at = big.as_ref().and_then(|(n, _, _)| mount_entry(v, n));
@@ -637,7 +792,11 @@ pub fn verdict(v: &Value, disk: &str, node: &str, size_bytes: u64) -> Verdict {
                         out.change_pct = out.old_bytes.map(|_| 0.0);
                     }
                     Some(_) => {
-                        out.verdict = if pct <= super::FIT_MAX { "smaller" } else { "beyond_limit" };
+                        out.verdict = if pct <= super::FIT_MAX {
+                            "smaller"
+                        } else {
+                            "beyond_limit"
+                        };
                         part_figures(&mut out, &d);
                         if let Some(f) = d.fits.first() {
                             figures(&mut out, f);
@@ -688,8 +847,13 @@ pub fn verdict(v: &Value, disk: &str, node: &str, size_bytes: u64) -> Verdict {
         }
         ProblemCode::FitOverPct => {
             // More than VERDICT_PCT_MAX: whether the data would fit even so.
-            let fits = matches!(&lax, Ok(Outcome::Fitted(d)) if d.fits.iter().all(|f| f.free >= f.need));
-            out.verdict = if fits { "beyond_limit" } else { "data_wont_fit" };
+            let fits =
+                matches!(&lax, Ok(Outcome::Fitted(d)) if d.fits.iter().all(|f| f.free >= f.need));
+            out.verdict = if fits {
+                "beyond_limit"
+            } else {
+                "data_wont_fit"
+            };
             out.data_fits = Some(fits);
             out.reason = (!fits).then(|| "data".to_string());
         }
@@ -707,7 +871,11 @@ pub fn verdict(v: &Value, disk: &str, node: &str, size_bytes: u64) -> Verdict {
 
 /// Every partition of DISK in V, as (number, start, sectors).
 fn geometry(v: &Value, disk: &str) -> Option<Vec<(u32, u64, u64)>> {
-    let d = v.at(&["storage", "disks"]).and_then(Value::as_array)?.iter().find(|x| s(x, "name").as_deref() == Some(disk))?;
+    let d = v
+        .at(&["storage", "disks"])
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|x| s(x, "name").as_deref() == Some(disk))?;
     let ss = u(d, "logical_sector_size").unwrap_or(512).max(512);
     let mut out = Vec::new();
     for p in d.get("partitions").and_then(Value::as_array)? {
@@ -787,14 +955,24 @@ fn one_with(v: &Value, t: &Target, pct: u64, strict: bool) -> Result<Outcome, Ve
     let who = format!("{} -> {}", t.disk, t.path);
     let no = |w: Why| -> Result<Outcome, Vec<Problem>> { Err(vec![w.problem(&who, t)]) };
     let disks = v.at(&["storage", "disks"]).and_then(Value::as_array);
-    let Some((di, disk)) = disks.and_then(|a| a.iter().position(|x| s(x, "name").as_deref() == Some(t.disk.as_str())).map(|i| (i, &a[i]))) else {
-        return no(why("other", format!("--fit-largest: the dump has no disk {}", t.disk)));
+    let Some((di, disk)) = disks.and_then(|a| {
+        a.iter()
+            .position(|x| s(x, "name").as_deref() == Some(t.disk.as_str()))
+            .map(|i| (i, &a[i]))
+    }) else {
+        return no(why(
+            "other",
+            format!("--fit-largest: the dump has no disk {}", t.disk),
+        ));
     };
     let sector = u(disk, "logical_sector_size").unwrap_or(512).max(512);
     let old_size = u(disk, "size_bytes").unwrap_or(0);
     let new_size = t.size_bytes - t.size_bytes % sector;
     if old_size == 0 {
-        return no(why("other", "--fit-largest: the dump doesn't give the source disk's size".into()));
+        return no(why(
+            "other",
+            "--fit-largest: the dump doesn't give the source disk's size".into(),
+        ));
     }
     if new_size == old_size {
         return Ok(Outcome::Same);
@@ -805,36 +983,71 @@ fn one_with(v: &Value, t: &Target, pct: u64, strict: bool) -> Result<Outcome, Ve
     // the sfdisk script the fit rewrites.
     if let Some(fam) = crate::other::Family::of_layout(v) {
         if !bigger {
-            return no(why("other_family", format!("--fit-largest changes the partition tables sfdisk writes; this dump is {}'s, whose table load writes itself, so a smaller target is still refused", fam.name())));
+            return no(why(
+                "other_family",
+                format!(
+                    "--fit-largest changes the partition tables sfdisk writes; this dump is {}'s, whose table load writes itself, so a smaller target is still refused",
+                    fam.name()
+                ),
+            ));
         }
-        return Ok(Outcome::Unused(format!("{who}: the target is bigger; --fit-largest doesn't grow a {} layout, so the extra {} stays unused", fam.name(), extra())));
+        return Ok(Outcome::Unused(format!(
+            "{who}: the target is bigger; --fit-largest doesn't grow a {} layout, so the extra {} stays unused",
+            fam.name(),
+            extra()
+        )));
     }
     let Some(table) = disk.get("partition_table").filter(|x| !x.is_null()) else {
         if !bigger {
             return no(why("no_table", "the source disk has no partition table, so --fit-largest has no partition to fit; version 1 needs the same size or bigger".into()));
         }
-        return Ok(Outcome::Unused(format!("{who}: the target is bigger; {} holds no partition table, so the extra {} stays unused", t.disk, extra())));
+        return Ok(Outcome::Unused(format!(
+            "{who}: the target is bigger; {} holds no partition table, so the extra {} stays unused",
+            t.disk,
+            extra()
+        )));
     };
     let gpt = s(table, "type").as_deref() == Some("gpt");
     let total = new_size / sector;
     // Where the last partition may end: a GPT keeps the source's table
     // length, so its backup header and entries take the same room at the
     // new end; an MBR's last sector is the disk's.
-    let entry_sectors = (u(table, "entry_count").unwrap_or(128) * u(table, "entry_size").unwrap_or(128)).div_ceil(sector);
+    let entry_sectors = (u(table, "entry_count").unwrap_or(128)
+        * u(table, "entry_size").unwrap_or(128))
+    .div_ceil(sector);
     let tail = if gpt { 2 + entry_sectors } else { 1 };
     if total <= tail {
-        return no(why("table_too_small", format!("--fit-largest: a target of {} is too small for a partition table", human(new_size))));
+        return no(why(
+            "table_too_small",
+            format!(
+                "--fit-largest: a target of {} is too small for a partition table",
+                human(new_size)
+            ),
+        ));
     }
     let new_last = total - tail;
-    let old_last = if gpt { u(table, "last_usable_lba").unwrap_or(old_size / sector - tail) } else { old_size / sector - 1 };
+    let old_last = if gpt {
+        u(table, "last_usable_lba").unwrap_or(old_size / sector - tail)
+    } else {
+        old_size / sector - 1
+    };
     let mut parts = Vec::new();
-    for (i, p) in disk.get("partitions").and_then(Value::as_array).into_iter().flatten().enumerate() {
+    for (i, p) in disk
+        .get("partitions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
         let (Some(number), Some(start), Some(sectors)) = (
             u(p, "number"),
             u(p, "start_lba").or_else(|| u(p, "start_bytes").map(|b| b / sector)),
             u(p, "sectors").or_else(|| u(p, "size_bytes").map(|b| b / sector)),
         ) else {
-            return no(why("other", "--fit-largest: a partition without a number, a start or a size".into()));
+            return no(why(
+                "other",
+                "--fit-largest: a partition without a number, a start or a size".into(),
+            ));
         };
         parts.push(P {
             i,
@@ -851,7 +1064,11 @@ fn one_with(v: &Value, t: &Target, pct: u64, strict: bool) -> Result<Outcome, Ve
         if !bigger {
             return no(why("no_partition", "the source disk's table holds no partition, so --fit-largest has none to fit; version 1 needs the same size or bigger".into()));
         }
-        return Ok(Outcome::Unused(format!("{who}: the target is bigger; {} has no partition to grow, so the extra {} stays unused", t.disk, extra())));
+        return Ok(Outcome::Unused(format!(
+            "{who}: the target is bigger; {} has no partition to grow, so the extra {} stays unused",
+            t.disk,
+            extra()
+        )));
     }
     let mut o = One {
         v,
@@ -890,14 +1107,33 @@ fn one_with(v: &Value, t: &Target, pct: u64, strict: bool) -> Result<Outcome, Ve
     let mut cands: Vec<&P> = parts.iter().filter(|p| !p.extended).collect();
     cands.sort_by(|a, b| b.sectors.cmp(&a.sectors).then(a.number.cmp(&b.number)));
     let Some(big) = cands.first().copied() else {
-        return no(why("no_partition", "--fit-largest: the disk holds nothing but an extended partition".into()));
+        return no(why(
+            "no_partition",
+            "--fit-largest: the disk holds nothing but an extended partition".into(),
+        ));
     };
-    let tied: Vec<String> = cands.iter().filter(|p| p.sectors == big.sectors).map(|p| format!("{} ({})", p.name, human(p.sectors * sector))).collect();
+    let tied: Vec<String> = cands
+        .iter()
+        .filter(|p| p.sectors == big.sectors)
+        .map(|p| format!("{} ({})", p.name, human(p.sectors * sector)))
+        .collect();
     if tied.len() > 1 {
-        return no(why("tied", format!("--fit-largest: {} are the same size, so there's no one largest partition", tied.join(" and "))));
+        return no(why(
+            "tied",
+            format!(
+                "--fit-largest: {} are the same size, so there's no one largest partition",
+                tied.join(" and ")
+            ),
+        ));
     }
     if big.logical {
-        return no(why("logical", format!("--fit-largest: the largest partition {} is an MBR logical partition, whose start the extended partition's chain records", big.name)));
+        return no(why(
+            "logical",
+            format!(
+                "--fit-largest: the largest partition {} is an MBR logical partition, whose start the extended partition's chain records",
+                big.name
+            ),
+        ));
     }
     // Only what starts after the largest moves, so the first partition
     // never does: the gap after the MBR, where GRUB's core image sits, is
@@ -905,25 +1141,44 @@ fn one_with(v: &Value, t: &Target, pct: u64, strict: bool) -> Result<Outcome, Ve
     let moved: Vec<&P> = parts.iter().filter(|p| p.start > big.start).collect();
     for m in &moved {
         if m.logical || m.extended {
-            return no(why("logical", format!(
-                "--fit-largest: {} would have to move, and it's an MBR {} partition, whose start the extended partition's chain records",
-                m.name,
-                if m.logical { "logical" } else { "extended" }
-            )));
+            return no(why(
+                "logical",
+                format!(
+                    "--fit-largest: {} would have to move, and it's an MBR {} partition, whose start the extended partition's chain records",
+                    m.name,
+                    if m.logical { "logical" } else { "extended" }
+                ),
+            ));
         }
-        let pv = &disk.at(&["partitions", &m.i.to_string()]).cloned().unwrap_or(Value::Null);
-        if pv.get("esp_image").is_some() || pv.at(&["boot_code", "image_b64"]).is_some_and(|b| !b.is_null()) {
-            return no(why("moves_bytes", format!("--fit-largest: {} would have to move, and the dump holds its bytes to put back where they were", m.name)));
+        let pv = &disk
+            .at(&["partitions", &m.i.to_string()])
+            .cloned()
+            .unwrap_or(Value::Null);
+        if pv.get("esp_image").is_some()
+            || pv
+                .at(&["boot_code", "image_b64"])
+                .is_some_and(|b| !b.is_null())
+        {
+            return no(why(
+                "moves_bytes",
+                format!(
+                    "--fit-largest: {} would have to move, and the dump holds its bytes to put back where they were",
+                    m.name
+                ),
+            ));
         }
         // A FAT's BPB records the sector its partition starts at, which
         // mkfs.fat is given as -h: a moved one is told the new start below,
         // and one recording anything else isn't a start the fit can mend.
         let mc = pv.get("content").cloned().unwrap_or(Value::Null);
         if let Some(h) = u(&mc, "hidden_sectors").filter(|&h| h != 0 && h != m.start) {
-            return no(why("fat_start", format!(
-                "--fit-largest: {} would have to move, and the filesystem on it records sector {h} as its first, not its own start {}",
-                m.name, m.start
-            )));
+            return no(why(
+                "fat_start",
+                format!(
+                    "--fit-largest: {} would have to move, and the filesystem on it records sector {h} as its first, not its own start {}",
+                    m.name, m.start
+                ),
+            ));
         }
     }
 
@@ -936,17 +1191,32 @@ fn one_with(v: &Value, t: &Target, pct: u64, strict: bool) -> Result<Outcome, Ve
     let entry_room = if gpt {
         u64::MAX
     } else {
-        let furthest = moved.iter().map(|m| m.end()).max().unwrap_or(0).max(big.end());
+        let furthest = moved
+            .iter()
+            .map(|m| m.end())
+            .max()
+            .unwrap_or(0)
+            .max(big.end());
         MBR_LAST.saturating_sub(furthest) / mib * mib
     };
-    let (shrink, grow) = if bigger { (0, room.min(cap).min(entry_room)) } else { ((last_end - new_last).div_ceil(mib) * mib, 0) };
+    let (shrink, grow) = if bigger {
+        (0, room.min(cap).min(entry_room))
+    } else {
+        ((last_end - new_last).div_ceil(mib) * mib, 0)
+    };
     // Growing, whatever is left past the last partition stays unused, as it
     // does without the flag (check_target's own note).  Under a MiB there
     // was never anything the fit could have done with it.
-    let unused = match (bigger, new_last.saturating_sub(last_end + grow) / mib * mib * sector) {
+    let unused = match (
+        bigger,
+        new_last.saturating_sub(last_end + grow) / mib * mib * sector,
+    ) {
         (true, n) if n > 0 => {
             o.unused = n;
-            Some(format!("the target is bigger; the extra {} stays unused", human(n)))
+            Some(format!(
+                "the target is bigger; the extra {} stays unused",
+                human(n)
+            ))
         }
         _ => None,
     };
@@ -965,17 +1235,34 @@ fn one_with(v: &Value, t: &Target, pct: u64, strict: bool) -> Result<Outcome, Ve
     }
     o.notes.extend(unused);
     if shrink > 0 && shrink * 100 > pct * big.sectors {
-        let text = format!("--fit-largest {pct}%: {} would have to shrink by {} of its {}, more than {pct}%", big.name, human(shrink * sector), human(big.sectors * sector));
-        return no(Why::coded(ProblemCode::FitOverPct, text).with("needed_pct", (shrink * 100).div_ceil(big.sectors)).with("given_pct", pct));
+        let text = format!(
+            "--fit-largest {pct}%: {} would have to shrink by {} of its {}, more than {pct}%",
+            big.name,
+            human(shrink * sector),
+            human(big.sectors * sector)
+        );
+        return no(Why::coded(ProblemCode::FitOverPct, text)
+            .with("needed_pct", (shrink * 100).div_ceil(big.sectors))
+            .with("given_pct", pct));
     }
     if shrink >= big.sectors {
-        return no(why("other", format!("--fit-largest: {} is only {}, and the target is {} too small", big.name, human(big.sectors * sector), human(shrink * sector))));
+        return no(why(
+            "other",
+            format!(
+                "--fit-largest: {} is only {}, and the target is {} too small",
+                big.name,
+                human(big.sectors * sector),
+                human(shrink * sector)
+            ),
+        ));
     }
     let delta = shrink as i64 - grow as i64;
     let new_sectors = (big.sectors as i64 - delta) as u64;
 
     // What the largest holds, and the filesystems that go with its size.
-    let what = o.resize_inside(big, big.sectors * sector, new_sectors * sector, pct).map_err(|e| vec![e.problem(&who, t)])?;
+    let what = o
+        .resize_inside(big, big.sectors * sector, new_sectors * sector, pct)
+        .map_err(|e| vec![e.problem(&who, t)])?;
 
     o.disk_edits(table, gpt, total);
     let bp = under(&o.at, &["partitions", &big.i.to_string()]);
@@ -1001,14 +1288,23 @@ fn one_with(v: &Value, t: &Target, pct: u64, strict: bool) -> Result<Outcome, Ve
         }
         shifted.push((m.number, -delta));
     }
-    let part = PartFit { number: big.number, name: big.name.clone(), what, old_sectors: big.sectors, new_sectors };
+    let part = PartFit {
+        number: big.number,
+        name: big.name.clone(),
+        what,
+        old_sectors: big.sectors,
+        new_sectors,
+    };
     Ok(o.done(Some(part), shifted))
 }
 
 impl One<'_> {
     /// The disk's partition entry as the dump holds it.
     fn part_json(&self, p: &P) -> Value {
-        self.disk.at(&["partitions", &p.i.to_string()]).cloned().unwrap_or(Value::Null)
+        self.disk
+            .at(&["partitions", &p.i.to_string()])
+            .cloned()
+            .unwrap_or(Value::Null)
     }
 
     /// Sets KEY of the object AT (whose path in the dump is PATH), where the
@@ -1032,7 +1328,14 @@ impl One<'_> {
         self.put(&tv, &tp, "last_usable_lba", new_last);
         self.put(&tv, &tp, "backup_lba", total - 1);
         // The protective MBR's own entry reaches the new end too.
-        for (i, e) in table.at(&["protective_mbr", "entries"]).and_then(Value::as_array).cloned().unwrap_or_default().iter().enumerate() {
+        for (i, e) in table
+            .at(&["protective_mbr", "entries"])
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+        {
             let start = u(e, "start_lba").unwrap_or(1);
             if s(e, "type").as_deref() != Some("0xee") || start >= total {
                 continue;
@@ -1067,7 +1370,11 @@ impl One<'_> {
     /// Gives what it holds, as the report names it.
     fn resize_inside(&mut self, p: &P, old: u64, new: u64, pct: u64) -> Result<String, Why> {
         let at = under(&self.at, &["partitions", &p.i.to_string(), "content"]);
-        let c = self.part_json(p).get("content").cloned().unwrap_or(Value::Null);
+        let c = self
+            .part_json(p)
+            .get("content")
+            .cloned()
+            .unwrap_or(Value::Null);
         // LUKS: the header stays where it is, so the payload keeps its
         // offset and the plaintext device gains or loses the difference.
         if s(&c, "type").as_deref() != Some("crypto_LUKS") {
@@ -1080,59 +1387,149 @@ impl One<'_> {
         // assemble; shrinking into 2*header_size + keyslots_size also corrupts
         // dynamic kept headers. Guard both when luksheader::kept() is present.
         if crate::luksheader::kept(self.v, &p.name).is_some() {
-            if c.at(&["segments", "0"]).and_then(|x| s(x, "size")).as_deref() != Some("dynamic") {
-                return Err(why("kept_luks_header", format!("--fit-largest: {} keeps its LUKS2 header with a fixed segment size, so it cannot be resized", p.name)));
+            if c.at(&["segments", "0"])
+                .and_then(|x| s(x, "size"))
+                .as_deref()
+                != Some("dynamic")
+            {
+                return Err(why(
+                    "kept_luks_header",
+                    format!(
+                        "--fit-largest: {} keeps its LUKS2 header with a fixed segment size, so it cannot be resized",
+                        p.name
+                    ),
+                ));
             }
-            let hdr_end = u(&c, "header_size").and_then(|h| h.checked_mul(2)).and_then(|h| h.checked_add(u(&c, "keyslots_size")?));
+            let hdr_end = u(&c, "header_size")
+                .and_then(|h| h.checked_mul(2))
+                .and_then(|h| h.checked_add(u(&c, "keyslots_size")?));
             if hdr_end.is_some_and(|e| new <= e) {
-                return Err(why("kept_luks_header", format!("--fit-largest: {} would be smaller than its kept LUKS2 header and keyslots area", p.name)));
+                return Err(why(
+                    "kept_luks_header",
+                    format!(
+                        "--fit-largest: {} would be smaller than its kept LUKS2 header and keyslots area",
+                        p.name
+                    ),
+                ));
             }
         }
         let off = u(&c, "data_offset_bytes")
             .or_else(|| c.at(&["segments", "0"]).and_then(|x| u(x, "offset")))
-            .ok_or_else(|| why("other", format!("--fit-largest: the dump doesn't give the LUKS payload offset on {}", p.name)))?;
-        let (i, dm) = self.crypt_dm(&p.name).ok_or_else(|| why("other", format!("--fit-largest: {} holds LUKS, and the dump doesn't say what was opened on it", p.name)))?;
+            .ok_or_else(|| {
+                why(
+                    "other",
+                    format!(
+                        "--fit-largest: the dump doesn't give the LUKS payload offset on {}",
+                        p.name
+                    ),
+                )
+            })?;
+        let (i, dm) = self.crypt_dm(&p.name).ok_or_else(|| {
+            why(
+                "other",
+                format!(
+                    "--fit-largest: {} holds LUKS, and the dump doesn't say what was opened on it",
+                    p.name
+                ),
+            )
+        })?;
         if old <= off || new <= off {
-            return Err(why("other", format!("--fit-largest: the LUKS payload on {} starts at {}, past the new size", p.name, human(off))));
+            return Err(why(
+                "other",
+                format!(
+                    "--fit-largest: the LUKS payload on {} starts at {}, past the new size",
+                    p.name,
+                    human(off)
+                ),
+            ));
         }
         let dp = path(&["storage", "dm_devices", &i.to_string()]);
         self.put(&dm, &dp, "size_bytes", new - off);
         self.put(&dm, &dp, "size", human(new - off));
         let dev = s(&dm, "name").unwrap_or_default();
         let c = dm.get("content").cloned().unwrap_or(Value::Null);
-        let what = self.resize_content(&dev, &c, &under(&dp, &["content"]), old - off, new - off, pct)?;
+        let what = self.resize_content(
+            &dev,
+            &c,
+            &under(&dp, &["content"]),
+            old - off,
+            new - off,
+            pct,
+        )?;
         Ok(format!("{what} on LUKS"))
     }
 
     /// The dm device a LUKS container on DEV was opened as: its index in the
     /// dump's dm_devices and its entry.
     fn crypt_dm(&self, dev: &str) -> Option<(usize, Value)> {
-        let all = self.v.at(&["storage", "dm_devices"]).and_then(Value::as_array)?;
+        let all = self
+            .v
+            .at(&["storage", "dm_devices"])
+            .and_then(Value::as_array)?;
         all.iter()
             .position(|d| {
                 d.at(&["dm", "target"]).and_then(Value::as_str) == Some("crypt")
-                    && d.get("slaves").and_then(Value::as_array).is_some_and(|sl| sl.iter().any(|x| x.as_str() == Some(dev)))
+                    && d.get("slaves")
+                        .and_then(Value::as_array)
+                        .is_some_and(|sl| sl.iter().any(|x| x.as_str() == Some(dev)))
             })
             .map(|i| (i, all[i].clone()))
     }
 
     /// A filesystem or a volume group on DEV, resized from OLD to NEW bytes.
-    fn resize_content(&mut self, dev: &str, c: &Value, at: &[String], old: u64, new: u64, pct: u64) -> Result<String, Why> {
+    fn resize_content(
+        &mut self,
+        dev: &str,
+        c: &Value,
+        at: &[String],
+        old: u64,
+        new: u64,
+        pct: u64,
+    ) -> Result<String, Why> {
         let kind = s(c, "type").unwrap_or_default();
         match kind.as_str() {
             "LVM2_member" => self.resize_vg(dev, old, new, pct),
             k if FS_SIZED.contains(&k) || FS_FILLS.contains(&k) => {
                 if k == "btrfs" && self.btrfs_devices(c) > 1 {
-                    return Err(why("multi_device", format!("--fit-largest: {dev} is one of {} devices of a btrfs filesystem", self.btrfs_devices(c))));
+                    return Err(why(
+                        "multi_device",
+                        format!(
+                            "--fit-largest: {dev} is one of {} devices of a btrfs filesystem",
+                            self.btrfs_devices(c)
+                        ),
+                    ));
                 }
                 self.resize_fs(dev, c, at, old, new)?;
                 Ok(kind)
             }
-            "" => Err(why("other", format!("--fit-largest: the dump says nothing is on {dev}"))),
-            "swap" => Err(why("swap", format!("--fit-largest: {dev} holds swap, whose size load takes from the partition; it's never the one to resize"))),
-            "linux_raid_member" => Err(why("member", format!("--fit-largest: {dev} is an md array's member, and version 1 doesn't resize an array"))),
-            "zfs_member" => Err(why("member", format!("--fit-largest: {dev} is a ZFS pool's member, and version 1 doesn't resize a pool"))),
-            k => Err(why("fs_unsupported", format!("--fit-largest: {dev} holds {k}, which isn't one it resizes (ext2/3/4, XFS, btrfs on one device, f2fs, JFS, NILFS2, LUKS with one of those, or LVM)"))),
+            "" => Err(why(
+                "other",
+                format!("--fit-largest: the dump says nothing is on {dev}"),
+            )),
+            "swap" => Err(why(
+                "swap",
+                format!(
+                    "--fit-largest: {dev} holds swap, whose size load takes from the partition; it's never the one to resize"
+                ),
+            )),
+            "linux_raid_member" => Err(why(
+                "member",
+                format!(
+                    "--fit-largest: {dev} is an md array's member, and version 1 doesn't resize an array"
+                ),
+            )),
+            "zfs_member" => Err(why(
+                "member",
+                format!(
+                    "--fit-largest: {dev} is a ZFS pool's member, and version 1 doesn't resize a pool"
+                ),
+            )),
+            k => Err(why(
+                "fs_unsupported",
+                format!(
+                    "--fit-largest: {dev} holds {k}, which isn't one it resizes (ext2/3/4, XFS, btrfs on one device, f2fs, JFS, NILFS2, LUKS with one of those, or LVM)"
+                ),
+            )),
         }
     }
 
@@ -1151,12 +1548,25 @@ impl One<'_> {
 
     /// A filesystem resized with the device under it: the source's own slack
     /// is kept, and one that filled its device fills it again.
-    fn resize_fs(&mut self, dev: &str, c: &Value, at: &[String], old: u64, new: u64) -> Result<(), Why> {
+    fn resize_fs(
+        &mut self,
+        dev: &str,
+        c: &Value,
+        at: &[String],
+        old: u64,
+        new: u64,
+    ) -> Result<(), Why> {
         let kind = s(c, "type").unwrap_or_default();
         let fills = FS_FILLS.contains(&kind.as_str());
-        let size = u(c, "size_bytes").or_else(|| Some(u(c, "blocks")? * u(c, "block_size")?)).or_else(|| u(c, "total_bytes")).unwrap_or(0);
+        let size = u(c, "size_bytes")
+            .or_else(|| Some(u(c, "blocks")? * u(c, "block_size")?))
+            .or_else(|| u(c, "total_bytes"))
+            .unwrap_or(0);
         if size == 0 {
-            return Err(why("other", format!("--fit-largest: the dump doesn't give the size of the {kind} on {dev}")));
+            return Err(why(
+                "other",
+                format!("--fit-largest: the dump doesn't give the size of the {kind} on {dev}"),
+            ));
         }
         // Whatever room the source left between the filesystem and the
         // device stays: the filesystem loses or gains what the device did.
@@ -1169,7 +1579,13 @@ impl One<'_> {
             size
         };
         if want == 0 || want > new {
-            return Err(why("other", format!("--fit-largest: the {kind} on {dev} doesn't fit a device of {}", human(new))));
+            return Err(why(
+                "other",
+                format!(
+                    "--fit-largest: the {kind} on {dev} doesn't fit a device of {}",
+                    human(new)
+                ),
+            ));
         }
         match kind.as_str() {
             "ext2" | "ext3" | "ext4" | "f2fs" => {
@@ -1180,15 +1596,20 @@ impl One<'_> {
                     // a group, so the inodes go with the groups.  Kept, the
                     // source's inode count may not fit fewer groups, and
                     // mke2fs would cut blocks per group to make room.
-                    if let Some(e) = ext_resized(c, blocks).map_err(|e| why("other", format!("--fit-largest: the {kind} on {dev} {e}")))? {
+                    if let Some(e) = ext_resized(c, blocks).map_err(|e| {
+                        why("other", format!("--fit-largest: the {kind} on {dev} {e}"))
+                    })? {
                         blocks = e.blocks;
                         if let (Some(old), Some(free)) = (u(c, "inodes"), u(c, "free_inodes")) {
                             let used = old.saturating_sub(free);
                             if e.inodes != old && used + used * SPARE_PCT / 100 > e.inodes {
-                                return Err(why("inodes", format!(
-                                    "--fit-largest: the {kind} on {dev} has {used} inodes in use, and in {} groups it would have {}, less than those and {SPARE_PCT}% to spare",
-                                    e.groups, e.inodes
-                                )));
+                                return Err(why(
+                                    "inodes",
+                                    format!(
+                                        "--fit-largest: the {kind} on {dev} has {used} inodes in use, and in {} groups it would have {}, less than those and {SPARE_PCT}% to spare",
+                                        e.groups, e.inodes
+                                    ),
+                                ));
                             }
                             if e.inodes != old {
                                 self.notes.push(format!("{dev}: the {kind} keeps {} inodes a group: {} groups, {} inodes (was {old})", e.ipg, e.groups, e.inodes));
@@ -1214,18 +1635,25 @@ impl One<'_> {
                     // the whole data area, and leaves out a last group that
                     // would be a stub.
                     if ag > blocks {
-                        return Err(why("xfs_ag", format!(
-                            "--fit-largest: the XFS on {dev} has allocation groups of {}, and {} is all that would be left for one",
-                            human(ag * bs),
-                            human(blocks * bs)
-                        )));
+                        return Err(why(
+                            "xfs_ag",
+                            format!(
+                                "--fit-largest: the XFS on {dev} has allocation groups of {}, and {} is all that would be left for one",
+                                human(ag * bs),
+                                human(blocks * bs)
+                            ),
+                        ));
                     }
                     // The least a last group may be and still be made: the
                     // minimum, and the log too where that group is the one
                     // mkfs.xfs puts it in (group agcount/2, which is the
                     // last of two).
                     let least = (XFS_AG_MIN_BYTES / bs).max(1);
-                    let least = if blocks.div_ceil(ag) == 2 { least + u(c, "log_blocks").unwrap_or(0) } else { least };
+                    let least = if blocks.div_ceil(ag) == 2 {
+                        least + u(c, "log_blocks").unwrap_or(0)
+                    } else {
+                        least
+                    };
                     let rem = blocks % ag;
                     if blocks > ag && rem != 0 && rem < least {
                         blocks -= rem;
@@ -1243,7 +1671,12 @@ impl One<'_> {
             let shrink = size - want;
             self.data_fits(dev, &kind, c, size, shrink)?;
             if let (Some(bs), Some(free)) = (u(c, "block_size"), u(c, "free_blocks")) {
-                self.put(c, at, "free_blocks", free.saturating_sub(shrink.div_ceil(bs)));
+                self.put(
+                    c,
+                    at,
+                    "free_blocks",
+                    free.saturating_sub(shrink.div_ceil(bs)),
+                );
             }
         }
         Ok(())
@@ -1251,7 +1684,14 @@ impl One<'_> {
 
     /// Whether what the dump says is on a filesystem still fits once it has
     /// shrunk, with room to spare.
-    fn data_fits(&mut self, dev: &str, kind: &str, c: &Value, size: u64, shrink: u64) -> Result<(), Why> {
+    fn data_fits(
+        &mut self,
+        dev: &str,
+        kind: &str,
+        c: &Value,
+        size: u64,
+        shrink: u64,
+    ) -> Result<(), Why> {
         let Some((used, free)) = self.usage(dev, c) else {
             let text = format!(
                 "--fit-largest: {dev} ({kind}) would shrink by {}, and the dump doesn't say how much of it is used, so there's no telling the data would still fit",
@@ -1260,7 +1700,15 @@ impl One<'_> {
             return Err(Why::coded(ProblemCode::DataUnknown, text).with("dev", dev));
         };
         let need = shrink + SPARE_BYTES.max(used * SPARE_PCT / 100);
-        self.fits.push(DataFit { dev: dev.to_string(), kind: kind.to_string(), size, shrink, used, free, need });
+        self.fits.push(DataFit {
+            dev: dev.to_string(),
+            kind: kind.to_string(),
+            size,
+            shrink,
+            used,
+            free,
+            need,
+        });
         if free < need && self.strict {
             let text = format!(
                 "--fit-largest: {dev} ({kind}) holds {} of {} and would shrink by {}; that leaves less than the {} free it needs (the shrink and {} to spare)",
@@ -1288,7 +1736,13 @@ impl One<'_> {
     /// What a filesystem holds and what it has free: the mount the dump
     /// recorded, else the superblock's own free blocks.
     fn usage(&self, dev: &str, c: &Value) -> Option<(u64, u64)> {
-        for m in self.v.at(&["storage", "mounts"]).and_then(Value::as_array).into_iter().flatten() {
+        for m in self
+            .v
+            .at(&["storage", "mounts"])
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             if s(m, "device").as_deref() == Some(dev) {
                 if let (Some(size), Some(used)) = (u(m, "size_bytes"), u(m, "used_bytes")) {
                     return Some((used, size.saturating_sub(used)));
@@ -1317,7 +1771,10 @@ fn free_runs(count: u64, used: &mut Vec<Run>) -> Result<Vec<Run>, Why> {
     let mut at = 0;
     for &(s, n) in used.iter() {
         if s < at {
-            return Err(why("other", "--fit-largest: the volume group's extents overlap in the dump".into()));
+            return Err(why(
+                "other",
+                "--fit-largest: the volume group's extents overlap in the dump".into(),
+            ));
         }
         if s > at {
             out.push((at, s - at));
@@ -1325,7 +1782,10 @@ fn free_runs(count: u64, used: &mut Vec<Run>) -> Result<Vec<Run>, Why> {
         at = s + n;
     }
     if at > count {
-        return Err(why("other", "--fit-largest: the volume group uses more extents than its physical volume has".into()));
+        return Err(why(
+            "other",
+            "--fit-largest: the volume group uses more extents than its physical volume has".into(),
+        ));
     }
     if at < count {
         out.push((at, count - at));
@@ -1365,25 +1825,70 @@ impl One<'_> {
     /// grows or shrinks with it, free extents go first, and the largest
     /// logical volume gives up the rest.
     fn resize_vg(&mut self, dev: &str, old: u64, new: u64, pct: u64) -> Result<String, Why> {
-        let vgs = self.v.at(&["storage", "lvm", "volume_groups"]).and_then(Value::as_array).cloned().unwrap_or_default();
+        let vgs = self
+            .v
+            .at(&["storage", "lvm", "volume_groups"])
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         let Some(vi) = vgs.iter().position(|g| {
-            g.get("physical_volumes").and_then(Value::as_array).is_some_and(|pvs| pvs.iter().any(|p| s(p, "device").as_deref() == Some(dev)))
+            g.get("physical_volumes")
+                .and_then(Value::as_array)
+                .is_some_and(|pvs| pvs.iter().any(|p| s(p, "device").as_deref() == Some(dev)))
         }) else {
-            return Err(why("other", format!("--fit-largest: {dev} is an LVM physical volume, and the dump has no volume group on it")));
+            return Err(why(
+                "other",
+                format!(
+                    "--fit-largest: {dev} is an LVM physical volume, and the dump has no volume group on it"
+                ),
+            ));
         };
         let vg = vgs[vi].clone();
         let name = s(&vg, "name").unwrap_or_default();
-        let pvs = vg.get("physical_volumes").and_then(Value::as_array).cloned().unwrap_or_default();
+        let pvs = vg
+            .get("physical_volumes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         if pvs.len() != 1 {
-            return Err(why("multi_device", format!("--fit-largest: the volume group {name} has {} physical volumes, and version 1 fits one on its own", pvs.len())));
+            return Err(why(
+                "multi_device",
+                format!(
+                    "--fit-largest: the volume group {name} has {} physical volumes, and version 1 fits one on its own",
+                    pvs.len()
+                ),
+            ));
         }
         let pv = pvs[0].clone();
         let pv_name = s(&pv, "name").unwrap_or_default();
-        let extent = u(&vg, "extent_size_bytes").filter(|&e| e > 0).ok_or_else(|| why("other", format!("--fit-largest: the volume group {name} has no extent size")))?;
-        let pe_start = u(&pv, "pe_start_bytes").ok_or_else(|| why("other", format!("--fit-largest: the physical volume {pv_name} has no pe_start")))?;
-        let old_count = u(&pv, "pe_count").ok_or_else(|| why("other", format!("--fit-largest: the physical volume {pv_name} has no extent count")))?;
+        let extent = u(&vg, "extent_size_bytes")
+            .filter(|&e| e > 0)
+            .ok_or_else(|| {
+                why(
+                    "other",
+                    format!("--fit-largest: the volume group {name} has no extent size"),
+                )
+            })?;
+        let pe_start = u(&pv, "pe_start_bytes").ok_or_else(|| {
+            why(
+                "other",
+                format!("--fit-largest: the physical volume {pv_name} has no pe_start"),
+            )
+        })?;
+        let old_count = u(&pv, "pe_count").ok_or_else(|| {
+            why(
+                "other",
+                format!("--fit-largest: the physical volume {pv_name} has no extent count"),
+            )
+        })?;
         if new <= pe_start {
-            return Err(why("other", format!("--fit-largest: the physical volume {pv_name} starts its extents at {}, past the new size", human(pe_start))));
+            return Err(why(
+                "other",
+                format!(
+                    "--fit-largest: the physical volume {pv_name} starts its extents at {}, past the new size",
+                    human(pe_start)
+                ),
+            ));
         }
         let new_count = (new - pe_start) / extent;
         let vp = path(&["storage", "lvm", "volume_groups", &vi.to_string()]);
@@ -1424,7 +1929,10 @@ impl One<'_> {
         self.put(&pv, &pp, "pe_count", new_count);
 
         let lvs = self.read_lvs(&vg, &pv_name)?;
-        let mut used: Vec<Run> = lvs.iter().flat_map(|l| l.segs.iter().map(|&(_, _, n, pe, st)| (pe, n / st.max(1)))).collect();
+        let mut used: Vec<Run> = lvs
+            .iter()
+            .flat_map(|l| l.segs.iter().map(|&(_, _, n, pe, st)| (pe, n / st.max(1))))
+            .collect();
         let free = free_runs(old_count, &mut used)?;
         let freed: u64 = free.iter().map(|&(_, n)| n).sum();
         let want = old_count - new_count;
@@ -1441,10 +1949,20 @@ impl One<'_> {
                     human(need * extent),
                     human(lvs[big].extents * extent)
                 );
-                return Err(Why::coded(ProblemCode::FitOverPct, text).with("needed_pct", (need * 100).div_ceil(lvs[big].extents)).with("given_pct", pct));
+                return Err(Why::coded(ProblemCode::FitOverPct, text)
+                    .with("needed_pct", (need * 100).div_ceil(lvs[big].extents))
+                    .with("given_pct", pct));
             }
             if need >= lvs[big].extents {
-                return Err(why("other", format!("--fit-largest: {name}/{} is only {}, and {} has to go", lvs[big].name, human(lvs[big].extents * extent), human(need * extent))));
+                return Err(why(
+                    "other",
+                    format!(
+                        "--fit-largest: {name}/{} is only {}, and {} has to go",
+                        lvs[big].name,
+                        human(lvs[big].extents * extent),
+                        human(need * extent)
+                    ),
+                ));
             }
             self.pool_shrink_ok(&name, &lvs[big].name, lvs[big].extents, need, extent)?;
             shrunk = Some((big, need));
@@ -1484,11 +2002,25 @@ impl One<'_> {
     /// this physical volume.
     fn read_lvs(&self, vg: &Value, pv: &str) -> Result<Vec<Lv>, Why> {
         let mut out = Vec::new();
-        for (i, lv) in vg.get("logical_volumes").and_then(Value::as_array).cloned().unwrap_or_default().iter().enumerate() {
+        for (i, lv) in vg
+            .get("logical_volumes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+        {
             let name = s(lv, "name").unwrap_or_default();
             let mut segs = Vec::new();
             let mut linear = true;
-            for (j, seg) in lv.get("segments").and_then(Value::as_array).cloned().unwrap_or_default().iter().enumerate() {
+            for (j, seg) in lv
+                .get("segments")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .enumerate()
+            {
                 let ty = s(seg, "type").unwrap_or_default();
                 // A thin pool and its thin LVs hold no extents of their own
                 // (the pool's data and metadata LVs do).
@@ -1496,30 +2028,64 @@ impl One<'_> {
                     continue;
                 }
                 if ty != "striped" {
-                    return Err(why("other", format!("--fit-largest: the logical volume {name} has a {ty} segment, and version 1 fits linear ones")));
+                    return Err(why(
+                        "other",
+                        format!(
+                            "--fit-largest: the logical volume {name} has a {ty} segment, and version 1 fits linear ones"
+                        ),
+                    ));
                 }
-                let stripes = seg.get("stripes").and_then(Value::as_array).cloned().unwrap_or_default();
+                let stripes = seg
+                    .get("stripes")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
                 let count = u(seg, "stripe_count").unwrap_or(1).max(1);
                 if count != 1 {
                     linear = false;
                 }
-                let (Some(start), Some(n)) = (u(seg, "start_extent"), u(seg, "extent_count")) else {
-                    return Err(why("other", format!("--fit-largest: a segment of the logical volume {name} has no extents")));
+                let (Some(start), Some(n)) = (u(seg, "start_extent"), u(seg, "extent_count"))
+                else {
+                    return Err(why(
+                        "other",
+                        format!(
+                            "--fit-largest: a segment of the logical volume {name} has no extents"
+                        ),
+                    ));
                 };
                 for k in 0..count as usize {
-                    let on = stripes.get(2 * k).and_then(Value::as_str).unwrap_or_default();
+                    let on = stripes
+                        .get(2 * k)
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
                     let at = stripes.get(2 * k + 1).and_then(Value::as_u64);
                     let Some(at) = at else {
-                        return Err(why("other", format!("--fit-largest: a segment of the logical volume {name} doesn't say where it is")));
+                        return Err(why(
+                            "other",
+                            format!(
+                                "--fit-largest: a segment of the logical volume {name} doesn't say where it is"
+                            ),
+                        ));
                     };
                     if on != pv {
-                        return Err(why("other", format!("--fit-largest: the logical volume {name} is on {on}, not on {pv}")));
+                        return Err(why(
+                            "other",
+                            format!(
+                                "--fit-largest: the logical volume {name} is on {on}, not on {pv}"
+                            ),
+                        ));
                     }
                     segs.push((j, start, n, at, count));
                 }
             }
             let extents = segs.iter().map(|&(_, _, n, _, st)| n / st.max(1)).sum();
-            out.push(Lv { i, name, segs, extents, linear });
+            out.push(Lv {
+                i,
+                name,
+                segs,
+                extents,
+                linear,
+            });
         }
         Ok(out)
     }
@@ -1529,30 +2095,77 @@ impl One<'_> {
     fn largest_lv(&self, lvs: &[Lv], vg: &str) -> Result<usize, Why> {
         // A pool's metadata and spare never shrink; its data LV stands for
         // the pool (pool_shrink checks it against the data in use).
-        let mut by_size: Vec<&Lv> = lvs.iter().filter(|l| l.extents > 0 && !l.name.ends_with("_tmeta") && !l.name.ends_with("_pmspare")).collect();
+        let mut by_size: Vec<&Lv> = lvs
+            .iter()
+            .filter(|l| {
+                l.extents > 0 && !l.name.ends_with("_tmeta") && !l.name.ends_with("_pmspare")
+            })
+            .collect();
         by_size.sort_by(|a, b| b.extents.cmp(&a.extents).then(a.name.cmp(&b.name)));
         let Some(big) = by_size.first() else {
-            return Err(why("no_partition", format!("--fit-largest: the volume group {vg} has no logical volume to shrink")));
+            return Err(why(
+                "no_partition",
+                format!("--fit-largest: the volume group {vg} has no logical volume to shrink"),
+            ));
         };
         if by_size.iter().filter(|l| l.extents == big.extents).count() > 1 {
-            let tied: Vec<&str> = by_size.iter().filter(|l| l.extents == big.extents).map(|l| l.name.as_str()).collect();
-            return Err(why("tied", format!("--fit-largest: {} are the same size, so there's no one largest logical volume in {vg}", tied.join(" and "))));
+            let tied: Vec<&str> = by_size
+                .iter()
+                .filter(|l| l.extents == big.extents)
+                .map(|l| l.name.as_str())
+                .collect();
+            return Err(why(
+                "tied",
+                format!(
+                    "--fit-largest: {} are the same size, so there's no one largest logical volume in {vg}",
+                    tied.join(" and ")
+                ),
+            ));
         }
         if !big.linear {
-            return Err(why("other", format!("--fit-largest: {vg}/{} is striped, and version 1 shrinks a linear one", big.name)));
+            return Err(why(
+                "other",
+                format!(
+                    "--fit-largest: {vg}/{} is striped, and version 1 shrinks a linear one",
+                    big.name
+                ),
+            ));
         }
         if self.pool_of_data(vg, &big.name).is_some() {
             return Ok(big.i);
         }
         let Some((_, c)) = self.lv_device(vg, &big.name) else {
-            return Err(why("other", format!("--fit-largest: the dump doesn't say what's on {vg}/{}", big.name)));
+            return Err(why(
+                "other",
+                format!(
+                    "--fit-largest: the dump doesn't say what's on {vg}/{}",
+                    big.name
+                ),
+            ));
         };
         let kind = s(&c, "type").unwrap_or_default();
         if kind == "swap" {
-            return Err(why("swap", format!("--fit-largest: the largest logical volume {vg}/{} is swap, which the fit never shrinks", big.name)));
+            return Err(why(
+                "swap",
+                format!(
+                    "--fit-largest: the largest logical volume {vg}/{} is swap, which the fit never shrinks",
+                    big.name
+                ),
+            ));
         }
         if !FS_SIZED.contains(&kind.as_str()) && !FS_FILLS.contains(&kind.as_str()) {
-            return Err(why("fs_unsupported", format!("--fit-largest: {vg}/{} holds {}, which isn't one the fit resizes", big.name, if kind.is_empty() { "nothing the dump knows" } else { &kind })));
+            return Err(why(
+                "fs_unsupported",
+                format!(
+                    "--fit-largest: {vg}/{} holds {}, which isn't one the fit resizes",
+                    big.name,
+                    if kind.is_empty() {
+                        "nothing the dump knows"
+                    } else {
+                        &kind
+                    }
+                ),
+            ));
         }
         Ok(big.i)
     }
@@ -1560,34 +2173,73 @@ impl One<'_> {
     /// A logical volume's device-mapper entry in the dump: its index and
     /// what's on it.
     fn lv_device(&self, vg: &str, lv: &str) -> Option<(usize, Value)> {
-        let all = self.v.at(&["storage", "dm_devices"]).and_then(Value::as_array)?;
-        let i = all.iter().position(|d| d.at(&["dm", "vg"]).and_then(Value::as_str) == Some(vg) && d.at(&["dm", "lv"]).and_then(Value::as_str) == Some(lv))?;
+        let all = self
+            .v
+            .at(&["storage", "dm_devices"])
+            .and_then(Value::as_array)?;
+        let i = all.iter().position(|d| {
+            d.at(&["dm", "vg"]).and_then(Value::as_str) == Some(vg)
+                && d.at(&["dm", "lv"]).and_then(Value::as_str) == Some(lv)
+        })?;
         Some((i, all[i].get("content").cloned().unwrap_or(Value::Null)))
     }
 
     /// The index (in its group's logical_volumes) of the thin pool whose
     /// data LV is DATA, if it is one.
     fn pool_of_data(&self, vg: &str, data: &str) -> Option<usize> {
-        let g = self.v.at(&["storage", "lvm", "volume_groups"]).and_then(Value::as_array)?.iter().find(|g| s(g, "name").as_deref() == Some(vg))?;
-        g.get("logical_volumes").and_then(Value::as_array)?.iter().position(|l| {
-            l.at(&["segments", "0", "type"]).and_then(Value::as_str) == Some("thin-pool") && l.at(&["segments", "0", "pool"]).and_then(Value::as_str) == Some(data)
-        })
+        let g = self
+            .v
+            .at(&["storage", "lvm", "volume_groups"])
+            .and_then(Value::as_array)?
+            .iter()
+            .find(|g| s(g, "name").as_deref() == Some(vg))?;
+        g.get("logical_volumes")
+            .and_then(Value::as_array)?
+            .iter()
+            .position(|l| {
+                l.at(&["segments", "0", "type"]).and_then(Value::as_str) == Some("thin-pool")
+                    && l.at(&["segments", "0", "pool"]).and_then(Value::as_str) == Some(data)
+            })
     }
 
     /// A thin pool may give up NEED of its data LV's EXTENTS only down to
     /// the data its source had in use (the dump's data_used_bytes), never
     /// below; a dump that doesn't say is refused.
-    fn pool_shrink_ok(&self, vg: &str, data: &str, extents: u64, need: u64, extent: u64) -> Result<(), Why> {
-        let Some(pi) = self.pool_of_data(vg, data) else { return Ok(()) };
-        let pool = self.v.at(&["storage", "lvm", "volume_groups"]).and_then(Value::as_array).and_then(|a| a.iter().find(|g| s(g, "name").as_deref() == Some(vg))).and_then(|g| g.at(&["logical_volumes", &pi.to_string()])).cloned().unwrap_or(Value::Null);
+    fn pool_shrink_ok(
+        &self,
+        vg: &str,
+        data: &str,
+        extents: u64,
+        need: u64,
+        extent: u64,
+    ) -> Result<(), Why> {
+        let Some(pi) = self.pool_of_data(vg, data) else {
+            return Ok(());
+        };
+        let pool = self
+            .v
+            .at(&["storage", "lvm", "volume_groups"])
+            .and_then(Value::as_array)
+            .and_then(|a| a.iter().find(|g| s(g, "name").as_deref() == Some(vg)))
+            .and_then(|g| g.at(&["logical_volumes", &pi.to_string()]))
+            .cloned()
+            .unwrap_or(Value::Null);
         let pn = s(&pool, "name").unwrap_or_default();
         let Some(used) = u(&pool, "data_used_bytes") else {
-            let text = format!("--fit-largest: thin pool {vg}/{pn} would have to shrink, and the dump doesn't say how much of its data was in use (no data_used_bytes), so it can't tell whether it fits");
-            return Err(Why::coded(ProblemCode::DataUnknown, text).with("dev", format!("{vg}/{pn}")));
+            let text = format!(
+                "--fit-largest: thin pool {vg}/{pn} would have to shrink, and the dump doesn't say how much of its data was in use (no data_used_bytes), so it can't tell whether it fits"
+            );
+            return Err(
+                Why::coded(ProblemCode::DataUnknown, text).with("dev", format!("{vg}/{pn}"))
+            );
         };
         let left = (extents - need) * extent;
         if left < used {
-            let text = format!("--fit-largest: thin pool {vg}/{pn} would shrink to {}, below the {} of data its source had in use", human(left), human(used));
+            let text = format!(
+                "--fit-largest: thin pool {vg}/{pn} would shrink to {}, below the {} of data its source had in use",
+                human(left),
+                human(used)
+            );
             // The same figures as a filesystem's: a pool may shrink to the
             // data in use and no further, with no margin, so that is the
             // least it may shrink to; it has no mount.
@@ -1607,25 +2259,55 @@ impl One<'_> {
     /// None when the group has no thin pool.
     fn grow_pool(&mut self, vg: &Value, vp: &[String], gain: u64, extent: u64) -> Option<String> {
         let name = s(vg, "name").unwrap_or_default();
-        let lvs = vg.get("logical_volumes").and_then(Value::as_array).cloned().unwrap_or_default();
+        let lvs = vg
+            .get("logical_volumes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         let (pi, pool) = lvs
             .iter()
             .enumerate()
-            .filter(|(_, l)| l.at(&["segments", "0", "type"]).and_then(Value::as_str) == Some("thin-pool"))
-            .max_by_key(|(_, l)| (u(l, "size_bytes").unwrap_or(0), std::cmp::Reverse(s(l, "name").unwrap_or_default())))?;
-        let data = pool.at(&["segments", "0", "pool"]).and_then(Value::as_str)?.to_string();
-        let di = lvs.iter().position(|l| s(l, "name").as_deref() == Some(data.as_str()))?;
-        let dsegs = lvs[di].get("segments").and_then(Value::as_array).cloned().unwrap_or_default();
+            .filter(|(_, l)| {
+                l.at(&["segments", "0", "type"]).and_then(Value::as_str) == Some("thin-pool")
+            })
+            .max_by_key(|(_, l)| {
+                (
+                    u(l, "size_bytes").unwrap_or(0),
+                    std::cmp::Reverse(s(l, "name").unwrap_or_default()),
+                )
+            })?;
+        let data = pool
+            .at(&["segments", "0", "pool"])
+            .and_then(Value::as_str)?
+            .to_string();
+        let di = lvs
+            .iter()
+            .position(|l| s(l, "name").as_deref() == Some(data.as_str()))?;
+        let dsegs = lvs[di]
+            .get("segments")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         let last = dsegs.len().checked_sub(1)?;
         let dp = under(vp, &["logical_volumes", &di.to_string()]);
         let pp = under(vp, &["logical_volumes", &pi.to_string()]);
         let n = u(&dsegs[last], "extent_count").unwrap_or(0);
-        self.put(&dsegs[last], &under(&dp, &["segments", &last.to_string()]), "extent_count", n + gain);
+        self.put(
+            &dsegs[last],
+            &under(&dp, &["segments", &last.to_string()]),
+            "extent_count",
+            n + gain,
+        );
         let total = u(&lvs[di], "size_bytes").unwrap_or(0) + gain * extent;
         self.put(&lvs[di], &dp, "size_bytes", total);
         let pseg = pool.at(&["segments", "0"]).cloned().unwrap_or(Value::Null);
         let pn = u(&pseg, "extent_count").unwrap_or(0);
-        self.put(&pseg, &under(&pp, &["segments", "0"]), "extent_count", pn + gain);
+        self.put(
+            &pseg,
+            &under(&pp, &["segments", "0"]),
+            "extent_count",
+            pn + gain,
+        );
         self.put(pool, &pp, "size_bytes", total);
         Some(format!(
             "the volume group {name} grows by {} ({gain} extents), all of it to thin pool {name}/{}, whose data is made {} (its metadata as on the source)",
@@ -1637,14 +2319,33 @@ impl One<'_> {
 
     /// Every logical volume's segments once GONE's extents are dropped and
     /// the ones above them renumbered down.
-    fn rewrite_lvs(&mut self, vp: &[String], vg: &Value, lvs: &[Lv], gone: &[Run], shrunk: Option<(usize, u64)>, extent: u64) -> Result<(), Why> {
+    fn rewrite_lvs(
+        &mut self,
+        vp: &[String],
+        vg: &Value,
+        lvs: &[Lv],
+        gone: &[Run],
+        shrunk: Option<(usize, u64)>,
+        extent: u64,
+    ) -> Result<(), Why> {
         let name = s(vg, "name").unwrap_or_default();
-        let all = vg.get("logical_volumes").and_then(Value::as_array).cloned().unwrap_or_default();
+        let all = vg
+            .get("logical_volumes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         for lv in lvs {
             let lp = under(vp, &["logical_volumes", &lv.i.to_string()]);
-            let mut segs = all[lv.i].get("segments").and_then(Value::as_array).cloned().unwrap_or_default();
+            let mut segs = all[lv.i]
+                .get("segments")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
             // This volume's own shrink comes off its last logical extents.
-            let mut left = shrunk.filter(|&(i, _)| i == lv.i).map(|(_, n)| n).unwrap_or(0);
+            let mut left = shrunk
+                .filter(|&(i, _)| i == lv.i)
+                .map(|(_, n)| n)
+                .unwrap_or(0);
             if left > 0 {
                 let mut order: Vec<usize> = (0..segs.len()).collect();
                 order.sort_by_key(|&j| std::cmp::Reverse(u(&segs[j], "start_extent").unwrap_or(0)));
@@ -1662,7 +2363,11 @@ impl One<'_> {
             }
             // Compaction: an extent moves down by what was dropped below it.
             for seg in segs.iter_mut() {
-                let stripes = seg.get("stripes").and_then(Value::as_array).cloned().unwrap_or_default();
+                let stripes = seg
+                    .get("stripes")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
                 let mut new = stripes.clone();
                 for k in (1..stripes.len()).step_by(2) {
                     let at = stripes[k].as_u64().unwrap_or(0);
@@ -1679,12 +2384,23 @@ impl One<'_> {
             // arrived at: a volume nothing took from comes to the same
             // number again and is left alone.
             let extents: u64 = segs.iter().map(|x| u(x, "extent_count").unwrap_or(0)).sum();
-            let was = all[lv.i].get("segments").and_then(Value::as_array).cloned().unwrap_or_default();
+            let was = all[lv.i]
+                .get("segments")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
             if segs != was {
                 if !lv.linear {
-                    return Err(why("other", format!("--fit-largest: {name}/{} is striped, and it would have to move", lv.name)));
+                    return Err(why(
+                        "other",
+                        format!(
+                            "--fit-largest: {name}/{} is striped, and it would have to move",
+                            lv.name
+                        ),
+                    ));
                 }
-                self.edits.push((under(&lp, &["segments"]), Value::Arr(segs)));
+                self.edits
+                    .push((under(&lp, &["segments"]), Value::Arr(segs)));
             }
             if extents == lv.extents {
                 continue;
@@ -1696,17 +2412,37 @@ impl One<'_> {
             if let Some(pi) = self.pool_of_data(&name, &lv.name) {
                 let pp = under(vp, &["logical_volumes", &pi.to_string()]);
                 self.put(&all[pi], &pp, "size_bytes", extents * extent);
-                let seg = all[pi].at(&["segments", "0"]).cloned().unwrap_or(Value::Null);
-                self.put(&seg, &under(&pp, &["segments", "0"]), "extent_count", extents);
+                let seg = all[pi]
+                    .at(&["segments", "0"])
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                self.put(
+                    &seg,
+                    &under(&pp, &["segments", "0"]),
+                    "extent_count",
+                    extents,
+                );
                 continue;
             }
-            let Some((di, c)) = self.lv_device(&name, &lv.name) else { continue };
+            let Some((di, c)) = self.lv_device(&name, &lv.name) else {
+                continue;
+            };
             let dp = path(&["storage", "dm_devices", &di.to_string()]);
-            let d = self.v.at(&["storage", "dm_devices", &di.to_string()]).cloned().unwrap_or(Value::Null);
+            let d = self
+                .v
+                .at(&["storage", "dm_devices", &di.to_string()])
+                .cloned()
+                .unwrap_or(Value::Null);
             self.put(&d, &dp, "size_bytes", extents * extent);
             self.put(&d, &dp, "size", human(extents * extent));
             let dev = s(&d, "name").unwrap_or_default();
-            self.resize_fs(&dev, &c, &under(&dp, &["content"]), lv.extents * extent, extents * extent)?;
+            self.resize_fs(
+                &dev,
+                &c,
+                &under(&dp, &["content"]),
+                lv.extents * extent,
+                extents * extent,
+            )?;
         }
         Ok(())
     }
@@ -1737,7 +2473,16 @@ mod tests {
 
     impl D {
         fn new(table: &'static str, total: u64) -> D {
-            D { table, total, parts: vec![], dm: vec![], vgs: vec![], mounts: vec![], family: None, short: 0 }
+            D {
+                table,
+                total,
+                parts: vec![],
+                dm: vec![],
+                vgs: vec![],
+                mounts: vec![],
+                family: None,
+                short: 0,
+            }
         }
         fn gpt(total: u64) -> D {
             D::new("gpt", total)
@@ -1801,9 +2546,13 @@ mod tests {
                     self.total - 1 - self.short,
                     (self.total - 1 - self.short) * 512
                 ),
-                _ => r#"{"type": "dos", "sector_size": 512, "disk_signature": "1f2e3d4c"}"#.to_string(),
+                _ => r#"{"type": "dos", "sector_size": 512, "disk_signature": "1f2e3d4c"}"#
+                    .to_string(),
             };
-            let fam = self.family.map(|f| format!(", \"family\": \"{f}\"")).unwrap_or_default();
+            let fam = self
+                .family
+                .map(|f| format!(", \"family\": \"{f}\""))
+                .unwrap_or_default();
             let text = format!(
                 r#"{{"format": "bko-holt", "schema": 1, "privileged": true, "host": {{"hostname": "t"}},
                      "os": {{"id": "debian", "version_id": "13"{fam}}}, "firmware": {{"mode": "bios"}},
@@ -1825,7 +2574,9 @@ mod tests {
     }
 
     fn ext4(blocks: u64, free: Option<u64>) -> String {
-        let f = free.map(|n| format!(", \"free_blocks\": {n}")).unwrap_or_default();
+        let f = free
+            .map(|n| format!(", \"free_blocks\": {n}"))
+            .unwrap_or_default();
         format!(
             r#"{{"type": "ext4", "usage": "filesystem", "uuid": "0b0e2c6e-1111-4222-8333-444455556666", "label": null,
                  "block_size": 4096, "blocks": {blocks}, "size_bytes": {}, "blocks_per_group": 32768, "inode_size": 256,
@@ -1945,24 +2696,47 @@ mod tests {
         let p = &f.problems[0];
         assert_eq!(p.code, ProblemCode::DataWontFit);
         let n = |k: &str| p.field(k).and_then(Value::as_u64);
-        assert_eq!((p.str_field("dev"), n("used_bytes"), n("margin_bytes")), (Some("vda1"), Some(18 * GIB), Some(GIB)));
+        assert_eq!(
+            (p.str_field("dev"), n("used_bytes"), n("margin_bytes")),
+            (Some("vda1"), Some(18 * GIB), Some(GIB))
+        );
         // The figure the test decides by: the 20 GiB filesystem less its
         // 2 GiB free, and the GiB to spare.
         assert_eq!(n("needed_bytes"), Some(19 * GIB));
         // Every field of the table, in its order: its mount (the dump's,
         // /m0), and the most it would get, its 20 GiB less the 2 GiB shrink
         // (RT10d).  The test: needed_bytes <= most_bytes, which fails.
-        let keys: Vec<(&str, bool)> = p.fields.iter().map(|(k, v)| (k.as_str(), v.is_null())).collect();
+        let keys: Vec<(&str, bool)> = p
+            .fields
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.is_null()))
+            .collect();
         assert_eq!(
             keys,
-            [("disk", false), ("target", false), ("dev", false), ("mount", false), ("used_bytes", false), ("margin_bytes", false), ("needed_bytes", false), ("most_bytes", false)]
+            [
+                ("disk", false),
+                ("target", false),
+                ("dev", false),
+                ("mount", false),
+                ("used_bytes", false),
+                ("margin_bytes", false),
+                ("needed_bytes", false),
+                ("most_bytes", false)
+            ]
         );
-        assert_eq!((p.str_field("mount"), n("most_bytes")), (Some("/m0"), Some(18 * GIB)));
+        assert_eq!(
+            (p.str_field("mount"), n("most_bytes")),
+            (Some("/m0"), Some(18 * GIB))
+        );
         assert!(n("needed_bytes") > n("most_bytes"));
     }
 
     fn one_target(size: u64) -> Vec<Target> {
-        vec![Target { disk: "vda".into(), path: "/dev/sdb".into(), size_bytes: size }]
+        vec![Target {
+            disk: "vda".into(),
+            path: "/dev/sdb".into(),
+            size_bytes: size,
+        }]
     }
 
     /// The fit of V onto a target of SIZE bytes, which must hold.
@@ -1981,14 +2755,36 @@ mod tests {
         // Every refusal is coded, about the pair, its reason one the spec
         // lists.
         for p in f.problems.iter() {
-            assert!(matches!(p.code, ProblemCode::FitRefused | ProblemCode::FitOverPct | ProblemCode::DataWontFit | ProblemCode::DataUnknown), "{p:?} {:?}", p.code);
-            assert_eq!((p.str_field("disk"), p.str_field("target")), (Some("vda"), Some("sdb")), "{p}");
+            assert!(
+                matches!(
+                    p.code,
+                    ProblemCode::FitRefused
+                        | ProblemCode::FitOverPct
+                        | ProblemCode::DataWontFit
+                        | ProblemCode::DataUnknown
+                ),
+                "{p:?} {:?}",
+                p.code
+            );
+            assert_eq!(
+                (p.str_field("disk"), p.str_field("target")),
+                (Some("vda"), Some("sdb")),
+                "{p}"
+            );
             assert!(p.text.starts_with("vda -> /dev/sdb: "), "{p}");
             if p.code == ProblemCode::FitRefused {
-                assert!(p.str_field("reason").is_some_and(|r| crate::load::codes::FIT_REASONS.contains(&r)), "{p}: {:?}", p.field("reason"));
+                assert!(
+                    p.str_field("reason")
+                        .is_some_and(|r| crate::load::codes::FIT_REASONS.contains(&r)),
+                    "{p}: {:?}",
+                    p.field("reason")
+                );
             }
         }
-        Refused { text: f.problems.join("\n"), first: f.problems[0].clone() }
+        Refused {
+            text: f.problems.join("\n"),
+            first: f.problems[0].clone(),
+        }
     }
 
     struct Refused {
@@ -2000,7 +2796,11 @@ mod tests {
         /// Asserts the first problem is fit_refused for REASON, or has the
         /// code REASON.
         fn is(self, reason: &str) -> Refused {
-            let got = if self.first.code == ProblemCode::FitRefused { self.first.str_field("reason").unwrap_or("").to_string() } else { self.first.code.as_str().to_string() };
+            let got = if self.first.code == ProblemCode::FitRefused {
+                self.first.str_field("reason").unwrap_or("").to_string()
+            } else {
+                self.first.code.as_str().to_string()
+            };
             assert_eq!(got, reason, "{}", self.text);
             self
         }
@@ -2025,12 +2825,20 @@ mod tests {
             .and_then(Value::as_array)
             .unwrap()
             .iter()
-            .map(|p| (u(p, "number").unwrap(), u(p, "start_lba").unwrap(), u(p, "sectors").unwrap()))
+            .map(|p| {
+                (
+                    u(p, "number").unwrap(),
+                    u(p, "start_lba").unwrap(),
+                    u(p, "sectors").unwrap(),
+                )
+            })
             .collect()
     }
 
     fn at(v: &Value, p: &[&str]) -> u64 {
-        v.at(p).and_then(Value::as_u64).unwrap_or_else(|| panic!("no number at {p:?}"))
+        v.at(p)
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("no number at {p:?}"))
     }
 
     /// A volume group's field, by the path under it.
@@ -2059,7 +2867,12 @@ mod tests {
     fn one_root(free: u64) -> (u64, D) {
         let root = 20 * G;
         let total = 2048 + root + 34;
-        (total, D::gpt(total).part(1, 2048, root, &ext4_on(root, free), "").mount("vda1", 20 * GIB, 20 * GIB - free))
+        (
+            total,
+            D::gpt(total)
+                .part(1, 2048, root, &ext4_on(root, free), "")
+                .mount("vda1", 20 * GIB, 20 * GIB - free),
+        )
     }
 
     #[test]
@@ -2073,20 +2886,73 @@ mod tests {
         assert_eq!(new[2], (3, old[2].1, old[2].2 - G));
         // The disk, the last usable LBA and the backup header follow.
         assert_eq!(at(&out, &["storage", "disks", "0", "size_bytes"]), 63 * GIB);
-        assert_eq!(at(&out, &["storage", "disks", "0", "partition_table", "last_usable_lba"]), 63 * G - 34);
-        assert_eq!(at(&out, &["storage", "disks", "0", "partition_table", "backup_lba"]), 63 * G - 1);
-        assert_eq!(at(&out, &["storage", "disks", "0", "partition_table", "protective_mbr", "entries", "0", "sectors"]), 63 * G - 1);
+        assert_eq!(
+            at(
+                &out,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partition_table",
+                    "last_usable_lba"
+                ]
+            ),
+            63 * G - 34
+        );
+        assert_eq!(
+            at(
+                &out,
+                &["storage", "disks", "0", "partition_table", "backup_lba"]
+            ),
+            63 * G - 1
+        );
+        assert_eq!(
+            at(
+                &out,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partition_table",
+                    "protective_mbr",
+                    "entries",
+                    "0",
+                    "sectors"
+                ]
+            ),
+            63 * G - 1
+        );
         // The btrfs on it fills the partition, as mkfs.btrfs makes it.
-        assert_eq!(at(&out, &["storage", "disks", "0", "partitions", "2", "content", "total_bytes"]), new[2].2 * 512);
+        assert_eq!(
+            at(
+                &out,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partitions",
+                    "2",
+                    "content",
+                    "total_bytes"
+                ]
+            ),
+            new[2].2 * 512
+        );
         // /boot's and the swap's entries, identifiers and all, are untouched.
         for i in ["0", "1"] {
-            assert_eq!(v.at(&["storage", "disks", "0", "partitions", i]), out.at(&["storage", "disks", "0", "partitions", i]));
+            assert_eq!(
+                v.at(&["storage", "disks", "0", "partitions", i]),
+                out.at(&["storage", "disks", "0", "partitions", i])
+            );
         }
         let p = f.disks[0].part.as_ref().unwrap();
         assert_eq!((p.number, p.what.as_str()), (3, "btrfs"));
         assert!(f.disks[0].moved.is_empty());
         let r = f.report(5).join("\n");
-        assert!(r.contains("vda -> /dev/sdb: fitted with --fit-largest 5%: 64 GiB -> 63 GiB"), "{r}");
+        assert!(
+            r.contains("vda -> /dev/sdb: fitted with --fit-largest 5%: 64 GiB -> 63 GiB"),
+            "{r}"
+        );
         assert!(r.contains("vda3 (btrfs) shrinks by 1 GiB"), "{r}");
         assert!(r.contains("8 GiB used"), "{r}");
     }
@@ -2106,11 +2972,33 @@ mod tests {
         let exact = (total - 2 * G - 1) * 512;
         let (out, _) = fitted(&v, exact, 10);
         assert_eq!(geom(&out)[1], (2, 2048 + G, root - 2 * G));
-        assert_eq!(at(&out, &["storage", "disks", "0", "partitions", "1", "content", "blocks"]), (root - 2 * G) / 8);
-        assert!(refused(&v, exact, 9).is("fit_over_pct").contains("more than 9%"));
+        assert_eq!(
+            at(
+                &out,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partitions",
+                    "1",
+                    "content",
+                    "blocks"
+                ]
+            ),
+            (root - 2 * G) / 8
+        );
+        assert!(
+            refused(&v, exact, 9)
+                .is("fit_over_pct")
+                .contains("more than 9%")
+        );
         // One sector smaller: the shrink rounds up to the next whole MiB,
         // which 10% of the root no longer covers.
-        assert!(refused(&v, exact - 512, 10).is("fit_over_pct").contains("more than 10%"));
+        assert!(
+            refused(&v, exact - 512, 10)
+                .is("fit_over_pct")
+                .contains("more than 10%")
+        );
         let (out, _) = fitted(&v, exact - 512, 11);
         assert_eq!(geom(&out)[1], (2, 2048 + G, root - 2 * G - M));
     }
@@ -2120,12 +3008,30 @@ mod tests {
         // The root ends 4 GiB before the last usable sector.
         let root = 20 * G;
         let total = 2048 + root + 4 * G + 34;
-        let v = D::gpt(total).part(1, 2048, root, &ext4_on(root, GIB), "").build();
+        let v = D::gpt(total)
+            .part(1, 2048, root, &ext4_on(root, GIB), "")
+            .build();
         let (out, f) = fitted(&v, (total - 2 * G) * 512, 1);
         assert_eq!(geom(&out), geom(&v));
         assert!(f.disks[0].part.is_none());
-        assert_eq!(at(&out, &["storage", "disks", "0", "partition_table", "last_usable_lba"]), total - 2 * G - 34);
-        assert!(f.disks[0].notes[0].contains("no partition changes"), "{:?}", f.disks[0].notes);
+        assert_eq!(
+            at(
+                &out,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partition_table",
+                    "last_usable_lba"
+                ]
+            ),
+            total - 2 * G - 34
+        );
+        assert!(
+            f.disks[0].notes[0].contains("no partition changes"),
+            "{:?}",
+            f.disks[0].notes
+        );
         // Nothing shrinks, so how full it is doesn't come into it.
         assert!(f.disks[0].fits.is_empty());
     }
@@ -2139,7 +3045,10 @@ mod tests {
             .part(2, 2048 + half, half, &ext4_on(half, GIB), "")
             .build();
         let why = refused(&v, (total - M) * 512, 50).is("tied");
-        assert!(why.contains("vda1 (8 GiB) and vda2 (8 GiB) are the same size"), "{why}");
+        assert!(
+            why.contains("vda1 (8 GiB) and vda2 (8 GiB) are the same size"),
+            "{why}"
+        );
     }
 
     #[test]
@@ -2160,14 +3069,62 @@ mod tests {
         assert_eq!(new[2], (3, old[2].1 - M, old[2].2));
         assert_eq!(f.disks[0].moved, vec![(3, -(M as i64))]);
         // An MBR has no last usable LBA to move, and the swap keeps its UUID.
-        assert!(out.at(&["storage", "disks", "0", "partition_table", "last_usable_lba"]).is_none());
-        assert_eq!(v.at(&["storage", "disks", "0", "partitions", "2", "content"]), out.at(&["storage", "disks", "0", "partitions", "2", "content"]));
+        assert!(
+            out.at(&[
+                "storage",
+                "disks",
+                "0",
+                "partition_table",
+                "last_usable_lba"
+            ])
+            .is_none()
+        );
+        assert_eq!(
+            v.at(&["storage", "disks", "0", "partitions", "2", "content"]),
+            out.at(&["storage", "disks", "0", "partitions", "2", "content"])
+        );
         // The XFS keeps its allocation group size, and counts them again.
-        let blocks = at(&out, &["storage", "disks", "0", "partitions", "1", "content", "blocks"]);
-        let ag = at(&out, &["storage", "disks", "0", "partitions", "1", "content", "ag_blocks"]);
+        let blocks = at(
+            &out,
+            &[
+                "storage",
+                "disks",
+                "0",
+                "partitions",
+                "1",
+                "content",
+                "blocks",
+            ],
+        );
+        let ag = at(
+            &out,
+            &[
+                "storage",
+                "disks",
+                "0",
+                "partitions",
+                "1",
+                "content",
+                "ag_blocks",
+            ],
+        );
         assert_eq!(blocks, (root - M) / 8);
         assert_eq!(ag, root / 32);
-        assert_eq!(at(&out, &["storage", "disks", "0", "partitions", "1", "content", "ag_count"]), blocks.div_ceil(ag));
+        assert_eq!(
+            at(
+                &out,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partitions",
+                    "1",
+                    "content",
+                    "ag_count"
+                ]
+            ),
+            blocks.div_ceil(ag)
+        );
     }
 
     #[test]
@@ -2177,17 +3134,61 @@ mod tests {
         let root = 25 * G;
         let total = 2048 + root + 34;
         let ag = 5 * GIB / 4096;
-        let v = D::gpt(total).part(1, 2048, root, &xfs(root / 8, ag), "").mount("vda1", 25 * GIB, 8 * GIB).build();
-        let blocks = |out: &Value| at(out, &["storage", "disks", "0", "partitions", "0", "content", "blocks"]);
+        let v = D::gpt(total)
+            .part(1, 2048, root, &xfs(root / 8, ag), "")
+            .mount("vda1", 25 * GIB, 8 * GIB)
+            .build();
+        let blocks = |out: &Value| {
+            at(
+                out,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partitions",
+                    "0",
+                    "content",
+                    "blocks",
+                ],
+            )
+        };
         // 8 MiB of a fifth group would be left: mkfs.xfs refuses that, so
         // the fit leaves it out and keeps four whole groups.
         let (out, _) = fitted(&v, (total - 5 * G + 8 * M) * 512, 50);
         assert_eq!(blocks(&out), 4 * ag);
-        assert_eq!(at(&out, &["storage", "disks", "0", "partitions", "0", "content", "ag_count"]), 4);
+        assert_eq!(
+            at(
+                &out,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partitions",
+                    "0",
+                    "content",
+                    "ag_count"
+                ]
+            ),
+            4
+        );
         // 64 MiB of it is group enough to keep.
         let (out, _) = fitted(&v, (total - 5 * G + 64 * M) * 512, 50);
         assert_eq!(blocks(&out), 4 * ag + 64 * MIB / 4096);
-        assert_eq!(at(&out, &["storage", "disks", "0", "partitions", "0", "content", "ag_count"]), 5);
+        assert_eq!(
+            at(
+                &out,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partitions",
+                    "0",
+                    "content",
+                    "ag_count"
+                ]
+            ),
+            5
+        );
     }
 
     /// BackShot2's fail-005 ext4 (alpine324-uefi's vda3, drifted): 4 KiB
@@ -2214,22 +3215,46 @@ mod tests {
         // source's 3466368 inodes would be 33013 a group, more than an
         // inode bitmap block's 32768.
         let e = ext_resized(&c, 3424947).unwrap().unwrap();
-        assert_eq!((e.blocks, e.groups, e.ipg, e.inodes), (3424947, 105, 32096, 105 * 32096));
+        assert_eq!(
+            (e.blocks, e.groups, e.ipg, e.inodes),
+            (3424947, 105, 32096, 105 * 32096)
+        );
         assert_eq!(e.reserved_gdt_blocks, Some(261));
         assert_eq!(e.reserved_blocks, Some(171246));
         // A last group of 100 blocks is dropped, one of its own overhead
         // (2 bitmaps, 2006 inode-table blocks) and 50 kept.
-        assert_eq!(ext_resized(&c, 104 * 32768 + 100).unwrap().unwrap().blocks, 104 * 32768);
-        assert_eq!(ext_resized(&c, 104 * 32768 + 2058).unwrap().unwrap().groups, 105);
+        assert_eq!(
+            ext_resized(&c, 104 * 32768 + 100).unwrap().unwrap().blocks,
+            104 * 32768
+        );
+        assert_eq!(
+            ext_resized(&c, 104 * 32768 + 2058).unwrap().unwrap().groups,
+            105
+        );
         // Group 125 (5^3) holds a backup: the superblock, 2 descriptor
         // blocks and the 261 reserved come on top.
         let e = ext_resized(&c, 125 * 32768 + 2058).unwrap().unwrap();
         assert_eq!((e.blocks, e.groups), (125 * 32768, 125));
-        assert_eq!(ext_resized(&c, 125 * 32768 + 2322).unwrap().unwrap().groups, 126);
+        assert_eq!(
+            ext_resized(&c, 125 * 32768 + 2322).unwrap().unwrap().groups,
+            126
+        );
         // The reserved GDT blocks take up what the descriptors give back
         // (2 blocks of 64 to 1), or give it (to 3), as resize2fs has them.
-        assert_eq!(ext_resized(&c, 64 * 32768).unwrap().unwrap().reserved_gdt_blocks, Some(262));
-        assert_eq!(ext_resized(&c, 129 * 32768).unwrap().unwrap().reserved_gdt_blocks, Some(260));
+        assert_eq!(
+            ext_resized(&c, 64 * 32768)
+                .unwrap()
+                .unwrap()
+                .reserved_gdt_blocks,
+            Some(262)
+        );
+        assert_eq!(
+            ext_resized(&c, 129 * 32768)
+                .unwrap()
+                .unwrap()
+                .reserved_gdt_blocks,
+            Some(260)
+        );
         // Less than a group's own overhead is no filesystem.
         assert!(ext_resized(&c, 1000).is_err());
         // Without inodes per group in the dump, nothing to go by.
@@ -2251,15 +3276,23 @@ mod tests {
         let blocks = 3538432;
         let root = blocks * 8;
         let total = 2048 + root + 34;
-        let v = D::gpt(total).part(1, 2048, root, &ext4_full(blocks, 2_000_000), "").mount("vda1", blocks * 4096, 6 * GIB).build();
+        let v = D::gpt(total)
+            .part(1, 2048, root, &ext4_full(blocks, 2_000_000), "")
+            .mount("vda1", blocks * 4096, 6 * GIB)
+            .build();
         let (out, f) = fitted(&v, (total - 464835584 / 512) * 512, 9);
-        let c = out.at(&["storage", "disks", "0", "partitions", "0", "content"]).unwrap();
+        let c = out
+            .at(&["storage", "disks", "0", "partitions", "0", "content"])
+            .unwrap();
         let n = at(c, &["blocks"]);
         let groups = n.div_ceil(32768);
         assert!(groups < 108, "{groups} groups");
         assert_eq!(at(c, &["inodes"]), groups * 32096);
         let argv = crate::load::commands::mke2fs("/dev/sdb1", c).join(" ");
-        assert!(argv.contains(&format!("-N {} -g 32768 ", groups * 32096)), "{argv}");
+        assert!(
+            argv.contains(&format!("-N {} -g 32768 ", groups * 32096)),
+            "{argv}"
+        );
         let r = f.report(9).join("\n");
         assert!(r.contains(&format!("vda1: the ext4 keeps 32096 inodes a group: {groups} groups, {} inodes (was 3466368)", groups * 32096)), "{r}");
     }
@@ -2270,8 +3303,12 @@ mod tests {
         let root = blocks * 8;
         let total = 2048 + root + 34;
         // 3.4 M inodes in use: the 105 groups' 3.37 M can't hold them.
-        let ext = ext4_full(blocks, 2_000_000).replace(r#""free_inodes": 3426368"#, r#""free_inodes": 60000"#);
-        let v = D::gpt(total).part(1, 2048, root, &ext, "").mount("vda1", blocks * 4096, 6 * GIB).build();
+        let ext = ext4_full(blocks, 2_000_000)
+            .replace(r#""free_inodes": 3426368"#, r#""free_inodes": 60000"#);
+        let v = D::gpt(total)
+            .part(1, 2048, root, &ext, "")
+            .mount("vda1", blocks * 4096, 6 * GIB)
+            .build();
         let e = refused(&v, (total - 464835584 / 512) * 512, 9).is("inodes");
         assert!(e.contains("inodes in use"), "{e}");
     }
@@ -2284,19 +3321,53 @@ mod tests {
         // 10% of 20 GiB is 2 GiB, and there are 16 GiB to grow into.
         let (out, f) = fitted(&v, (total + 16 * G) * 512, 10);
         assert_eq!(geom(&out)[0], (1, 2048, root + 2 * G));
-        assert_eq!(at(&out, &["storage", "disks", "0", "partitions", "0", "content", "blocks"]), (root + 2 * G) / 8);
-        assert!(f.disks[0].fits.is_empty(), "nothing shrinks, so there's nothing to check");
+        assert_eq!(
+            at(
+                &out,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partitions",
+                    "0",
+                    "content",
+                    "blocks"
+                ]
+            ),
+            (root + 2 * G) / 8
+        );
+        assert!(
+            f.disks[0].fits.is_empty(),
+            "nothing shrinks, so there's nothing to check"
+        );
         // The 14 GiB PCT held it back from is said to stay unused, as it is
         // without the flag.
-        assert!(f.disks[0].notes.iter().any(|n| n == "the target is bigger; the extra 14 GiB stays unused"), "{:?}", f.disks[0].notes);
-        assert!(f.report(10).iter().any(|l| l.contains("the extra 14 GiB stays unused")), "{:?}", f.report(10));
+        assert!(
+            f.disks[0]
+                .notes
+                .iter()
+                .any(|n| n == "the target is bigger; the extra 14 GiB stays unused"),
+            "{:?}",
+            f.disks[0].notes
+        );
+        assert!(
+            f.report(10)
+                .iter()
+                .any(|l| l.contains("the extra 14 GiB stays unused")),
+            "{:?}",
+            f.report(10)
+        );
         // Room first: one GiB of disk, where 10% would allow two.
         let (out, _) = fitted(&v, (total + G) * 512, 10);
         assert_eq!(geom(&out)[0], (1, 2048, root + G));
         // Less than a MiB to grow into: the extra stays unused.
         let (out, f) = fitted(&v, (total + 1024) * 512, 10);
         assert_eq!(geom(&out), geom(&v));
-        assert!(f.disks[0].notes[0].contains("doesn't grow"), "{:?}", f.disks[0].notes);
+        assert!(
+            f.disks[0].notes[0].contains("doesn't grow"),
+            "{:?}",
+            f.disks[0].notes
+        );
     }
 
     #[test]
@@ -2306,19 +3377,56 @@ mod tests {
         // hasn't, so the fit stops at the last sector one can hold.
         let root = 3_774_873_600;
         let total = 2048 + root;
-        let v = D::mbr(total).part(1, 2048, root, &ext4_on(root, 512 * GIB), "").mount("vda1", root * 512, 256 * GIB).build();
+        let v = D::mbr(total)
+            .part(1, 2048, root, &ext4_on(root, 512 * GIB), "")
+            .mount("vda1", root * 512, 256 * GIB)
+            .build();
         let (out, f) = fitted(&v, 4 << 40, 50);
         let (number, start, sectors) = geom(&out)[0];
         assert_eq!((number, start), (1, 2048));
-        assert_eq!(start + sectors - 1, MBR_LAST, "it grows to the last sector an entry reaches");
-        assert_eq!(at(&out, &["storage", "disks", "0", "partitions", "0", "content", "blocks"]), sectors / 8);
+        assert_eq!(
+            start + sectors - 1,
+            MBR_LAST,
+            "it grows to the last sector an entry reaches"
+        );
+        assert_eq!(
+            at(
+                &out,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partitions",
+                    "0",
+                    "content",
+                    "blocks"
+                ]
+            ),
+            sectors / 8
+        );
         // And the 2 TiB it couldn't take is said to stay unused.
-        assert!(f.disks[0].notes.iter().any(|n| n.contains("the extra 2 TiB stays unused")), "{:?}", f.disks[0].notes);
+        assert!(
+            f.disks[0]
+                .notes
+                .iter()
+                .any(|n| n.contains("the extra 2 TiB stays unused")),
+            "{:?}",
+            f.disks[0].notes
+        );
         // A partition already at the limit doesn't grow at all.
-        let v = D::mbr(MBR_LAST + 1).part(1, 2048, MBR_LAST - 2047, &ext4_on(MBR_LAST - 2047, GIB), "").build();
+        let v = D::mbr(MBR_LAST + 1)
+            .part(1, 2048, MBR_LAST - 2047, &ext4_on(MBR_LAST - 2047, GIB), "")
+            .build();
         let (out, f) = fitted(&v, 4 << 40, 50);
         assert_eq!(geom(&out), geom(&v));
-        assert!(f.disks[0].notes.iter().any(|n| n.contains("an MBR partition entry reaches no further")), "{:?}", f.disks[0].notes);
+        assert!(
+            f.disks[0]
+                .notes
+                .iter()
+                .any(|n| n.contains("an MBR partition entry reaches no further")),
+            "{:?}",
+            f.disks[0].notes
+        );
     }
 
     #[test]
@@ -2328,18 +3436,33 @@ mod tests {
         // bigger by less than the table's own tail there's no room at all.
         let root = 20 * G;
         let total = 2048 + root + 20 * G + 34;
-        let v = D::gpt(total).short(20 * G).part(1, 2048, root, &ext4_on(root, GIB), "").build();
+        let v = D::gpt(total)
+            .short(20 * G)
+            .part(1, 2048, root, &ext4_on(root, GIB), "")
+            .build();
         let (out, f) = fitted(&v, (total - 4 * G) * 512, 10);
         assert_eq!(geom(&out), geom(&v));
         let notes = f.disks[0].notes.join("; ");
         assert!(notes.contains("no partition changes"), "{notes}");
-        assert!(notes.contains("only 4 GiB of the source's unused space is gone"), "{notes}");
+        assert!(
+            notes.contains("only 4 GiB of the source's unused space is gone"),
+            "{notes}"
+        );
         // The same table with its last partition run into the tail, on a
         // target 16 sectors bigger: nothing past it to grow into.
-        let v = D::gpt(total).part(1, 2048, total - 2048, &ext4_on(root, GIB), "").build();
+        let v = D::gpt(total)
+            .part(1, 2048, total - 2048, &ext4_on(root, GIB), "")
+            .build();
         let (out, f) = fitted(&v, (total + 16) * 512, 10);
         assert_eq!(geom(&out), geom(&v));
-        assert!(f.disks[0].notes.iter().any(|n| n.contains("less than 1 MiB to grow into")), "{:?}", f.disks[0].notes);
+        assert!(
+            f.disks[0]
+                .notes
+                .iter()
+                .any(|n| n.contains("less than 1 MiB to grow into")),
+            "{:?}",
+            f.disks[0].notes
+        );
     }
 
     #[test]
@@ -2359,7 +3482,21 @@ mod tests {
         let src = d(start).build();
         let (out, _) = fitted(&src, (total - G) * 512, 10);
         assert_eq!(geom(&out)[1], (2, start - G, esp));
-        assert_eq!(at(&out, &["storage", "disks", "0", "partitions", "1", "content", "hidden_sectors"]), start - G);
+        assert_eq!(
+            at(
+                &out,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partitions",
+                    "1",
+                    "content",
+                    "hidden_sectors"
+                ]
+            ),
+            start - G
+        );
         // Nothing else about it changes, identifiers and all.
         for k in ["uuid", "label", "fat_bits", "reserved_sectors", "media"] {
             let p = ["storage", "disks", "0", "partitions", "1", "content", k];
@@ -2368,9 +3505,27 @@ mod tests {
         // One that records no start keeps that: it says nothing about where
         // the partition is.
         let (out, _) = fitted(&d(0).build(), (total - G) * 512, 10);
-        assert_eq!(at(&out, &["storage", "disks", "0", "partitions", "1", "content", "hidden_sectors"]), 0);
+        assert_eq!(
+            at(
+                &out,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partitions",
+                    "1",
+                    "content",
+                    "hidden_sectors"
+                ]
+            ),
+            0
+        );
         // One recording something else isn't a start the fit can mend.
-        assert!(refused(&d(1).build(), (total - G) * 512, 10).is("fat_start").contains("records sector 1 as its first, not its own start"));
+        assert!(
+            refused(&d(1).build(), (total - G) * 512, 10)
+                .is("fat_start")
+                .contains("records sector 1 as its first, not its own start")
+        );
     }
 
     #[test]
@@ -2381,9 +3536,38 @@ mod tests {
         let ag = 4 * GIB / 4096;
         let root = 8 * G;
         let total = 2048 + root + 34;
-        let v = D::gpt(total).part(1, 2048, root, &xfs(2 * ag, ag), "").mount("vda1", 8 * GIB, GIB).build();
-        let blocks = |out: &Value| at(out, &["storage", "disks", "0", "partitions", "0", "content", "blocks"]);
-        let groups = |out: &Value| at(out, &["storage", "disks", "0", "partitions", "0", "content", "ag_count"]);
+        let v = D::gpt(total)
+            .part(1, 2048, root, &xfs(2 * ag, ag), "")
+            .mount("vda1", 8 * GIB, GIB)
+            .build();
+        let blocks = |out: &Value| {
+            at(
+                out,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partitions",
+                    "0",
+                    "content",
+                    "blocks",
+                ],
+            )
+        };
+        let groups = |out: &Value| {
+            at(
+                out,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partitions",
+                    "0",
+                    "content",
+                    "ag_count",
+                ],
+            )
+        };
         // 20 MiB of a second group: past the 16 MiB minimum, and short of
         // that again plus the 10 MiB log, so the group goes.
         let (out, _) = fitted(&v, (total - 4076 * M) * 512, 50);
@@ -2399,14 +3583,52 @@ mod tests {
         let root = 20 * G;
         let total = 2048 + root + 34;
         let blocks = (root - G) / 8;
-        let v = D::gpt(total).part(1, 2048, root, &xfs(blocks, blocks / 4), "").mount("vda1", 19 * GIB, 2 * GIB).build();
+        let v = D::gpt(total)
+            .part(1, 2048, root, &xfs(blocks, blocks / 4), "")
+            .mount("vda1", 19 * GIB, 2 * GIB)
+            .build();
         let (out, _) = fitted(&v, (total - G) * 512, 20);
         // It loses the GiB the partition lost, and keeps the slack.
-        assert_eq!(at(&out, &["storage", "disks", "0", "partitions", "0", "content", "blocks"]), blocks - G / 8);
+        assert_eq!(
+            at(
+                &out,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partitions",
+                    "0",
+                    "content",
+                    "blocks"
+                ]
+            ),
+            blocks - G / 8
+        );
         // Growing, a filesystem with slack keeps its size.
         let (out, f) = fitted(&v, (total + G) * 512, 20);
-        assert_eq!(at(&out, &["storage", "disks", "0", "partitions", "0", "content", "blocks"]), blocks);
-        assert!(f.disks[0].notes.iter().any(|n| n.contains("keeps that size")), "{:?}", f.disks[0].notes);
+        assert_eq!(
+            at(
+                &out,
+                &[
+                    "storage",
+                    "disks",
+                    "0",
+                    "partitions",
+                    "0",
+                    "content",
+                    "blocks"
+                ]
+            ),
+            blocks
+        );
+        assert!(
+            f.disks[0]
+                .notes
+                .iter()
+                .any(|n| n.contains("keeps that size")),
+            "{:?}",
+            f.disks[0].notes
+        );
     }
 
     #[test]
@@ -2419,35 +3641,77 @@ mod tests {
             refused(&v, smaller, 50)
         };
         assert!(case(&swap()).is("swap").contains("holds swap"));
-        assert!(case(r#"{"type": "linux_raid_member", "uuid": "a"}"#).is("member").contains("md array's member"));
-        assert!(case(r#"{"type": "zfs_member", "label": "rpool"}"#).is("member").contains("ZFS pool's member"));
-        assert!(case(r#"{"type": "bcachefs", "uuid": "a"}"#).is("fs_unsupported").contains("isn't one it resizes"));
-        assert!(case(r#"{"type": "vfat", "uuid": "1234-ABCD"}"#).is("fs_unsupported").contains("isn't one it resizes"));
+        assert!(
+            case(r#"{"type": "linux_raid_member", "uuid": "a"}"#)
+                .is("member")
+                .contains("md array's member")
+        );
+        assert!(
+            case(r#"{"type": "zfs_member", "label": "rpool"}"#)
+                .is("member")
+                .contains("ZFS pool's member")
+        );
+        assert!(
+            case(r#"{"type": "bcachefs", "uuid": "a"}"#)
+                .is("fs_unsupported")
+                .contains("isn't one it resizes")
+        );
+        assert!(
+            case(r#"{"type": "vfat", "uuid": "1234-ABCD"}"#)
+                .is("fs_unsupported")
+                .contains("isn't one it resizes")
+        );
         assert!(case("null").is("other").contains("nothing is on"));
         // btrfs over two devices.
-        let v = D::gpt(total).part(1, 2048, root, &btrfs(root * 512), "").build();
+        let v = D::gpt(total)
+            .part(1, 2048, root, &btrfs(root * 512), "")
+            .build();
         let two = crate::json::parse(&v.compact().replace(
             r#""btrfs":[]"#,
             r#""btrfs":[{"uuid":"b7b7b7b7-0000-4000-8000-000000000003","devices":["vda1","vdb1"]}]"#,
         ))
         .unwrap();
-        assert!(refused(&two, smaller, 50).is("multi_device").contains("one of 2 devices"));
+        assert!(
+            refused(&two, smaller, 50)
+                .is("multi_device")
+                .contains("one of 2 devices")
+        );
         // An MBR logical partition, and one that would have to move.
         let ext = root - 4 * G;
         let v = D::mbr(total)
             .part(1, 2048, 4 * G, &ext4_on(4 * G, GIB), "")
             .part(2, 2048 + 4 * G, ext, "null", "\"extended\": true")
-            .part(5, 2048 + 4 * G + 2, ext - 2, &ext4_on(ext - 2, GIB), "\"logical\": true")
+            .part(
+                5,
+                2048 + 4 * G + 2,
+                ext - 2,
+                &ext4_on(ext - 2, GIB),
+                "\"logical\": true",
+            )
             .mount("vda5", 16 * GIB, GIB)
             .build();
-        assert!(refused(&v, smaller, 50).is("logical").contains("is an MBR logical partition"));
+        assert!(
+            refused(&v, smaller, 50)
+                .is("logical")
+                .contains("is an MBR logical partition")
+        );
         let v = D::mbr(total)
             .part(1, 2048, root - 4 * G, &ext4_on(root - 4 * G, 8 * GIB), "")
             .part(2, 2048 + root - 4 * G, 4 * G, "null", "\"extended\": true")
-            .part(5, 2048 + root - 4 * G + 2, 4 * G - 2, &ext4_on(4 * G - 2, GIB), "\"logical\": true")
+            .part(
+                5,
+                2048 + root - 4 * G + 2,
+                4 * G - 2,
+                &ext4_on(4 * G - 2, GIB),
+                "\"logical\": true",
+            )
             .mount("vda1", 16 * GIB, 8 * GIB)
             .build();
-        assert!(refused(&v, smaller, 50).is("logical").contains("would have to move, and it's an MBR extended partition"));
+        assert!(
+            refused(&v, smaller, 50)
+                .is("logical")
+                .contains("would have to move, and it's an MBR extended partition")
+        );
         // A whole-disk layout with no table at all.
         let v = crate::json::parse(
             r#"{"format": "bko-holt", "schema": 1, "privileged": true, "os": {"id": "debian", "version_id": "13"},
@@ -2455,14 +3719,36 @@ mod tests {
                   "partition_table": null, "partitions": [], "content": {"type": "xfs", "uuid": "a"}}]}}"#,
         )
         .unwrap();
-        assert!(refused(&v, 1 << 29, 50).is("no_table").contains("no partition table"));
+        assert!(
+            refused(&v, 1 << 29, 50)
+                .is("no_table")
+                .contains("no partition table")
+        );
         // Another system's layout, whose table load writes itself.
-        let v = D::gpt(total).part(1, 2048, root, &ext4_on(root, GIB), "").family("freebsd").build();
-        assert!(refused(&v, smaller, 50).is("other_family").contains("this dump is freebsd's"));
+        let v = D::gpt(total)
+            .part(1, 2048, root, &ext4_on(root, GIB), "")
+            .family("freebsd")
+            .build();
+        assert!(
+            refused(&v, smaller, 50)
+                .is("other_family")
+                .contains("this dump is freebsd's")
+        );
         let f = fit(&v, &one_target((total + 4 * G) * 512), 50);
         assert!(f.v.is_none() && f.problems.is_empty());
-        assert!(f.notes[0].contains("doesn't grow a freebsd layout"), "{:?}", f.notes);
-        assert_eq!((f.notes[0].code, f.notes[0].str_field("target"), f.notes[0].field("bytes").and_then(Value::as_u64)), (NoteCode::TargetBigger, Some("sdb"), Some(4 * GIB)));
+        assert!(
+            f.notes[0].contains("doesn't grow a freebsd layout"),
+            "{:?}",
+            f.notes
+        );
+        assert_eq!(
+            (
+                f.notes[0].code,
+                f.notes[0].str_field("target"),
+                f.notes[0].field("bytes").and_then(Value::as_u64)
+            ),
+            (NoteCode::TargetBigger, Some("sdb"), Some(4 * GIB))
+        );
         assert_eq!(f.new_end, vec!["vda".to_string()]);
     }
 
@@ -2472,10 +3758,20 @@ mod tests {
         let total = 2048 + root + 2 * M + 34;
         let v = D::gpt(total)
             .part(1, 2048, root, &ext4_on(root, 16 * GIB), "")
-            .part(2, 2048 + root, 2 * M, &btrfs(2 * M * 512), r#""esp_image": [{"offset": 0, "b64": "AAA="}]"#)
+            .part(
+                2,
+                2048 + root,
+                2 * M,
+                &btrfs(2 * M * 512),
+                r#""esp_image": [{"offset": 0, "b64": "AAA="}]"#,
+            )
             .mount("vda1", 20 * GIB, GIB)
             .build();
-        assert!(refused(&v, (total - M) * 512, 50).is("moves_bytes").contains("the dump holds its bytes to put back"));
+        assert!(
+            refused(&v, (total - M) * 512, 50)
+                .is("moves_bytes")
+                .contains("the dump holds its bytes to put back")
+        );
     }
 
     #[test]
@@ -2483,28 +3779,59 @@ mod tests {
         // 18 GiB used of 20: 2 GiB free, and a 2 GiB shrink needs 3.
         let (total, d) = one_root(2 * GIB);
         let why = refused(&d.build(), (total - 2 * G) * 512, 50).is("data_wont_fit");
-        assert!(why.contains("holds 18 GiB of 20 GiB and would shrink by 2 GiB"), "{why}");
+        assert!(
+            why.contains("holds 18 GiB of 20 GiB and would shrink by 2 GiB"),
+            "{why}"
+        );
         assert!(why.contains("1 GiB to spare"), "{why}");
         // A GiB of it: that fits, with the GiB to spare.
         let (_, f) = fitted(&d.build(), (total - G) * 512, 50);
-        assert_eq!(f.disks[0].fits[0], DataFit { dev: "vda1".into(), kind: "ext4".into(), size: 20 * GIB, shrink: GIB, used: 18 * GIB, free: 2 * GIB, need: 2 * GIB });
+        assert_eq!(
+            f.disks[0].fits[0],
+            DataFit {
+                dev: "vda1".into(),
+                kind: "ext4".into(),
+                size: 20 * GIB,
+                shrink: GIB,
+                used: 18 * GIB,
+                free: 2 * GIB,
+                need: 2 * GIB
+            }
+        );
         // 5% of what's used, where that's more than a GiB: 120 GiB used of
         // 200, so a 76 GiB shrink needs 82 GiB free and has 80.
         let big = 200 * G;
         let btotal = 2048 + big + 34;
-        let v = D::gpt(btotal).part(1, 2048, big, &ext4_on(big, 80 * GIB), "").mount("vda1", 200 * GIB, 120 * GIB).build();
+        let v = D::gpt(btotal)
+            .part(1, 2048, big, &ext4_on(big, 80 * GIB), "")
+            .mount("vda1", 200 * GIB, 120 * GIB)
+            .build();
         let why = refused(&v, (btotal - 76 * G) * 512, 50).is("data_wont_fit");
         assert!(why.contains("would shrink by 76 GiB"), "{why}");
-        assert!(why.contains("82 GiB free it needs (the shrink and 6 GiB to spare)"), "{why}");
+        assert!(
+            why.contains("82 GiB free it needs (the shrink and 6 GiB to spare)"),
+            "{why}"
+        );
         let (_, f) = fitted(&v, (btotal - 70 * G) * 512, 50);
         assert_eq!(f.disks[0].fits[0].need, 76 * GIB);
         // The superblock's own free blocks, where nothing says it's mounted.
-        let sb = D::gpt(total).part(1, 2048, 20 * G, &ext4_on(20 * G, 4 * GIB), "").build();
+        let sb = D::gpt(total)
+            .part(1, 2048, 20 * G, &ext4_on(20 * G, 4 * GIB), "")
+            .build();
         let (_, f) = fitted(&sb, (total - 2 * G) * 512, 50);
-        assert_eq!((f.disks[0].fits[0].free, f.disks[0].fits[0].used), (4 * GIB, 16 * GIB));
+        assert_eq!(
+            (f.disks[0].fits[0].free, f.disks[0].fits[0].used),
+            (4 * GIB, 16 * GIB)
+        );
         // Nothing says how full it is: the shrink is refused.
-        let blind = D::gpt(total).part(1, 2048, 20 * G, &ext4(20 * G / 8, None), "").build();
-        assert!(refused(&blind, (total - M) * 512, 50).is("data_unknown").contains("doesn't say how much of it is used"));
+        let blind = D::gpt(total)
+            .part(1, 2048, 20 * G, &ext4(20 * G / 8, None), "")
+            .build();
+        assert!(
+            refused(&blind, (total - M) * 512, 50)
+                .is("data_unknown")
+                .contains("doesn't say how much of it is used")
+        );
     }
 
     #[test]
@@ -2515,15 +3842,29 @@ mod tests {
         let inner = root * 512 - off;
         let v = D::gpt(total)
             .part(1, 2048, root, &luks(off), "")
-            .dm(crypt_dm("dm-0", "vda1", inner, &ext4(inner / 4096, Some(GIB / 4096))))
+            .dm(crypt_dm(
+                "dm-0",
+                "vda1",
+                inner,
+                &ext4(inner / 4096, Some(GIB / 4096)),
+            ))
             .mount("dm-0", inner, 4 * GIB)
             .build();
         let (out, f) = fitted(&v, (total - G) * 512, 50);
         assert_eq!(geom(&out)[0], (1, 2048, root - G));
-        assert_eq!(at(&out, &["storage", "dm_devices", "0", "size_bytes"]), inner - GIB);
-        assert_eq!(at(&out, &["storage", "dm_devices", "0", "content", "blocks"]), (inner - GIB) / 4096);
+        assert_eq!(
+            at(&out, &["storage", "dm_devices", "0", "size_bytes"]),
+            inner - GIB
+        );
+        assert_eq!(
+            at(&out, &["storage", "dm_devices", "0", "content", "blocks"]),
+            (inner - GIB) / 4096
+        );
         // The header's offset and the LUKS UUID are still the source's.
-        assert_eq!(v.at(&["storage", "disks", "0", "partitions", "0", "content"]), out.at(&["storage", "disks", "0", "partitions", "0", "content"]));
+        assert_eq!(
+            v.at(&["storage", "disks", "0", "partitions", "0", "content"]),
+            out.at(&["storage", "disks", "0", "partitions", "0", "content"])
+        );
         assert_eq!(f.disks[0].part.as_ref().unwrap().what, "ext4 on LUKS");
         assert_eq!(f.disks[0].fits[0].dev, "dm-0");
     }
@@ -2536,8 +3877,19 @@ mod tests {
         let total = 2048 + part + 34;
         D::gpt(total)
             .part(1, 2048, part, &pv(), "")
-            .vg(vg("vda1", part * 512, 5119, &[("root", root, vec![0]), ("swap_1", 256, vec![root])]))
-            .dm(lv_dm("dm-0", "root", "vda1", root * EXT, &ext4(root * EXT / 4096, Some(root * MIB / 4096))))
+            .vg(vg(
+                "vda1",
+                part * 512,
+                5119,
+                &[("root", root, vec![0]), ("swap_1", 256, vec![root])],
+            ))
+            .dm(lv_dm(
+                "dm-0",
+                "root",
+                "vda1",
+                root * EXT,
+                &ext4(root * EXT / 4096, Some(root * MIB / 4096)),
+            ))
             .dm(lv_dm("dm-1", "swap_1", "vda1", 256 * EXT, &swap()))
             .mount("dm-0", root * EXT, root * 2 * MIB)
     }
@@ -2551,20 +3903,38 @@ mod tests {
     #[test]
     fn thin_pool_data_wont_fit_carries_its_figures() {
         let data = 5119 - 256;
-        let g = vg("vda1", 20 * G * 512, 5119, &[("pool_tdata", data, vec![0]), ("swap_1", 256, vec![data])]);
+        let g = vg(
+            "vda1",
+            20 * G * 512,
+            5119,
+            &[("pool_tdata", data, vec![0]), ("swap_1", 256, vec![data])],
+        );
         let with_used = |used: u64| {
             let pool = format!(
                 r#", {{"name": "pool", "id": "bkoLVM-0000-0000-0000-0000-0000-000009", "status": ["READ", "WRITE", "VISIBLE"], "flags": [], "size_bytes": {},
                      "segments": [{{"start_extent": 0, "extent_count": {data}, "type": "thin-pool", "pool": "pool_tdata"}}], "data_used_bytes": {used}}}]}}"#,
                 data * EXT
             );
-            D::gpt(LVM_TOTAL).part(1, 2048, 20 * G, &pv(), "").vg(format!("{}{pool}", g.strip_suffix("]}").unwrap())).dm(lv_dm("dm-1", "swap_1", "vda1", 256 * EXT, &swap())).build()
+            D::gpt(LVM_TOTAL)
+                .part(1, 2048, 20 * G, &pv(), "")
+                .vg(format!("{}{pool}", g.strip_suffix("]}").unwrap()))
+                .dm(lv_dm("dm-1", "swap_1", "vda1", 256 * EXT, &swap()))
+                .build()
         };
         // A GiB has to go: 256 extents, leaving the pool 4607 (18 GiB).
         let r = refused(&with_used(19 * GIB), (LVM_TOTAL - G) * 512, 10).is("data_wont_fit");
-        assert!(r.contains("thin pool vg0/pool would shrink to ") && r.contains(" of data its source had in use"), "{}", &*r);
+        assert!(
+            r.contains("thin pool vg0/pool would shrink to ")
+                && r.contains(" of data its source had in use"),
+            "{}",
+            &*r
+        );
         let p = &r.first;
-        let keys: Vec<(&str, String)> = p.fields.iter().map(|(k, v)| (k.as_str(), v.compact())).collect();
+        let keys: Vec<(&str, String)> = p
+            .fields
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.compact()))
+            .collect();
         assert_eq!(
             keys,
             [
@@ -2586,14 +3956,30 @@ mod tests {
         let v = lvm_disk(512).build();
         let (out, f) = fitted(&v, (LVM_TOTAL - G) * 512, 10);
         // The PV shrinks; no logical volume changes at all.
-        assert_eq!(vg_at(&out, &["physical_volumes", "0", "pe_count"]), 5119 - 256);
-        assert_eq!(vg_at(&out, &["physical_volumes", "0", "dev_size_bytes"]), (20 * G - G) * 512);
+        assert_eq!(
+            vg_at(&out, &["physical_volumes", "0", "pe_count"]),
+            5119 - 256
+        );
+        assert_eq!(
+            vg_at(&out, &["physical_volumes", "0", "dev_size_bytes"]),
+            (20 * G - G) * 512
+        );
         assert_eq!(
             v.at(&["storage", "lvm", "volume_groups", "0", "logical_volumes"]),
             out.at(&["storage", "lvm", "volume_groups", "0", "logical_volumes"])
         );
-        assert_eq!(v.at(&["storage", "dm_devices"]), out.at(&["storage", "dm_devices"]));
-        assert!(f.disks[0].notes.iter().any(|n| n.contains("all of them free")), "{:?}", f.disks[0].notes);
+        assert_eq!(
+            v.at(&["storage", "dm_devices"]),
+            out.at(&["storage", "dm_devices"])
+        );
+        assert!(
+            f.disks[0]
+                .notes
+                .iter()
+                .any(|n| n.contains("all of them free")),
+            "{:?}",
+            f.disks[0].notes
+        );
         assert!(f.disks[0].fits.is_empty());
     }
 
@@ -2604,25 +3990,77 @@ mod tests {
         let v = lvm_disk(0).build();
         let root = 5119 - 256;
         let (out, f) = fitted(&v, (LVM_TOTAL - G) * 512, 10);
-        assert_eq!(vg_at(&out, &["physical_volumes", "0", "pe_count"]), 5119 - 256);
-        assert_eq!(vg_at(&out, &["logical_volumes", "0", "size_bytes"]), (root - 256) * EXT);
-        assert_eq!(vg_at(&out, &["logical_volumes", "0", "segments", "0", "extent_count"]), root - 256);
+        assert_eq!(
+            vg_at(&out, &["physical_volumes", "0", "pe_count"]),
+            5119 - 256
+        );
+        assert_eq!(
+            vg_at(&out, &["logical_volumes", "0", "size_bytes"]),
+            (root - 256) * EXT
+        );
+        assert_eq!(
+            vg_at(
+                &out,
+                &["logical_volumes", "0", "segments", "0", "extent_count"]
+            ),
+            root - 256
+        );
         // root keeps its first extent; swap_1 moves down by the 256 dropped.
-        assert_eq!(vg_at(&out, &["logical_volumes", "0", "segments", "0", "stripes", "1"]), 0);
-        assert_eq!(vg_at(&out, &["logical_volumes", "1", "segments", "0", "stripes", "1"]), root - 256);
-        assert_eq!(vg_at(&out, &["logical_volumes", "1", "size_bytes"]), 256 * EXT);
-        assert_eq!(vg_at(&out, &["logical_volumes", "1", "segments", "0", "extent_count"]), 256);
+        assert_eq!(
+            vg_at(
+                &out,
+                &["logical_volumes", "0", "segments", "0", "stripes", "1"]
+            ),
+            0
+        );
+        assert_eq!(
+            vg_at(
+                &out,
+                &["logical_volumes", "1", "segments", "0", "stripes", "1"]
+            ),
+            root - 256
+        );
+        assert_eq!(
+            vg_at(&out, &["logical_volumes", "1", "size_bytes"]),
+            256 * EXT
+        );
+        assert_eq!(
+            vg_at(
+                &out,
+                &["logical_volumes", "1", "segments", "0", "extent_count"]
+            ),
+            256
+        );
         // The volume's device and its filesystem shrink with it.
-        assert_eq!(at(&out, &["storage", "dm_devices", "0", "size_bytes"]), (root - 256) * EXT);
-        assert_eq!(at(&out, &["storage", "dm_devices", "0", "content", "blocks"]), (root - 256) * EXT / 4096);
+        assert_eq!(
+            at(&out, &["storage", "dm_devices", "0", "size_bytes"]),
+            (root - 256) * EXT
+        );
+        assert_eq!(
+            at(&out, &["storage", "dm_devices", "0", "content", "blocks"]),
+            (root - 256) * EXT / 4096
+        );
         // swap_1's own device, UUID and all, doesn't change.
-        assert_eq!(v.at(&["storage", "dm_devices", "1"]), out.at(&["storage", "dm_devices", "1"]));
+        assert_eq!(
+            v.at(&["storage", "dm_devices", "1"]),
+            out.at(&["storage", "dm_devices", "1"])
+        );
         assert_eq!(f.disks[0].fits[0].dev, "dm-0");
-        assert!(f.disks[0].notes.iter().any(|n| n.contains("256 of them from the end of vg0/root")), "{:?}", f.disks[0].notes);
+        assert!(
+            f.disks[0]
+                .notes
+                .iter()
+                .any(|n| n.contains("256 of them from the end of vg0/root")),
+            "{:?}",
+            f.disks[0].notes
+        );
         // The volume's own size is held to the same percentage: a GiB is 5%
         // of the 20 GiB partition, and 5.2% of the 19 GiB volume.
         let why = refused(&v, (LVM_TOTAL - G) * 512, 5).is("fit_over_pct");
-        assert!(why.contains("vg0/root would have to shrink by 1 GiB of its 19 GiB, more than 5%"), "{why}");
+        assert!(
+            why.contains("vg0/root would have to shrink by 1 GiB of its 19 GiB, more than 5%"),
+            "{why}"
+        );
     }
 
     #[test]
@@ -2634,18 +4072,41 @@ mod tests {
         let root = 4700;
         let v = D::gpt(LVM_TOTAL)
             .part(1, 2048, part, &pv(), "")
-            .vg(vg("vda1", part * 512, 5000, &[("root", root, vec![0]), ("swap_1", 256, vec![root])]))
-            .dm(lv_dm("dm-0", "root", "vda1", root * EXT, &ext4(root * EXT / 4096, Some(root * MIB / 4096))))
+            .vg(vg(
+                "vda1",
+                part * 512,
+                5000,
+                &[("root", root, vec![0]), ("swap_1", 256, vec![root])],
+            ))
+            .dm(lv_dm(
+                "dm-0",
+                "root",
+                "vda1",
+                root * EXT,
+                &ext4(root * EXT / 4096, Some(root * MIB / 4096)),
+            ))
             .dm(lv_dm("dm-1", "swap_1", "vda1", 256 * EXT, &swap()))
             .mount("dm-0", root * EXT, root * 2 * MIB)
             .build();
         let (out, f) = fitted(&v, (LVM_TOTAL - M) * 512, 10);
         assert_eq!(vg_at(&out, &["physical_volumes", "0", "pe_count"]), 5000);
-        assert_eq!(vg_at(&out, &["physical_volumes", "0", "dev_size_bytes"]), (part - M) * 512);
-        assert_eq!(v.at(&["storage", "lvm", "volume_groups", "0", "logical_volumes"]), out.at(&["storage", "lvm", "volume_groups", "0", "logical_volumes"]));
+        assert_eq!(
+            vg_at(&out, &["physical_volumes", "0", "dev_size_bytes"]),
+            (part - M) * 512
+        );
+        assert_eq!(
+            v.at(&["storage", "lvm", "volume_groups", "0", "logical_volumes"]),
+            out.at(&["storage", "lvm", "volume_groups", "0", "logical_volumes"])
+        );
         let notes = f.disks[0].notes.join("; ");
-        assert!(notes.contains("keeps its 5000 extents") && notes.contains("1 MiB the disk lost"), "{notes}");
-        assert!(!notes.contains("grows"), "a smaller disk doesn't grow the group: {notes}");
+        assert!(
+            notes.contains("keeps its 5000 extents") && notes.contains("1 MiB the disk lost"),
+            "{notes}"
+        );
+        assert!(
+            !notes.contains("grows"),
+            "a smaller disk doesn't grow the group: {notes}"
+        );
     }
 
     #[test]
@@ -2658,31 +4119,66 @@ mod tests {
         let v = D::gpt(total)
             .part(1, 2048, part, &pv(), "")
             .vg(vg("vda1", part * 512, 5119, &[("a", a, vec![0, a / 2])]))
-            .dm(lv_dm("dm-0", "a", "vda1", a * EXT, &ext4(a * EXT / 4096, Some(15 * GIB / 4096))))
+            .dm(lv_dm(
+                "dm-0",
+                "a",
+                "vda1",
+                a * EXT,
+                &ext4(a * EXT / 4096, Some(15 * GIB / 4096)),
+            ))
             .mount("dm-0", a * EXT, GIB)
             .build();
         let (out, f) = fitted(&v, (total - G) * 512, 10);
-        assert_eq!(vg_at(&out, &["physical_volumes", "0", "pe_count"]), 5119 - 256);
+        assert_eq!(
+            vg_at(&out, &["physical_volumes", "0", "pe_count"]),
+            5119 - 256
+        );
         assert_eq!(
             v.at(&["storage", "lvm", "volume_groups", "0", "logical_volumes"]),
             out.at(&["storage", "lvm", "volume_groups", "0", "logical_volumes"])
         );
-        assert_eq!(v.at(&["storage", "dm_devices"]), out.at(&["storage", "dm_devices"]));
-        assert!(f.disks[0].fits.is_empty(), "nothing shrinks, so there's nothing to check");
-        assert!(f.disks[0].notes.iter().any(|n| n.contains("all of them free")), "{:?}", f.disks[0].notes);
+        assert_eq!(
+            v.at(&["storage", "dm_devices"]),
+            out.at(&["storage", "dm_devices"])
+        );
+        assert!(
+            f.disks[0].fits.is_empty(),
+            "nothing shrinks, so there's nothing to check"
+        );
+        assert!(
+            f.disks[0]
+                .notes
+                .iter()
+                .any(|n| n.contains("all of them free")),
+            "{:?}",
+            f.disks[0].notes
+        );
     }
 
     #[test]
     fn lvm_growth_leaves_the_new_extents_free() {
         let v = lvm_disk(0).build();
         let (out, f) = fitted(&v, (LVM_TOTAL + G) * 512, 10);
-        assert_eq!(vg_at(&out, &["physical_volumes", "0", "pe_count"]), 5119 + 256);
+        assert_eq!(
+            vg_at(&out, &["physical_volumes", "0", "pe_count"]),
+            5119 + 256
+        );
         assert_eq!(
             v.at(&["storage", "lvm", "volume_groups", "0", "logical_volumes"]),
             out.at(&["storage", "lvm", "volume_groups", "0", "logical_volumes"])
         );
-        assert_eq!(v.at(&["storage", "dm_devices"]), out.at(&["storage", "dm_devices"]));
-        assert!(f.disks[0].notes.iter().any(|n| n.contains("stay free in it")), "{:?}", f.disks[0].notes);
+        assert_eq!(
+            v.at(&["storage", "dm_devices"]),
+            out.at(&["storage", "dm_devices"])
+        );
+        assert!(
+            f.disks[0]
+                .notes
+                .iter()
+                .any(|n| n.contains("stay free in it")),
+            "{:?}",
+            f.disks[0].notes
+        );
     }
 
     #[test]
@@ -2694,56 +4190,156 @@ mod tests {
         // The largest volume is swap.
         let v = D::gpt(total)
             .part(1, 2048, part, &pv(), "")
-            .vg(vg("vda1", part * 512, 5119, &[("swap_1", root, vec![0]), ("root", 256, vec![root])]))
+            .vg(vg(
+                "vda1",
+                part * 512,
+                5119,
+                &[("swap_1", root, vec![0]), ("root", 256, vec![root])],
+            ))
             .dm(lv_dm("dm-0", "swap_1", "vda1", root * EXT, &swap()))
-            .dm(lv_dm("dm-1", "root", "vda1", 256 * EXT, &ext4(256 * EXT / 4096, Some(M))))
+            .dm(lv_dm(
+                "dm-1",
+                "root",
+                "vda1",
+                256 * EXT,
+                &ext4(256 * EXT / 4096, Some(M)),
+            ))
             .build();
-        assert!(refused(&v, smaller, 50).is("swap").contains("is swap, which the fit never shrinks"));
+        assert!(
+            refused(&v, smaller, 50)
+                .is("swap")
+                .contains("is swap, which the fit never shrinks")
+        );
         // Two volumes of the same size, with nothing free between them.
         let v = D::gpt(total)
             .part(1, 2048, part, &pv(), "")
-            .vg(vg("vda1", part * 512, 5118, &[("a", 2559, vec![0]), ("b", 2559, vec![2559])]))
-            .dm(lv_dm("dm-0", "a", "vda1", 2559 * EXT, &ext4(2559 * EXT / 4096, Some(M))))
-            .dm(lv_dm("dm-1", "b", "vda1", 2559 * EXT, &ext4(2559 * EXT / 4096, Some(M))))
+            .vg(vg(
+                "vda1",
+                part * 512,
+                5118,
+                &[("a", 2559, vec![0]), ("b", 2559, vec![2559])],
+            ))
+            .dm(lv_dm(
+                "dm-0",
+                "a",
+                "vda1",
+                2559 * EXT,
+                &ext4(2559 * EXT / 4096, Some(M)),
+            ))
+            .dm(lv_dm(
+                "dm-1",
+                "b",
+                "vda1",
+                2559 * EXT,
+                &ext4(2559 * EXT / 4096, Some(M)),
+            ))
             .build();
-        assert!(refused(&v, smaller, 50).is("tied").contains("same size, so there's no one largest logical volume"));
+        assert!(
+            refused(&v, smaller, 50)
+                .is("tied")
+                .contains("same size, so there's no one largest logical volume")
+        );
         // The largest volume is striped.
         let v = D::gpt(total)
             .part(1, 2048, part, &pv(), "")
-            .vg(vg("vda1", part * 512, 5119, &[("a", 4000, vec![0, 2000]), ("b", 1119, vec![4000])]))
-            .dm(lv_dm("dm-0", "a", "vda1", 4000 * EXT, &ext4(4000 * EXT / 4096, Some(M))))
-            .dm(lv_dm("dm-1", "b", "vda1", 1119 * EXT, &ext4(1119 * EXT / 4096, Some(M))))
+            .vg(vg(
+                "vda1",
+                part * 512,
+                5119,
+                &[("a", 4000, vec![0, 2000]), ("b", 1119, vec![4000])],
+            ))
+            .dm(lv_dm(
+                "dm-0",
+                "a",
+                "vda1",
+                4000 * EXT,
+                &ext4(4000 * EXT / 4096, Some(M)),
+            ))
+            .dm(lv_dm(
+                "dm-1",
+                "b",
+                "vda1",
+                1119 * EXT,
+                &ext4(1119 * EXT / 4096, Some(M)),
+            ))
             .build();
-        assert!(refused(&v, smaller, 50).is("other").contains("vg0/a is striped, and version 1 shrinks a linear one"));
+        assert!(
+            refused(&v, smaller, 50)
+                .is("other")
+                .contains("vg0/a is striped, and version 1 shrinks a linear one")
+        );
         // A striped volume that would have to move: 97 free extents below
         // it, and the rest off the end of the linear volume below those.
         let v = D::gpt(total)
             .part(1, 2048, part, &pv(), "")
-            .vg(vg("vda1", part * 512, 5119, &[("b", 4000, vec![0]), ("a", 1022, vec![4097, 4608])]))
-            .dm(lv_dm("dm-0", "b", "vda1", 4000 * EXT, &ext4(4000 * EXT / 4096, Some(8 * GIB / 4096))))
-            .dm(lv_dm("dm-1", "a", "vda1", 1022 * EXT, &ext4(1022 * EXT / 4096, Some(M))))
+            .vg(vg(
+                "vda1",
+                part * 512,
+                5119,
+                &[("b", 4000, vec![0]), ("a", 1022, vec![4097, 4608])],
+            ))
+            .dm(lv_dm(
+                "dm-0",
+                "b",
+                "vda1",
+                4000 * EXT,
+                &ext4(4000 * EXT / 4096, Some(8 * GIB / 4096)),
+            ))
+            .dm(lv_dm(
+                "dm-1",
+                "a",
+                "vda1",
+                1022 * EXT,
+                &ext4(1022 * EXT / 4096, Some(M)),
+            ))
             .mount("dm-0", 4000 * EXT, 2 * GIB)
             .build();
-        assert!(refused(&v, smaller, 50).is("other").contains("vg0/a is striped, and it would have to move"));
+        assert!(
+            refused(&v, smaller, 50)
+                .is("other")
+                .contains("vg0/a is striped, and it would have to move")
+        );
         // A second physical volume somewhere else.
         let two = crate::json::parse(&lvm_disk(0).build().compact().replace(
             r#""device":"vda1"}]"#,
             r#""device":"vda1"},{"name":"pv1","id":"x","dev_size_bytes":1024,"pe_start_bytes":1048576,"pe_count":1,"device":"vdb1"}]"#,
         ))
         .unwrap();
-        assert!(refused(&two, smaller, 50).is("multi_device").contains("has 2 physical volumes"));
+        assert!(
+            refused(&two, smaller, 50)
+                .is("multi_device")
+                .contains("has 2 physical volumes")
+        );
         // Thin pools and thin LVs hold no extents of their own: with
         // nothing else in the group, nothing can give any up.
-        let thin = crate::json::parse(&lvm_disk(0).build().compact().replace(r#""type":"striped""#, r#""type":"thin-pool""#)).unwrap();
+        let thin = crate::json::parse(
+            &lvm_disk(0)
+                .build()
+                .compact()
+                .replace(r#""type":"striped""#, r#""type":"thin-pool""#),
+        )
+        .unwrap();
         let e = refused(&thin, smaller, 50);
-        assert!(e.contains("--fit-largest: ") && !e.contains("has a thin-pool segment"), "{e}");
+        assert!(
+            e.contains("--fit-largest: ") && !e.contains("has a thin-pool segment"),
+            "{e}"
+        );
     }
 
     #[test]
     fn a_table_fitted_before_is_recognised() {
         let v = boot_swap_root().build();
-        let t = |size: u64| Target { disk: "vda".into(), path: "/dev/sdb".into(), size_bytes: size };
-        let sectors = |x: &Value| -> Vec<(u32, u64, u64)> { geom(x).into_iter().map(|(n, s, l)| (n as u32, s, l)).collect() };
+        let t = |size: u64| Target {
+            disk: "vda".into(),
+            path: "/dev/sdb".into(),
+            size_bytes: size,
+        };
+        let sectors = |x: &Value| -> Vec<(u32, u64, u64)> {
+            geom(x)
+                .into_iter()
+                .map(|(n, s, l)| (n as u32, s, l))
+                .collect()
+        };
         let same = sectors(&v);
         // The source's own table, on a target of the source's size: no fit.
         assert_eq!(wrote(&v, &t(64 * GIB), &same), None);
@@ -2757,7 +4353,14 @@ mod tests {
         // Nor is the fitted table on a disk no fit of it leaves that way.
         assert_eq!(wrote(&v, &t(62 * GIB), &after), None);
         // A table of another layout altogether, and a half-written one.
-        assert_eq!(wrote(&v, &t(63 * GIB), &[(1, 2048, 1024), (2, 4096, 1024), (3, 8192, 1024)]), None);
+        assert_eq!(
+            wrote(
+                &v,
+                &t(63 * GIB),
+                &[(1, 2048, 1024), (2, 4096, 1024), (3, 8192, 1024)]
+            ),
+            None
+        );
         assert_eq!(wrote(&v, &t(63 * GIB), &after[..2]), None);
         // A partition someone resized by hand: a fit would have taken the
         // whole overrun, not four kilobytes of it.
@@ -2770,10 +4373,33 @@ mod tests {
     fn the_paths_it_writes_must_be_there() {
         let v = boot_swap_root().build();
         let mut x = v.clone();
-        assert!(set_path(&mut x, &path(&["storage", "disks", "0", "size_bytes"]), Value::UInt(7)).is_ok());
+        assert!(
+            set_path(
+                &mut x,
+                &path(&["storage", "disks", "0", "size_bytes"]),
+                Value::UInt(7)
+            )
+            .is_ok()
+        );
         assert_eq!(at(&x, &["storage", "disks", "0", "size_bytes"]), 7);
-        assert!(set_path(&mut x, &path(&["storage", "disks", "0", "nope"]), Value::UInt(7)).unwrap_err().contains("no key nope"));
-        assert!(set_path(&mut x, &path(&["storage", "disks", "9", "size_bytes"]), Value::UInt(7)).unwrap_err().contains("no element 9"));
+        assert!(
+            set_path(
+                &mut x,
+                &path(&["storage", "disks", "0", "nope"]),
+                Value::UInt(7)
+            )
+            .unwrap_err()
+            .contains("no key nope")
+        );
+        assert!(
+            set_path(
+                &mut x,
+                &path(&["storage", "disks", "9", "size_bytes"]),
+                Value::UInt(7)
+            )
+            .unwrap_err()
+            .contains("no element 9")
+        );
     }
 
     #[test]
@@ -2796,7 +4422,10 @@ mod tests {
     /// each size: whatever comes back keeps the table sound.
     #[test]
     fn every_layout_keeps_the_table_sound() {
-        let mut dumps: Vec<(String, Value)> = crate::scenarios::dumps().into_iter().map(|(n, v)| (n.to_string(), v)).collect();
+        let mut dumps: Vec<(String, Value)> = crate::scenarios::dumps()
+            .into_iter()
+            .map(|(n, v)| (n.to_string(), v))
+            .collect();
         let root = 20 * G;
         let total = 2048 + root + 34;
         dumps.push(("fixture-gpt".into(), boot_swap_root().build()));
@@ -2806,7 +4435,13 @@ mod tests {
             "fixture-mbr".into(),
             D::mbr(total)
                 .part(1, 2048, G, &ext4_on(G, 512 * MIB), "")
-                .part(2, 2048 + G, root - 3 * G, &xfs((root - 3 * G) / 8, (root - 3 * G) / 32), "")
+                .part(
+                    2,
+                    2048 + G,
+                    root - 3 * G,
+                    &xfs((root - 3 * G) / 8, (root - 3 * G) / 32),
+                    "",
+                )
                 .part(3, 2048 + root - 2 * G, 2 * G, &swap(), "")
                 .mount("vda2", (root - 3 * G) * 512, GIB)
                 .build(),
@@ -2815,27 +4450,56 @@ mod tests {
             "fixture-luks".into(),
             D::gpt(total)
                 .part(1, 2048, root, &luks(16 * MIB), "")
-                .dm(crypt_dm("dm-0", "vda1", root * 512 - 16 * MIB, &ext4((root * 512 - 16 * MIB) / 4096, Some(GIB / 4096))))
+                .dm(crypt_dm(
+                    "dm-0",
+                    "vda1",
+                    root * 512 - 16 * MIB,
+                    &ext4((root * 512 - 16 * MIB) / 4096, Some(GIB / 4096)),
+                ))
                 .mount("dm-0", root * 512 - 16 * MIB, 2 * GIB)
                 .build(),
         ));
         let mut fits = 0;
         for (name, v) in dumps {
-            for disk in v.at(&["storage", "disks"]).and_then(Value::as_array).cloned().unwrap_or_default() {
-                let Some(size) = u(&disk, "size_bytes").filter(|&s| s > 4 * MIB) else { continue };
+            for disk in v
+                .at(&["storage", "disks"])
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+            {
+                let Some(size) = u(&disk, "size_bytes").filter(|&s| s > 4 * MIB) else {
+                    continue;
+                };
                 let dn = s(&disk, "name").unwrap_or_default();
                 let sector = u(&disk, "logical_sector_size").unwrap_or(512).max(512);
-                for delta in [-(MIB as i64), -4 * MIB as i64, -(GIB as i64), MIB as i64, GIB as i64] {
+                for delta in [
+                    -(MIB as i64),
+                    -4 * MIB as i64,
+                    -(GIB as i64),
+                    MIB as i64,
+                    GIB as i64,
+                ] {
                     if size as i64 + delta <= 4 * MIB as i64 {
                         continue;
                     }
                     let want = (size as i64 + delta) as u64;
-                    let t = vec![Target { disk: dn.clone(), path: "/dev/sdz".into(), size_bytes: want }];
+                    let t = vec![Target {
+                        disk: dn.clone(),
+                        path: "/dev/sdz".into(),
+                        size_bytes: want,
+                    }];
                     for pct in [1, 50] {
                         let f = fit(&v, &t, pct);
                         let Some(out) = &f.v else { continue };
                         fits += 1;
-                        check_sound(&format!("{name} {dn} {delta} {pct}%"), &v, out, &dn, sector, want);
+                        check_sound(
+                            &format!("{name} {dn} {delta} {pct}%"),
+                            &v,
+                            out,
+                            &dn,
+                            sector,
+                            want,
+                        );
                     }
                 }
             }
@@ -2854,17 +4518,39 @@ mod tests {
                 .unwrap()
         };
         let (was, now) = (find(v), find(out));
-        assert_eq!(u(&now, "size_bytes"), Some(size - size % sector), "{what}: the disk's size");
+        assert_eq!(
+            u(&now, "size_bytes"),
+            Some(size - size % sector),
+            "{what}: the disk's size"
+        );
         let table = now.at(&["partition_table"]).cloned().unwrap_or(Value::Null);
         let gpt = s(&table, "type").as_deref() == Some("gpt");
         let total = (size - size % sector) / sector;
-        let tail = if gpt { 2 + (u(&table, "entry_count").unwrap_or(128) * u(&table, "entry_size").unwrap_or(128)).div_ceil(sector) } else { 1 };
+        let tail = if gpt {
+            2 + (u(&table, "entry_count").unwrap_or(128) * u(&table, "entry_size").unwrap_or(128))
+                .div_ceil(sector)
+        } else {
+            1
+        };
         let last = total - tail;
         if gpt {
-            assert_eq!(u(&table, "last_usable_lba"), Some(last), "{what}: the last usable LBA");
-            assert_eq!(u(&table, "backup_lba"), Some(total - 1), "{what}: the backup header");
+            assert_eq!(
+                u(&table, "last_usable_lba"),
+                Some(last),
+                "{what}: the last usable LBA"
+            );
+            assert_eq!(
+                u(&table, "backup_lba"),
+                Some(total - 1),
+                "{what}: the backup header"
+            );
         }
-        let parts = |d: &Value| d.get("partitions").and_then(Value::as_array).cloned().unwrap_or_default();
+        let parts = |d: &Value| {
+            d.get("partitions")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+        };
         let (pw, pn) = (parts(&was), parts(&now));
         assert_eq!(pw.len(), pn.len(), "{what}: as many partitions");
         let mut resized = 0;
@@ -2874,19 +4560,43 @@ mod tests {
             let (s1, n1) = (u(b, "start_lba").unwrap(), u(b, "sectors").unwrap());
             assert_eq!(u(a, "number"), u(b, "number"), "{what}: the numbers");
             // Identifiers and everything else about it stay the source's.
-            for k in ["uuid", "type", "partlabel", "attributes", "bootable", "name"] {
-                assert_eq!(a.get(k), b.get(k), "{what}: {k} of partition {:?}", u(a, "number"));
+            for k in [
+                "uuid",
+                "type",
+                "partlabel",
+                "attributes",
+                "bootable",
+                "name",
+            ] {
+                assert_eq!(
+                    a.get(k),
+                    b.get(k),
+                    "{what}: {k} of partition {:?}",
+                    u(a, "number")
+                );
             }
             if n0 != n1 {
                 resized += 1;
                 assert_eq!(s0, s1, "{what}: a resized partition keeps its start");
-                assert_eq!((n1 as i64 - n0 as i64).unsigned_abs() * sector % MIB, 0, "{what}: whole MiB");
+                assert_eq!(
+                    (n1 as i64 - n0 as i64).unsigned_abs() * sector % MIB,
+                    0,
+                    "{what}: whole MiB"
+                );
             }
             if s0 != s1 {
                 assert_eq!(n0, n1, "{what}: a moved partition keeps its size");
-                assert_eq!((s1 as i64 - s0 as i64).unsigned_abs() * sector % MIB, 0, "{what}: whole MiB");
+                assert_eq!(
+                    (s1 as i64 - s0 as i64).unsigned_abs() * sector % MIB,
+                    0,
+                    "{what}: whole MiB"
+                );
             }
-            assert!(s1 + n1 - 1 <= last, "{what}: partition {:?} ends past {last}", u(a, "number"));
+            assert!(
+                s1 + n1 - 1 <= last,
+                "{what}: partition {:?} ends past {last}",
+                u(a, "number")
+            );
             if b.get("end_lba").is_some() {
                 assert_eq!(u(b, "end_lba"), Some(s1 + n1 - 1), "{what}: end_lba");
             }
@@ -2900,17 +4610,40 @@ mod tests {
         // Primaries don't overlap each other; logical partitions lie inside
         // their extended one, so they're only held apart from each other.
         for pass in [false, true] {
-            let mut these: Vec<(u64, u64)> = spans.iter().filter(|x| x.2 == pass).map(|x| (x.0, x.1)).collect();
+            let mut these: Vec<(u64, u64)> = spans
+                .iter()
+                .filter(|x| x.2 == pass)
+                .map(|x| (x.0, x.1))
+                .collect();
             these.sort();
             for w in these.windows(2) {
-                assert!(w[0].0 + w[0].1 <= w[1].0, "{what}: {:?} and {:?} overlap", w[0], w[1]);
+                assert!(
+                    w[0].0 + w[0].1 <= w[1].0,
+                    "{what}: {:?} and {:?} overlap",
+                    w[0],
+                    w[1]
+                );
             }
         }
         // The table's own identity, and every filesystem's, are untouched.
-        for k in ["disk_guid", "disk_signature", "first_usable_lba", "entry_count", "entry_size"] {
-            assert_eq!(was.at(&["partition_table", k]), now.at(&["partition_table", k]), "{what}: {k}");
+        for k in [
+            "disk_guid",
+            "disk_signature",
+            "first_usable_lba",
+            "entry_count",
+            "entry_size",
+        ] {
+            assert_eq!(
+                was.at(&["partition_table", k]),
+                now.at(&["partition_table", k]),
+                "{what}: {k}"
+            );
         }
-        assert_eq!(uuids(v), uuids(out), "{what}: the filesystem and container identifiers");
+        assert_eq!(
+            uuids(v),
+            uuids(out),
+            "{what}: the filesystem and container identifiers"
+        );
     }
 
     /// Every identifier anywhere in the dump.

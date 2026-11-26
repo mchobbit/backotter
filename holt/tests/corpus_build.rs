@@ -111,20 +111,42 @@ fn replace_word(s: &str, host: &str, to: &str, n: &mut usize) -> String {
 /// signature, user@HOST:/usr/obj; a hostname that is Debian's release tag):
 /// the pseudonym there too, or the dump shows which name it stands for.
 fn scrub_kernel_hosts(v: &Value, r: &bko_holt::redact::Redactor, n: &mut usize) -> Value {
-    let hosts: Vec<_> = r.entries.iter().filter(|e| e.kind == bko_holt::redact::Kind::Hostname).collect();
+    let hosts: Vec<_> = r
+        .entries
+        .iter()
+        .filter(|e| e.kind == bko_holt::redact::Kind::Hostname)
+        .collect();
     let Value::Obj(top) = v else { return v.clone() };
-    Value::Obj(top.iter().map(|(k, x)| {
-        let Value::Obj(os) = x else { return (k.clone(), x.clone()) };
-        if k != "os" {
-            return (k.clone(), x.clone());
-        }
-        (k.clone(), Value::Obj(os.iter().map(|(f, y)| match y {
-            Value::Str(s) if f == "kernel_version" || f == "kernel_release" => {
-                (f.clone(), Value::Str(hosts.iter().fold(s.clone(), |s, e| replace_word(&s, &e.original, &e.pseudonym, n))))
-            }
-            _ => (f.clone(), y.clone()),
-        }).collect()))
-    }).collect())
+    Value::Obj(
+        top.iter()
+            .map(|(k, x)| {
+                let Value::Obj(os) = x else {
+                    return (k.clone(), x.clone());
+                };
+                if k != "os" {
+                    return (k.clone(), x.clone());
+                }
+                (
+                    k.clone(),
+                    Value::Obj(
+                        os.iter()
+                            .map(|(f, y)| match y {
+                                Value::Str(s) if f == "kernel_version" || f == "kernel_release" => {
+                                    (
+                                        f.clone(),
+                                        Value::Str(hosts.iter().fold(s.clone(), |s, e| {
+                                            replace_word(&s, &e.original, &e.pseudonym, n)
+                                        })),
+                                    )
+                                }
+                                _ => (f.clone(), y.clone()),
+                            })
+                            .collect(),
+                    ),
+                )
+            })
+            .collect(),
+    )
 }
 
 fn scrub_emails(v: &Value, n: &mut usize) -> Value {
@@ -146,7 +168,11 @@ fn scrub_emails(v: &Value, n: &mut usize) -> Value {
             Value::Str(out)
         }
         Value::Arr(a) => Value::Arr(a.iter().map(|x| scrub_emails(x, n)).collect()),
-        Value::Obj(kv) => Value::Obj(kv.iter().map(|(k, x)| (k.clone(), scrub_emails(x, n))).collect()),
+        Value::Obj(kv) => Value::Obj(
+            kv.iter()
+                .map(|(k, x)| (k.clone(), scrub_emails(x, n)))
+                .collect(),
+        ),
         other => other.clone(),
     }
 }
@@ -176,7 +202,13 @@ fn is_boot_code(parent: &str, key: &str) -> bool {
 /// V with its boot code filled; PARENT is the key V sits under (an array's
 /// elements sit under the array's key).  A boot-code value that isn't base64
 /// is left as it is and its path put in BAD: that dump isn't made.
-fn fill(v: &Value, path: &str, parent: &str, out: &mut Vec<Filled>, bad: &mut Vec<String>) -> Value {
+fn fill(
+    v: &Value,
+    path: &str,
+    parent: &str,
+    out: &mut Vec<Filled>,
+    bad: &mut Vec<String>,
+) -> Value {
     match v {
         Value::Obj(kv) => Value::Obj(
             kv.iter()
@@ -188,15 +220,27 @@ fn fill(v: &Value, path: &str, parent: &str, out: &mut Vec<Filled>, bad: &mut Ve
                                 bad.push(p.trim_start_matches('.').to_string());
                                 return (k.clone(), x.clone());
                             };
-                            out.push(Filled { path: p, bytes: raw.len(), crc32: bko_holt::bytes::crc32(&raw) });
-                            return (k.clone(), Value::Str(bko_holt::bytes::base64(&filler(raw.len()))));
+                            out.push(Filled {
+                                path: p,
+                                bytes: raw.len(),
+                                crc32: bko_holt::bytes::crc32(&raw),
+                            });
+                            return (
+                                k.clone(),
+                                Value::Str(bko_holt::bytes::base64(&filler(raw.len()))),
+                            );
                         }
                     }
                     (k.clone(), fill(x, &p, k, out, bad))
                 })
                 .collect(),
         ),
-        Value::Arr(a) => Value::Arr(a.iter().enumerate().map(|(i, x)| fill(x, &format!("{path}.{i}"), parent, out, bad)).collect()),
+        Value::Arr(a) => Value::Arr(
+            a.iter()
+                .enumerate()
+                .map(|(i, x)| fill(x, &format!("{path}.{i}"), parent, out, bad))
+                .collect(),
+        ),
         other => other.clone(),
     }
 }
@@ -208,7 +252,12 @@ type Provenance = BTreeMap<String, BTreeMap<String, String>>;
 /// column and one row a guest.
 fn provenance(raw: &Path) -> Result<Provenance, String> {
     let p = raw.join("provenance.tsv");
-    let text = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e} (collect-dumps.sh writes it beside the raw dumps)", p.display()))?;
+    let text = std::fs::read_to_string(&p).map_err(|e| {
+        format!(
+            "{}: {e} (collect-dumps.sh writes it beside the raw dumps)",
+            p.display()
+        )
+    })?;
     let mut lines = text.lines();
     let cols: Vec<&str> = lines.next().unwrap_or("").split('\t').collect();
     if !cols.contains(&"guest") {
@@ -219,7 +268,11 @@ fn provenance(raw: &Path) -> Result<Provenance, String> {
         if l.is_empty() {
             continue;
         }
-        let row: BTreeMap<String, String> = cols.iter().zip(l.split('\t')).map(|(c, v)| (c.to_string(), v.to_string())).collect();
+        let row: BTreeMap<String, String> = cols
+            .iter()
+            .zip(l.split('\t'))
+            .map(|(c, v)| (c.to_string(), v.to_string()))
+            .collect();
         let Some(g) = row.get("guest").filter(|g| !g.is_empty()).cloned() else {
             return Err(format!("{}: line {} names no guest", p.display(), i + 2));
         };
@@ -238,7 +291,11 @@ fn dumps_in(dir: &Path) -> Result<Vec<String>, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(format!("{}: {e}", dir.display())),
     };
-    let mut v: Vec<String> = rd.filter_map(|e| e.ok()).filter(|e| e.path().join("src.json").is_file()).filter_map(|e| e.file_name().to_str().map(str::to_string)).collect();
+    let mut v: Vec<String> = rd
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().join("src.json").is_file())
+        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+        .collect();
     v.sort();
     Ok(v)
 }
@@ -248,14 +305,28 @@ fn dumps_in(dir: &Path) -> Result<Vec<String>, String> {
 /// now) or a listed guest without its dump is an error.
 fn raw_guests(raw: &Path, prov: &Provenance) -> Result<Vec<String>, String> {
     let dumps = dumps_in(raw)?;
-    let extra: Vec<&str> = dumps.iter().filter(|g| !prov.contains_key(*g)).map(String::as_str).collect();
-    let missing: Vec<&str> = prov.keys().filter(|g| !dumps.contains(g)).map(String::as_str).collect();
+    let extra: Vec<&str> = dumps
+        .iter()
+        .filter(|g| !prov.contains_key(*g))
+        .map(String::as_str)
+        .collect();
+    let missing: Vec<&str> = prov
+        .keys()
+        .filter(|g| !dumps.contains(g))
+        .map(String::as_str)
+        .collect();
     let mut bad = Vec::new();
     if !extra.is_empty() {
-        bad.push(format!("dumps that provenance.tsv doesn't list (an earlier collection's?): {}", extra.join(", ")));
+        bad.push(format!(
+            "dumps that provenance.tsv doesn't list (an earlier collection's?): {}",
+            extra.join(", ")
+        ));
     }
     if !missing.is_empty() {
-        bad.push(format!("provenance.tsv's guests without GUEST/src.json: {}", missing.join(", ")));
+        bad.push(format!(
+            "provenance.tsv's guests without GUEST/src.json: {}",
+            missing.join(", ")
+        ));
     }
     if prov.is_empty() {
         bad.push("provenance.tsv lists no guest".to_string());
@@ -268,7 +339,16 @@ fn raw_guests(raw: &Path, prov: &Provenance) -> Result<Vec<String>, String> {
 }
 
 /// The provenance columns index.tsv carries (raw_sha256 stays on the host).
-const PROV: [&str; 8] = ["host", "run", "result", "report_time", "generated", "tool_version", "generation", "image"];
+const PROV: [&str; 8] = [
+    "host",
+    "run",
+    "result",
+    "report_time",
+    "generated",
+    "tool_version",
+    "generation",
+    "image",
+];
 
 struct Built {
     text: String,
@@ -293,8 +373,12 @@ fn failure_class(e: &CheckPlanError) -> &'static str {
 /// kind named: a new one has to be placed here.
 fn stops_the_dump(kind: CheckPlanFailure) -> bool {
     match kind {
-        CheckPlanFailure::LeftInDump | CheckPlanFailure::LeftInPlan | CheckPlanFailure::NotJson => true,
-        CheckPlanFailure::MapBack | CheckPlanFailure::PlanDiffers | CheckPlanFailure::LoadArgs => false,
+        CheckPlanFailure::LeftInDump | CheckPlanFailure::LeftInPlan | CheckPlanFailure::NotJson => {
+            true
+        }
+        CheckPlanFailure::MapBack | CheckPlanFailure::PlanDiffers | CheckPlanFailure::LoadArgs => {
+            false
+        }
     }
 }
 
@@ -313,9 +397,15 @@ fn build_one(guest: &str, raw_text: &str, prov: Option<&BTreeMap<String, String>
         Err(e) => {
             let class = failure_class(&e);
             if stops_the_dump(e.kind) {
-                return Err(hard(&format!("check_plan on the raw dump: {class}"), e.message));
+                return Err(hard(
+                    &format!("check_plan on the raw dump: {class}"),
+                    e.message,
+                ));
             }
-            (format!("FAIL:{}", class.replace(' ', "-")), Some((class.to_string(), e.message)))
+            (
+                format!("FAIL:{}", class.replace(' ', "-")),
+                Some((class.to_string(), e.message)),
+            )
         }
     };
     // 2. Redaction, twice.
@@ -326,12 +416,19 @@ fn build_one(guest: &str, raw_text: &str, prov: Option<&BTreeMap<String, String>
     }
     let leaks = r.leaks(&red_text);
     if !leaks.is_empty() {
-        return Err(hard("an identifier is left in the redacted dump", format!("{leaks:?}")));
+        return Err(hard(
+            "an identifier is left in the redacted dump",
+            format!("{leaks:?}"),
+        ));
     }
-    let a = common::plan(&red_text, 0).map_err(|e| hard("the redacted dump can't be planned", e))?;
+    let a =
+        common::plan(&red_text, 0).map_err(|e| hard("the redacted dump can't be planned", e))?;
     let leaks = r.leaks(&(a.out.clone() + &a.err));
     if !leaks.is_empty() {
-        return Err(hard("an identifier is left in the redacted dump's plan", format!("{leaks:?}")));
+        return Err(hard(
+            "an identifier is left in the redacted dump's plan",
+            format!("{leaks:?}"),
+        ));
     }
     // 3, 4. E-mail addresses, boot code.
     let mut scrubbed = 0;
@@ -348,16 +445,32 @@ fn build_one(guest: &str, raw_text: &str, prov: Option<&BTreeMap<String, String>
         "same".to_string()
     } else {
         let (ta, tb) = (common::golden_text(&a), common::golden_text(&b));
-        let problem = (b.out.contains("# Problems (") && !a.out.contains("# Problems (")) || b.code != a.code;
-        format!("differs:{}{}:{}", common::lines_changed(&ta, &tb), if problem { ":problem" } else { "" }, common::stages_changed(&ta, &tb).join("+"))
+        let problem =
+            (b.out.contains("# Problems (") && !a.out.contains("# Problems (")) || b.code != a.code;
+        format!(
+            "differs:{}{}:{}",
+            common::lines_changed(&ta, &tb),
+            if problem { ":problem" } else { "" },
+            common::stages_changed(&ta, &tb).join("+")
+        )
     };
-    let (n_after, _) = bko_holt::bugreport::check_plan(&text).map_err(|e| hard(&format!("check_plan on the corpus dump: {}", failure_class(&e)), e.message))?;
+    let (n_after, _) = bko_holt::bugreport::check_plan(&text).map_err(|e| {
+        hard(
+            &format!("check_plan on the corpus dump: {}", failure_class(&e)),
+            e.message,
+        )
+    })?;
     let after = format!("ok:{n_after}");
     let empty = BTreeMap::new();
     let p = prov.unwrap_or(&empty);
     let mut row = vec![guest.to_string()];
     for c in PROV {
-        row.push(p.get(c).filter(|x| !x.is_empty()).cloned().unwrap_or_else(|| "-".into()));
+        row.push(
+            p.get(c)
+                .filter(|x| !x.is_empty())
+                .cloned()
+                .unwrap_or_else(|| "-".into()),
+        );
     }
     let blob_bytes: usize = filled.iter().map(|f| f.bytes).sum();
     row.extend([
@@ -368,20 +481,45 @@ fn build_one(guest: &str, raw_text: &str, prov: Option<&BTreeMap<String, String>
         blob_bytes.to_string(),
         fill_plan.clone(),
         after.clone(),
-        if filled.is_empty() { "-".into() } else { filled.iter().map(|f| format!("{}={}/{:08x}", f.path.trim_start_matches('.'), f.bytes, f.crc32)).collect::<Vec<_>>().join(" ") },
+        if filled.is_empty() {
+            "-".into()
+        } else {
+            filled
+                .iter()
+                .map(|f| {
+                    format!(
+                        "{}={}/{:08x}",
+                        f.path.trim_start_matches('.'),
+                        f.bytes,
+                        f.crc32
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        },
     ]);
     let head = match &raw_fail {
         None => {
-            let (ids, lines) = raw_check.trim_start_matches("ok:").split_once(':').unwrap_or(("?", "?"));
+            let (ids, lines) = raw_check
+                .trim_start_matches("ok:")
+                .split_once(':')
+                .unwrap_or(("?", "?"));
             format!("ok    {guest}: {ids} identifiers, plan of {lines} lines")
         }
-        Some((class, _)) => format!("RAW   {guest}: check_plan on the raw dump: {class} (the message, which may quote the raw dump, is in the raw directory's corpus-build-errors.txt)"),
+        Some((class, _)) => format!(
+            "RAW   {guest}: check_plan on the raw dump: {class} (the message, which may quote the raw dump, is in the raw directory's corpus-build-errors.txt)"
+        ),
     };
     let log = format!(
         "{head}; {scrubbed} e-mail address(es) scrubbed; {} boot-code blob(s), {blob_bytes} bytes, filled; filled plan {fill_plan}; check_plan of the corpus dump {after}",
         filled.len()
     );
-    Ok(Built { text, row, log, raw_fail })
+    Ok(Built {
+        text,
+        row,
+        log,
+        raw_fail,
+    })
 }
 
 /// index.tsv's columns: the guest, its provenance (collect-dumps.sh's), what
@@ -389,22 +527,55 @@ fn build_one(guest: &str, raw_text: &str, prov: Option<&BTreeMap<String, String>
 /// is `ok:IDENTIFIERS:PLAN_LINES` or `FAIL:CLASS`; check_plan the corpus
 /// dump's (`ok:IDENTIFIERS`).
 const COLUMNS: [&str; 17] = [
-    "guest", "host", "run", "result", "report_time", "generated", "tool_version", "generation", "image", "identifiers", "check_plan_raw", "scrubbed", "blobs",
-    "blob_bytes", "fill_plan", "check_plan", "filled",
+    "guest",
+    "host",
+    "run",
+    "result",
+    "report_time",
+    "generated",
+    "tool_version",
+    "generation",
+    "image",
+    "identifiers",
+    "check_plan_raw",
+    "scrubbed",
+    "blobs",
+    "blob_bytes",
+    "fill_plan",
+    "check_plan",
+    "filled",
 ];
 
 #[test]
 #[ignore]
 fn corpus_build() {
-    let (Some(raw), Some(out)) = (std::env::var_os("BKO_HOLT_CORPUS_RAW"), std::env::var_os("BKO_HOLT_CORPUS_OUT")) else {
-        panic!("set BKO_HOLT_CORPUS_RAW (the raw dumps: GUEST/src.json, provenance.tsv) and BKO_HOLT_CORPUS_OUT (the corpus to write)");
+    let (Some(raw), Some(out)) = (
+        std::env::var_os("BKO_HOLT_CORPUS_RAW"),
+        std::env::var_os("BKO_HOLT_CORPUS_OUT"),
+    ) else {
+        panic!(
+            "set BKO_HOLT_CORPUS_RAW (the raw dumps: GUEST/src.json, provenance.tsv) and BKO_HOLT_CORPUS_OUT (the corpus to write)"
+        );
     };
     let (raw, out) = (PathBuf::from(raw), PathBuf::from(out));
-    assert_ne!(raw.canonicalize().ok(), out.canonicalize().ok(), "BKO_HOLT_CORPUS_OUT must not be the raw directory");
+    assert_ne!(
+        raw.canonicalize().ok(),
+        out.canonicalize().ok(),
+        "BKO_HOLT_CORPUS_OUT must not be the raw directory"
+    );
     let prov = provenance(&raw).unwrap_or_else(|e| panic!("{e}"));
     let guests = raw_guests(&raw, &prov).unwrap_or_else(|e| panic!("{e}"));
-    let stale: Vec<String> = dumps_in(&out).unwrap_or_else(|e| panic!("{e}")).into_iter().filter(|g| !guests.contains(g)).collect();
-    assert!(stale.is_empty(), "{} holds dumps this build doesn't make: {} (build into an empty directory, or remove them)", out.display(), stale.join(", "));
+    let stale: Vec<String> = dumps_in(&out)
+        .unwrap_or_else(|e| panic!("{e}"))
+        .into_iter()
+        .filter(|g| !guests.contains(g))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "{} holds dumps this build doesn't make: {} (build into an empty directory, or remove them)",
+        out.display(),
+        stale.join(", ")
+    );
     // Every dump is built before anything is written.
     let built: Vec<(&String, BuildResult)> = guests
         .iter()
@@ -428,7 +599,8 @@ fn corpus_build() {
                 println!("{}", b.log);
                 let d = out.join(g);
                 std::fs::create_dir_all(&d).unwrap();
-                common::write_atomic(&d.join("src.json"), b.text.as_bytes()).unwrap_or_else(|e| panic!("{e}"));
+                common::write_atomic(&d.join("src.json"), b.text.as_bytes())
+                    .unwrap_or_else(|e| panic!("{e}"));
                 index += &(b.row.join("\t") + "\n");
                 if let Some((class, msg)) = b.raw_fail {
                     soft.push(format!("{g}: {class}"));
@@ -438,13 +610,16 @@ fn corpus_build() {
             Err((class, msg)) => {
                 // Nothing of this dump is written, and an older one goes.
                 let _ = std::fs::remove_file(out.join(g).join("src.json"));
-                println!("FAIL  {g}: {class} (no corpus dump made; the message is in the raw directory's corpus-build-errors.txt)");
+                println!(
+                    "FAIL  {g}: {class} (no corpus dump made; the message is in the raw directory's corpus-build-errors.txt)"
+                );
                 hard.push(format!("{g}: {class}"));
                 errors += &format!("{g}: {class}: {msg}\n");
             }
         }
     }
-    common::write_atomic(&out.join("index.tsv"), index.as_bytes()).unwrap_or_else(|e| panic!("{e}"));
+    common::write_atomic(&out.join("index.tsv"), index.as_bytes())
+        .unwrap_or_else(|e| panic!("{e}"));
     // The messages quote the raw dumps: they stay beside them.
     let elog = raw.join("corpus-build-errors.txt");
     if errors.is_empty() {
@@ -459,7 +634,12 @@ fn corpus_build() {
         out.display(),
         soft.len()
     );
-    assert!(hard.is_empty() && soft.is_empty(), "not made: {:?}; made, but check_plan failed on the raw dump: {:?}", hard, soft);
+    assert!(
+        hard.is_empty() && soft.is_empty(),
+        "not made: {:?}; made, but check_plan failed on the raw dump: {:?}",
+        hard,
+        soft
+    );
 }
 
 #[test]
@@ -467,7 +647,10 @@ fn check_plan_failures_by_kind() {
     use CheckPlanFailure as F;
     // index.tsv's FAIL:CLASS and the log carry these words: as they were.
     let classes = [
-        (F::MapBack, "the redacted dump doesn't map back to the original"),
+        (
+            F::MapBack,
+            "the redacted dump doesn't map back to the original",
+        ),
         (F::PlanDiffers, "the plan of the redacted dump differs"),
         (F::LeftInPlan, "left in the redacted dump's plan"),
         (F::LeftInDump, "left in the redacted dump"),
@@ -477,12 +660,23 @@ fn check_plan_failures_by_kind() {
     for (k, c) in classes {
         assert_eq!(k.class(), c);
         // A leak stops the dump, and so does no JSON; the rest are reported.
-        assert_eq!(stops_the_dump(k), matches!(k, F::LeftInPlan | F::LeftInDump | F::NotJson), "{k:?}");
-        assert_eq!(k.is_leak(), matches!(k, F::LeftInPlan | F::LeftInDump), "{k:?}");
+        assert_eq!(
+            stops_the_dump(k),
+            matches!(k, F::LeftInPlan | F::LeftInDump | F::NotJson),
+            "{k:?}"
+        );
+        assert_eq!(
+            k.is_leak(),
+            matches!(k, F::LeftInPlan | F::LeftInDump),
+            "{k:?}"
+        );
     }
     let e = bko_holt::bugreport::check_plan("{").unwrap_err();
     assert_eq!(e.kind, F::NotJson);
-    assert!(e.message.starts_with("not JSON: ") && e.to_string() == e.message, "{e}");
+    assert!(
+        e.message.starts_with("not JSON: ") && e.to_string() == e.message,
+        "{e}"
+    );
     assert_eq!(failure_class(&e), "not JSON");
 }
 
@@ -497,9 +691,17 @@ fn a_hostname_in_the_kernels_version_strings() {
     let (red, r) = bko_holt::redact::redact(&d);
     let mut n = 0;
     let v = scrub_kernel_hosts(&red, &r, &mut n);
-    let s = |k: &str| v.at(&["os", k]).and_then(Value::as_str).unwrap().to_string();
+    let s = |k: &str| {
+        v.at(&["os", k])
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string()
+    };
     assert_eq!(n, 3);
-    assert_eq!(s("kernel_version"), "X 6.4 #1: Mon root@host1:/usr/obj/oldboxes/sys/host1");
+    assert_eq!(
+        s("kernel_version"),
+        "X 6.4 #1: Mon root@host1:/usr/obj/oldboxes/sys/host1"
+    );
     assert_eq!(s("kernel_release"), "6.12+host1-amd64");
     assert_eq!(s("pretty_name"), "oldbox", "only the kernel's strings");
     let mut n = 0;
@@ -515,7 +717,10 @@ fn e_mail_shapes() {
     let mut n = 0;
     let v = scrub_emails(&Value::Str(s.into()), &mut n);
     assert_eq!(n, 1);
-    assert_eq!(v.as_str().unwrap(), s.replace("builds@mkrepro.example.org", EMAIL_SCRUB));
+    assert_eq!(
+        v.as_str().unwrap(),
+        s.replace("builds@mkrepro.example.org", EMAIL_SCRUB)
+    );
     for not in ["user@host", "a@b.c", "@example.org", "root@", "x@y.12"] {
         assert!(email_spans(not).is_empty(), "{not}");
     }
@@ -536,29 +741,87 @@ fn boot_code_is_filled_to_its_length() {
     let o = fill(&v, "", "", &mut f, &mut bad);
     assert!(bad.is_empty(), "{bad:?}");
     let paths: Vec<&str> = f.iter().map(|x| x.path.as_str()).collect();
-    assert_eq!(paths, [".storage.disks.0.boot_code.code_b64", ".storage.disks.0.partitions.0.esp_image.0.b64", ".storage.disks.0.partitions.0.boot_code.image_b64"]);
+    assert_eq!(
+        paths,
+        [
+            ".storage.disks.0.boot_code.code_b64",
+            ".storage.disks.0.partitions.0.esp_image.0.b64",
+            ".storage.disks.0.partitions.0.boot_code.image_b64"
+        ]
+    );
     assert_eq!(f[1].bytes, 1500);
     assert_eq!(f[1].crc32, bko_holt::bytes::crc32(&vec![7u8; 1500]));
-    let back_in = |o: &Value, p: &[&str]| bko_holt::bytes::unbase64(o.at(p).and_then(Value::as_str).unwrap()).unwrap();
+    let back_in = |o: &Value, p: &[&str]| {
+        bko_holt::bytes::unbase64(o.at(p).and_then(Value::as_str).unwrap()).unwrap()
+    };
     let back = |p: &[&str]| back_in(&o, p);
-    assert_eq!(back(&["storage", "disks", "0", "partitions", "0", "esp_image", "0", "b64"]), filler(1500));
-    assert_eq!(back(&["storage", "disks", "0", "boot_code", "code_b64"]).len(), 7);
+    assert_eq!(
+        back(&[
+            "storage",
+            "disks",
+            "0",
+            "partitions",
+            "0",
+            "esp_image",
+            "0",
+            "b64"
+        ]),
+        filler(1500)
+    );
+    assert_eq!(
+        back(&["storage", "disks", "0", "boot_code", "code_b64"]).len(),
+        7
+    );
     // Not boot code: kept.
-    assert_eq!(o.at(&["storage", "disks", "0", "boot_code", "first_bytes"]), v.at(&["storage", "disks", "0", "boot_code", "first_bytes"]));
-    assert_eq!(o.at(&["boot", "efi", "entries", "0", "load_option_hex"]), v.at(&["boot", "efi", "entries", "0", "load_option_hex"]));
+    assert_eq!(
+        o.at(&["storage", "disks", "0", "boot_code", "first_bytes"]),
+        v.at(&["storage", "disks", "0", "boot_code", "first_bytes"])
+    );
+    assert_eq!(
+        o.at(&["boot", "efi", "entries", "0", "load_option_hex"]),
+        v.at(&["boot", "efi", "entries", "0", "load_option_hex"])
+    );
     assert_eq!(o.get("b64"), v.get("b64"));
-    assert_eq!(o.at(&["storage", "disks", "0", "partitions", "0", "esp_image", "0", "offset"]).and_then(Value::as_u64), Some(0));
+    assert_eq!(
+        o.at(&[
+            "storage",
+            "disks",
+            "0",
+            "partitions",
+            "0",
+            "esp_image",
+            "0",
+            "offset"
+        ])
+        .and_then(Value::as_u64),
+        Some(0)
+    );
     // Ubuntu Core's boot areas: the MBR code and BIOS Boot's image, not
     // their SHA-256.
     let sc = json::parse(&format!(r#"{{"boot": {{"snapcore": {{"boot_areas": {{"mbr_code_b64": "{code}", "mbr_code_sha256": "ab", "bios_boot": {{"image_b64": "{img}", "sha256": "cd"}}}}}}}}}}"#)).unwrap();
     let (mut f, mut bad) = (Vec::new(), Vec::new());
     let o = fill(&sc, "", "", &mut f, &mut bad);
     assert!(bad.is_empty(), "{bad:?}");
-    assert_eq!(f.iter().map(|x| x.path.as_str()).collect::<Vec<_>>(), [".boot.snapcore.boot_areas.mbr_code_b64", ".boot.snapcore.boot_areas.bios_boot.image_b64"]);
-    assert_eq!(back_in(&o, &["boot", "snapcore", "boot_areas", "mbr_code_b64"]), filler(7));
-    assert_eq!(o.at(&["boot", "snapcore", "boot_areas", "mbr_code_sha256"]).and_then(Value::as_str), Some("ab"));
+    assert_eq!(
+        f.iter().map(|x| x.path.as_str()).collect::<Vec<_>>(),
+        [
+            ".boot.snapcore.boot_areas.mbr_code_b64",
+            ".boot.snapcore.boot_areas.bios_boot.image_b64"
+        ]
+    );
+    assert_eq!(
+        back_in(&o, &["boot", "snapcore", "boot_areas", "mbr_code_b64"]),
+        filler(7)
+    );
+    assert_eq!(
+        o.at(&["boot", "snapcore", "boot_areas", "mbr_code_sha256"])
+            .and_then(Value::as_str),
+        Some("ab")
+    );
     // Boot code that isn't base64 is named, not emptied.
-    let torn = json::parse(r#"{"storage": {"disks": [{"boot_code": {"code_b64": "not base64!"}}]}}"#).unwrap();
+    let torn =
+        json::parse(r#"{"storage": {"disks": [{"boot_code": {"code_b64": "not base64!"}}]}}"#)
+            .unwrap();
     let (mut f, mut bad) = (Vec::new(), Vec::new());
     let o = fill(&torn, "", "", &mut f, &mut bad);
     assert_eq!(bad, ["storage.disks.0.boot_code.code_b64"]);
@@ -575,8 +838,17 @@ fn raw_dumps_come_from_provenance_tsv() {
         std::fs::write(raw.join(g).join("src.json"), "{}").unwrap();
     }
     std::fs::create_dir_all(raw.join("empty")).unwrap();
-    let tsv = |rows: &str| std::fs::write(raw.join("provenance.tsv"), format!("guest\thost\trun\n{rows}")).unwrap();
-    assert!(provenance(&raw).unwrap_err().contains("provenance.tsv"), "none there");
+    let tsv = |rows: &str| {
+        std::fs::write(
+            raw.join("provenance.tsv"),
+            format!("guest\thost\trun\n{rows}"),
+        )
+        .unwrap()
+    };
+    assert!(
+        provenance(&raw).unwrap_err().contains("provenance.tsv"),
+        "none there"
+    );
     tsv("a\tchopin\tr4all\nb\tcinqcent\tr4all\n");
     let p = provenance(&raw).unwrap();
     assert_eq!(p["b"]["host"], "cinqcent");
@@ -584,16 +856,30 @@ fn raw_dumps_come_from_provenance_tsv() {
     // b's dump from an earlier collection, which this one didn't list.
     tsv("a\tchopin\tr4all\n");
     let e = raw_guests(&raw, &provenance(&raw).unwrap()).unwrap_err();
-    assert!(e.contains("doesn't list (an earlier collection's?): b"), "{e}");
+    assert!(
+        e.contains("doesn't list (an earlier collection's?): b"),
+        "{e}"
+    );
     // A listed guest without its dump.
     tsv("a\tchopin\tr4all\nb\tchopin\tr4all\nc\tchopin\tr4all\n");
-    assert!(raw_guests(&raw, &provenance(&raw).unwrap()).unwrap_err().contains("without GUEST/src.json: c"));
+    assert!(
+        raw_guests(&raw, &provenance(&raw).unwrap())
+            .unwrap_err()
+            .contains("without GUEST/src.json: c")
+    );
     // Malformed: two rows for a guest, a row without one, no guest column.
     tsv("a\tchopin\tr4all\na\tcinqcent\tr4all\n");
     assert!(provenance(&raw).unwrap_err().contains("two rows for a"));
     tsv("\tchopin\tr4all\n");
-    assert!(provenance(&raw).unwrap_err().contains("line 2 names no guest"));
+    assert!(
+        provenance(&raw)
+            .unwrap_err()
+            .contains("line 2 names no guest")
+    );
     std::fs::write(raw.join("provenance.tsv"), "host\trun\n").unwrap();
     assert!(provenance(&raw).unwrap_err().contains("no guest column"));
-    assert_eq!(dumps_in(&dir.path().join("nosuch")).unwrap(), Vec::<String>::new());
+    assert_eq!(
+        dumps_in(&dir.path().join("nosuch")).unwrap(),
+        Vec::<String>::new()
+    );
 }

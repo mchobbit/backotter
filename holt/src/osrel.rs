@@ -8,7 +8,11 @@ pub struct OsRelease(pub Vec<(String, String)>);
 
 impl OsRelease {
     pub fn get(&self, key: &str) -> Option<&str> {
-        self.0.iter().rev().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+        self.0
+            .iter()
+            .rev()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -20,7 +24,9 @@ pub fn parse(text: &str) -> OsRelease {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let Some((k, v)) = line.split_once('=') else { continue };
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
         let k = k.trim();
         if k.is_empty() || !k.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') {
             continue;
@@ -65,7 +71,10 @@ pub fn read(sys: &Sys) -> Option<OsRelease> {
     sys.read("/etc/os-release")
         .or_else(|| sys.read("/usr/lib/os-release"))
         .map(|t| parse(&t))
-        .or_else(|| sys.read("/etc/release").and_then(|t| openindiana_release(&t)))
+        .or_else(|| {
+            sys.read("/etc/release")
+                .and_then(|t| openindiana_release(&t))
+        })
 }
 
 /// OpenIndiana Hipster's /etc/release, whose first line (indented) is
@@ -78,9 +87,17 @@ pub fn openindiana_release(text: &str) -> Option<OsRelease> {
     if (w.next(), w.next()) != (Some("OpenIndiana"), Some("Hipster")) {
         return None;
     }
-    let ver = w.next().filter(|v| v.starts_with(|c: char| c.is_ascii_digit()));
-    let pretty = ver.map_or_else(|| "OpenIndiana Hipster".to_string(), |v| format!("OpenIndiana Hipster {v}"));
-    let mut out = vec![("ID".to_string(), "openindiana".to_string()), ("NAME".into(), "OpenIndiana Hipster".into())];
+    let ver = w
+        .next()
+        .filter(|v| v.starts_with(|c: char| c.is_ascii_digit()));
+    let pretty = ver.map_or_else(
+        || "OpenIndiana Hipster".to_string(),
+        |v| format!("OpenIndiana Hipster {v}"),
+    );
+    let mut out = vec![
+        ("ID".to_string(), "openindiana".to_string()),
+        ("NAME".into(), "OpenIndiana Hipster".into()),
+    ];
     if let Some(v) = ver {
         out.push(("VERSION_ID".into(), v.to_string()));
     }
@@ -285,18 +302,28 @@ pub const SLACKWARE_CURRENT_MAJORS: [&str; 2] = ["15", "16"];
 /// Whether ID, VERSION_ID and VERSION_CODENAME are Slackware -current at a
 /// VERSION_ID it has carried (check_supported; load's layout check too).
 pub fn slackware_current(id: &str, version_id: &str, codename: Option<&str>) -> bool {
-    id == "slackware" && codename == Some("current") && SLACKWARE_CURRENT_MAJORS.contains(&version_id.split('.').next().unwrap_or(""))
+    id == "slackware"
+        && codename == Some("current")
+        && SLACKWARE_CURRENT_MAJORS.contains(&version_id.split('.').next().unwrap_or(""))
 }
 
 /// Ok unless this is Slackware -current on a MACHINE (`uname -m`) other
 /// than x86_64: -current's support was built and checked on
 /// Slackware64-current (ELILO and LILO, x86_64 kernels) only, and Slackware
 /// AArch64, -current only, says it is -current the same way.
-pub fn check_slackware_current_machine(os: Option<&OsRelease>, machine: &str) -> Result<(), String> {
+pub fn check_slackware_current_machine(
+    os: Option<&OsRelease>,
+    machine: &str,
+) -> Result<(), String> {
     let Some(os) = os else { return Ok(()) };
-    let (id, ver) = (os.get("ID").unwrap_or(""), os.get("VERSION_ID").unwrap_or(""));
+    let (id, ver) = (
+        os.get("ID").unwrap_or(""),
+        os.get("VERSION_ID").unwrap_or(""),
+    );
     if slackware_current(id, ver, os.get("VERSION_CODENAME")) && machine != "x86_64" {
-        return Err(format!("this is Slackware -current on {machine}, and bko-holt supports -current on x86_64 (Slackware64-current) only"));
+        return Err(format!(
+            "this is Slackware -current on {machine}, and bko-holt supports -current on x86_64 (Slackware64-current) only"
+        ));
     }
     Ok(())
 }
@@ -305,7 +332,9 @@ pub fn check_slackware_current_machine(os: Option<&OsRelease>, machine: &str) ->
 /// ("22.3" is Mint 22).  Derivatives don't count by their ID_LIKE.
 pub fn supported(id: &str, version_id: &str) -> bool {
     let major = version_id.split('.').next().unwrap_or("");
-    SUPPORTED.iter().any(|(i, v, _)| *i == id && (*v == major || *v == "*"))
+    SUPPORTED
+        .iter()
+        .any(|(i, v, _)| *i == id && (*v == major || *v == "*"))
 }
 
 /// "Debian 13, Linux Mint 22, ... or Zorin OS 18", for messages.
@@ -320,7 +349,9 @@ pub fn supported_names() -> String {
 /// Ok on a supported system, else why not.
 pub fn check_supported(os: Option<&OsRelease>) -> Result<(), String> {
     let Some(os) = os else {
-        return Err("no /etc/os-release or /usr/lib/os-release: can't tell which system this is".into());
+        return Err(
+            "no /etc/os-release or /usr/lib/os-release: can't tell which system this is".into(),
+        );
     };
     let id = os.get("ID").unwrap_or("");
     let ver = os.get("VERSION_ID").unwrap_or("");
@@ -350,8 +381,16 @@ pub fn check_supported(os: Option<&OsRelease>) -> Result<(), String> {
     }
     // Qubes OS: 4.3 and later (its row takes the major); 4.2's support
     // ended 2026-06-21, and its volumes and boot differ.
-    if id == "qubes" && ver.split('.').nth(1).and_then(|m| m.parse::<u64>().ok()).is_some_and(|m| ver.starts_with("4.") && m < 3) {
-        return Err(format!("this is Qubes OS {ver} (ID=qubes, VERSION_ID={ver}), and bko-holt dump supports Qubes OS 4.3 and later only"));
+    if id == "qubes"
+        && ver
+            .split('.')
+            .nth(1)
+            .and_then(|m| m.parse::<u64>().ok())
+            .is_some_and(|m| ver.starts_with("4.") && m < 3)
+    {
+        return Err(format!(
+            "this is Qubes OS {ver} (ID=qubes, VERSION_ID={ver}), and bko-holt dump supports Qubes OS 4.3 and later only"
+        ));
     }
     // Fedora's atomic desktops (Silverblue, Kinoite: ID=fedora with an
     // OSTREE_VERSION) are claimed at 44 only, kinoite44's, as Bazzite is by
@@ -365,8 +404,15 @@ pub fn check_supported(os: Option<&OsRelease>) -> Result<(), String> {
     if supported(id, ver) {
         return Ok(());
     }
-    let name = os.get("PRETTY_NAME").map(str::to_string).unwrap_or_else(|| format!("{id} {ver}"));
-    Err(format!("this is {} (ID={id}, VERSION_ID={ver}), and bko-holt dump supports only {} for now", name.trim(), supported_names()))
+    let name = os
+        .get("PRETTY_NAME")
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{id} {ver}"));
+    Err(format!(
+        "this is {} (ID={id}, VERSION_ID={ver}), and bko-holt dump supports only {} for now",
+        name.trim(),
+        supported_names()
+    ))
 }
 
 pub fn to_json(sys: &Sys, os: Option<&OsRelease>) -> Value {
@@ -377,7 +423,10 @@ pub fn to_json(sys: &Sys, os: Option<&OsRelease>) -> Value {
         .set("version_codename", g("VERSION_CODENAME"))
         .set("pretty_name", g("PRETTY_NAME"))
         .set("debian_version", sys.read_trim("/etc/debian_version"))
-        .set("kernel_release", sys.read_trim("/proc/sys/kernel/osrelease"))
+        .set(
+            "kernel_release",
+            sys.read_trim("/proc/sys/kernel/osrelease"),
+        )
         .set("kernel_version", sys.read_trim("/proc/sys/kernel/version"))
         .set("architecture", std::env::consts::ARCH)
         // The machine's, as `uname -m` says (crate::arch): what load holds
@@ -407,7 +456,9 @@ pub(crate) mod tests {
 
     #[test]
     fn quoting_and_junk() {
-        let o = parse("# comment\n\nA='single \"q\"'\nB=\"a\\\"b\\\\c\\$d\\`e\\x\"\n  C = bare \nnot a line\n=nokey\nBAD-KEY=1\nA=override\n");
+        let o = parse(
+            "# comment\n\nA='single \"q\"'\nB=\"a\\\"b\\\\c\\$d\\`e\\x\"\n  C = bare \nnot a line\n=nokey\nBAD-KEY=1\nA=override\n",
+        );
         assert_eq!(o.get("A"), Some("override"));
         assert_eq!(o.get("B"), Some("a\"b\\c$d`e\\x"));
         assert_eq!(o.get("C"), Some("bare"));
@@ -419,15 +470,25 @@ pub(crate) mod tests {
 
     #[test]
     fn refuses_other_systems() {
-        let buster = parse("ID=debian\nVERSION_ID=\"10\"\nPRETTY_NAME=\"Debian GNU/Linux 10 (buster)\"\n");
+        let buster =
+            parse("ID=debian\nVERSION_ID=\"10\"\nPRETTY_NAME=\"Debian GNU/Linux 10 (buster)\"\n");
         let e = check_supported(Some(&buster)).unwrap_err();
         assert!(e.contains("Debian GNU/Linux 10 (buster)"), "{e}");
         assert!(check_supported(Some(&parse("ID=debian\nVERSION_ID=\"12\"\n"))).is_ok());
         let ubuntu = parse("ID=ubuntu\nID_LIKE=debian\nVERSION_ID=\"26.04\"\n");
         assert!(check_supported(Some(&ubuntu)).is_ok());
         let ubuntu22 = parse("ID=ubuntu\nID_LIKE=debian\nVERSION_ID=\"22.04\"\n");
-        assert!(check_supported(Some(&ubuntu22)).unwrap_err().contains("ubuntu 22.04"));
-        assert!(check_supported(Some(&parse("ID=zorin\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=\"18\"\n"))).is_ok());
+        assert!(
+            check_supported(Some(&ubuntu22))
+                .unwrap_err()
+                .contains("ubuntu 22.04")
+        );
+        assert!(
+            check_supported(Some(&parse(
+                "ID=zorin\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=\"18\"\n"
+            )))
+            .is_ok()
+        );
         // KDE neon User Edition's /etc/os-release (neon's base-files); not
         // the neon that was on Ubuntu 22.04, nor one on 26.04 yet.
         let neon = "PRETTY_NAME=\"KDE neon User Edition\"\nNAME=\"KDE neon\"\nVERSION_ID=\"24.04\"\nVERSION=\"User Edition\"\nVERSION_CODENAME=noble\nID=neon\nID_LIKE=\"ubuntu debian\"\nUBUNTU_CODENAME=noble\nLOGO=start-here-kde-neon\n";
@@ -435,26 +496,51 @@ pub(crate) mod tests {
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "22.04")))).is_err());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "26.04")))).is_err());
         assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Fedora 45, Alpine Linux 3, Artix Linux, AerynOS, Solus 4, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE MicroOS, Aeon, openSUSE Leap 16, Rocky Linux 10, Qubes OS 4.3, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Slackware 15, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox, Sculpt OS or Ubuntu Core 24"), "{e}");
-        for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
+        for t in [
+            "ID=devuan\nVERSION_ID=6\n",
+            "ID=pop\nVERSION_ID=\"24.04\"\n",
+            "ID=cachyos\nBUILD_ID=rolling\n",
+            "ID=void\n",
+            "ID=nixos\nVERSION_ID=\"26.05\"\n",
+            "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n",
+            "ID=rocky\nVERSION_ID=\"10.2\"\n",
+        ] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
         assert!(check_supported(Some(&parse("ID=alpine\nVERSION_ID=3.24.3\n"))).is_ok());
         assert!(check_supported(Some(&parse("ID=artix\nNAME=\"Artix Linux\"\n"))).is_ok());
         // A real xfce-dinit install from artix-xfce-dinit-20261102.
         assert!(check_supported(Some(&parse("NAME=\"Artix Linux\"\nID=artix\nBUILD_ID=rolling\nVERSION_ID=20261102\nVARIANT=xfce-dinit\n"))).is_ok());
-        assert!(check_supported(Some(&parse("NAME=\"EndeavourOS\"\nID=\"endeavouros\"\nID_LIKE=\"arch\"\nBUILD_ID=rolling\n"))).is_ok());
-        assert!(check_supported(Some(&parse("NAME=\"Manjaro Linux\"\nID=manjaro\nID_LIKE=arch\nBUILD_ID=rolling\n"))).is_ok());
+        assert!(
+            check_supported(Some(&parse(
+                "NAME=\"EndeavourOS\"\nID=\"endeavouros\"\nID_LIKE=\"arch\"\nBUILD_ID=rolling\n"
+            )))
+            .is_ok()
+        );
+        assert!(
+            check_supported(Some(&parse(
+                "NAME=\"Manjaro Linux\"\nID=manjaro\nID_LIKE=arch\nBUILD_ID=rolling\n"
+            )))
+            .is_ok()
+        );
         // Garuda's real os-release (read 2026-11-14 from its ISO).
         assert!(check_supported(Some(&parse("NAME=\"Garuda Linux\"\nPRETTY_NAME=\"Garuda Linux\"\nID=garuda\nID_LIKE=arch\nBUILD_ID=rolling\nANSI_COLOR=\"38;2;23;147;209\"\nHOME_URL=\"https://garudalinux.org/\"\nLOGO=garudalinux\n"))).is_ok());
         // BigLinux's real os-release, as biglinux-name writes it.
         assert!(check_supported(Some(&parse("NAME=\"BigLinux based on Manjaro Linux\"\nPRETTY_NAME=\"BigLinux based on Manjaro Linux\"\nID=\"biglinux\"\nID_LIKE=arch\nBUILD_ID=rolling\n"))).is_ok());
-        assert!(check_supported(Some(&parse("ID=\"aerynos\"\nVERSION_ID=\"2026.11\"\nID_LIKE=\"linux\"\n"))).is_ok());
+        assert!(
+            check_supported(Some(&parse(
+                "ID=\"aerynos\"\nVERSION_ID=\"2026.11\"\nID_LIKE=\"linux\"\n"
+            )))
+            .is_ok()
+        );
         assert!(check_supported(Some(&parse("ID=\"aerynos\"\nVERSION_ID=\"2027.01\"\n"))).is_ok());
         // Linux Mint 22.x; not 21, and not Mint's Debian edition (LMDE).
         let mint = parse("ID=linuxmint\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=\"22.3\"\n");
         assert!(check_supported(Some(&mint)).is_ok());
         assert!(check_supported(Some(&parse("ID=linuxmint\nVERSION_ID=\"21.3\"\n"))).is_err());
-        assert!(check_supported(Some(&parse("ID=lmde\nID_LIKE=debian\nVERSION_ID=\"6\"\n"))).is_err());
+        assert!(
+            check_supported(Some(&parse("ID=lmde\nID_LIKE=debian\nVERSION_ID=\"6\"\n"))).is_err()
+        );
         assert!(!supported("debian", "130"));
         assert!(check_supported(Some(&parse("ID=arch\nBUILD_ID=rolling\n"))).is_ok());
         assert!(check_supported(Some(&parse("ID=fedora\nVERSION_ID=44\n"))).is_ok());
@@ -485,7 +571,9 @@ pub(crate) mod tests {
         assert!(supported("chimera", "20261103"));
         assert!(supported_names().contains("Chimera Linux"));
         // Not by its likeness: another musl/apk system isn't Chimera.
-        assert!(check_supported(Some(&parse("ID=\"chimera-ish\"\nID_LIKE=\"chimera\"\n"))).is_err());
+        assert!(
+            check_supported(Some(&parse("ID=\"chimera-ish\"\nID_LIKE=\"chimera\"\n"))).is_err()
+        );
     }
 
     /// The gentoo guest's /etc/os-release (baselayout 2.18), the same as the
@@ -507,7 +595,10 @@ pub(crate) mod tests {
         assert!(supported("gentoo", ""));
         assert!(supported_names().contains("Chimera Linux, Gentoo Linux, Bazzite 44"));
         // Not by its likeness: Funtoo and Calculate say ID_LIKE=gentoo.
-        for t in ["ID=funtoo\nID_LIKE=gentoo\nVERSION_ID=2.4\n", "ID=calculate\nID_LIKE=gentoo\nVERSION_ID=\"25\"\nPRETTY_NAME=\"Calculate Linux 25\"\n"] {
+        for t in [
+            "ID=funtoo\nID_LIKE=gentoo\nVERSION_ID=2.4\n",
+            "ID=calculate\nID_LIKE=gentoo\nVERSION_ID=\"25\"\nPRETTY_NAME=\"Calculate Linux 25\"\n",
+        ] {
             let e = check_supported(Some(&parse(t))).unwrap_err();
             assert!(e.contains("Gentoo Linux"), "{e}");
         }
@@ -517,20 +608,34 @@ pub(crate) mod tests {
     /// kinoite44's (Fedora Kinoite 44.20261111.0).
     #[test]
     fn bazzite_and_kinoite() {
-        let b = parse("NAME=\"Bazzite\"\nVERSION=\"44.20261012.0 (Kinoite)\"\nID=bazzite\nID_LIKE=\"fedora\"\nVERSION_ID=44\nVARIANT_ID=bazzite\nPRETTY_NAME=\"Bazzite 44 (FROM Fedora Kinoite)\"\nOSTREE_VERSION='44.20261012.0'\n");
+        let b = parse(
+            "NAME=\"Bazzite\"\nVERSION=\"44.20261012.0 (Kinoite)\"\nID=bazzite\nID_LIKE=\"fedora\"\nVERSION_ID=44\nVARIANT_ID=bazzite\nPRETTY_NAME=\"Bazzite 44 (FROM Fedora Kinoite)\"\nOSTREE_VERSION='44.20261012.0'\n",
+        );
         assert_eq!(b.get("ID"), Some("bazzite"));
         assert_eq!(b.get("OSTREE_VERSION"), Some("44.20261012.0"));
         assert!(check_supported(Some(&b)).is_ok());
         assert!(supported_names().contains("Bazzite 44"));
         // Not the next Fedora major until a guest or a run shows it.
-        assert!(check_supported(Some(&parse("ID=bazzite\nID_LIKE=fedora\nVERSION_ID=45\n"))).is_err());
+        assert!(
+            check_supported(Some(&parse("ID=bazzite\nID_LIKE=fedora\nVERSION_ID=45\n"))).is_err()
+        );
         // Bluefin and Aurora aren't Bazzite, and ID_LIKE=fedora doesn't let them in.
-        assert!(check_supported(Some(&parse("ID=bluefin\nID_LIKE=fedora\nVERSION_ID=44\n"))).is_err());
-        let k = parse("NAME=\"Fedora Linux\"\nVERSION=\"44.20261111.0 (Kinoite)\"\nID=fedora\nVERSION_ID=44\nVARIANT_ID=kinoite\nOSTREE_VERSION='44.20261111.0'\n");
+        assert!(
+            check_supported(Some(&parse("ID=bluefin\nID_LIKE=fedora\nVERSION_ID=44\n"))).is_err()
+        );
+        let k = parse(
+            "NAME=\"Fedora Linux\"\nVERSION=\"44.20261111.0 (Kinoite)\"\nID=fedora\nVERSION_ID=44\nVARIANT_ID=kinoite\nOSTREE_VERSION='44.20261111.0'\n",
+        );
         assert!(check_supported(Some(&k)).is_ok());
         // Kinoite 45 isn't claimed by Workstation's Fedora 45 row.
-        let k45 = parse("NAME=\"Fedora Linux\"\nVERSION=\"45.20261118.0 (Kinoite)\"\nID=fedora\nVERSION_ID=45\nVARIANT_ID=kinoite\nOSTREE_VERSION='45.20261118.0'\n");
-        assert!(check_supported(Some(&k45)).unwrap_err().contains("atomic desktops (Silverblue, Kinoite) at 44 only"));
+        let k45 = parse(
+            "NAME=\"Fedora Linux\"\nVERSION=\"45.20261118.0 (Kinoite)\"\nID=fedora\nVERSION_ID=45\nVARIANT_ID=kinoite\nOSTREE_VERSION='45.20261118.0'\n",
+        );
+        assert!(
+            check_supported(Some(&k45))
+                .unwrap_err()
+                .contains("atomic desktops (Silverblue, Kinoite) at 44 only")
+        );
     }
 
     /// The Thinkpad's /etc/os-release, Fedora 45 Workstation (BackShot1,
@@ -563,12 +668,25 @@ pub(crate) mod tests {
         assert!(supported_names().contains("Bazzite 44, PikaOS 4"));
         // Not PikaOS 5 until a guest shows it, nor PikaOS 3 (Ubuntu-based).
         let e = check_supported(Some(&parse(&PIKA.replace("\"4\"", "\"5\"")))).unwrap_err();
-        assert!(e.contains("(ID=pika, VERSION_ID=5)") && e.contains("Bazzite 44, PikaOS 4,"), "{e}");
+        assert!(
+            e.contains("(ID=pika, VERSION_ID=5)") && e.contains("Bazzite 44, PikaOS 4,"),
+            "{e}"
+        );
         assert!(check_supported(Some(&parse(&PIKA.replace("\"4\"", "\"3\"")))).is_err());
         // Another ID_LIKE=debian system on sid isn't PikaOS, nor is a
         // derivative that claims its VERSION_ID.
-        assert!(check_supported(Some(&parse("PRETTY_NAME=\"Siduction\"\nID=siduction\nID_LIKE=debian\nVERSION_ID=\"4\"\n"))).is_err());
-        assert!(check_supported(Some(&parse("ID=pika-ish\nID_LIKE=\"pika debian\"\nVERSION_ID=\"4\"\n"))).is_err());
+        assert!(
+            check_supported(Some(&parse(
+                "PRETTY_NAME=\"Siduction\"\nID=siduction\nID_LIKE=debian\nVERSION_ID=\"4\"\n"
+            )))
+            .is_err()
+        );
+        assert!(
+            check_supported(Some(&parse(
+                "ID=pika-ish\nID_LIKE=\"pika debian\"\nVERSION_ID=\"4\"\n"
+            )))
+            .is_err()
+        );
     }
 
     /// elementary OS 8.1's /etc/os-release (the elementary8 guest, built from
@@ -590,9 +708,23 @@ pub(crate) mod tests {
         assert!(supported("elementary", "8.1"));
         assert!(supported_names().contains("KDE neon, elementary OS 8, Arch Linux"));
         // Not 7 (Ubuntu 22.04's stack), nor a 9 until a guest shows it.
-        let e = check_supported(Some(&parse(&ELEMENTARY.replace("VERSION_ID=\"8\"", "VERSION_ID=\"7\"").replace("elementary OS 8\"", "elementary OS 7\"")))).unwrap_err();
-        assert!(e.contains("this is elementary OS 7 (ID=elementary, VERSION_ID=7)") && e.contains("elementary OS 8,"), "{e}");
-        assert!(check_supported(Some(&parse(&ELEMENTARY.replace("VERSION_ID=\"8\"", "VERSION_ID=\"9\"")))).is_err());
+        let e = check_supported(Some(&parse(
+            &ELEMENTARY
+                .replace("VERSION_ID=\"8\"", "VERSION_ID=\"7\"")
+                .replace("elementary OS 8\"", "elementary OS 7\""),
+        )))
+        .unwrap_err();
+        assert!(
+            e.contains("this is elementary OS 7 (ID=elementary, VERSION_ID=7)")
+                && e.contains("elementary OS 8,"),
+            "{e}"
+        );
+        assert!(
+            check_supported(Some(&parse(
+                &ELEMENTARY.replace("VERSION_ID=\"8\"", "VERSION_ID=\"9\"")
+            )))
+            .is_err()
+        );
         // Not by its likeness: Ubuntu 24.04 is supported as ubuntu, but
         // another ID_LIKE="ubuntu debian" system claiming VERSION_ID 8 isn't.
         assert!(check_supported(Some(&parse("ID=elementary-remix\nID_LIKE=\"elementary ubuntu debian\"\nVERSION_ID=\"8\"\nUBUNTU_CODENAME=noble\n"))).is_err());
@@ -614,11 +746,17 @@ pub(crate) mod tests {
         assert!(supported_names().contains("PikaOS 4, AnduinOS 2, "));
         // Not 1.x (Ubuntu 24.04's stack), nor a 3 until a guest shows it.
         let e = check_supported(Some(&parse(&ANDUINOS.replace("2.0.5", "1.1.2")))).unwrap_err();
-        assert!(e.contains("this is AnduinOS 1.1.2 (ID=anduinos, VERSION_ID=1.1.2)") && e.contains("AnduinOS 2,"), "{e}");
+        assert!(
+            e.contains("this is AnduinOS 1.1.2 (ID=anduinos, VERSION_ID=1.1.2)")
+                && e.contains("AnduinOS 2,"),
+            "{e}"
+        );
         assert!(check_supported(Some(&parse(&ANDUINOS.replace("\"2.0.5\"", "\"3.0\"")))).is_err());
         // Not by its likeness: another ID_LIKE=debian system on resolute,
         // claiming AnduinOS's VERSION_ID, isn't AnduinOS.
-        let lookalike = ANDUINOS.replace("ID=anduinos", "ID=anduinos-remix").replace("NAME=\"AnduinOS\"", "NAME=\"Remix\"");
+        let lookalike = ANDUINOS
+            .replace("ID=anduinos", "ID=anduinos-remix")
+            .replace("NAME=\"AnduinOS\"", "NAME=\"Remix\"");
         assert!(check_supported(Some(&parse(&lookalike))).is_err());
         assert!(check_supported(Some(&parse("ID=resolute-desktop\nID_LIKE=debian\nVERSION_ID=\"2.0.5\"\nUBUNTU_CODENAME=resolute\n"))).is_err());
     }
@@ -641,14 +779,25 @@ pub(crate) mod tests {
         // Rolling (decision 2): every snapshot, the next year's too, and
         // one with no VERSION_ID at all.
         for v in ["2026.4", "2027.1", "2025.4"] {
-            assert!(check_supported(Some(&parse(&KALI.replace("2026.3", v)))).is_ok(), "{v}");
+            assert!(
+                check_supported(Some(&parse(&KALI.replace("2026.3", v)))).is_ok(),
+                "{v}"
+            );
         }
-        assert!(check_supported(Some(&parse(&KALI.replace("VERSION_ID=\"2026.3\"\n", "")))).is_ok());
+        assert!(
+            check_supported(Some(&parse(&KALI.replace("VERSION_ID=\"2026.3\"\n", "")))).is_ok()
+        );
         // Not by its likeness: a remix with its own ID, or a derivative that
         // names Kali in ID_LIKE and claims its VERSION_ID, isn't Kali.
-        let remix = KALI.replace("ID=kali\n", "ID=kali-remix\n").replace("NAME=\"Kali GNU/Linux\"", "NAME=\"Remix\"");
+        let remix = KALI
+            .replace("ID=kali\n", "ID=kali-remix\n")
+            .replace("NAME=\"Kali GNU/Linux\"", "NAME=\"Remix\"");
         let e = check_supported(Some(&parse(&remix))).unwrap_err();
-        assert!(e.contains("(ID=kali-remix, VERSION_ID=2026.3)") && e.contains("AnduinOS 2, Kali Linux,"), "{e}");
+        assert!(
+            e.contains("(ID=kali-remix, VERSION_ID=2026.3)")
+                && e.contains("AnduinOS 2, Kali Linux,"),
+            "{e}"
+        );
         assert!(check_supported(Some(&parse("ID=pentestos\nID_LIKE=\"kali debian\"\nVERSION_ID=\"2026.3\"\nVERSION_CODENAME=kali-rolling\n"))).is_err());
         // Debian testing itself (no VERSION_ID), even on Kali's codename.
         assert!(check_supported(Some(&parse("ID=debian\nVERSION_CODENAME=kali-rolling\nPRETTY_NAME=\"Debian GNU/Linux forky/sid\"\n"))).is_err());
@@ -695,39 +844,116 @@ pub(crate) mod tests {
         assert!(supported_names().contains("Garuda Linux, Slackware 15, Chimera Linux"));
         // 14.2 isn't 15.
         let e = check_supported(Some(&parse(&SLACKWARE.replace("15.0", "14.2")))).unwrap_err();
-        assert!(e.contains("(ID=slackware, VERSION_ID=14.2)") && e.contains("Slackware 15,"), "{e}");
+        assert!(
+            e.contains("(ID=slackware, VERSION_ID=14.2)") && e.contains("Slackware 15,"),
+            "{e}"
+        );
         // -current before aaa_base 16.0: VERSION="15.0+", the codename.
-        let current = SLACKWARE.replace("VERSION=\"15.0\"", "VERSION=\"15.0+\"").replace("VERSION_CODENAME=stable", "VERSION_CODENAME=current");
+        let current = SLACKWARE
+            .replace("VERSION=\"15.0\"", "VERSION=\"15.0+\"")
+            .replace("VERSION_CODENAME=stable", "VERSION_CODENAME=current");
         assert!(check_supported(Some(&parse(&current))).is_ok());
-        assert!(check_supported(Some(&parse(&SLACKWARE.replace("VERSION_CODENAME=stable", "VERSION_CODENAME=current")))).is_ok());
+        assert!(
+            check_supported(Some(&parse(
+                &SLACKWARE.replace("VERSION_CODENAME=stable", "VERSION_CODENAME=current")
+            )))
+            .is_ok()
+        );
         // VERSION's "+" under any other codename is no tree bko-holt knows.
-        let e = check_supported(Some(&parse(&SLACKWARE.replace("VERSION=\"15.0\"", "VERSION=\"15.0+\"")))).unwrap_err();
-        assert!(e.contains("Slackware development tree") && e.contains("VERSION=15.0+") && e.contains("VERSION_CODENAME=stable"), "{e}");
-        assert!(check_supported(Some(&parse(&SLACKWARE.replace("VERSION=\"15.0\"", "VERSION=\"15.0+\"").replace("VERSION_CODENAME=stable\n", "")))).is_err());
+        let e = check_supported(Some(&parse(
+            &SLACKWARE.replace("VERSION=\"15.0\"", "VERSION=\"15.0+\""),
+        )))
+        .unwrap_err();
+        assert!(
+            e.contains("Slackware development tree")
+                && e.contains("VERSION=15.0+")
+                && e.contains("VERSION_CODENAME=stable"),
+            "{e}"
+        );
+        assert!(
+            check_supported(Some(&parse(
+                &SLACKWARE
+                    .replace("VERSION=\"15.0\"", "VERSION=\"15.0+\"")
+                    .replace("VERSION_CODENAME=stable\n", "")
+            )))
+            .is_err()
+        );
         // -current since aaa_base 16.0 (the Thinkpad's, 2026-11-22).
         let o = parse(SLACKWARE_CURRENT);
-        assert_eq!((o.get("VERSION_ID"), o.get("VERSION_CODENAME")), (Some("16.0"), Some("current")));
+        assert_eq!(
+            (o.get("VERSION_ID"), o.get("VERSION_CODENAME")),
+            (Some("16.0"), Some("current"))
+        );
         assert!(check_supported(Some(&o)).is_ok());
         // The 16.0 release, or a -current at a VERSION_ID it hasn't had, isn't.
-        let e = check_supported(Some(&parse(&SLACKWARE_CURRENT.replace("VERSION_CODENAME=current", "VERSION_CODENAME=stable")))).unwrap_err();
-        assert!(e.contains("(ID=slackware, VERSION_ID=16.0)") && e.contains("Slackware 15,"), "{e}");
-        assert!(check_supported(Some(&parse(&SLACKWARE_CURRENT.replace("VERSION_CODENAME=current\n", "")))).is_err());
-        let e = check_supported(Some(&parse(&SLACKWARE_CURRENT.replace("16.0", "17.0")))).unwrap_err();
-        assert!(e.contains("Slackware -current (ID=slackware, VERSION_ID=17.0, VERSION_CODENAME=current)") && e.contains("only at VERSION_ID 15.0 or 16.0"), "{e}");
-        assert!(check_supported(Some(&parse(&SLACKWARE.replace("15.0", "14.2").replace("VERSION_CODENAME=stable", "VERSION_CODENAME=current")))).is_err());
-        assert!(slackware_current("slackware", "16.0", Some("current")) && slackware_current("slackware", "15.0", Some("current")));
+        let e = check_supported(Some(&parse(
+            &SLACKWARE_CURRENT.replace("VERSION_CODENAME=current", "VERSION_CODENAME=stable"),
+        )))
+        .unwrap_err();
+        assert!(
+            e.contains("(ID=slackware, VERSION_ID=16.0)") && e.contains("Slackware 15,"),
+            "{e}"
+        );
+        assert!(
+            check_supported(Some(&parse(
+                &SLACKWARE_CURRENT.replace("VERSION_CODENAME=current\n", "")
+            )))
+            .is_err()
+        );
+        let e =
+            check_supported(Some(&parse(&SLACKWARE_CURRENT.replace("16.0", "17.0")))).unwrap_err();
+        assert!(
+            e.contains(
+                "Slackware -current (ID=slackware, VERSION_ID=17.0, VERSION_CODENAME=current)"
+            ) && e.contains("only at VERSION_ID 15.0 or 16.0"),
+            "{e}"
+        );
+        assert!(
+            check_supported(Some(&parse(
+                &SLACKWARE
+                    .replace("15.0", "14.2")
+                    .replace("VERSION_CODENAME=stable", "VERSION_CODENAME=current")
+            )))
+            .is_err()
+        );
+        assert!(
+            slackware_current("slackware", "16.0", Some("current"))
+                && slackware_current("slackware", "15.0", Some("current"))
+        );
         // -current on x86_64 only (Slackware AArch64 is -current too).
         assert!(check_slackware_current_machine(Some(&o), "x86_64").is_ok());
         let e = check_slackware_current_machine(Some(&o), "aarch64").unwrap_err();
-        assert!(e.contains("Slackware -current on aarch64") && e.contains("x86_64 (Slackware64-current) only"), "{e}");
-        assert!(check_slackware_current_machine(Some(&parse(SLACKWARE)), "aarch64").is_ok() && check_slackware_current_machine(None, "aarch64").is_ok());
-        assert!(!slackware_current("slackware", "16.0", Some("stable")) && !slackware_current("slackware", "16.0", None) && !slackware_current("slackware", "17.0", Some("current")) && !slackware_current("salix", "16.0", Some("current")));
+        assert!(
+            e.contains("Slackware -current on aarch64")
+                && e.contains("x86_64 (Slackware64-current) only"),
+            "{e}"
+        );
+        assert!(
+            check_slackware_current_machine(Some(&parse(SLACKWARE)), "aarch64").is_ok()
+                && check_slackware_current_machine(None, "aarch64").is_ok()
+        );
+        assert!(
+            !slackware_current("slackware", "16.0", Some("stable"))
+                && !slackware_current("slackware", "16.0", None)
+                && !slackware_current("slackware", "17.0", Some("current"))
+                && !slackware_current("salix", "16.0", Some("current"))
+        );
         // A derivative's -current is still not Slackware's.
-        assert!(check_supported(Some(&parse("ID=salix\nID_LIKE=slackware\nVERSION_ID=16.0\nVERSION_CODENAME=current\n"))).is_err());
+        assert!(
+            check_supported(Some(&parse(
+                "ID=salix\nID_LIKE=slackware\nVERSION_ID=16.0\nVERSION_CODENAME=current\n"
+            )))
+            .is_err()
+        );
         // A 15.1 passes by the major (the row's comment).
         assert!(supported("slackware", "15.1"));
         // Not by its likeness: a derivative claiming 15.0 isn't Slackware.
-        assert!(check_supported(Some(&parse("ID=salix\nID_LIKE=slackware\nVERSION_ID=15.0\n"))).is_err());
+        assert!(
+            check_supported(Some(&parse(
+                "ID=salix\nID_LIKE=slackware\nVERSION_ID=15.0\n"
+            )))
+            .is_err()
+        );
     }
 
     /// Vanilla OS 3's os-release (base-files v1.1.0: docs/design/vanillaos.md;
@@ -746,10 +972,18 @@ pub(crate) mod tests {
         // Not Orchid (2.0) until a guest shows it, nor a 4.
         for v in ["2.0", "4.0"] {
             let e = check_supported(Some(&parse(&VANILLA.replace("3.0", v)))).unwrap_err();
-            assert!(e.contains(&format!("(ID=vanilla, VERSION_ID={v})")) && e.contains("Vanilla OS 3,"), "{e}");
+            assert!(
+                e.contains(&format!("(ID=vanilla, VERSION_ID={v})")) && e.contains("Vanilla OS 3,"),
+                "{e}"
+            );
         }
         // Not by its likeness: ID_LIKE=debian alone isn't Debian 13.
-        assert!(check_supported(Some(&parse("ID=vanillish\nID_LIKE=debian\nVERSION_ID=\"3.0\"\n"))).is_err());
+        assert!(
+            check_supported(Some(&parse(
+                "ID=vanillish\nID_LIKE=debian\nVERSION_ID=\"3.0\"\n"
+            )))
+            .is_err()
+        );
     }
 
     /// The microos guest's /usr/lib/os-release (openSUSE's
@@ -760,18 +994,32 @@ pub(crate) mod tests {
     #[test]
     fn microos() {
         let o = parse(MICROOS);
-        assert_eq!((o.get("ID"), o.get("VERSION_ID")), (Some("opensuse-microos"), Some("20261111")));
+        assert_eq!(
+            (o.get("ID"), o.get("VERSION_ID")),
+            (Some("opensuse-microos"), Some("20261111"))
+        );
         assert!(check_supported(Some(&o)).is_ok());
         // Rolling: any snapshot.
         assert!(supported("opensuse-microos", "20270101"));
         // Tumbleweed stays Tumbleweed: its own row, not MicroOS's by
         // ID_LIKE; and MicroOS isn't Tumbleweed by its ID_LIKE either.
-        assert!(check_supported(Some(&parse("ID=\"opensuse-tumbleweed\"\nID_LIKE=\"opensuse suse\"\nVERSION_ID=\"20261101\"\n"))).is_ok());
+        assert!(
+            check_supported(Some(&parse(
+                "ID=\"opensuse-tumbleweed\"\nID_LIKE=\"opensuse suse\"\nVERSION_ID=\"20261101\"\n"
+            )))
+            .is_ok()
+        );
         assert!(supported_names().contains("openSUSE Tumbleweed, openSUSE MicroOS, "));
         // Aeon (and SL Micro, Leap Micro) aren't claimed by MicroOS's row.
         for id in ["opensuse-aeon", "sl-micro", "opensuse-leap-micro"] {
-            let e = check_supported(Some(&parse(&MICROOS.replace("\"opensuse-microos\"", &format!("\"{id}\""))))).unwrap_err();
-            assert!(e.contains(&format!("(ID={id}, VERSION_ID=20261111)")), "{e}");
+            let e = check_supported(Some(&parse(
+                &MICROOS.replace("\"opensuse-microos\"", &format!("\"{id}\"")),
+            )))
+            .unwrap_err();
+            assert!(
+                e.contains(&format!("(ID={id}, VERSION_ID=20261111)")),
+                "{e}"
+            );
         }
     }
 
@@ -782,22 +1030,44 @@ pub(crate) mod tests {
     #[test]
     fn aeon() {
         let o = parse(AEON);
-        assert_eq!((o.get("ID"), o.get("VERSION_ID"), o.get("VERSION")), (Some("aeon"), Some("20261111"), None));
+        assert_eq!(
+            (o.get("ID"), o.get("VERSION_ID"), o.get("VERSION")),
+            (Some("aeon"), Some("20261111"), None)
+        );
         assert!(check_supported(Some(&o)).is_ok());
         // Rolling: any snapshot, later or earlier.
         for v in ["20270301", "20260101"] {
-            assert!(check_supported(Some(&parse(&AEON.replace("20261111", v)))).is_ok(), "{v}");
+            assert!(
+                check_supported(Some(&parse(&AEON.replace("20261111", v)))).is_ok(),
+                "{v}"
+            );
         }
         assert!(supported_names().contains("openSUSE MicroOS, Aeon, "));
         // By its own ID only: a system that names Aeon (or MicroOS) in its
         // ID_LIKE isn't taken by either row, nor is Aeon by MicroOS's.
         assert!(supported("aeon", "20261111") && !supported("opensuse-aeon", "20261111"));
         for id in ["opensuse-aeon", "aeon-ish", "kalpa"] {
-            let e = check_supported(Some(&parse(&AEON.replace("ID=\"aeon\"", &format!("ID=\"{id}\""))))).unwrap_err();
-            assert!(e.contains(&format!("(ID={id}, VERSION_ID=20261111)")), "{e}");
+            let e = check_supported(Some(&parse(
+                &AEON.replace("ID=\"aeon\"", &format!("ID=\"{id}\"")),
+            )))
+            .unwrap_err();
+            assert!(
+                e.contains(&format!("(ID={id}, VERSION_ID=20261111)")),
+                "{e}"
+            );
         }
-        assert!(check_supported(Some(&parse(&MICROOS.replace("ID=\"opensuse-microos\"", "ID=\"aeon\"")))).is_ok());
-        assert!(check_supported(Some(&parse("ID=\"opensuse-microos\"\nID_LIKE=\"aeon\"\nVERSION_ID=\"20261111\"\n"))).is_ok());
+        assert!(
+            check_supported(Some(&parse(
+                &MICROOS.replace("ID=\"opensuse-microos\"", "ID=\"aeon\"")
+            )))
+            .is_ok()
+        );
+        assert!(
+            check_supported(Some(&parse(
+                "ID=\"opensuse-microos\"\nID_LIKE=\"aeon\"\nVERSION_ID=\"20261111\"\n"
+            )))
+            .is_ok()
+        );
     }
 
     /// Leap 16.1's /etc/os-release (the Leap-16.1 offline ISO, Build60.2:
@@ -807,24 +1077,41 @@ pub(crate) mod tests {
     #[test]
     fn leap16() {
         let o = parse(LEAP16);
-        assert_eq!((o.get("ID"), o.get("VERSION_ID")), (Some("opensuse-leap"), Some("16.1")));
+        assert_eq!(
+            (o.get("ID"), o.get("VERSION_ID")),
+            (Some("opensuse-leap"), Some("16.1"))
+        );
         assert!(check_supported(Some(&o)).is_ok());
         // Every 16.x point release, 16.0 too.
         assert!(check_supported(Some(&parse(&LEAP16.replace("16.1", "16.0")))).is_ok());
         assert!(supported("opensuse-leap", "16.2"));
-        assert!(supported_names().contains("openSUSE MicroOS, Aeon, openSUSE Leap 16, Rocky Linux 10"));
+        assert!(
+            supported_names().contains("openSUSE MicroOS, Aeon, openSUSE Leap 16, Rocky Linux 10")
+        );
         // Not Leap 15.x (YaST, its older tools), nor a 17 until a guest shows it.
         for v in ["15.6", "17.0"] {
             let e = check_supported(Some(&parse(&LEAP16.replace("16.1", v)))).unwrap_err();
-            assert!(e.contains(&format!("this is openSUSE Leap {v} (ID=opensuse-leap, VERSION_ID={v})")) && e.contains("openSUSE Leap 16,"), "{e}");
+            assert!(
+                e.contains(&format!(
+                    "this is openSUSE Leap {v} (ID=opensuse-leap, VERSION_ID={v})"
+                )) && e.contains("openSUSE Leap 16,"),
+                "{e}"
+            );
         }
         // Tumbleweed stays Tumbleweed (its own row, any snapshot), and
         // neither is the other by ID_LIKE.
-        let tw = parse("NAME=\"openSUSE Tumbleweed\"\nID=\"opensuse-tumbleweed\"\nID_LIKE=\"opensuse suse\"\nVERSION_ID=\"20261101\"\nPRETTY_NAME=\"openSUSE Tumbleweed\"\n");
+        let tw = parse(
+            "NAME=\"openSUSE Tumbleweed\"\nID=\"opensuse-tumbleweed\"\nID_LIKE=\"opensuse suse\"\nVERSION_ID=\"20261101\"\nPRETTY_NAME=\"openSUSE Tumbleweed\"\n",
+        );
         assert_eq!(tw.get("ID"), Some("opensuse-tumbleweed"));
         assert!(check_supported(Some(&tw)).is_ok());
         assert!(!supported("opensuse-leap", "20261101"));
-        assert!(check_supported(Some(&parse("ID=opensuse-leap-micro\nID_LIKE=\"suse opensuse\"\nVERSION_ID=\"16.1\"\n"))).is_err());
+        assert!(
+            check_supported(Some(&parse(
+                "ID=opensuse-leap-micro\nID_LIKE=\"suse opensuse\"\nVERSION_ID=\"16.1\"\n"
+            )))
+            .is_err()
+        );
     }
 
     /// Solus 4.9's /usr/lib/os-release (the Solus-Xfce-Release-2026-04-18
@@ -834,18 +1121,27 @@ pub(crate) mod tests {
     #[test]
     fn solus() {
         let o = parse(SOLUS);
-        assert_eq!((o.get("ID"), o.get("VERSION_ID"), o.get("ID_LIKE")), (Some("solus"), Some("4.9"), None));
+        assert_eq!(
+            (o.get("ID"), o.get("VERSION_ID"), o.get("ID_LIKE")),
+            (Some("solus"), Some("4.9"), None)
+        );
         assert_eq!(o.get("PRETTY_NAME"), Some("Solus 4.9 Serenity"));
         assert!(check_supported(Some(&o)).is_ok());
         // Every 4.x ISO; not a 5 until a guest shows it, nor the 3.x before.
         assert!(supported("solus", "4.10"));
         assert!(supported_names().contains("AerynOS, Solus 4, Debian 12"));
         for v in ["5.0", "3.9999"] {
-            let e = check_supported(Some(&parse(&SOLUS.replace("\"4.9\"", &format!("\"{v}\""))))).unwrap_err();
-            assert!(e.contains(&format!("(ID=solus, VERSION_ID={v})")) && e.contains("Solus 4,"), "{e}");
+            let e = check_supported(Some(&parse(&SOLUS.replace("\"4.9\"", &format!("\"{v}\"")))))
+                .unwrap_err();
+            assert!(
+                e.contains(&format!("(ID=solus, VERSION_ID={v})")) && e.contains("Solus 4,"),
+                "{e}"
+            );
         }
         // Not by its likeness: a remix with its own ID claiming 4.9 isn't Solus.
-        let remix = SOLUS.replace("ID=\"solus\"", "ID=\"solus-remix\"").replace("NAME=\"Solus\"", "NAME=\"Remix\"");
+        let remix = SOLUS
+            .replace("ID=\"solus\"", "ID=\"solus-remix\"")
+            .replace("NAME=\"Solus\"", "NAME=\"Remix\"");
         assert!(check_supported(Some(&parse(&remix))).is_err());
         assert!(check_supported(Some(&parse("ID=solusos\nVERSION_ID=\"4.9\"\n"))).is_err());
     }
@@ -881,7 +1177,10 @@ pub(crate) mod tests {
         assert!(supported("openindiana", "2027.04"));
         // A leading blank line, and no snapshot after Hipster.
         let o = openindiana_release("\n\n  OpenIndiana Hipster\n").unwrap();
-        assert_eq!((o.get("VERSION_ID"), o.get("PRETTY_NAME")), (None, Some("OpenIndiana Hipster")));
+        assert_eq!(
+            (o.get("VERSION_ID"), o.get("PRETTY_NAME")),
+            (None, Some("OpenIndiana Hipster"))
+        );
         assert!(check_supported(Some(&o)).is_ok());
         // os-release wins where there is one (OmniOS has both).
         t.file("/etc/os-release", "ID=omnios\nVERSION_ID=r151058y\n");
@@ -890,7 +1189,12 @@ pub(crate) mod tests {
 
     #[test]
     fn other_etc_release_isnt_openindiana() {
-        for rel in ["                             Oracle Solaris 11.4 X86\n  Copyright (c) 1983, 2024, Oracle and/or its affiliates.\n", "             OpenIndiana Development oi_151a X86\n", "OpenIndianaX Hipster 2026.10\n", ""] {
+        for rel in [
+            "                             Oracle Solaris 11.4 X86\n  Copyright (c) 1983, 2024, Oracle and/or its affiliates.\n",
+            "             OpenIndiana Development oi_151a X86\n",
+            "OpenIndianaX Hipster 2026.10\n",
+            "",
+        ] {
             assert!(openindiana_release(rel).is_none(), "{rel}");
             let t = Tree::new("osrel-sunos");
             t.file("/etc/release", rel);
@@ -899,8 +1203,15 @@ pub(crate) mod tests {
         }
         // Without an os-release, other::os_release makes one from uname
         // (ID=sunos), which is refused.
-        let e = check_supported(Some(&parse("ID=sunos\nVERSION_ID=\"5.11\"\nPRETTY_NAME=\"SunOS 5.11\"\n"))).unwrap_err();
-        assert!(e.contains("this is SunOS 5.11 (ID=sunos, VERSION_ID=5.11)") && e.contains("OmniOS, OpenIndiana,"), "{e}");
+        let e = check_supported(Some(&parse(
+            "ID=sunos\nVERSION_ID=\"5.11\"\nPRETTY_NAME=\"SunOS 5.11\"\n",
+        )))
+        .unwrap_err();
+        assert!(
+            e.contains("this is SunOS 5.11 (ID=sunos, VERSION_ID=5.11)")
+                && e.contains("OmniOS, OpenIndiana,"),
+            "{e}"
+        );
         assert!(check_supported(Some(&parse("ID=solaris\nVERSION_ID=\"11.4\"\n"))).is_err());
     }
 
@@ -911,13 +1222,23 @@ pub(crate) mod tests {
     #[test]
     fn ubuntu_core() {
         let o = parse(UBUNTU_CORE);
-        assert_eq!((o.get("ID"), o.get("VERSION_ID")), (Some("ubuntu-core"), Some("24")));
+        assert_eq!(
+            (o.get("ID"), o.get("VERSION_ID")),
+            (Some("ubuntu-core"), Some("24"))
+        );
         assert!(check_supported(Some(&o)).is_ok());
         assert!(supported_names().ends_with(", Sculpt OS or Ubuntu Core 24"));
         // UC20 and UC22 keep their FDE keys otherwise; UC26 isn't tested.
         for v in ["20", "22", "26"] {
-            let e = check_supported(Some(&parse(&UBUNTU_CORE.replace("\"24\"", &format!("\"{v}\""))))).unwrap_err();
-            assert!(e.contains(&format!("(ID=ubuntu-core, VERSION_ID={v})")) && e.contains("Ubuntu Core 24"), "{e}");
+            let e = check_supported(Some(&parse(
+                &UBUNTU_CORE.replace("\"24\"", &format!("\"{v}\"")),
+            )))
+            .unwrap_err();
+            assert!(
+                e.contains(&format!("(ID=ubuntu-core, VERSION_ID={v})"))
+                    && e.contains("Ubuntu Core 24"),
+                "{e}"
+            );
         }
         // Ubuntu's own row is another.
         assert!(check_supported(Some(&parse("ID=ubuntu\nVERSION_ID=\"24\"\n"))).is_ok());
@@ -928,28 +1249,53 @@ pub(crate) mod tests {
     fn qubes() {
         let q = "NAME=Qubes\nVERSION=\"4.3.2 (R4.3)\"\nID=qubes\nVERSION_ID=4.3\nPRETTY_NAME=\"Qubes OS 4.3.2 (R4.3)\"\n";
         let o = parse(q);
-        assert_eq!((o.get("ID"), o.get("VERSION_ID")), (Some("qubes"), Some("4.3")));
+        assert_eq!(
+            (o.get("ID"), o.get("VERSION_ID")),
+            (Some("qubes"), Some("4.3"))
+        );
         assert!(check_supported(Some(&o)).is_ok());
-        let e = check_supported(Some(&parse(&q.replace("VERSION_ID=4.3", "VERSION_ID=4.2")))).unwrap_err();
+        let e = check_supported(Some(&parse(&q.replace("VERSION_ID=4.3", "VERSION_ID=4.2"))))
+            .unwrap_err();
         assert!(e.contains("Qubes OS 4.3 and later only"), "{e}");
-        assert!(check_supported(Some(&parse(&q.replace("VERSION_ID=4.3", "VERSION_ID=3.2")))).is_err());
+        assert!(
+            check_supported(Some(&parse(&q.replace("VERSION_ID=4.3", "VERSION_ID=3.2")))).is_err()
+        );
     }
 
     #[test]
     fn json_fields() {
         let t = Tree::new("osrel-json");
-        t.debian13().file("/proc/sys/kernel/osrelease", "6.12.48+deb13-amd64\n").file(
-            "/proc/sys/kernel/version",
-            "#1 SMP PREEMPT_DYNAMIC Debian 6.12.48-1 (2025-09-20)\n",
-        );
+        t.debian13()
+            .file("/proc/sys/kernel/osrelease", "6.12.48+deb13-amd64\n")
+            .file(
+                "/proc/sys/kernel/version",
+                "#1 SMP PREEMPT_DYNAMIC Debian 6.12.48-1 (2025-09-20)\n",
+            );
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
         let o = read(&s);
         let j = to_json(&s, o.as_ref());
         assert_eq!(j.get("id").and_then(Value::as_str), Some("debian"));
-        assert_eq!(j.get("version_codename").and_then(Value::as_str), Some("trixie"));
-        assert_eq!(j.get("debian_version").and_then(Value::as_str), Some("13.1"));
-        assert_eq!(j.get("kernel_release").and_then(Value::as_str), Some("6.12.48+deb13-amd64"));
-        assert!(j.get("kernel_version").and_then(Value::as_str).unwrap().contains("Debian"));
-        assert_eq!(j.get("architecture").and_then(Value::as_str), Some(std::env::consts::ARCH));
+        assert_eq!(
+            j.get("version_codename").and_then(Value::as_str),
+            Some("trixie")
+        );
+        assert_eq!(
+            j.get("debian_version").and_then(Value::as_str),
+            Some("13.1")
+        );
+        assert_eq!(
+            j.get("kernel_release").and_then(Value::as_str),
+            Some("6.12.48+deb13-amd64")
+        );
+        assert!(
+            j.get("kernel_version")
+                .and_then(Value::as_str)
+                .unwrap()
+                .contains("Debian")
+        );
+        assert_eq!(
+            j.get("architecture").and_then(Value::as_str),
+            Some(std::env::consts::ARCH)
+        );
     }
 }

@@ -109,7 +109,11 @@ impl BootEnv {
 /// children's `/usr`, ZFSBootMenu's `/`), and refuses it for a legacy one
 /// (TrueNAS's roots).
 pub fn ro_options(legacy: bool) -> String {
-    if legacy { "ro,nodev,nosuid,noexec".to_string() } else { "ro,zfsutil,nodev,nosuid,noexec".to_string() }
+    if legacy {
+        "ro,nodev,nosuid,noexec".to_string()
+    } else {
+        "ro,zfsutil,nodev,nosuid,noexec".to_string()
+    }
 }
 
 /// The note each inactive BE's backup sources carry.
@@ -140,14 +144,28 @@ fn prop(by_name: &[(String, &Value)], ds: &str, k: &str) -> Option<String> {
 /// too, by pool then dataset name.  `.inactive()` tells the ones a backup
 /// mounts itself.
 pub fn list(tools: &Value) -> Vec<BootEnv> {
-    let datasets: Vec<&Value> = tools.get("datasets").and_then(Value::as_array).into_iter().flatten().filter(|d| s(d, "type").as_deref() != Some("volume")).collect();
-    let by_name: Vec<(String, &Value)> = datasets.iter().filter_map(|d| s(d, "name").map(|n| (n, *d))).collect();
+    let datasets: Vec<&Value> = tools
+        .get("datasets")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|d| s(d, "type").as_deref() != Some("volume"))
+        .collect();
+    let by_name: Vec<(String, &Value)> = datasets
+        .iter()
+        .filter_map(|d| s(d, "name").map(|n| (n, *d)))
+        .collect();
     let bootfs: Vec<String> = tools
         .get("imported_pools")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|p| p.at(&["properties", "bootfs"]).and_then(Value::as_str).filter(|b| *b != "-" && !b.is_empty()).map(str::to_string))
+        .filter_map(|p| {
+            p.at(&["properties", "bootfs"])
+                .and_then(Value::as_str)
+                .filter(|b| *b != "-" && !b.is_empty())
+                .map(str::to_string)
+        })
         .collect();
     let mut roots: Vec<(String, Rule)> = Vec::new();
     for (name, d) in &by_name {
@@ -162,7 +180,9 @@ pub fn list(tools: &Value) -> Vec<BootEnv> {
         } else {
             let active = prop(&by_name, name, ZBM_ACTIVE);
             match mp.as_str() {
-                "/" if canmount != "off" && active.as_deref() != Some("off") => Some(Rule::ZfsBootMenu),
+                "/" if canmount != "off" && active.as_deref() != Some("off") => {
+                    Some(Rule::ZfsBootMenu)
+                }
                 "legacy" if active.as_deref() == Some("on") => Some(Rule::ZfsBootMenu),
                 _ => None,
             }
@@ -173,13 +193,17 @@ pub fn list(tools: &Value) -> Vec<BootEnv> {
     }
     // A candidate inside another (a child with mountpoint=/) is the other's.
     let all: Vec<String> = roots.iter().map(|(n, _)| n.clone()).collect();
-    roots.retain(|(n, _)| !all.iter().any(|o| o != n && n.starts_with(&format!("{o}/"))));
+    roots.retain(|(n, _)| {
+        !all.iter()
+            .any(|o| o != n && n.starts_with(&format!("{o}/")))
+    });
     roots.sort_by(|a, b| a.0.cmp(&b.0));
     // Hinted paths: /run/bko-be/NAME, or POOL/NAME where two pools share a
     // NAME, or the whole dataset name where even that clashes.
     let last = |n: &str| n.rsplit('/').next().unwrap_or(n).to_string();
     let pool_of = |n: &str| n.split('/').next().unwrap_or(n).to_string();
-    let count = |f: &dyn Fn(&str) -> String, x: &str| roots.iter().filter(|(n, _)| f(n) == f(x)).count();
+    let count =
+        |f: &dyn Fn(&str) -> String, x: &str| roots.iter().filter(|(n, _)| f(n) == f(x)).count();
     let mut out = Vec::new();
     for (name, rule) in &roots {
         let Some(d) = by_name.iter().find(|(n, _)| n == name).map(|(_, d)| *d) else {
@@ -197,7 +221,10 @@ pub fn list(tools: &Value) -> Vec<BootEnv> {
         };
         let mut locked = s(d, "keystatus").as_deref() == Some("unavailable");
         let mut children = Vec::new();
-        let mut kids: Vec<&(String, &Value)> = by_name.iter().filter(|(n, _)| n.starts_with(&format!("{name}/"))).collect();
+        let mut kids: Vec<&(String, &Value)> = by_name
+            .iter()
+            .filter(|(n, _)| n.starts_with(&format!("{name}/")))
+            .collect();
         kids.sort_by(|a, b| a.0.cmp(&b.0));
         for (kn, kd) in kids {
             locked |= s(kd, "keystatus").as_deref() == Some("unavailable");
@@ -211,7 +238,12 @@ pub fn list(tools: &Value) -> Vec<BootEnv> {
             } else {
                 Some(format!("{path}/{rel}"))
             };
-            children.push(BeDataset { dataset: kn.clone(), mountpoint: mp, origin: s(kd, "origin"), path: at });
+            children.push(BeDataset {
+                dataset: kn.clone(),
+                mountpoint: mp,
+                origin: s(kd, "origin"),
+                path: at,
+            });
         }
         out.push(BootEnv {
             pool,
@@ -242,8 +274,14 @@ pub fn inactive(tools: &Value) -> Vec<BootEnv> {
 /// system's files: the dump warns and load refuses it.
 pub fn bootfs_not_booted(bes: &[BootEnv]) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    for b in bes.iter().filter(|b| b.rule == Rule::TrueNas && b.bootfs && !b.mounted) {
-        if let Some(m) = bes.iter().find(|m| m.rule == Rule::TrueNas && m.pool == b.pool && m.mounted) {
+    for b in bes
+        .iter()
+        .filter(|b| b.rule == Rule::TrueNas && b.bootfs && !b.mounted)
+    {
+        if let Some(m) = bes
+            .iter()
+            .find(|m| m.rule == Rule::TrueNas && m.pool == b.pool && m.mounted)
+        {
             out.push((b.dataset.clone(), m.dataset.clone()));
         }
     }
@@ -256,7 +294,10 @@ pub fn bootfs_not_booted(bes: &[BootEnv]) -> Vec<(String, String)> {
 /// mount.zfs (`zfsutil`) under its /run; elsewhere (FreeBSD's bectl,
 /// illumos' beadm) the inactive BEs come back empty as before
 /// (docs/design/openindiana.md, decision 3), and nothing is listed.
-pub fn dump_sources(fam: Option<crate::other::Family>, tools: &Value) -> (Vec<BootEnv>, Vec<BackupSource>, Vec<String>) {
+pub fn dump_sources(
+    fam: Option<crate::other::Family>,
+    tools: &Value,
+) -> (Vec<BootEnv>, Vec<BackupSource>, Vec<String>) {
     if fam.is_some() {
         return (Vec::new(), Vec::new(), Vec::new());
     }
@@ -292,7 +333,11 @@ pub fn backup_sources(bes: &[BootEnv]) -> (Vec<BackupSource>, Vec<String>) {
             fstype: "zfs".into(),
             source: ds.to_string(),
             subvol: None,
-            mount: Some(MountHint { device: ds.to_string(), fstype: "zfs".into(), options: ro_options(legacy) }),
+            mount: Some(MountHint {
+                device: ds.to_string(),
+                fstype: "zfs".into(),
+                options: ro_options(legacy),
+            }),
             note: Some(note(&be.name)),
         };
         out.push(hinted(&be.path, &be.dataset, be.legacy()));
@@ -330,8 +375,19 @@ mod tests {
     }
 
     fn tools(pools: &[(&str, &str)], datasets: Vec<Value>) -> Value {
-        let pools: Vec<Value> = pools.iter().map(|(n, b)| Obj::new().set("name", *n).set("properties", Obj::new().set("bootfs", *b)).build()).collect();
-        Obj::new().set("imported_pools", pools).set("datasets", datasets).build()
+        let pools: Vec<Value> = pools
+            .iter()
+            .map(|(n, b)| {
+                Obj::new()
+                    .set("name", *n)
+                    .set("properties", Obj::new().set("bootfs", *b))
+                    .build()
+            })
+            .collect();
+        Obj::new()
+            .set("imported_pools", pools)
+            .set("datasets", datasets)
+            .build()
     }
 
     /// ZFSBootMenu's rule: mountpoint=/ and not mounted, wherever it is;
@@ -348,13 +404,31 @@ mod tests {
                 ds("zroot/ROOT/void", "/", "noauto", "yes", &[]),
                 ds("zroot/ROOT/void-old", "/", "noauto", "no", &[]),
                 ds("zroot/ROOT/void-old/var", "/var", "noauto", "no", &[]),
-                ds("zroot/ROOT/void-old/var/log", "/var/log", "noauto", "no", &[]),
+                ds(
+                    "zroot/ROOT/void-old/var/log",
+                    "/var/log",
+                    "noauto",
+                    "no",
+                    &[],
+                ),
                 ds("zroot/ROOT/void-old/opt", "legacy", "on", "no", &[]),
                 ds("zroot/ROOT/void-old/box", "none", "on", "no", &[]),
-                ds("zroot/ROOT/hidden", "/", "noauto", "no", &[(ZBM_ACTIVE, "off")]),
+                ds(
+                    "zroot/ROOT/hidden",
+                    "/",
+                    "noauto",
+                    "no",
+                    &[(ZBM_ACTIVE, "off")],
+                ),
                 ds("zroot/other", "none", "off", "no", &[(ZBM_ACTIVE, "off")]),
                 ds("zroot/other/inherits-off", "/", "noauto", "no", &[]),
-                ds("zroot/legacy-be", "legacy", "noauto", "no", &[(ZBM_ACTIVE, "on")]),
+                ds(
+                    "zroot/legacy-be",
+                    "legacy",
+                    "noauto",
+                    "no",
+                    &[(ZBM_ACTIVE, "on")],
+                ),
                 ds("zroot/legacy-not", "legacy", "noauto", "no", &[]),
                 ds("zroot/home", "/home", "on", "yes", &[]),
                 ds("tank", "/tank", "on", "yes", &[]),
@@ -363,7 +437,10 @@ mod tests {
             ],
         );
         let all = list(&t);
-        let names: Vec<(&str, &str, bool)> = all.iter().map(|b| (b.dataset.as_str(), b.path.as_str(), b.inactive())).collect();
+        let names: Vec<(&str, &str, bool)> = all
+            .iter()
+            .map(|b| (b.dataset.as_str(), b.path.as_str(), b.inactive()))
+            .collect();
         assert_eq!(
             names,
             vec![
@@ -375,37 +452,100 @@ mod tests {
         );
         assert!(all.iter().all(|b| b.rule == Rule::ZfsBootMenu));
         let old = &all[2];
-        let kids: Vec<(&str, Option<&str>)> = old.children.iter().map(|c| (c.dataset.as_str(), c.path.as_deref())).collect();
+        let kids: Vec<(&str, Option<&str>)> = old
+            .children
+            .iter()
+            .map(|c| (c.dataset.as_str(), c.path.as_deref()))
+            .collect();
         assert_eq!(
             kids,
             vec![
                 ("zroot/ROOT/void-old/box", None),
-                ("zroot/ROOT/void-old/opt", Some("/run/bko-be/zroot/void-old/opt")),
-                ("zroot/ROOT/void-old/var", Some("/run/bko-be/zroot/void-old/var")),
-                ("zroot/ROOT/void-old/var/log", Some("/run/bko-be/zroot/void-old/var/log")),
+                (
+                    "zroot/ROOT/void-old/opt",
+                    Some("/run/bko-be/zroot/void-old/opt")
+                ),
+                (
+                    "zroot/ROOT/void-old/var",
+                    Some("/run/bko-be/zroot/void-old/var")
+                ),
+                (
+                    "zroot/ROOT/void-old/var/log",
+                    Some("/run/bko-be/zroot/void-old/var/log")
+                ),
             ]
         );
         assert!(old.holds("zroot/ROOT/void-old/var") && !old.holds("zroot/ROOT/void-older"));
         let (src, warns) = backup_sources(&all);
         assert!(warns.is_empty());
-        let got: Vec<(&str, &str, &str)> = src.iter().map(|b| (b.path.as_str(), b.source.as_str(), b.mount.as_ref().unwrap().options.as_str())).collect();
+        let got: Vec<(&str, &str, &str)> = src
+            .iter()
+            .map(|b| {
+                (
+                    b.path.as_str(),
+                    b.source.as_str(),
+                    b.mount.as_ref().unwrap().options.as_str(),
+                )
+            })
+            .collect();
         assert_eq!(
             got,
             vec![
-                ("/run/bko-be/legacy-be", "zroot/legacy-be", "ro,nodev,nosuid,noexec"),
-                ("/run/bko-be/tank/void-old", "tank/void-old", "ro,zfsutil,nodev,nosuid,noexec"),
-                ("/run/bko-be/zroot/void-old", "zroot/ROOT/void-old", "ro,zfsutil,nodev,nosuid,noexec"),
-                ("/run/bko-be/zroot/void-old/opt", "zroot/ROOT/void-old/opt", "ro,nodev,nosuid,noexec"),
-                ("/run/bko-be/zroot/void-old/var", "zroot/ROOT/void-old/var", "ro,zfsutil,nodev,nosuid,noexec"),
-                ("/run/bko-be/zroot/void-old/var/log", "zroot/ROOT/void-old/var/log", "ro,zfsutil,nodev,nosuid,noexec"),
+                (
+                    "/run/bko-be/legacy-be",
+                    "zroot/legacy-be",
+                    "ro,nodev,nosuid,noexec"
+                ),
+                (
+                    "/run/bko-be/tank/void-old",
+                    "tank/void-old",
+                    "ro,zfsutil,nodev,nosuid,noexec"
+                ),
+                (
+                    "/run/bko-be/zroot/void-old",
+                    "zroot/ROOT/void-old",
+                    "ro,zfsutil,nodev,nosuid,noexec"
+                ),
+                (
+                    "/run/bko-be/zroot/void-old/opt",
+                    "zroot/ROOT/void-old/opt",
+                    "ro,nodev,nosuid,noexec"
+                ),
+                (
+                    "/run/bko-be/zroot/void-old/var",
+                    "zroot/ROOT/void-old/var",
+                    "ro,zfsutil,nodev,nosuid,noexec"
+                ),
+                (
+                    "/run/bko-be/zroot/void-old/var/log",
+                    "zroot/ROOT/void-old/var/log",
+                    "ro,zfsutil,nodev,nosuid,noexec"
+                ),
             ]
         );
-        assert!(src.iter().all(|b| b.from.is_none() && b.fstype == "zfs" && b.mount.as_ref().unwrap().fstype == "zfs"));
-        assert_eq!(src[2].note.as_deref(), Some("ZFS boot environment void-old (not booted): a backup mounts it read-only here"));
+        assert!(src.iter().all(|b| b.from.is_none()
+            && b.fstype == "zfs"
+            && b.mount.as_ref().unwrap().fstype == "zfs"));
+        assert_eq!(
+            src[2].note.as_deref(),
+            Some("ZFS boot environment void-old (not booted): a backup mounts it read-only here")
+        );
         // The pool's bootfs not booted (another BE picked in ZFSBootMenu's
         // menu): still inactive.
-        let t2 = tools(&[("zroot", "zroot/ROOT/void-old")], vec![ds("zroot/ROOT/void", "/", "noauto", "yes", &[]), ds("zroot/ROOT/void-old", "/", "noauto", "no", &[])]);
-        assert_eq!(inactive(&t2).iter().map(|b| b.dataset.as_str()).collect::<Vec<_>>(), vec!["zroot/ROOT/void-old"]);
+        let t2 = tools(
+            &[("zroot", "zroot/ROOT/void-old")],
+            vec![
+                ds("zroot/ROOT/void", "/", "noauto", "yes", &[]),
+                ds("zroot/ROOT/void-old", "/", "noauto", "no", &[]),
+            ],
+        );
+        assert_eq!(
+            inactive(&t2)
+                .iter()
+                .map(|b| b.dataset.as_str())
+                .collect::<Vec<_>>(),
+            vec!["zroot/ROOT/void-old"]
+        );
     }
 
     /// TrueNAS's rule: boot-pool/ROOT's children, legacy roots; the bootfs
@@ -417,9 +557,21 @@ mod tests {
             ds("boot-pool", "none", "off", "no", &[]),
             ds("boot-pool/ROOT", "none", "off", "no", &[]),
             ds("boot-pool/grub", "legacy", "off", "yes", &[]),
-            ds("boot-pool/ROOT/25.10.7", "legacy", "noauto", "no", &[("truenas:kernel_version", "6.6.44-production+truenas")]),
+            ds(
+                "boot-pool/ROOT/25.10.7",
+                "legacy",
+                "noauto",
+                "no",
+                &[("truenas:kernel_version", "6.6.44-production+truenas")],
+            ),
             ds("boot-pool/ROOT/25.10.7/usr", "/usr", "noauto", "no", &[]),
-            ds("boot-pool/ROOT/25.10.7/var/ca-certificates", "/var/local/ca-certificates", "noauto", "no", &[]),
+            ds(
+                "boot-pool/ROOT/25.10.7/var/ca-certificates",
+                "/var/local/ca-certificates",
+                "noauto",
+                "no",
+                &[],
+            ),
             ds("boot-pool/ROOT/25.10.8", "legacy", "noauto", "yes", &[]),
             ds("boot-pool/ROOT/25.10.8/usr", "/usr", "noauto", "yes", &[]),
         ];
@@ -429,11 +581,23 @@ mod tests {
         assert!(all.iter().all(|b| b.rule == Rule::TrueNas && b.legacy()));
         assert!(all[1].bootfs && !all[1].inactive() && all[0].inactive());
         let paths: Vec<Option<&str>> = all[0].children.iter().map(|c| c.path.as_deref()).collect();
-        assert_eq!(paths, vec![Some("/run/bko-be/25.10.7/usr"), Some("/run/bko-be/25.10.7/var/local/ca-certificates")]);
+        assert_eq!(
+            paths,
+            vec![
+                Some("/run/bko-be/25.10.7/usr"),
+                Some("/run/bko-be/25.10.7/var/local/ca-certificates")
+            ]
+        );
         let (src, _) = backup_sources(&all);
         assert_eq!(src.len(), 3);
-        assert_eq!(src[0].mount.as_ref().unwrap().options, "ro,nodev,nosuid,noexec");
-        assert_eq!(src[1].mount.as_ref().unwrap().options, "ro,zfsutil,nodev,nosuid,noexec");
+        assert_eq!(
+            src[0].mount.as_ref().unwrap().options,
+            "ro,nodev,nosuid,noexec"
+        );
+        assert_eq!(
+            src[1].mount.as_ref().unwrap().options,
+            "ro,zfsutil,nodev,nosuid,noexec"
+        );
         // Its key not loaded: no source, a warning.
         if let Value::Obj(o) = &mut v[4] {
             for (k, x) in o.iter_mut() {
@@ -447,6 +611,10 @@ mod tests {
         let (src, warns) = backup_sources(&all);
         assert!(src.is_empty());
         assert_eq!(warns.len(), 1);
-        assert!(warns[0].starts_with("ZFS boot environment 25.10.7 (boot-pool/ROOT/25.10.7) is encrypted"), "{warns:?}");
+        assert!(
+            warns[0]
+                .starts_with("ZFS boot environment 25.10.7 (boot-pool/ROOT/25.10.7) is encrypted"),
+            "{warns:?}"
+        );
     }
 }

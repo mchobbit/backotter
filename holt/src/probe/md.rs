@@ -2,7 +2,7 @@
 //! end) and 0.90 (at the end).
 
 use super::Content;
-use crate::bytes::{hex, le16, le32, le64, sub, uuid, ByteSource};
+use crate::bytes::{ByteSource, hex, le16, le32, le64, sub, uuid};
 use crate::json::Obj;
 
 const MAGIC: u32 = 0xa92b_4efc;
@@ -41,7 +41,9 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
         if off >= size {
             continue;
         }
-        let Some(b) = src.read_exact_at(off, 4096.min((size - off) as usize)) else { continue };
+        let Some(b) = src.read_exact_at(off, 4096.min((size - off) as usize)) else {
+            continue;
+        };
         if le32(&b, 0) != MAGIC {
             continue;
         }
@@ -65,7 +67,11 @@ fn v1(b: &[u8], version: &str) -> Content {
     let level = le32(b, 72) as i32;
     let dev_number = le32(b, 160);
     let max_dev = le32(b, 220);
-    let role = if dev_number < max_dev.min(1920) { Some(le16(b, 256 + 2 * dev_number as usize)) } else { None };
+    let role = if dev_number < max_dev.min(1920) {
+        Some(le16(b, 256 + 2 * dev_number as usize))
+    } else {
+        None
+    };
     let role_text = match role {
         Some(0xffff) => "spare".to_string(),
         Some(0xfffe) => "faulty".to_string(),
@@ -124,7 +130,16 @@ fn v090(b: &[u8]) -> Content {
         .set("md_minor", le32(b, 44))
         .set("layout", le32(b, 256))
         .set("chunk_size", le32(b, 260))
-        .set("mdadm_uuid", format!("{:08x}:{:08x}:{:08x}:{:08x}", le32(b, 20), le32(b, 52), le32(b, 56), le32(b, 60)))
+        .set(
+            "mdadm_uuid",
+            format!(
+                "{:08x}:{:08x}:{:08x}:{:08x}",
+                le32(b, 20),
+                le32(b, 52),
+                le32(b, 56),
+                le32(b, 60)
+            ),
+        )
         .set("creation_time", le32(b, 24))
         .set("update_time", le32(b, 128));
     Content {
@@ -141,7 +156,14 @@ fn v090(b: &[u8]) -> Content {
 #[cfg(test)]
 pub mod sample {
     /// A 1.x member superblock at `off` of a `size`-byte device.
-    pub fn v1(size: usize, off: usize, name: &str, level: i32, dev_number: u32, role: u16) -> Vec<u8> {
+    pub fn v1(
+        size: usize,
+        off: usize,
+        name: &str,
+        level: i32,
+        dev_number: u32,
+        role: u16,
+    ) -> Vec<u8> {
         let mut img = vec![0u8; size];
         let b = &mut img[off..off + 4096];
         b[0..4].copy_from_slice(&0xa92b_4efcu32.to_le_bytes());
@@ -179,16 +201,34 @@ mod tests {
         let c = probe(&MemSource(sample::v1(1 << 20, 4096, "cinqcent:0", 1, 1, 1))).unwrap();
         assert_eq!(c.kind, "linux_raid_member");
         assert_eq!(c.version.as_deref(), Some("1.2"));
-        assert_eq!(c.uuid.as_deref(), Some("30313233-3435-3637-3839-3a3b3c3d3e3f"));
+        assert_eq!(
+            c.uuid.as_deref(),
+            Some("30313233-3435-3637-3839-3a3b3c3d3e3f")
+        );
         assert_eq!(c.label.as_deref(), Some("cinqcent:0"));
         let d = c.details.build();
         assert_eq!(d.get("level").and_then(Value::as_str), Some("raid1"));
-        assert_eq!(d.get("mdadm_uuid").and_then(Value::as_str), Some("30313233:34353637:38393a3b:3c3d3e3f"));
-        assert_eq!(d.get("device_role").and_then(Value::as_str), Some("active 1"));
-        assert_eq!(d.get("chunk_size").and_then(Value::as_u64), Some(512 * 1024));
-        assert_eq!(d.get("data_offset_bytes").and_then(Value::as_u64), Some(1 << 20));
+        assert_eq!(
+            d.get("mdadm_uuid").and_then(Value::as_str),
+            Some("30313233:34353637:38393a3b:3c3d3e3f")
+        );
+        assert_eq!(
+            d.get("device_role").and_then(Value::as_str),
+            Some("active 1")
+        );
+        assert_eq!(
+            d.get("chunk_size").and_then(Value::as_u64),
+            Some(512 * 1024)
+        );
+        assert_eq!(
+            d.get("data_offset_bytes").and_then(Value::as_u64),
+            Some(1 << 20)
+        );
         assert_eq!(d.get("write_intent_bitmap"), Some(&Value::Bool(true)));
-        assert_eq!(d.get("bitmap_offset_sectors").and_then(Value::as_i64), Some(8));
+        assert_eq!(
+            d.get("bitmap_offset_sectors").and_then(Value::as_i64),
+            Some(8)
+        );
         assert_eq!(d.get("events").and_then(Value::as_u64), Some(17));
     }
 
@@ -196,12 +236,18 @@ mod tests {
     fn v11_and_v10() {
         let c = probe(&MemSource(sample::v1(1 << 20, 0, "x", 0, 0, 0xffff))).unwrap();
         assert_eq!(c.version.as_deref(), Some("1.1"));
-        assert_eq!(c.details.build().get("device_role").and_then(Value::as_str), Some("spare"));
+        assert_eq!(
+            c.details.build().get("device_role").and_then(Value::as_str),
+            Some("spare")
+        );
         let size = (1 << 20) + 3 * 512;
         let off = ((size / 512 - 16) & !7) * 512;
         let c = probe(&MemSource(sample::v1(size, off, "esp", 1, 0, 0xfffe))).unwrap();
         assert_eq!(c.version.as_deref(), Some("1.0"));
-        assert_eq!(c.details.build().get("device_role").and_then(Value::as_str), Some("faulty"));
+        assert_eq!(
+            c.details.build().get("device_role").and_then(Value::as_str),
+            Some("faulty")
+        );
     }
 
     #[test]
@@ -234,11 +280,20 @@ mod tests {
         b[260..264].copy_from_slice(&65536u32.to_le_bytes());
         let c = probe(&MemSource(img)).unwrap();
         assert_eq!(c.version.as_deref(), Some("0.90"));
-        assert_eq!(c.uuid.as_deref(), Some("04030201-0807-0605-0000-000000000000"));
+        assert_eq!(
+            c.uuid.as_deref(),
+            Some("04030201-0807-0605-0000-000000000000")
+        );
         let d = c.details.build();
         assert_eq!(d.get("level").and_then(Value::as_str), Some("raid5"));
-        assert_eq!(d.get("mdadm_uuid").and_then(Value::as_str), Some("01020304:05060708:00000000:00000000"));
-        assert_eq!(d.get("component_size_bytes").and_then(Value::as_u64), Some(960 * 1024));
+        assert_eq!(
+            d.get("mdadm_uuid").and_then(Value::as_str),
+            Some("01020304:05060708:00000000:00000000")
+        );
+        assert_eq!(
+            d.get("component_size_bytes").and_then(Value::as_u64),
+            Some(960 * 1024)
+        );
         assert_eq!(d.get("chunk_size").and_then(Value::as_u64), Some(65536));
     }
 

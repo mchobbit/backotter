@@ -12,7 +12,7 @@
 //! one through a private read-only mount, as Proxmox's (crate::boot).
 
 use crate::json::{Obj, Value};
-use crate::sys::{safe_name, RoMountWords, Sys, RUN_DIR};
+use crate::sys::{RUN_DIR, RoMountWords, Sys, safe_name};
 use crate::zfs_be::{BootEnv, Rule};
 
 /// The middleware's config database and TrueNAS's GRUB helper: both there
@@ -65,7 +65,10 @@ fn user_prop(tools: &Value, ds: &str, k: &str) -> Option<String> {
 /// dump's run directory, read, unmounted at once.  None (said) when it
 /// can't be.
 fn be_version(sys: &Sys, be: &BootEnv) -> Option<String> {
-    let etc = be.children.iter().find(|c| c.mountpoint == "/etc" || c.dataset == format!("{}/etc", be.dataset))?;
+    let etc = be
+        .children
+        .iter()
+        .find(|c| c.mountpoint == "/etc" || c.dataset == format!("{}/etc", be.dataset))?;
     if !sys.privileged || !safe_name(&be.name, b"-_.+") {
         return None;
     }
@@ -73,33 +76,70 @@ fn be_version(sys: &Sys, be: &BootEnv) -> Option<String> {
     // `/run/bko-holt/truenas-be-NAME`.
     let at = format!("{RUN_DIR}/truenas-be-{}", be.name);
     let words = RoMountWords {
-        cant_make: format!("TrueNAS: can't make {at} to read boot environment {}'s /etc/version", be.name),
-        mount_failed: format!("TrueNAS: a read-only mount of {} at {at} failed, so boot.truenas doesn't say boot environment {}'s version", etc.dataset, be.name),
-        still_mounted: format!("TrueNAS: {} is still mounted read-only at {at}; `umount {at}` when this dump is done", etc.dataset),
+        cant_make: format!(
+            "TrueNAS: can't make {at} to read boot environment {}'s /etc/version",
+            be.name
+        ),
+        mount_failed: format!(
+            "TrueNAS: a read-only mount of {} at {at} failed, so boot.truenas doesn't say boot environment {}'s version",
+            etc.dataset, be.name
+        ),
+        still_mounted: format!(
+            "TrueNAS: {} is still mounted read-only at {at}; `umount {at}` when this dump is done",
+            etc.dataset
+        ),
     };
-    sys.with_ro_mount("zfs", &crate::zfs_be::ro_options(etc.legacy()), &etc.dataset, &at, &words, |at| {
-        sys.read_trim(&format!("{at}/version")).map(|v| v.lines().next().unwrap_or("").trim().to_string()).filter(|v| !v.is_empty())
-    })?
+    sys.with_ro_mount(
+        "zfs",
+        &crate::zfs_be::ro_options(etc.legacy()),
+        &etc.dataset,
+        &at,
+        &words,
+        |at| {
+            sys.read_trim(&format!("{at}/version"))
+                .map(|v| v.lines().next().unwrap_or("").trim().to_string())
+                .filter(|v| !v.is_empty())
+        },
+    )?
 }
 
 /// boot.truenas for a TrueNAS system: its BEs (`bes`, crate::zfs_be::list
 /// of the dump's tools, `tools`) and the ESPs of its boot-pool disks
 /// (`esps`: device, disk, volume ID, label), each read through
 /// `read_esp` (device -> contents; crate::boot's private read-only mount).
-pub fn read(sys: &Sys, tools: &Value, bes: &[BootEnv], esps: Vec<(String, String, Option<String>, Option<String>)>, read_esp: &dyn Fn(&str) -> Option<Value>) -> TrueNas {
+pub fn read(
+    sys: &Sys,
+    tools: &Value,
+    bes: &[BootEnv],
+    esps: Vec<(String, String, Option<String>, Option<String>)>,
+    read_esp: &dyn Fn(&str) -> Option<Value>,
+) -> TrueNas {
     let mut list = Vec::new();
     for be in bes.iter().filter(|b| b.rule == Rule::TrueNas) {
         // The booted one (a bootfs that isn't booted is warned of by
         // crate::zfs_be::backup_sources, and refused by load).
         let active = be.mounted;
         let version = if active {
-            sys.read_trim(VERSION).map(|v| v.lines().next().unwrap_or("").trim().to_string()).filter(|v| !v.is_empty())
+            sys.read_trim(VERSION)
+                .map(|v| v.lines().next().unwrap_or("").trim().to_string())
+                .filter(|v| !v.is_empty())
         } else if be.locked {
             None
         } else {
             be_version(sys, be)
         };
-        let clones: Vec<Value> = be.children.iter().filter_map(|c| c.origin.as_ref().map(|o| Obj::new().set("dataset", c.dataset.as_str()).set("origin", o.as_str()).build())).collect();
+        let clones: Vec<Value> = be
+            .children
+            .iter()
+            .filter_map(|c| {
+                c.origin.as_ref().map(|o| {
+                    Obj::new()
+                        .set("dataset", c.dataset.as_str())
+                        .set("origin", o.as_str())
+                        .build()
+                })
+            })
+            .collect();
         list.push(
             Obj::new()
                 .set("name", be.name.as_str())
@@ -119,21 +159,38 @@ pub fn read(sys: &Sys, tools: &Value, bes: &[BootEnv], esps: Vec<(String, String
     let mut esp_json = Vec::new();
     for (device, disk, uuid, label) in esps {
         let contents = read_esp(&device).unwrap_or(Value::Null);
-        esp_json.push(Obj::new().set("device", device.as_str()).set("disk", disk.as_str()).set("uuid", uuid).set("label", label).set("read", !contents.is_null()).build());
+        esp_json.push(
+            Obj::new()
+                .set("device", device.as_str())
+                .set("disk", disk.as_str())
+                .set("uuid", uuid)
+                .set("label", label)
+                .set("read", !contents.is_null())
+                .build(),
+        );
         out_esps.push(Esp { device, contents });
     }
     let json = Obj::new()
         .set("pool", crate::zfs_be::TRUENAS_POOL)
-        .set("version", sys.read_trim(VERSION).map(|v| v.lines().next().unwrap_or("").trim().to_string()))
+        .set(
+            "version",
+            sys.read_trim(VERSION)
+                .map(|v| v.lines().next().unwrap_or("").trim().to_string()),
+        )
         .set("bes", list)
         .set("esps", esp_json)
         .build();
-    TrueNas { json, esps: out_esps }
+    TrueNas {
+        json,
+        esps: out_esps,
+    }
 }
 
 /// BOOT (the dump's boot section) with boot.truenas in it.
 pub fn add_to_boot(boot: Value, t: Option<&TrueNas>) -> Value {
-    let (Some(t), Value::Obj(mut o)) = (t, boot.clone()) else { return boot };
+    let (Some(t), Value::Obj(mut o)) = (t, boot.clone()) else {
+        return boot;
+    };
     o.push(("truenas".into(), t.json.clone()));
     Value::Obj(o)
 }

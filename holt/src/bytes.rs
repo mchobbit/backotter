@@ -77,7 +77,9 @@ impl ByteSource for MemSource {
         self.0.len() as u64
     }
     fn read_at(&self, offset: u64, len: usize) -> Vec<u8> {
-        let Ok(start) = usize::try_from(offset) else { return Vec::new() };
+        let Ok(start) = usize::try_from(offset) else {
+            return Vec::new();
+        };
         if start >= self.0.len() {
             return Vec::new();
         }
@@ -103,20 +105,32 @@ impl FileSource {
     pub fn open(path: &Path) -> std::io::Result<FileSource> {
         let mut file = File::open(path)?;
         let size = file.seek(SeekFrom::End(0))?;
-        Ok(FileSource { file, size, head: OnceCell::new() })
+        Ok(FileSource {
+            file,
+            size,
+            head: OnceCell::new(),
+        })
     }
 
     /// Opens a disk device whose size the caller knows: a BSD's or illumos'
     /// character device may not seek to its end.
     pub fn open_sized(path: &Path, size: u64) -> std::io::Result<FileSource> {
-        Ok(FileSource { file: File::open(path)?, size, head: OnceCell::new() })
+        Ok(FileSource {
+            file: File::open(path)?,
+            size,
+            head: OnceCell::new(),
+        })
     }
 
     /// The same open file, with the size the caller knows.  Not a second
     /// open: NetBSD refuses to open a block device that is open already
     /// (EBUSY; its rescue image's /dev/ld1a, HoltTest2's netbsd11+img).
     pub fn with_size(self, size: u64) -> FileSource {
-        FileSource { file: self.file, size, head: OnceCell::new() }
+        FileSource {
+            file: self.file,
+            size,
+            head: OnceCell::new(),
+        }
     }
 
     /// Reads whole 4 KiB blocks: a BSD's or illumos' raw disk device takes
@@ -126,7 +140,9 @@ impl FileSource {
     /// asked for a buffer the size of the device).
     fn raw_read(&self, offset: u64, len: usize) -> Vec<u8> {
         const A: u64 = 4096;
-        let Some(stop) = offset.checked_add(len as u64) else { return Vec::new() };
+        let Some(stop) = offset.checked_add(len as u64) else {
+            return Vec::new();
+        };
         let start = offset - offset % A;
         let end = stop.div_ceil(A).saturating_mul(A).min(self.size.max(stop));
         let skip = (offset - start) as usize;
@@ -187,7 +203,9 @@ impl ByteSource for OffsetSource<'_> {
         }
         let len = (len as u64).min(self.len - offset) as usize;
         // `start` can come from disk data (a disklabel64's offset).
-        let Some(at) = self.start.checked_add(offset) else { return Vec::new() };
+        let Some(at) = self.start.checked_add(offset) else {
+            return Vec::new();
+        };
         self.inner.read_at(at, len)
     }
 }
@@ -248,7 +266,14 @@ pub fn guid(b: &[u8]) -> String {
         le32(b, 0),
         le16(b, 4),
         le16(b, 6),
-        b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+        b[8],
+        b[9],
+        b[10],
+        b[11],
+        b[12],
+        b[13],
+        b[14],
+        b[15]
     )
 }
 
@@ -259,7 +284,14 @@ pub fn uuid(b: &[u8]) -> String {
         return String::new();
     }
     let h = hex(b);
-    format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
+    format!(
+        "{}-{}-{}-{}-{}",
+        &h[0..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..32]
+    )
 }
 
 pub fn hex(b: &[u8]) -> String {
@@ -319,7 +351,11 @@ const CRC_TABLE: [u32; 256] = {
         let mut c = i as u32;
         let mut k = 0;
         while k < 8 {
-            c = if c & 1 != 0 { 0xedb8_8320 ^ (c >> 1) } else { c >> 1 };
+            c = if c & 1 != 0 {
+                0xedb8_8320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
             k += 1;
         }
         t[i] = c;
@@ -339,7 +375,10 @@ mod tests {
         let p = t.path().join("f");
         std::fs::write(&p, b"0123456789").unwrap();
         assert_eq!(read_bounded(&p, 10).unwrap(), b"0123456789");
-        assert_eq!(read_bounded(&p, 9).unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(
+            read_bounded(&p, 9).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
+        );
         assert_eq!(read_tail(&p, 4).unwrap(), b"6789");
         assert_eq!(read_tail(&p, 10).unwrap(), b"0123456789");
         assert_eq!(read_tail(&p, 99).unwrap(), b"0123456789");
@@ -350,7 +389,10 @@ mod tests {
     fn crc32_check_values() {
         assert_eq!(crc32(b""), 0);
         assert_eq!(crc32(b"123456789"), 0xcbf4_3926);
-        assert_eq!(crc32(b"The quick brown fox jumps over the lazy dog"), 0x414f_a339);
+        assert_eq!(
+            crc32(b"The quick brown fox jumps over the lazy dog"),
+            0x414f_a339
+        );
         let split = crc32_update(crc32(b"12345"), b"6789");
         assert_eq!(split, 0xcbf4_3926);
     }
@@ -382,8 +424,8 @@ mod tests {
     fn guid_and_uuid_formats() {
         // The ESP type GUID as it sits in a GPT entry.
         let esp = [
-            0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9,
-            0x3b,
+            0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e,
+            0xc9, 0x3b,
         ];
         assert_eq!(guid(&esp), "c12a7328-f81f-11d2-ba4b-00a0c93ec93b");
         let raw: Vec<u8> = (0u8..16).collect();
@@ -401,7 +443,11 @@ mod tests {
         assert_eq!(label(b"\0\0\0"), None);
         assert_eq!(label(b"   "), None);
         assert_eq!(label(b"a b \0junk"), Some("a b".into()));
-        let w: Vec<u8> = "Linux ☃".encode_utf16().flat_map(|u| u.to_le_bytes()).chain([0, 0, 0x41, 0]).collect();
+        let w: Vec<u8> = "Linux ☃"
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .chain([0, 0, 0x41, 0])
+            .collect();
         assert_eq!(utf16le(&w), "Linux ☃");
         assert_eq!(utf16le(&[0x41]), "");
         assert_eq!(hex(&[0, 0xab, 0x10]), "00ab10");
@@ -437,8 +483,14 @@ mod tests {
         assert_eq!(f.size(), data.len() as u64);
         assert_eq!(f.read_at(0, 16), data[0..16].to_vec());
         // Straddling the cached head goes to the file.
-        assert_eq!(f.read_at(HEAD as u64 - 8, 16), data[HEAD - 8..HEAD + 8].to_vec());
-        assert_eq!(f.read_at(HEAD as u64 + 4000, 200), data[HEAD + 4000..].to_vec());
+        assert_eq!(
+            f.read_at(HEAD as u64 - 8, 16),
+            data[HEAD - 8..HEAD + 8].to_vec()
+        );
+        assert_eq!(
+            f.read_at(HEAD as u64 + 4000, 200),
+            data[HEAD + 4000..].to_vec()
+        );
         assert_eq!(f.read_at(data.len() as u64, 10), Vec::<u8>::new());
         assert!(FileSource::open(&dir.path().join("missing")).is_err());
         // with_size keeps the open file and takes the size it's given.
@@ -467,18 +519,40 @@ mod tests {
         let path = dir.path().join("img");
         std::fs::write(&path, vec![7u8; 8192]).unwrap();
         let f = FileSource::open(&path).unwrap();
-        for (off, len) in [(u64::MAX, 512), (u64::MAX - 100, 16384), (u64::MAX - 512, 16384), (u64::MAX - 20000, 16384), (u64::MAX - 4095, 4096)] {
-            assert_eq!(f.read_at(off, len), Vec::<u8>::new(), "FileSource {off:#x}+{len}");
+        for (off, len) in [
+            (u64::MAX, 512),
+            (u64::MAX - 100, 16384),
+            (u64::MAX - 512, 16384),
+            (u64::MAX - 20000, 16384),
+            (u64::MAX - 4095, 4096),
+        ] {
+            assert_eq!(
+                f.read_at(off, len),
+                Vec::<u8>::new(),
+                "FileSource {off:#x}+{len}"
+            );
             assert_eq!(f.read_exact_at(off, len), None);
         }
-        let o = OffsetSource { inner: &f, start: u64::MAX - 512, len: u64::MAX };
+        let o = OffsetSource {
+            inner: &f,
+            start: u64::MAX - 512,
+            len: u64::MAX,
+        };
         assert_eq!(o.read_at(16384, 16384), Vec::<u8>::new());
         assert_eq!(o.read_at(0, 16384), Vec::<u8>::new());
         let m = MemSource(vec![1; 64]);
-        let o = OffsetSource { inner: &m, start: u64::MAX - 512, len: 4096 };
+        let o = OffsetSource {
+            inner: &m,
+            start: u64::MAX - 512,
+            len: 4096,
+        };
         assert_eq!(o.read_at(1024, 512), Vec::<u8>::new());
         // An ordinary window still reads what it did.
-        let o = OffsetSource { inner: &f, start: 4096, len: 4096 };
+        let o = OffsetSource {
+            inner: &f,
+            start: 4096,
+            len: 4096,
+        };
         assert_eq!(o.read_at(4090, 100), vec![7u8; 6]);
     }
 }
@@ -489,7 +563,9 @@ const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 pub fn base64(b: &[u8]) -> String {
     let mut out = String::with_capacity(b.len().div_ceil(3) * 4);
     for c in b.chunks(3) {
-        let n = (u32::from(c[0]) << 16) | (u32::from(*c.get(1).unwrap_or(&0)) << 8) | u32::from(*c.get(2).unwrap_or(&0));
+        let n = (u32::from(c[0]) << 16)
+            | (u32::from(*c.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*c.get(2).unwrap_or(&0));
         for i in 0..4 {
             if i <= c.len() {
                 out.push(B64[((n >> (18 - 6 * i)) & 63) as usize] as char);
@@ -525,7 +601,16 @@ pub fn unbase64(s: &str) -> Option<Vec<u8>> {
 mod base64_tests {
     #[test]
     fn round_trip() {
-        for t in [&b""[..], b"f", b"fo", b"foo", b"foob", b"fooba", b"foobar", &[0u8, 255, 1, 254, 7][..]] {
+        for t in [
+            &b""[..],
+            b"f",
+            b"fo",
+            b"foo",
+            b"foob",
+            b"fooba",
+            b"foobar",
+            &[0u8, 255, 1, 254, 7][..],
+        ] {
             assert_eq!(super::unbase64(&super::base64(t)).unwrap(), t);
         }
         assert_eq!(super::base64(b"foobar"), "Zm9vYmFy");
@@ -535,10 +620,14 @@ mod base64_tests {
 }
 
 const SHA256_K: [u32; 64] = [
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
 /// SHA-256 (FIPS 180-4), as `sha256sum` prints it: lower-case hex.  For a
@@ -547,7 +636,9 @@ pub fn sha256_hex(data: &[u8]) -> String {
     hex(&sha256(data))
 }
 
-const SHA256_H0: [u32; 8] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+const SHA256_H0: [u32; 8] = [
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+];
 
 /// SHA-256 (FIPS 180-4) of DATA, the 32 bytes.
 pub fn sha256(data: &[u8]) -> [u8; 32] {
@@ -569,7 +660,11 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
 /// without a copy on the heap: for secrets (the recovery key's checksum).
 /// The padded block is built in BLOCK and the message schedule in W, which
 /// then still hold DATA's bytes: the caller wipes both.
-pub(crate) fn sha256_short<const N: usize>(data: &[u8; N], block: &mut [u8; 64], w: &mut [u32; 64]) -> [u8; 32] {
+pub(crate) fn sha256_short<const N: usize>(
+    data: &[u8; N],
+    block: &mut [u8; 64],
+    w: &mut [u32; 64],
+) -> [u8; 32] {
     const { assert!(N <= 55, "sha256_short: more than one block") };
     block.fill(0);
     block[..N].copy_from_slice(data);
@@ -589,13 +684,20 @@ fn sha256_compress(h: &mut [u32; 8], block: &[u8], w: &mut [u32; 64]) {
     for i in 16..64 {
         let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
         let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-        w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+        w[i] = w[i - 16]
+            .wrapping_add(s0)
+            .wrapping_add(w[i - 7])
+            .wrapping_add(s1);
     }
     let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh] = *h;
     for i in 0..64 {
         let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
         let ch = (e & f) ^ (!e & g);
-        let t1 = hh.wrapping_add(s1).wrapping_add(ch).wrapping_add(SHA256_K[i]).wrapping_add(w[i]);
+        let t1 = hh
+            .wrapping_add(s1)
+            .wrapping_add(ch)
+            .wrapping_add(SHA256_K[i])
+            .wrapping_add(w[i]);
         let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
         let maj = (a & b) ^ (a & c) ^ (b & c);
         let t2 = s0.wrapping_add(maj);
@@ -630,12 +732,20 @@ mod sha256_tests {
     #[test]
     fn short_matches() {
         fn check<const N: usize>() {
-            let data: [u8; N] = std::array::from_fn(|i| (i as u8).wrapping_mul(37).wrapping_add(N as u8));
+            let data: [u8; N] =
+                std::array::from_fn(|i| (i as u8).wrapping_mul(37).wrapping_add(N as u8));
             let (mut block, mut w) = ([0xaau8; 64], [7u32; 64]);
-            assert_eq!(sha256_short(&data, &mut block, &mut w), sha256(&data), "length {N}");
+            assert_eq!(
+                sha256_short(&data, &mut block, &mut w),
+                sha256(&data),
+                "length {N}"
+            );
             assert_eq!(&block[..N], &data[..]);
             assert_eq!(block[N], 0x80);
-            assert_eq!(u64::from_be_bytes(block[56..].try_into().unwrap()), N as u64 * 8);
+            assert_eq!(
+                u64::from_be_bytes(block[56..].try_into().unwrap()),
+                N as u64 * 8
+            );
         }
         check::<0>();
         check::<1>();
@@ -644,16 +754,34 @@ mod sha256_tests {
         check::<54>();
         check::<55>();
         let (mut block, mut w) = ([0u8; 64], [0u32; 64]);
-        assert_eq!(hex(&sha256_short(b"abc", &mut block, &mut w)), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(
+            hex(&sha256_short(b"abc", &mut block, &mut w)),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     /// FIPS 180-4's examples, and lengths around the padding's block edge.
     #[test]
     fn known_digests() {
-        assert_eq!(sha256_hex(b""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-        assert_eq!(sha256_hex(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
-        assert_eq!(sha256_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"), "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
-        assert_eq!(sha256_hex(b"The quick brown fox jumps over the lazy dog"), "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592");
-        assert_eq!(sha256_hex(&[b'a'; 1000]), "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3");
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            sha256_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+        );
+        assert_eq!(
+            sha256_hex(b"The quick brown fox jumps over the lazy dog"),
+            "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592"
+        );
+        assert_eq!(
+            sha256_hex(&[b'a'; 1000]),
+            "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3"
+        );
     }
 }

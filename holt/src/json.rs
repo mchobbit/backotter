@@ -28,7 +28,9 @@ impl PartialEq for Value {
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::UInt(a), Value::UInt(b)) => a == b,
-            (Value::Int(a), Value::UInt(b)) | (Value::UInt(b), Value::Int(a)) => u64::try_from(*a).is_ok_and(|a| a == *b),
+            (Value::Int(a), Value::UInt(b)) | (Value::UInt(b), Value::Int(a)) => {
+                u64::try_from(*a).is_ok_and(|a| a == *b)
+            }
             (Value::Float(a), Value::Float(b)) => a == b,
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::Arr(a), Value::Arr(b)) => a == b,
@@ -167,7 +169,16 @@ impl Value {
     pub fn get_u64_lenient(&self, key: &str) -> Option<u64> {
         match self.get(key)? {
             // from_str_radix takes a '+' too: "0x+1f" isn't a spelling.
-            Value::Str(t) => t.strip_prefix("0x").map_or_else(|| t.parse().ok(), |h| if h.bytes().all(|c| c.is_ascii_hexdigit()) { u64::from_str_radix(h, 16).ok() } else { None }),
+            Value::Str(t) => t.strip_prefix("0x").map_or_else(
+                || t.parse().ok(),
+                |h| {
+                    if h.bytes().all(|c| c.is_ascii_hexdigit()) {
+                        u64::from_str_radix(h, 16).ok()
+                    } else {
+                        None
+                    }
+                },
+            ),
             x => x.as_u64(),
         }
     }
@@ -193,7 +204,10 @@ impl Value {
     }
 
     pub fn arr_at(&self, path: &[&str]) -> &[Value] {
-        self.at(path).and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
+        self.at(path)
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     /// The report's layout: two-space indents, and arrays of scalars that fit
@@ -470,7 +484,11 @@ impl std::error::Error for ParseError {}
 const MAX_DEPTH: usize = 256;
 
 pub fn parse(text: &str) -> Result<Value, ParseError> {
-    let mut p = Parser { s: text.as_bytes(), i: 0, depth: 0 };
+    let mut p = Parser {
+        s: text.as_bytes(),
+        i: 0,
+        depth: 0,
+    };
     p.ws();
     let v = p.value()?;
     p.ws();
@@ -488,7 +506,10 @@ struct Parser<'a> {
 
 impl Parser<'_> {
     fn err(&self, message: &'static str) -> ParseError {
-        ParseError { offset: self.i, message }
+        ParseError {
+            offset: self.i,
+            message,
+        }
     }
     fn ws(&mut self) {
         while let Some(b' ' | b'\t' | b'\n' | b'\r') = self.s.get(self.i) {
@@ -582,7 +603,10 @@ impl Parser<'_> {
         Ok(Value::Arr(a))
     }
     fn hex4(&mut self) -> Result<u32, ParseError> {
-        let h = self.s.get(self.i..self.i + 4).ok_or_else(|| self.err("short \\u escape"))?;
+        let h = self
+            .s
+            .get(self.i..self.i + 4)
+            .ok_or_else(|| self.err("short \\u escape"))?;
         let h = std::str::from_utf8(h).map_err(|_| self.err("bad \\u escape"))?;
         let n = u32::from_str_radix(h, 16).map_err(|_| self.err("bad \\u escape"))?;
         self.i += 4;
@@ -592,12 +616,18 @@ impl Parser<'_> {
         self.i += 1; // opening quote
         let mut out: Vec<u8> = Vec::new();
         loop {
-            let c = *self.s.get(self.i).ok_or_else(|| self.err("unterminated string"))?;
+            let c = *self
+                .s
+                .get(self.i)
+                .ok_or_else(|| self.err("unterminated string"))?;
             self.i += 1;
             match c {
                 b'"' => break,
                 b'\\' => {
-                    let e = *self.s.get(self.i).ok_or_else(|| self.err("unterminated escape"))?;
+                    let e = *self
+                        .s
+                        .get(self.i)
+                        .ok_or_else(|| self.err("unterminated escape"))?;
                     self.i += 1;
                     let ch = match e {
                         b'"' => '"',
@@ -674,7 +704,8 @@ impl Parser<'_> {
                 return Err(self.err("expected exponent digits"));
             }
         }
-        let text = std::str::from_utf8(&self.s[start..self.i]).map_err(|_| self.err("bad number"))?;
+        let text =
+            std::str::from_utf8(&self.s[start..self.i]).map_err(|_| self.err("bad number"))?;
         if !float {
             if let Ok(n) = text.parse::<u64>() {
                 return Ok(Value::UInt(n));
@@ -683,7 +714,9 @@ impl Parser<'_> {
                 return Ok(Value::Int(n));
             }
         }
-        text.parse::<f64>().map(Value::Float).map_err(|_| self.err("bad number"))
+        text.parse::<f64>()
+            .map(Value::Float)
+            .map_err(|_| self.err("bad number"))
     }
 }
 
@@ -718,7 +751,13 @@ mod tests {
         assert_eq!(parse("5").unwrap(), Value::from(5i32));
         assert_eq!(Value::Int(0), Value::UInt(0));
         assert_eq!(Value::UInt(7), Value::Int(7));
-        assert_eq!(parse("[1,{\"a\":2}]").unwrap(), Value::Arr(vec![Value::Int(1), Value::Obj(vec![("a".into(), Value::Int(2))])]));
+        assert_eq!(
+            parse("[1,{\"a\":2}]").unwrap(),
+            Value::Arr(vec![
+                Value::Int(1),
+                Value::Obj(vec![("a".into(), Value::Int(2))])
+            ])
+        );
         assert_ne!(Value::Int(-1), Value::UInt(u64::MAX));
         assert_ne!(Value::Int(5), Value::UInt(6));
         assert_ne!(Value::Int(5), Value::Float(5.0));
@@ -730,7 +769,10 @@ mod tests {
     #[test]
     fn strings_escape() {
         let v = Value::from("a\"b\\c\nd\re\tf\u{8}\u{c}\u{1}\u{7f}é😀");
-        assert_eq!(v.compact(), "\"a\\\"b\\\\c\\nd\\re\\tf\\b\\f\\u0001\\u007fé😀\"");
+        assert_eq!(
+            v.compact(),
+            "\"a\\\"b\\\\c\\nd\\re\\tf\\b\\f\\u0001\\u007fé😀\""
+        );
         assert_eq!(parse(&v.compact()).unwrap(), v);
     }
 
@@ -761,22 +803,75 @@ mod tests {
     #[test]
     fn u64_readers() {
         let v = parse(r#"{"n": 7, "neg": -1, "dec": "2048", "plus": "+5", "hex": "0x1f", "HEX": "0X1f", "bad": "12a", "sp": " 1", "f": 1.5, "b": true, "tneg": "-1", "junk": "12abc", "hplus": "0x+1f", "hneg": "0x-1", "h0": "0x", "e": "", "big": "18446744073709551616"}"#).unwrap();
-        let all = |f: fn(&Value, &str) -> Option<u64>| ["n", "neg", "dec", "plus", "hex", "HEX", "bad", "sp", "f", "b", "none", "tneg", "junk", "hplus", "hneg", "h0", "e", "big"].map(|k| f(&v, k));
+        let all = |f: fn(&Value, &str) -> Option<u64>| {
+            [
+                "n", "neg", "dec", "plus", "hex", "HEX", "bad", "sp", "f", "b", "none", "tneg",
+                "junk", "hplus", "hneg", "h0", "e", "big",
+            ]
+            .map(|k| f(&v, k))
+        };
         let no = [None; 7];
-        assert_eq!(all(Value::get_u64).to_vec(), [[Some(7), None, None, None, None, None, None, None, None, None, None].as_slice(), &no].concat());
-        assert_eq!(all(Value::get_u64_lenient).to_vec(), [[Some(7), None, Some(2048), Some(5), Some(31), None, None, None, None, None, None].as_slice(), &no].concat());
+        assert_eq!(
+            all(Value::get_u64).to_vec(),
+            [
+                [
+                    Some(7),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None
+                ]
+                .as_slice(),
+                &no
+            ]
+            .concat()
+        );
+        assert_eq!(
+            all(Value::get_u64_lenient).to_vec(),
+            [
+                [
+                    Some(7),
+                    None,
+                    Some(2048),
+                    Some(5),
+                    Some(31),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None
+                ]
+                .as_slice(),
+                &no
+            ]
+            .concat()
+        );
     }
 
     #[test]
     fn mutable_accessors() {
         let mut v = parse(r#"{"a": {"b": [1, {"c": "x"}]}, "d": 2}"#).unwrap();
         *v.at_mut(&["a", "b", "1", "c"]).unwrap() = Value::from("y");
-        assert_eq!(v.at(&["a", "b", "1", "c"]).and_then(Value::as_str), Some("y"));
+        assert_eq!(
+            v.at(&["a", "b", "1", "c"]).and_then(Value::as_str),
+            Some("y")
+        );
         assert!(v.at_mut(&["a", "b", "2"]).is_none());
         assert!(v.at_mut(&["a", "b", "x"]).is_none());
         assert!(v.at_mut(&["d", "e"]).is_none());
         assert_eq!(v.at_mut(&[]).map(|x| x.compact()), Some(v.compact()));
-        v.get_mut("a").and_then(|a| a.get_mut("b")).and_then(Value::as_array_mut).unwrap().push(Value::Null);
+        v.get_mut("a")
+            .and_then(|a| a.get_mut("b"))
+            .and_then(Value::as_array_mut)
+            .unwrap()
+            .push(Value::Null);
         assert_eq!(v.arr_at(&["a", "b"]).len(), 3);
         // put replaces in place, else adds at the end; not an object: nothing.
         v.put("a", 1u64);
@@ -792,7 +887,9 @@ mod tests {
     fn obj_set_replaces_in_place() {
         let o = Obj::new().set("a", 1u8).set("b", 2u8).set("a", 3u8);
         assert_eq!(o.build().compact(), "{\"a\":3,\"b\":2}");
-        let o = Obj::new().set_some("x", None::<u8>).set_some("y", Some("z"));
+        let o = Obj::new()
+            .set_some("x", None::<u8>)
+            .set_some("y", Some("z"));
         assert_eq!(o.build().compact(), "{\"y\":\"z\"}");
     }
 
@@ -800,7 +897,10 @@ mod tests {
     fn option_and_vec_into() {
         assert_eq!(Value::from(None::<u32>), Value::Null);
         assert_eq!(Value::from(Some(7u32)), Value::UInt(7));
-        assert_eq!(Value::from(vec![1u8, 2]), Value::Arr(vec![Value::UInt(1), Value::UInt(2)]));
+        assert_eq!(
+            Value::from(vec![1u8, 2]),
+            Value::Arr(vec![Value::UInt(1), Value::UInt(2)])
+        );
         assert_eq!(Value::from(-3i32), Value::Int(-3));
     }
 
@@ -821,14 +921,23 @@ mod tests {
 
     #[test]
     fn parse_big_numbers() {
-        assert_eq!(parse("18446744073709551615").unwrap(), Value::UInt(u64::MAX));
+        assert_eq!(
+            parse("18446744073709551615").unwrap(),
+            Value::UInt(u64::MAX)
+        );
         assert_eq!(parse("-9223372036854775808").unwrap(), Value::Int(i64::MIN));
-        assert_eq!(parse("18446744073709551616").unwrap(), Value::Float(18446744073709551616.0));
+        assert_eq!(
+            parse("18446744073709551616").unwrap(),
+            Value::Float(18446744073709551616.0)
+        );
     }
 
     #[test]
     fn parse_unicode_escapes() {
-        assert_eq!(parse(r#""\u00e9\ud83d\ude00\/""#).unwrap(), Value::from("é😀/"));
+        assert_eq!(
+            parse(r#""\u00e9\ud83d\ude00\/""#).unwrap(),
+            Value::from("é😀/")
+        );
         assert!(parse(r#""\ud83d""#).is_err());
         assert!(parse(r#""\ude00""#).is_err());
         assert!(parse(r#""\ud83d\u0041""#).is_err());
@@ -839,8 +948,24 @@ mod tests {
     #[test]
     fn parse_rejects_bad_input() {
         for bad in [
-            "", "{", "[1,]", "{\"a\" 1}", "{\"a\":1,}", "01", "1.", "1e", "-", "tru", "\"abc",
-            "\"a\u{1}\"", "[1 2]", "{1:2}", "\"\\x\"", "1 2", "nul", ".5",
+            "",
+            "{",
+            "[1,]",
+            "{\"a\" 1}",
+            "{\"a\":1,}",
+            "01",
+            "1.",
+            "1e",
+            "-",
+            "tru",
+            "\"abc",
+            "\"a\u{1}\"",
+            "[1 2]",
+            "{1:2}",
+            "\"\\x\"",
+            "1 2",
+            "nul",
+            ".5",
         ] {
             assert!(parse(bad).is_err(), "accepted {bad:?}");
         }

@@ -18,8 +18,8 @@
 //! --glob-file), as it leaves out the aliases of a btrfs it remakes.
 
 use super::codes::{Note, NoteCode, Notes, Problem, ProblemCode, Problems};
-use crate::json::{Obj, Value};
 use super::layout::{find_device, for_each_device_mut};
+use crate::json::{Obj, Value};
 use crate::load::shared::{self, Mount};
 
 /// The types --reformat converts between.
@@ -32,24 +32,150 @@ pub const TYPES: [&str; 3] = ["ext4", "xfs", "btrfs"];
 /// has ftype, lazysbcount, attr2 and projid32bit.  exchange, parent and
 /// metadir are in none of them: commands::mkfs_xfs names them off.
 const XFS_PROFILES: [((u32, u32), &[&str]); 7] = [
-    ((4, 19), &["lazysbcount", "attr2", "projid32bit", "crc", "finobt", "ftype", "sparse"]),
-    ((5, 4), &["lazysbcount", "attr2", "projid32bit", "crc", "finobt", "reflink", "ftype", "sparse"]),
-    ((5, 10), &["lazysbcount", "attr2", "projid32bit", "crc", "finobt", "reflink", "ftype", "sparse"]),
-    ((5, 15), &["lazysbcount", "attr2", "projid32bit", "crc", "finobt", "reflink", "inobtcount", "ftype", "sparse", "bigtime"]),
-    ((6, 1), &["lazysbcount", "attr2", "projid32bit", "crc", "finobt", "reflink", "inobtcount", "ftype", "sparse", "bigtime"]),
-    ((6, 6), &["lazysbcount", "attr2", "projid32bit", "crc", "finobt", "rmapbt", "reflink", "inobtcount", "ftype", "sparse", "bigtime", "nrext64"]),
-    ((6, 12), &["lazysbcount", "attr2", "projid32bit", "crc", "finobt", "rmapbt", "reflink", "inobtcount", "ftype", "sparse", "bigtime", "nrext64"]),
+    (
+        (4, 19),
+        &[
+            "lazysbcount",
+            "attr2",
+            "projid32bit",
+            "crc",
+            "finobt",
+            "ftype",
+            "sparse",
+        ],
+    ),
+    (
+        (5, 4),
+        &[
+            "lazysbcount",
+            "attr2",
+            "projid32bit",
+            "crc",
+            "finobt",
+            "reflink",
+            "ftype",
+            "sparse",
+        ],
+    ),
+    (
+        (5, 10),
+        &[
+            "lazysbcount",
+            "attr2",
+            "projid32bit",
+            "crc",
+            "finobt",
+            "reflink",
+            "ftype",
+            "sparse",
+        ],
+    ),
+    (
+        (5, 15),
+        &[
+            "lazysbcount",
+            "attr2",
+            "projid32bit",
+            "crc",
+            "finobt",
+            "reflink",
+            "inobtcount",
+            "ftype",
+            "sparse",
+            "bigtime",
+        ],
+    ),
+    (
+        (6, 1),
+        &[
+            "lazysbcount",
+            "attr2",
+            "projid32bit",
+            "crc",
+            "finobt",
+            "reflink",
+            "inobtcount",
+            "ftype",
+            "sparse",
+            "bigtime",
+        ],
+    ),
+    (
+        (6, 6),
+        &[
+            "lazysbcount",
+            "attr2",
+            "projid32bit",
+            "crc",
+            "finobt",
+            "rmapbt",
+            "reflink",
+            "inobtcount",
+            "ftype",
+            "sparse",
+            "bigtime",
+            "nrext64",
+        ],
+    ),
+    (
+        (6, 12),
+        &[
+            "lazysbcount",
+            "attr2",
+            "projid32bit",
+            "crc",
+            "finobt",
+            "rmapbt",
+            "reflink",
+            "inobtcount",
+            "ftype",
+            "sparse",
+            "bigtime",
+            "nrext64",
+        ],
+    ),
 ];
 
 /// ext4's features as e2fsprogs 1.43 to 1.46 make them by default.
 const EXT4_BASE: [&str; 14] = [
-    "has_journal", "ext_attr", "resize_inode", "dir_index", "filetype", "extent", "64bit", "flex_bg", "sparse_super", "large_file", "huge_file", "dir_nlink", "extra_isize", "metadata_csum",
+    "has_journal",
+    "ext_attr",
+    "resize_inode",
+    "dir_index",
+    "filetype",
+    "extent",
+    "64bit",
+    "flex_bg",
+    "sparse_super",
+    "large_file",
+    "huge_file",
+    "dir_nlink",
+    "extra_isize",
+    "metadata_csum",
 ];
 
 /// Mount options any filesystem takes; every other one is the old type's.
 const GENERIC_OPTIONS: [&str; 20] = [
-    "defaults", "ro", "rw", "noatime", "relatime", "strictatime", "lazytime", "nolazytime", "nodiratime", "diratime", "nodev", "dev", "nosuid", "suid", "noexec", "exec",
-    "nofail", "noauto", "auto", "sync",
+    "defaults",
+    "ro",
+    "rw",
+    "noatime",
+    "relatime",
+    "strictatime",
+    "lazytime",
+    "nolazytime",
+    "nodiratime",
+    "diratime",
+    "nodev",
+    "dev",
+    "nosuid",
+    "suid",
+    "noexec",
+    "exec",
+    "nofail",
+    "noauto",
+    "auto",
+    "sync",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -97,8 +223,14 @@ pub struct Reformat {
 /// the table has none), about MOUNT made as TYPE, each null when the
 /// refusal isn't about one (holt-json.md: a field not known is null).
 fn refused(reason: &str, mount: Option<&str>, to: Option<&str>, text: String) -> Problem {
-    debug_assert!(crate::load::codes::REFORMAT_REASONS.contains(&reason), "{reason}: not in codes::REFORMAT_REASONS");
-    Problem::new(ProblemCode::ReformatRefused, text).with("mount", mount).with("type", to).with("reason", reason)
+    debug_assert!(
+        crate::load::codes::REFORMAT_REASONS.contains(&reason),
+        "{reason}: not in codes::REFORMAT_REASONS"
+    );
+    Problem::new(ProblemCode::ReformatRefused, text)
+        .with("mount", mount)
+        .with("type", to)
+        .with("reason", reason)
 }
 
 fn s(v: &Value, k: &str) -> Option<String> {
@@ -106,7 +238,10 @@ fn s(v: &Value, k: &str) -> Option<String> {
 }
 
 fn arr<'a>(v: &'a Value, path: &[&str]) -> &'a [Value] {
-    v.at(path).and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
+    v.at(path)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
 }
 
 /// "6.18.60-1-lts" -> (6, 18).
@@ -125,8 +260,15 @@ fn package_version(v: &str) -> Option<(u32, u32)> {
 /// (os.kernel_release), which is all an Arch dump has (vmlinuz-linux names
 /// no version).
 fn oldest_kernel(v: &Value) -> Option<(u32, u32)> {
-    let mut all: Vec<String> = arr(v, &["boot", "kernels", "installed"]).iter().filter_map(|k| s(k, "version")).collect();
-    all.extend(v.at(&["os", "kernel_release"]).and_then(Value::as_str).map(str::to_string));
+    let mut all: Vec<String> = arr(v, &["boot", "kernels", "installed"])
+        .iter()
+        .filter_map(|k| s(k, "version"))
+        .collect();
+    all.extend(
+        v.at(&["os", "kernel_release"])
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    );
     all.iter().filter_map(|k| kernel_version(k)).min()
 }
 
@@ -143,14 +285,22 @@ pub fn grub_env_block(v: &Value, c: &Change) -> Option<Value> {
     if c.from != "btrfs" {
         return None;
     }
-    find_device(v, &c.src)?.get("content")?.get("grub_env_block").filter(|b| b.as_object().is_some()).cloned()
+    find_device(v, &c.src)?
+        .get("content")?
+        .get("grub_env_block")
+        .filter(|b| b.as_object().is_some())
+        .cloned()
 }
 
 /// Whether PATH (in the restored system) is on C's filesystem: the source's
 /// fstab mount holding it, the longest one above it, is C's mount or one
 /// it folds.
 pub fn holds(v: &Value, c: &Change, path: &str) -> bool {
-    let owner = arr(v, &["storage", "fstab"]).iter().filter_map(|e| s(e, "file")).filter(|f| f.starts_with('/') && under(path, f)).max_by_key(String::len);
+    let owner = arr(v, &["storage", "fstab"])
+        .iter()
+        .filter_map(|e| s(e, "file"))
+        .filter(|f| f.starts_with('/') && under(path, f))
+        .max_by_key(String::len);
     owner.is_some_and(|o| o == c.mount || c.folded.contains(&o))
 }
 
@@ -168,17 +318,33 @@ pub fn grub_path(v: &Value, c: &Change, path: &str, relative: bool) -> Option<St
     if c.from != "btrfs" || !path.starts_with('/') {
         return None;
     }
-    let fs = arr(v, &["storage", "btrfs"]).iter().find(|f| s(f, "uuid").as_deref() == Some(c.uuid.as_str())).cloned().unwrap_or(Value::Null);
+    let fs = arr(v, &["storage", "btrfs"])
+        .iter()
+        .find(|f| s(f, "uuid").as_deref() == Some(c.uuid.as_str()))
+        .cloned()
+        .unwrap_or(Value::Null);
     let mounts: Vec<(String, String)> = arr(v, &["storage", "fstab"])
         .iter()
-        .filter(|e| s(e, "resolves_to").as_deref() == Some(c.src.as_str()) && s(e, "type").as_deref() != Some("swap"))
-        .filter_map(|e| Some((s(e, "file")?, mounted_subvolume(&s(e, "options").unwrap_or_default(), &fs))))
+        .filter(|e| {
+            s(e, "resolves_to").as_deref() == Some(c.src.as_str())
+                && s(e, "type").as_deref() != Some("swap")
+        })
+        .filter_map(|e| {
+            Some((
+                s(e, "file")?,
+                mounted_subvolume(&s(e, "options").unwrap_or_default(), &fs),
+            ))
+        })
         .collect();
     let mut p = path.trim_matches('/').to_string();
     if relative {
         let def = mounted_subvolume("", &fs);
         if !def.is_empty() {
-            p = if p.is_empty() { def } else { format!("{def}/{p}") };
+            p = if p.is_empty() {
+                def
+            } else {
+                format!("{def}/{p}")
+            };
         }
     }
     let inside = |sv: &str| sv.is_empty() || p == sv || p.starts_with(&format!("{sv}/"));
@@ -187,25 +353,52 @@ pub fn grub_path(v: &Value, c: &Change, path: &str, relative: bool) -> Option<St
     // stub after the rewrite, or one grub-install wrote fresh), which a
     // mount of the top level (subvolid=5 at /mnt/top, /.btrfsroot) would
     // otherwise take to /mnt/top/boot/grub: GRUB at the grub> prompt.
-    let mut subs: Vec<String> = arr(&fs, &["subvolumes"]).iter().filter_map(|x| s(x, "path")).map(|x| x.trim_start_matches("<FS_TREE>/").trim_matches('/').to_string()).collect();
+    let mut subs: Vec<String> = arr(&fs, &["subvolumes"])
+        .iter()
+        .filter_map(|x| s(x, "path"))
+        .map(|x| {
+            x.trim_start_matches("<FS_TREE>/")
+                .trim_matches('/')
+                .to_string()
+        })
+        .collect();
     subs.extend(mounts.iter().map(|(_, sv)| sv.clone()));
     if !subs.iter().any(|sv| !sv.is_empty() && inside(sv)) {
         return None;
     }
-    let (at, sv) = mounts.iter().filter(|(_, sv)| inside(sv)).max_by_key(|(_, sv)| sv.len())?;
-    let rest = if sv.is_empty() { p.as_str() } else { p[sv.len()..].trim_start_matches('/') };
+    let (at, sv) = mounts
+        .iter()
+        .filter(|(_, sv)| inside(sv))
+        .max_by_key(|(_, sv)| sv.len())?;
+    let rest = if sv.is_empty() {
+        p.as_str()
+    } else {
+        p[sv.len()..].trim_start_matches('/')
+    };
     let restored = match (at.as_str(), rest) {
         (a, "") => a.to_string(),
         ("/", r) => format!("/{r}"),
         (a, r) => format!("{a}/{r}"),
     };
     // Another mount of it below that one hides it there: not restored.
-    if mounts.iter().any(|(t, _)| t != at && under(t, at) && under(&restored, t)) || !under(&restored, &c.mount) {
+    if mounts
+        .iter()
+        .any(|(t, _)| t != at && under(t, at) && under(&restored, t))
+        || !under(&restored, &c.mount)
+    {
         return None;
     }
-    let new = if c.mount == "/" { restored } else { restored[c.mount.len()..].to_string() };
+    let new = if c.mount == "/" {
+        restored
+    } else {
+        restored[c.mount.len()..].to_string()
+    };
     let new = if new.is_empty() { "/".to_string() } else { new };
-    let new = if path.len() > 1 && path.ends_with('/') && !new.ends_with('/') { format!("{new}/") } else { new };
+    let new = if path.len() > 1 && path.ends_with('/') && !new.ends_with('/') {
+        format!("{new}/")
+    } else {
+        new
+    };
     (new != path).then_some(new)
 }
 
@@ -220,7 +413,14 @@ pub fn generic_options(o: &str) -> (String, Vec<String>) {
             drop.push(x.to_string());
         }
     }
-    (if keep.is_empty() { "defaults".to_string() } else { keep.join(",") }, drop)
+    (
+        if keep.is_empty() {
+            "defaults".to_string()
+        } else {
+            keep.join(",")
+        },
+        drop,
+    )
 }
 
 /// A btrfs mount's subvolume path from its options (subvol=/@ -> "@"), or
@@ -230,21 +430,43 @@ fn mounted_subvolume(options: &str, fs: &Value) -> String {
         if let Some(p) = o.strip_prefix("subvol=") {
             return p.trim_matches('/').to_string();
         }
-        if let Some(id) = o.strip_prefix("subvolid=").and_then(|i| i.parse::<u64>().ok()) {
+        if let Some(id) = o
+            .strip_prefix("subvolid=")
+            .and_then(|i| i.parse::<u64>().ok())
+        {
             if id == 5 {
                 return String::new();
             }
-            if let Some(p) = arr(fs, &["subvolumes"]).iter().find(|x| x.get("id").and_then(Value::as_u64) == Some(id)).and_then(|x| s(x, "path")) {
-                return p.trim_start_matches("<FS_TREE>/").trim_matches('/').to_string();
+            if let Some(p) = arr(fs, &["subvolumes"])
+                .iter()
+                .find(|x| x.get("id").and_then(Value::as_u64) == Some(id))
+                .and_then(|x| s(x, "path"))
+            {
+                return p
+                    .trim_start_matches("<FS_TREE>/")
+                    .trim_matches('/')
+                    .to_string();
             }
         }
     }
     // No option: the default subvolume.
-    let def = fs.at(&["default_subvolume", "id"]).and_then(Value::as_u64).unwrap_or(5);
+    let def = fs
+        .at(&["default_subvolume", "id"])
+        .and_then(Value::as_u64)
+        .unwrap_or(5);
     if def == 5 {
         return String::new();
     }
-    arr(fs, &["subvolumes"]).iter().find(|x| x.get("id").and_then(Value::as_u64) == Some(def)).and_then(|x| s(x, "path")).map(|p| p.trim_start_matches("<FS_TREE>/").trim_matches('/').to_string()).unwrap_or_default()
+    arr(fs, &["subvolumes"])
+        .iter()
+        .find(|x| x.get("id").and_then(Value::as_u64) == Some(def))
+        .and_then(|x| s(x, "path"))
+        .map(|p| {
+            p.trim_start_matches("<FS_TREE>/")
+                .trim_matches('/')
+                .to_string()
+        })
+        .unwrap_or_default()
 }
 
 fn cut_label(label: &str, max: usize) -> String {
@@ -265,7 +487,12 @@ fn loader_reads(v: &Value, src: &str) -> bool {
         return false;
     }
     let fstab = arr(v, &["storage", "fstab"]);
-    let on = |file: &str| fstab.iter().find(|e| s(e, "file").as_deref() == Some(file)).and_then(|e| s(e, "resolves_to"));
+    let on = |file: &str| {
+        fstab
+            .iter()
+            .find(|e| s(e, "file").as_deref() == Some(file))
+            .and_then(|e| s(e, "resolves_to"))
+    };
     match on("/boot") {
         Some(b) => b == src,
         None => on("/").as_deref() == Some(src),
@@ -277,10 +504,20 @@ fn loader_reads(v: &Value, src: &str) -> bool {
 /// boot configuration.
 fn layout_refusal(v: &Value) -> Option<Problem> {
     if v.get("load_reformat").is_some() {
-        return Some(refused("edited", None, None, "this layout was edited by --reformat already; give the dump itself".into()));
+        return Some(refused(
+            "edited",
+            None,
+            None,
+            "this layout was edited by --reformat already; give the dump itself".into(),
+        ));
     }
     if crate::other::Family::of_layout(v).is_some() {
-        return Some(refused("not_linux", None, None, "--reformat is for Linux sources only".into()));
+        return Some(refused(
+            "not_linux",
+            None,
+            None,
+            "--reformat is for Linux sources only".into(),
+        ));
     }
     // Their boot stages aren't the one that runs `bko-holt rewrite`, and
     // each keeps what names its filesystems elsewhere: ostree's and ABRoot's
@@ -331,34 +568,75 @@ fn root_boot_refusal(v: &Value, what: &str) -> Option<String> {
         }
     }
     for (conf, a) in &appends {
-        if let Some(w) = a.split_whitespace().find(|w| ["rootfstype=", "rootfs=", "rootflags="].iter().any(|p| w.starts_with(p))) {
-            return Some(format!("{what}: {conf}'s append= gives the kernel {w}, for the old type, and bko-holt load doesn't rewrite lilo.conf or elilo.conf; take it out there and back up again"));
+        if let Some(w) = a.split_whitespace().find(|w| {
+            ["rootfstype=", "rootfs=", "rootflags="]
+                .iter()
+                .any(|p| w.starts_with(p))
+        }) {
+            return Some(format!(
+                "{what}: {conf}'s append= gives the kernel {w}, for the old type, and bko-holt load doesn't rewrite lilo.conf or elilo.conf; take it out there and back up again"
+            ));
         }
     }
     let conf_note = "/etc/mkinitrd.conf, whose ROOTFS and MODULE_LIST name the old type and which bko-holt load doesn't rewrite";
-    match v.at(&["boot", "initramfs", "generator"]).and_then(Value::as_str) {
+    match v
+        .at(&["boot", "initramfs", "generator"])
+        .and_then(Value::as_str)
+    {
         Some("mkinitrd") => {
-            let m = v.at(&["boot", "initramfs", "mkinitrd"]).cloned().unwrap_or(Value::Null);
-            let words: Vec<String> = s(&m, "command_line").map(|c| c.split_whitespace().map(str::to_string).collect()).unwrap_or_default();
-            let kernels = m.get("kernels").and_then(Value::as_array).is_some_and(|k| !k.is_empty());
+            let m = v
+                .at(&["boot", "initramfs", "mkinitrd"])
+                .cloned()
+                .unwrap_or(Value::Null);
+            let words: Vec<String> = s(&m, "command_line")
+                .map(|c| c.split_whitespace().map(str::to_string).collect())
+                .unwrap_or_default();
+            let kernels = m
+                .get("kernels")
+                .and_then(Value::as_array)
+                .is_some_and(|k| !k.is_empty());
             if words.is_empty() {
-                return Some(format!("{what}: Slackware's initrd has to be made again for the new type, and there's no /boot/initrd-tree/command_line to make it by: mkinitrd -F would read {conf_note}"));
+                return Some(format!(
+                    "{what}: Slackware's initrd has to be made again for the new type, and there's no /boot/initrd-tree/command_line to make it by: mkinitrd -F would read {conf_note}"
+                ));
             }
             if words.first().and_then(|p| p.rsplit('/').next()) != Some("mkinitrd") {
-                return Some(format!("{what}: Slackware's initrd has to be made again for the new type, and /boot/initrd-tree/command_line isn't a mkinitrd command"));
+                return Some(format!(
+                    "{what}: Slackware's initrd has to be made again for the new type, and /boot/initrd-tree/command_line isn't a mkinitrd command"
+                ));
             }
             if words.iter().any(|w| w == "-F") {
-                return Some(format!("{what}: Slackware's initrd has to be made again for the new type, and its command (mkinitrd -F) reads {conf_note}"));
+                return Some(format!(
+                    "{what}: Slackware's initrd has to be made again for the new type, and its command (mkinitrd -F) reads {conf_note}"
+                ));
             }
             if !kernels {
-                return Some(format!("{what}: Slackware's initrd has to be made again for the new type, and no kernel has /lib/modules to make it for"));
+                return Some(format!(
+                    "{what}: Slackware's initrd has to be made again for the new type, and no kernel has /lib/modules to make it for"
+                ));
             }
         }
-        Some("geninitrd") => match v.at(&["boot", "initramfs", "geninitrd", "runs"]).and_then(Value::as_str) {
+        Some("geninitrd") => match v
+            .at(&["boot", "initramfs", "geninitrd", "runs"])
+            .and_then(Value::as_str)
+        {
             Some("mkinitrd_command_generator.sh") => {}
-            Some("mkinitrd") => return Some(format!("{what}: geninitrd's initrd images have to be made again for the new type, and its GENERATOR=mkinitrd reads {conf_note}")),
-            Some("override") => return Some(format!("{what}: geninitrd's initrd images have to be made again for the new type, and it runs a GENINITRD_OVERRIDE_SCRIPT, which bko-holt load doesn't run")),
-            other => return Some(format!("{what}: geninitrd's initrd images have to be made again for the new type, and its generator ({}) isn't one bko-holt load runs", other.unwrap_or("unknown"))),
+            Some("mkinitrd") => {
+                return Some(format!(
+                    "{what}: geninitrd's initrd images have to be made again for the new type, and its GENERATOR=mkinitrd reads {conf_note}"
+                ));
+            }
+            Some("override") => {
+                return Some(format!(
+                    "{what}: geninitrd's initrd images have to be made again for the new type, and it runs a GENINITRD_OVERRIDE_SCRIPT, which bko-holt load doesn't run"
+                ));
+            }
+            other => {
+                return Some(format!(
+                    "{what}: geninitrd's initrd images have to be made again for the new type, and its generator ({}) isn't one bko-holt load runs",
+                    other.unwrap_or("unknown")
+                ));
+            }
         },
         _ => {}
     }
@@ -384,35 +662,100 @@ struct Named<'a> {
 /// reformatted: no fstab entry, no filesystem, a type it doesn't convert or
 /// the same one, no UUID, reformatted twice (CHANGES so far), a btrfs on
 /// more than one device.
-fn validate_entry<'a>(v: &'a Value, changes: &[Change], mount: &str, to: &str, what: &str) -> Result<Named<'a>, Problem> {
+fn validate_entry<'a>(
+    v: &'a Value,
+    changes: &[Change],
+    mount: &str,
+    to: &str,
+    what: &str,
+) -> Result<Named<'a>, Problem> {
     let fstab = arr(v, &["storage", "fstab"]);
-    let Some(entry) = fstab.iter().find(|e| s(e, "file").as_deref() == Some(mount) && s(e, "type").as_deref() != Some("swap")) else {
-        return Err(refused("other", Some(mount), Some(to), format!("{what}: no fstab entry mounts {mount}")));
+    let Some(entry) = fstab.iter().find(|e| {
+        s(e, "file").as_deref() == Some(mount) && s(e, "type").as_deref() != Some("swap")
+    }) else {
+        return Err(refused(
+            "other",
+            Some(mount),
+            Some(to),
+            format!("{what}: no fstab entry mounts {mount}"),
+        ));
     };
     let Some(src) = s(entry, "resolves_to") else {
-        return Err(refused("other", Some(mount), Some(to), format!("{what}: fstab's {mount} isn't on the layout's disks")));
+        return Err(refused(
+            "other",
+            Some(mount),
+            Some(to),
+            format!("{what}: fstab's {mount} isn't on the layout's disks"),
+        ));
     };
-    let Some(content) = find_device(v, &src).and_then(|d| d.get("content")).filter(|c| !c.is_null()) else {
-        return Err(refused("other", Some(mount), Some(to), format!("{what}: {src} has no filesystem in the layout")));
+    let Some(content) = find_device(v, &src)
+        .and_then(|d| d.get("content"))
+        .filter(|c| !c.is_null())
+    else {
+        return Err(refused(
+            "other",
+            Some(mount),
+            Some(to),
+            format!("{what}: {src} has no filesystem in the layout"),
+        ));
     };
     let from = s(content, "type").unwrap_or_default();
     if !TYPES.contains(&from.as_str()) {
-        return Err(refused("not_convertible", Some(mount), Some(to), format!("{what}: {mount} is {from} on {src}; --reformat converts ext4, XFS and btrfs")));
+        return Err(refused(
+            "not_convertible",
+            Some(mount),
+            Some(to),
+            format!("{what}: {mount} is {from} on {src}; --reformat converts ext4, XFS and btrfs"),
+        ));
     }
     if from == to {
-        return Err(refused("same_type", Some(mount), Some(to), format!("{what}: {mount} is {from} already")));
+        return Err(refused(
+            "same_type",
+            Some(mount),
+            Some(to),
+            format!("{what}: {mount} is {from} already"),
+        ));
     }
     let Some(uuid) = s(content, "uuid") else {
-        return Err(refused("no_uuid", Some(mount), Some(to), format!("{what}: {src}'s filesystem has no UUID in the layout")));
+        return Err(refused(
+            "no_uuid",
+            Some(mount),
+            Some(to),
+            format!("{what}: {src}'s filesystem has no UUID in the layout"),
+        ));
     };
     if changes.iter().any(|c| c.src == src) {
-        return Err(refused("twice", Some(mount), Some(to), format!("{what}: {src} is reformatted twice")));
+        return Err(refused(
+            "twice",
+            Some(mount),
+            Some(to),
+            format!("{what}: {src} is reformatted twice"),
+        ));
     }
-    let fs = arr(v, &["storage", "btrfs"]).iter().find(|f| s(f, "uuid").as_deref() == Some(uuid.as_str())).cloned().unwrap_or(Value::Null);
+    let fs = arr(v, &["storage", "btrfs"])
+        .iter()
+        .find(|f| s(f, "uuid").as_deref() == Some(uuid.as_str()))
+        .cloned()
+        .unwrap_or(Value::Null);
     if from == "btrfs" && arr(&fs, &["devices"]).len() > 1 {
-        return Err(refused("multi_device", Some(mount), Some(to), format!("{what}: btrfs {uuid} is on {} devices; --reformat takes a btrfs on one", arr(&fs, &["devices"]).len())));
+        return Err(refused(
+            "multi_device",
+            Some(mount),
+            Some(to),
+            format!(
+                "{what}: btrfs {uuid} is on {} devices; --reformat takes a btrfs on one",
+                arr(&fs, &["devices"]).len()
+            ),
+        ));
     }
-    Ok(Named { entry, src, content, from, uuid, fs })
+    Ok(Named {
+        entry,
+        src,
+        content,
+        from,
+        uuid,
+        fs,
+    })
 }
 
 /// N's mounts, from one pass over fstab's entries of its device.
@@ -429,13 +772,33 @@ struct Folds {
 /// N's mounts (Folds), or None, with a problem pushed for each, when one
 /// isn't under MOUNT: every other mount of the same filesystem becomes a
 /// directory of this one, so each must be under it.
-fn fold_mounts(v: &Value, n: &Named, mount: &str, to: &str, what: &str, problems: &mut Problems) -> Option<Folds> {
-    let mut f = Folds { folded: Vec::new(), mounted_subs: vec![mounted_subvolume(&s(n.entry, "options").unwrap_or_default(), &n.fs)], mounts: Vec::new() };
+fn fold_mounts(
+    v: &Value,
+    n: &Named,
+    mount: &str,
+    to: &str,
+    what: &str,
+    problems: &mut Problems,
+) -> Option<Folds> {
+    let mut f = Folds {
+        folded: Vec::new(),
+        mounted_subs: vec![mounted_subvolume(
+            &s(n.entry, "options").unwrap_or_default(),
+            &n.fs,
+        )],
+        mounts: Vec::new(),
+    };
     let mut bad = false;
-    for e in arr(v, &["storage", "fstab"]).iter().filter(|e| s(e, "resolves_to").as_deref() == Some(n.src.as_str()) && s(e, "type").as_deref() != Some("swap")) {
+    for e in arr(v, &["storage", "fstab"]).iter().filter(|e| {
+        s(e, "resolves_to").as_deref() == Some(n.src.as_str())
+            && s(e, "type").as_deref() != Some("swap")
+    }) {
         let file = s(e, "file").unwrap_or_default();
         let subvol = mounted_subvolume(&s(e, "options").unwrap_or_default(), &n.fs);
-        f.mounts.push(Mount { target: file.clone(), subvol: subvol.clone() });
+        f.mounts.push(Mount {
+            target: file.clone(),
+            subvol: subvol.clone(),
+        });
         if file == mount {
             continue;
         }
@@ -454,10 +817,23 @@ fn fold_mounts(v: &Value, n: &Named, mount: &str, to: &str, what: &str, problems
 /// the backup doesn't hold, those below a mount, which the backup holds
 /// there, and the snapshots below a mount, each with where the backup has
 /// it, which the restore leaves out).
-fn classify_subvolumes(fs: &Value, mounts: &[Mount], mounted_subs: &[String]) -> (Vec<String>, Vec<String>, Vec<(String, String)>) {
+fn classify_subvolumes(
+    fs: &Value,
+    mounts: &[Mount],
+    mounted_subs: &[String],
+) -> (Vec<String>, Vec<String>, Vec<(String, String)>) {
     let all: Vec<(String, Option<String>, Option<String>)> = arr(fs, &["subvolumes"])
         .iter()
-        .filter_map(|x| Some((s(x, "path")?.trim_start_matches("<FS_TREE>/").trim_matches('/').to_string(), s(x, "uuid"), s(x, "parent_uuid"))))
+        .filter_map(|x| {
+            Some((
+                s(x, "path")?
+                    .trim_start_matches("<FS_TREE>/")
+                    .trim_matches('/')
+                    .to_string(),
+                s(x, "uuid"),
+                s(x, "parent_uuid"),
+            ))
+        })
         .collect();
     let (mut unmounted, mut nested, mut snapshots) = (Vec::new(), Vec::new(), Vec::new());
     for (p, _, parent) in &all {
@@ -468,7 +844,10 @@ fn classify_subvolumes(fs: &Value, mounts: &[Mount], mounted_subs: &[String]) ->
             unmounted.push(p.clone());
             continue;
         };
-        let snapshot = shared::snapper_slot(p).is_some() || parent.as_ref().is_some_and(|pu| all.iter().any(|(_, u, _)| u.as_ref() == Some(pu)));
+        let snapshot = shared::snapper_slot(p).is_some()
+            || parent
+                .as_ref()
+                .is_some_and(|pu| all.iter().any(|(_, u, _)| u.as_ref() == Some(pu)));
         if snapshot {
             snapshots.push((p.clone(), b));
         } else {
@@ -482,11 +861,28 @@ fn classify_subvolumes(fs: &Value, mounts: &[Mount], mounted_subs: &[String]) ->
 /// the oldest installed kernel KV, the source's TOOL_VERSION of TO's tools,
 /// and whether GRUB READS it; Err, the refusal's text, for a kernel older
 /// than mkfs.xfs's oldest profile.
-fn features_for(to: &str, kv: (u32, u32), tool_version: Option<(u32, u32)>, reads: bool, what: &str) -> Result<(Vec<String>, String), String> {
+fn features_for(
+    to: &str,
+    kv: (u32, u32),
+    tool_version: Option<(u32, u32)>,
+    reads: bool,
+    what: &str,
+) -> Result<(Vec<String>, String), String> {
     Ok(match to {
         "xfs" => match XFS_PROFILES.iter().rev().find(|(k, _)| *k <= kv) {
-            Some(((a, b), f)) => (f.iter().map(|x| x.to_string()).collect(), format!("mkfs.xfs's lts_{a}.{b} profile (the oldest installed kernel is {}.{})", kv.0, kv.1)),
-            None => return Err(format!("{what}: the oldest installed kernel, {}.{}, is older than mkfs.xfs's oldest profile (4.19)", kv.0, kv.1)),
+            Some(((a, b), f)) => (
+                f.iter().map(|x| x.to_string()).collect(),
+                format!(
+                    "mkfs.xfs's lts_{a}.{b} profile (the oldest installed kernel is {}.{})",
+                    kv.0, kv.1
+                ),
+            ),
+            None => {
+                return Err(format!(
+                    "{what}: the oldest installed kernel, {}.{}, is older than mkfs.xfs's oldest profile (4.19)",
+                    kv.0, kv.1
+                ));
+            }
         },
         "ext4" => {
             let mut f: Vec<String> = EXT4_BASE.iter().map(|x| x.to_string()).collect();
@@ -499,12 +895,27 @@ fn features_for(to: &str, kv: (u32, u32), tool_version: Option<(u32, u32)>, read
                 }
             }
             let by = match tool_version {
-                Some((a, b)) => format!("e2fsprogs {a}.{b}'s defaults, for a {}.{} kernel{}", kv.0, kv.1, if reads { ", that GRUB reads" } else { "" }),
-                None => format!("e2fsprogs 1.43's defaults (its version isn't in the layout), for a {}.{} kernel", kv.0, kv.1),
+                Some((a, b)) => format!(
+                    "e2fsprogs {a}.{b}'s defaults, for a {}.{} kernel{}",
+                    kv.0,
+                    kv.1,
+                    if reads { ", that GRUB reads" } else { "" }
+                ),
+                None => format!(
+                    "e2fsprogs 1.43's defaults (its version isn't in the layout), for a {}.{} kernel",
+                    kv.0, kv.1
+                ),
             };
             (f, by)
         }
-        _ => (vec!["extended_iref".to_string(), "skinny_metadata".into(), "no_holes".into()], format!("mkfs.btrfs's defaults, for a {}.{} kernel", kv.0, kv.1)),
+        _ => (
+            vec![
+                "extended_iref".to_string(),
+                "skinny_metadata".into(),
+                "no_holes".into(),
+            ],
+            format!("mkfs.btrfs's defaults, for a {}.{} kernel", kv.0, kv.1),
+        ),
     })
 }
 
@@ -519,7 +930,9 @@ fn new_label(content: &Value, to: &str, what: &str, notes: &mut Notes) -> Option
         };
         let cut = cut_label(&l, max);
         if cut != l {
-            notes.push(format!("{what}: the label {l:?} is cut to {cut:?}, {to}'s limit"));
+            notes.push(format!(
+                "{what}: the label {l:?} is cut to {cut:?}, {to}'s limit"
+            ));
         }
         cut
     })
@@ -529,7 +942,9 @@ fn new_label(content: &Value, to: &str, what: &str, notes: &mut Notes) -> Option
 /// file moves, and resume_offset= with it), with a note for one that
 /// doesn't.
 fn swap_refused(v: &Value, mount: &str, to: &str, what: &str, r: &mut Reformat) -> bool {
-    let resume_offset = v.at(&["boot", "cmdline", "storage", "resume_offset"]).is_some_and(|x| !x.is_null());
+    let resume_offset = v
+        .at(&["boot", "cmdline", "storage", "resume_offset"])
+        .is_some_and(|x| !x.is_null());
     let mut bad = false;
     for sw in arr(v, &["storage", "swaps"]) {
         let Some(file) = s(sw, "file") else { continue };
@@ -538,7 +953,8 @@ fn swap_refused(v: &Value, mount: &str, to: &str, what: &str, r: &mut Reformat) 
                 r.problems.push(refused("hibernation", Some(mount), Some(to), format!("{what}: the system hibernates into the swap file {file} on it, and resume_offset= would no longer match")));
                 bad = true;
             } else {
-                r.notes.push(format!("{what}: the swap file {file} is on it"));
+                r.notes
+                    .push(format!("{what}: the swap file {file} is on it"));
             }
         }
     }
@@ -548,24 +964,47 @@ fn swap_refused(v: &Value, mount: &str, to: &str, what: &str, r: &mut Reformat) 
 /// The change `--reformat MOUNT=TO` makes, or None, with its problems in
 /// R, when it can't be made.  PACKAGES and KERNEL: the source's packages
 /// and its oldest kernel.
-fn one_change(v: &Value, r: &mut Reformat, packages: Option<&Value>, kernel: Option<(u32, u32)>, mount: &str, to: &str) -> Option<Change> {
+fn one_change(
+    v: &Value,
+    r: &mut Reformat,
+    packages: Option<&Value>,
+    kernel: Option<(u32, u32)>,
+    mount: &str,
+    to: &str,
+) -> Option<Change> {
     let what = format!("--reformat {mount}={to}");
-    let n = validate_entry(v, &r.changes, mount, to, &what).map_err(|p| r.problems.push(p)).ok()?;
-    let Folds { folded, mounted_subs, mounts } = fold_mounts(v, &n, mount, to, &what, &mut r.problems)?;
+    let n = validate_entry(v, &r.changes, mount, to, &what)
+        .map_err(|p| r.problems.push(p))
+        .ok()?;
+    let Folds {
+        folded,
+        mounted_subs,
+        mounts,
+    } = fold_mounts(v, &n, mount, to, &what, &mut r.problems)?;
     // The subvolumes: those mounted (gone into directories), those below
     // a mount (the backup holds them there), and those it doesn't hold.
     // A snapshot below a mount is left out of the restore, as is a
     // mounted subvolume seen again below another mount (shared.rs).
     let (unmounted, nested, snapshots) = classify_subvolumes(&n.fs, &mounts, &mounted_subs);
-    let aliases = if n.from == "btrfs" { shared::aliases(&mounts) } else { Vec::new() };
+    let aliases = if n.from == "btrfs" {
+        shared::aliases(&mounts)
+    } else {
+        Vec::new()
+    };
     let reads = loader_reads(v, &n.src);
     if reads && to != "ext4" {
-        r.problems.push(refused("grub_reads", Some(mount), Some(to), format!("{what}: GRUB reads /boot from it; under GRUB, --reformat makes ext4 only")));
+        r.problems.push(refused(
+            "grub_reads",
+            Some(mount),
+            Some(to),
+            format!("{what}: GRUB reads /boot from it; under GRUB, --reformat makes ext4 only"),
+        ));
         return None;
     }
     if mount == "/" {
         if let Some(text) = root_boot_refusal(v, &what) {
-            r.problems.push(refused("other", Some(mount), Some(to), text));
+            r.problems
+                .push(refused("other", Some(mount), Some(to), text));
             return None;
         }
     }
@@ -575,7 +1014,10 @@ fn one_change(v: &Value, r: &mut Reformat, packages: Option<&Value>, kernel: Opt
         "btrfs" => "btrfs-progs",
         _ => "e2fsprogs",
     };
-    let tool_version = packages.and_then(|p| p.get(tool)).and_then(Value::as_str).and_then(package_version);
+    let tool_version = packages
+        .and_then(|p| p.get(tool))
+        .and_then(Value::as_str)
+        .and_then(package_version);
     match packages {
         Some(p) if p.get(tool).is_none_or(Value::is_null) => {
             r.problems.push(refused("no_fsck", Some(mount), Some(to), format!("{what}: the source doesn't have {tool} installed; install it there and back up again, or the restored system has no fsck or repair for {to}")));
@@ -588,11 +1030,24 @@ fn one_change(v: &Value, r: &mut Reformat, packages: Option<&Value>, kernel: Opt
         r.problems.push(refused("old_kernel", Some(mount), Some(to), format!("{what}: the layout lists no installed kernel, so the {to} features it can mount aren't known")));
         return None;
     };
-    let (features, features_from) = features_for(to, kv, tool_version, reads, &what).map_err(|text| r.problems.push(refused("old_kernel", Some(mount), Some(to), text))).ok()?;
+    let (features, features_from) = features_for(to, kv, tool_version, reads, &what)
+        .map_err(|text| {
+            r.problems
+                .push(refused("old_kernel", Some(mount), Some(to), text))
+        })
+        .ok()?;
     // free_space_tree is a compat_ro feature, as the dump records it.
-    let compat_ro: Vec<String> = if to == "btrfs" && kv >= (4, 5) { vec!["free_space_tree".into()] } else { vec![] };
+    let compat_ro: Vec<String> = if to == "btrfs" && kv >= (4, 5) {
+        vec!["free_space_tree".into()]
+    } else {
+        vec![]
+    };
     let (options, dropped) = generic_options(&s(n.entry, "options").unwrap_or_default());
-    let passno = if to == "ext4" { if mount == "/" { 1 } else { 2 } } else { 0 };
+    let passno = if to == "ext4" {
+        if mount == "/" { 1 } else { 2 }
+    } else {
+        0
+    };
     let label = new_label(n.content, to, &what, &mut r.notes);
     // Hibernation into a swap file on it: the file moves, resume_offset with it.
     if swap_refused(v, mount, to, &what, r) {
@@ -629,10 +1084,18 @@ fn change_notes(v: &Value, c: &Change, notes: &mut Notes) {
         c.from,
         c.uuid,
         c.to,
-        c.label.as_ref().map(|l| format!(", label {l:?}")).unwrap_or_default(),
+        c.label
+            .as_ref()
+            .map(|l| format!(", label {l:?}"))
+            .unwrap_or_default(),
         c.features_from
     );
-    notes.push(Note::new(NoteCode::Reformat, first).with("mount", c.mount.as_str()).with("from", c.from.as_str()).with("to", c.to.as_str()));
+    notes.push(
+        Note::new(NoteCode::Reformat, first)
+            .with("mount", c.mount.as_str())
+            .with("from", c.from.as_str())
+            .with("to", c.to.as_str()),
+    );
     let mut n = Vec::new();
     n.push(format!(
         "fstab's {}: {} with {} (pass {}){}",
@@ -640,13 +1103,24 @@ fn change_notes(v: &Value, c: &Change, notes: &mut Notes) {
         c.to,
         c.options,
         c.passno,
-        if c.dropped.is_empty() { String::new() } else { format!("; {} dropped", c.dropped.join(",")) }
+        if c.dropped.is_empty() {
+            String::new()
+        } else {
+            format!("; {} dropped", c.dropped.join(","))
+        }
     ));
     for f in &c.folded {
-        n.push(format!("fstab's {f}: a directory of {} now (--reformat {}={})", c.mount, c.mount, c.to));
+        n.push(format!(
+            "fstab's {f}: a directory of {} now (--reformat {}={})",
+            c.mount, c.mount, c.to
+        ));
     }
     if !c.nested.is_empty() {
-        n.push(format!("reformat {}: subvolumes {} become plain directories", c.src, c.nested.join(", ")));
+        n.push(format!(
+            "reformat {}: subvolumes {} become plain directories",
+            c.src,
+            c.nested.join(", ")
+        ));
     }
     for u in &c.unmounted {
         n.push(format!("reformat {}: subvolume {u} isn't mounted, nor below a mount, so it isn't in the backup; it isn't recreated", c.src));
@@ -655,14 +1129,26 @@ fn change_notes(v: &Value, c: &Change, notes: &mut Notes) {
         n.push(format!("reformat {}: snapshot {sv} isn't recreated: {} has no btrfs snapshots, so the restore leaves out {b}", c.src, c.to));
     }
     for a in &c.aliases {
-        n.push(format!("reformat {}: {a} is a mounted subvolume seen again; the restore leaves it out", c.src));
+        n.push(format!(
+            "reformat {}: {a} is a mounted subvolume seen again; the restore leaves it out",
+            c.src
+        ));
     }
     if c.from == "btrfs" {
         n.push(format!("reformat {}: chattr C and c and btrfs.* xattrs don't come along ({} refuses them; rustic-bko warns in load.log)", c.src, c.to));
     }
     if let Some(b) = grub_env_block(v, c) {
-        let vars: Vec<String> = b.as_object().into_iter().flatten().map(|(k, x)| format!("{k}={}", x.as_str().unwrap_or_default())).collect();
-        let vars = if vars.is_empty() { "no variables".to_string() } else { vars.join(" ") };
+        let vars: Vec<String> = b
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(k, x)| format!("{k}={}", x.as_str().unwrap_or_default()))
+            .collect();
+        let vars = if vars.is_empty() {
+            "no variables".to_string()
+        } else {
+            vars.join(" ")
+        };
         n.push(format!("reformat {}: GRUB's environment block in btrfs's reserved area ({vars}) has no place on {}: boot moves its variables into grubenv and takes out grubenv's env_block=", c.src, c.to));
     }
     if c.mount == "/" {
@@ -705,8 +1191,16 @@ impl Reformat {
         // failing to exclude snapshots/pools and silently skipping user files.
         let mut g = Vec::new();
         for c in &self.changes {
-            g.extend(c.aliases.iter().map(|a| format!("!{}/**", shared::glob_literal(a))));
-            g.extend(c.snapshots.iter().map(|(_, b)| format!("!{}/**", shared::glob_literal(b))));
+            g.extend(
+                c.aliases
+                    .iter()
+                    .map(|a| format!("!{}/**", shared::glob_literal(a))),
+            );
+            g.extend(
+                c.snapshots
+                    .iter()
+                    .map(|(_, b)| format!("!{}/**", shared::glob_literal(b))),
+            );
         }
         g
     }
@@ -719,9 +1213,15 @@ fn content(c: &Change) -> Value {
         .set("usage", "filesystem")
         .set("uuid", c.uuid.as_str())
         .set("label", c.label.clone())
-        .set("features", c.features.iter().map(String::as_str).collect::<Vec<_>>());
+        .set(
+            "features",
+            c.features.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
     if c.to == "btrfs" {
-        o = o.set("compat_ro_features", c.compat_ro.iter().map(String::as_str).collect::<Vec<_>>());
+        o = o.set(
+            "compat_ro_features",
+            c.compat_ro.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
     }
     o.set("reformatted_from", c.from.as_str()).build()
 }
@@ -737,13 +1237,26 @@ pub fn apply(mut v: Value, r: &Reformat) -> Value {
                 d.put("content", content(c));
             }
         });
-        if let Some(list) = v.at_mut(&["storage", "btrfs"]).and_then(Value::as_array_mut) {
+        if let Some(list) = v
+            .at_mut(&["storage", "btrfs"])
+            .and_then(Value::as_array_mut)
+        {
             list.retain(|f| f.get("uuid").and_then(Value::as_str) != Some(c.uuid.as_str()));
         }
-        if let Some(list) = v.at_mut(&["storage", "fstab"]).and_then(Value::as_array_mut) {
-            list.retain(|e| !(e.get("resolves_to").and_then(Value::as_str) == Some(c.src.as_str()) && e.get("file").and_then(Value::as_str).is_some_and(|f| c.folded.iter().any(|x| x == f))));
+        if let Some(list) = v
+            .at_mut(&["storage", "fstab"])
+            .and_then(Value::as_array_mut)
+        {
+            list.retain(|e| {
+                !(e.get("resolves_to").and_then(Value::as_str) == Some(c.src.as_str())
+                    && e.get("file")
+                        .and_then(Value::as_str)
+                        .is_some_and(|f| c.folded.iter().any(|x| x == f)))
+            });
             for e in list.iter_mut() {
-                if e.get("resolves_to").and_then(Value::as_str) == Some(c.src.as_str()) && e.get("file").and_then(Value::as_str) == Some(c.mount.as_str()) {
+                if e.get("resolves_to").and_then(Value::as_str) == Some(c.src.as_str())
+                    && e.get("file").and_then(Value::as_str) == Some(c.mount.as_str())
+                {
                     e.put("type", c.to.as_str());
                     e.put("options", c.options.as_str());
                     e.put("passno", Value::Int(c.passno as i64));
@@ -755,17 +1268,28 @@ pub fn apply(mut v: Value, r: &Reformat) -> Value {
     // plan to take back (commands.rs, build).
     let problems: Vec<Value> = r.problems.iter().map(Problem::to_json).collect();
     let notes: Vec<Value> = r.notes.iter().map(Note::to_json).collect();
-    v.put("load_reformat", Obj::new().set("problems", problems).set("notes", notes).set("restore_globs", r.restore_globs()).build());
+    v.put(
+        "load_reformat",
+        Obj::new()
+            .set("problems", problems)
+            .set("notes", notes)
+            .set("restore_globs", r.restore_globs())
+            .build(),
+    );
     v
 }
 
 /// LAYOUT as the stages work from it with OPTS's --reformats: edited once
 /// (load::run does it; `load_reformat` marks it done), else as it is.
-pub fn edited(layout: &crate::load::layout::Layout, reformats: &[(String, String)]) -> Option<crate::load::layout::Layout> {
+pub fn edited(
+    layout: &crate::load::layout::Layout,
+    reformats: &[(String, String)],
+) -> Option<crate::load::layout::Layout> {
     if reformats.is_empty() || layout.v.get("load_reformat").is_some() {
         return None;
     }
-    crate::load::layout::Layout::from_json(apply(layout.v.clone(), &work_out(&layout.v, reformats))).ok()
+    crate::load::layout::Layout::from_json(apply(layout.v.clone(), &work_out(&layout.v, reformats)))
+        .ok()
 }
 
 #[cfg(test)]
@@ -798,7 +1322,9 @@ mod tests {
     }
 
     fn re(a: &[(&str, &str)]) -> Vec<(String, String)> {
-        a.iter().map(|(m, t)| (m.to_string(), t.to_string())).collect()
+        a.iter()
+            .map(|(m, t)| (m.to_string(), t.to_string()))
+            .collect()
     }
 
     #[test]
@@ -806,7 +1332,10 @@ mod tests {
         let r = work_out(&eos(), &re(&[("/", "xfs")]));
         assert!(r.problems.is_empty(), "{:?}", r.problems);
         let c = &r.changes[0];
-        assert_eq!((c.src.as_str(), c.from.as_str(), c.to.as_str()), ("nvme0n1p2", "btrfs", "xfs"));
+        assert_eq!(
+            (c.src.as_str(), c.from.as_str(), c.to.as_str()),
+            ("nvme0n1p2", "btrfs", "xfs")
+        );
         assert_eq!(c.folded, ["/home", "/var/cache", "/var/log"]);
         assert_eq!(c.nested, ["@/var/lib/portables"]);
         assert_eq!(c.unmounted, ["@snapshots"]);
@@ -815,41 +1344,91 @@ mod tests {
         assert_eq!(c.passno, 0);
         assert_eq!(c.label.as_deref(), Some("endeavouros"));
         assert!(c.features_from.contains("lts_6.12"), "{}", c.features_from);
-        assert!(c.features.contains(&"rmapbt".to_string()) && c.features.contains(&"nrext64".to_string()));
+        assert!(
+            c.features.contains(&"rmapbt".to_string())
+                && c.features.contains(&"nrext64".to_string())
+        );
         // As the XFS probe names a v5 superblock's, so that format's read-back holds.
-        assert!(c.features.contains(&"attr2".to_string()) && c.features.contains(&"projid32bit".to_string()));
+        assert!(
+            c.features.contains(&"attr2".to_string())
+                && c.features.contains(&"projid32bit".to_string())
+        );
         assert!(c.snapshots.is_empty() && c.aliases.is_empty());
-        assert!(r.notes.iter().any(|n| n.starts_with("fstab's /home: a directory of / now")), "{:?}", r.notes);
+        assert!(
+            r.notes
+                .iter()
+                .any(|n| n.starts_with("fstab's /home: a directory of / now")),
+            "{:?}",
+            r.notes
+        );
 
         let v = apply(eos(), &r);
-        let fstab = v.at(&["storage", "fstab"]).and_then(Value::as_array).unwrap();
+        let fstab = v
+            .at(&["storage", "fstab"])
+            .and_then(Value::as_array)
+            .unwrap();
         assert_eq!(fstab.len(), 2);
         assert_eq!(fstab[1].get("type").and_then(Value::as_str), Some("xfs"));
-        assert_eq!(fstab[1].get("options").and_then(Value::as_str), Some("noatime"));
-        assert_eq!(v.at(&["storage", "btrfs"]).and_then(Value::as_array).map(Vec::len), Some(0));
-        let c2 = v.at(&["storage", "disks", "0", "partitions", "1", "content"]).unwrap();
+        assert_eq!(
+            fstab[1].get("options").and_then(Value::as_str),
+            Some("noatime")
+        );
+        assert_eq!(
+            v.at(&["storage", "btrfs"])
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0)
+        );
+        let c2 = v
+            .at(&["storage", "disks", "0", "partitions", "1", "content"])
+            .unwrap();
         assert_eq!(c2.get("type").and_then(Value::as_str), Some("xfs"));
-        assert_eq!(c2.get("uuid").and_then(Value::as_str), Some("1b64a017-659b-4484-bf36-b97f639c3c35"));
-        assert_eq!(v.at(&["load_reformat", "problems"]).and_then(Value::as_array).map(Vec::len), Some(0));
+        assert_eq!(
+            c2.get("uuid").and_then(Value::as_str),
+            Some("1b64a017-659b-4484-bf36-b97f639c3c35")
+        );
+        assert_eq!(
+            v.at(&["load_reformat", "problems"])
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0)
+        );
     }
 
     #[test]
     fn xfs_profile_follows_the_oldest_kernel() {
-        let old = crate::json::parse(&eos().compact().replace("6.18.60-1-lts", "6.1.115-1-lts")).unwrap();
+        let old =
+            crate::json::parse(&eos().compact().replace("6.18.60-1-lts", "6.1.115-1-lts")).unwrap();
         let c = &work_out(&old, &re(&[("/", "xfs")])).changes[0];
         assert!(c.features_from.contains("lts_6.1 "), "{}", c.features_from);
         assert!(!c.features.contains(&"rmapbt".to_string()));
-        let ancient = crate::json::parse(&eos().compact().replace("6.18.60-1-lts", "4.14.1")).unwrap();
+        let ancient =
+            crate::json::parse(&eos().compact().replace("6.18.60-1-lts", "4.14.1")).unwrap();
         let r = work_out(&ancient, &re(&[("/", "xfs")]));
-        assert!(r.problems[0].contains("older than mkfs.xfs's oldest profile"), "{:?}", r.problems);
+        assert!(
+            r.problems[0].contains("older than mkfs.xfs's oldest profile"),
+            "{:?}",
+            r.problems
+        );
     }
 
     #[test]
     fn ext4_features_and_label() {
-        let r = work_out(&crate::json::parse(&eos().compact().replace("\"endeavouros\"}", "\"a-long-label-here\"}")).unwrap(), &re(&[("/", "ext4")]));
+        let r = work_out(
+            &crate::json::parse(
+                &eos()
+                    .compact()
+                    .replace("\"endeavouros\"}", "\"a-long-label-here\"}"),
+            )
+            .unwrap(),
+            &re(&[("/", "ext4")]),
+        );
         let c = &r.changes[0];
         assert_eq!(c.passno, 1);
-        assert!(c.features.contains(&"orphan_file".to_string()) && c.features.contains(&"metadata_csum_seed".to_string()));
+        assert!(
+            c.features.contains(&"orphan_file".to_string())
+                && c.features.contains(&"metadata_csum_seed".to_string())
+        );
         assert_eq!(c.label.as_deref(), Some("a-long-label-her"));
         assert!(r.notes.iter().any(|n| n.contains("is cut to")));
     }
@@ -862,14 +1441,22 @@ mod tests {
         assert!(p(&[("/efi", "xfs")])[0].contains("is vfat"));
         assert!(p(&[("/", "btrfs")])[0].contains("is btrfs already"));
         assert!(p(&[("/home", "xfs")])[0].contains("mounted at / too, which isn't under /home"));
-        let no_tools = crate::json::parse(&v.compact().replace("\"xfsprogs\":\"7.2.1-1\",", "")).unwrap();
-        assert!(work_out(&no_tools, &re(&[("/", "xfs")])).problems[0].contains("doesn't have xfsprogs installed"));
+        let no_tools =
+            crate::json::parse(&v.compact().replace("\"xfsprogs\":\"7.2.1-1\",", "")).unwrap();
+        assert!(
+            work_out(&no_tools, &re(&[("/", "xfs")])).problems[0]
+                .contains("doesn't have xfsprogs installed")
+        );
         // GRUB reads Debian 13's / (no /boot of its own here would) -- the
         // sample has /boot on ext4 apart, so / is free; /boot isn't.
         let deb = crate::json::parse(&sample::bios_mbr()).unwrap();
         assert!(work_out(&deb, &re(&[("/boot", "xfs")])).problems[0].contains("GRUB reads /boot"));
         let r = work_out(&deb, &re(&[("/boot", "btrfs")]));
-        assert!(r.problems[0].contains("GRUB reads /boot"), "{:?}", r.problems);
+        assert!(
+            r.problems[0].contains("GRUB reads /boot"),
+            "{:?}",
+            r.problems
+        );
     }
 
     /// Every refusal is reformat_refused, its reason the table's, about
@@ -881,37 +1468,105 @@ mod tests {
         let v = eos();
         let one = |v: &Value, a: &[(&str, &str)]| {
             let r = work_out(v, &re(a));
-            assert!(!r.problems.is_empty() && r.problems.iter().all(|p| p.code == ProblemCode::ReformatRefused), "{a:?}: {:?}", r.problems);
+            assert!(
+                !r.problems.is_empty()
+                    && r.problems
+                        .iter()
+                        .all(|p| p.code == ProblemCode::ReformatRefused),
+                "{a:?}: {:?}",
+                r.problems
+            );
             let p = r.problems[0].clone();
-            (p.str_field("reason").unwrap_or("").to_string(), p.str_field("mount").map(str::to_string), p.str_field("type").map(str::to_string), p.text.clone())
+            (
+                p.str_field("reason").unwrap_or("").to_string(),
+                p.str_field("mount").map(str::to_string),
+                p.str_field("type").map(str::to_string),
+                p.text.clone(),
+            )
         };
         let (r, m, t, text) = one(&v, &[("/efi", "xfs")]);
-        assert_eq!((r.as_str(), m.as_deref(), t.as_deref()), ("not_convertible", Some("/efi"), Some("xfs")));
-        assert!(text.starts_with("--reformat /efi=xfs: /efi is vfat"), "{text}");
+        assert_eq!(
+            (r.as_str(), m.as_deref(), t.as_deref()),
+            ("not_convertible", Some("/efi"), Some("xfs"))
+        );
+        assert!(
+            text.starts_with("--reformat /efi=xfs: /efi is vfat"),
+            "{text}"
+        );
         assert_eq!(one(&v, &[("/", "btrfs")]).0, "same_type");
         assert_eq!(one(&v, &[("/home", "xfs")]).0, "mounted_elsewhere");
         assert_eq!(one(&v, &[("/srv", "xfs")]).0, "other");
-        let no_tools = crate::json::parse(&v.compact().replace("\"xfsprogs\":\"7.2.1-1\",", "")).unwrap();
+        let no_tools =
+            crate::json::parse(&v.compact().replace("\"xfsprogs\":\"7.2.1-1\",", "")).unwrap();
         assert_eq!(one(&no_tools, &[("/", "xfs")]).0, "no_fsck");
         let deb = crate::json::parse(&sample::bios_mbr()).unwrap();
         assert_eq!(one(&deb, &[("/boot", "xfs")]).0, "grub_reads");
-        let nixos = crate::json::parse(&eos().compact().replace(r#""id":"endeavouros""#, r#""id":"nixos""#)).unwrap();
+        let nixos = crate::json::parse(
+            &eos()
+                .compact()
+                .replace(r#""id":"endeavouros""#, r#""id":"nixos""#),
+        )
+        .unwrap();
         let (r, m, ..) = one(&nixos, &[("/", "xfs")]);
         assert_eq!((r.as_str(), m), ("own_tools", None));
         // Not about one mount: mount and type are there, null.
         let p = &work_out(&nixos, &re(&[("/", "xfs")])).problems[0];
-        assert_eq!(p.fields.iter().map(|(k, v)| (k.as_str(), v.is_null())).collect::<Vec<_>>(), [("mount", true), ("type", true), ("reason", false)]);
-        let bsd = crate::json::parse(&eos().compact().replace(r#""os":{"#, r#""os":{"family":"freebsd","#)).unwrap();
+        assert_eq!(
+            p.fields
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.is_null()))
+                .collect::<Vec<_>>(),
+            [("mount", true), ("type", true), ("reason", false)]
+        );
+        let bsd = crate::json::parse(
+            &eos()
+                .compact()
+                .replace(r#""os":{"#, r#""os":{"family":"freebsd","#),
+        )
+        .unwrap();
         assert_eq!(one(&bsd, &[("/", "xfs")]).0, "not_linux");
         // The change's note, and the trip through the edited layout.
         let ok = work_out(&v, &re(&[("/", "xfs")]));
         assert!(ok.problems.is_empty(), "{:?}", ok.problems);
         let n = &ok.notes[0];
-        assert_eq!((n.code, n.str_field("mount"), n.str_field("from"), n.str_field("to")), (crate::load::codes::NoteCode::Reformat, Some("/"), Some("btrfs"), Some("xfs")));
-        let edited = apply(v.clone(), &work_out(&v, &re(&[("/", "btrfs"), ("/srv", "xfs")])));
-        let back: Vec<Problem> = edited.arr_at(&["load_reformat", "problems"]).iter().filter_map(Problem::from_json).collect();
-        assert_eq!(back.iter().map(|p| (p.code, p.str_field("reason"))).collect::<Vec<_>>(), [(ProblemCode::ReformatRefused, Some("same_type")), (ProblemCode::ReformatRefused, Some("other"))]);
-        assert_eq!(apply(v.clone(), &work_out(&v, &re(&[("/", "btrfs")]))).arr_at(&["load_reformat", "problems"])[0].get_str("text"), Some("--reformat /=btrfs: / is btrfs already"));
+        assert_eq!(
+            (
+                n.code,
+                n.str_field("mount"),
+                n.str_field("from"),
+                n.str_field("to")
+            ),
+            (
+                crate::load::codes::NoteCode::Reformat,
+                Some("/"),
+                Some("btrfs"),
+                Some("xfs")
+            )
+        );
+        let edited = apply(
+            v.clone(),
+            &work_out(&v, &re(&[("/", "btrfs"), ("/srv", "xfs")])),
+        );
+        let back: Vec<Problem> = edited
+            .arr_at(&["load_reformat", "problems"])
+            .iter()
+            .filter_map(Problem::from_json)
+            .collect();
+        assert_eq!(
+            back.iter()
+                .map(|p| (p.code, p.str_field("reason")))
+                .collect::<Vec<_>>(),
+            [
+                (ProblemCode::ReformatRefused, Some("same_type")),
+                (ProblemCode::ReformatRefused, Some("other"))
+            ]
+        );
+        assert_eq!(
+            apply(v.clone(), &work_out(&v, &re(&[("/", "btrfs")])))
+                .arr_at(&["load_reformat", "problems"])[0]
+                .get_str("text"),
+            Some("--reformat /=btrfs: / is btrfs already")
+        );
         let edited_twice = apply(edited.clone(), &Reformat::default());
         assert_eq!(one(&edited_twice, &[("/", "xfs")]).0, "edited");
     }
@@ -928,29 +1583,76 @@ mod tests {
                 r#"{"spec":"UUID=1b64a017-659b-4484-bf36-b97f639c3c35","file":"/home""#,
                 r#"{"spec":"UUID=1b64a017-659b-4484-bf36-b97f639c3c35","file":"/.snapshots","type":"btrfs","options":"subvol=/@/.snapshots","passno":0,"resolves_to":"nvme0n1p2"},{"spec":"UUID=1b64a017-659b-4484-bf36-b97f639c3c35","file":"/home""#,
             );
-        assert!(text.contains("/@/.snapshots/1/snapshot") && text.contains(r#""file":"/.snapshots""#), "{text}");
+        assert!(
+            text.contains("/@/.snapshots/1/snapshot") && text.contains(r#""file":"/.snapshots""#),
+            "{text}"
+        );
         let r = work_out(&crate::json::parse(&text).unwrap(), &re(&[("/", "ext4")]));
         assert!(r.problems.is_empty(), "{:?}", r.problems);
         let c = &r.changes[0];
-        assert_eq!(c.snapshots, [("@/.snapshots/2/snapshot".to_string(), "/.snapshots/2/snapshot".to_string())]);
+        assert_eq!(
+            c.snapshots,
+            [(
+                "@/.snapshots/2/snapshot".to_string(),
+                "/.snapshots/2/snapshot".to_string()
+            )]
+        );
         assert_eq!(c.aliases, ["/.snapshots/1/snapshot"]);
-        assert!(c.unmounted.contains(&"@".to_string()) && !c.nested.iter().any(|n| n.contains("snapshot")), "{c:?}");
-        assert_eq!(r.restore_globs(), ["!/.snapshots/1/snapshot/**", "!/.snapshots/2/snapshot/**"]);
+        assert!(
+            c.unmounted.contains(&"@".to_string())
+                && !c.nested.iter().any(|n| n.contains("snapshot")),
+            "{c:?}"
+        );
+        assert_eq!(
+            r.restore_globs(),
+            ["!/.snapshots/1/snapshot/**", "!/.snapshots/2/snapshot/**"]
+        );
         let v = apply(crate::json::parse(&text).unwrap(), &r);
-        assert_eq!(v.at(&["load_reformat", "restore_globs"]).map(Value::compact).as_deref(), Some(r#"["!/.snapshots/1/snapshot/**","!/.snapshots/2/snapshot/**"]"#));
+        assert_eq!(
+            v.at(&["load_reformat", "restore_globs"])
+                .map(Value::compact)
+                .as_deref(),
+            Some(r#"["!/.snapshots/1/snapshot/**","!/.snapshots/2/snapshot/**"]"#)
+        );
     }
 
     #[test]
     fn btrfs_features_and_other_systems() {
-        let ext4 = eos().compact().replace(r#""type":"btrfs","uuid":"1b64"#, r#""type":"ext4","uuid":"1b64"#).replace(r#""file":"/","type":"btrfs""#, r#""file":"/","type":"ext4""#);
+        let ext4 = eos()
+            .compact()
+            .replace(
+                r#""type":"btrfs","uuid":"1b64"#,
+                r#""type":"ext4","uuid":"1b64"#,
+            )
+            .replace(
+                r#""file":"/","type":"btrfs""#,
+                r#""file":"/","type":"ext4""#,
+            );
         let r = work_out(&crate::json::parse(&ext4).unwrap(), &re(&[("/", "btrfs")]));
         assert!(r.problems.is_empty(), "{:?}", r.problems);
         let v = apply(crate::json::parse(&ext4).unwrap(), &r);
-        let c = v.at(&["storage", "disks", "0", "partitions", "1", "content"]).unwrap();
-        assert_eq!(c.get("features").map(Value::compact).as_deref(), Some(r#"["extended_iref","skinny_metadata","no_holes"]"#));
-        assert_eq!(c.get("compat_ro_features").map(Value::compact).as_deref(), Some(r#"["free_space_tree"]"#));
-        let nixos = crate::json::parse(&eos().compact().replace(r#""id":"endeavouros""#, r#""id":"nixos""#)).unwrap();
-        assert!(work_out(&nixos, &re(&[("/", "xfs")])).problems[0].contains("isn't built for NixOS"), "{:?}", work_out(&nixos, &re(&[("/", "xfs")])).problems);
+        let c = v
+            .at(&["storage", "disks", "0", "partitions", "1", "content"])
+            .unwrap();
+        assert_eq!(
+            c.get("features").map(Value::compact).as_deref(),
+            Some(r#"["extended_iref","skinny_metadata","no_holes"]"#)
+        );
+        assert_eq!(
+            c.get("compat_ro_features").map(Value::compact).as_deref(),
+            Some(r#"["free_space_tree"]"#)
+        );
+        let nixos = crate::json::parse(
+            &eos()
+                .compact()
+                .replace(r#""id":"endeavouros""#, r#""id":"nixos""#),
+        )
+        .unwrap();
+        assert!(
+            work_out(&nixos, &re(&[("/", "xfs")])).problems[0].contains("isn't built for NixOS"),
+            "{:?}",
+            work_out(&nixos, &re(&[("/", "xfs")])).problems
+        );
     }
 
     /// A btrfs whose reserved area holds GRUB's environment block (Leap
@@ -958,17 +1660,32 @@ mod tests {
     /// plan says; the block's mounts are the files it holds.
     #[test]
     fn grub_env_block_on_a_reformatted_btrfs() {
-        let with = crate::json::parse(&eos().compact().replace(r#""label":"endeavouros"}"#, r#""label":"endeavouros","grub_env_block":{"next_entry":"1"}}"#)).unwrap();
+        let with = crate::json::parse(&eos().compact().replace(
+            r#""label":"endeavouros"}"#,
+            r#""label":"endeavouros","grub_env_block":{"next_entry":"1"}}"#,
+        ))
+        .unwrap();
         let r = work_out(&with, &re(&[("/", "ext4")]));
         assert!(r.problems.is_empty(), "{:?}", r.problems);
         let c = &r.changes[0];
-        assert_eq!(grub_env_block(&with, c).map(|b| b.compact()).as_deref(), Some(r#"{"next_entry":"1"}"#));
+        assert_eq!(
+            grub_env_block(&with, c).map(|b| b.compact()).as_deref(),
+            Some(r#"{"next_entry":"1"}"#)
+        );
         assert!(r.notes.iter().any(|n| n == "reformat nvme0n1p2: GRUB's environment block in btrfs's reserved area (next_entry=1) has no place on ext4: boot moves its variables into grubenv and takes out grubenv's env_block="), "{:?}", r.notes);
         let none = work_out(&eos(), &re(&[("/", "ext4")]));
         assert!(grub_env_block(&eos(), &none.changes[0]).is_none());
-        assert!(!none.notes.iter().any(|n| n.contains("environment block")), "{:?}", none.notes);
+        assert!(
+            !none.notes.iter().any(|n| n.contains("environment block")),
+            "{:?}",
+            none.notes
+        );
         // Which files are on it: / and what it folds, not the ESP.
-        assert!(holds(&with, c, "/boot/grub/grubenv") && holds(&with, c, "/var/log/x") && holds(&with, c, "/home"));
+        assert!(
+            holds(&with, c, "/boot/grub/grubenv")
+                && holds(&with, c, "/var/log/x")
+                && holds(&with, c, "/home")
+        );
         assert!(!holds(&with, c, "/efi/grub/grubenv") && !holds(&with, c, "/efi"));
     }
 
@@ -980,24 +1697,48 @@ mod tests {
         let c = work_out(&v, &re(&[("/", "ext4")])).changes.remove(0);
         let g = |p: &str| grub_path(&v, &c, p, false);
         assert_eq!(g("/@/boot/grub").as_deref(), Some("/boot/grub"));
-        assert_eq!(g("/@/boot/grub/grub.cfg").as_deref(), Some("/boot/grub/grub.cfg"));
+        assert_eq!(
+            g("/@/boot/grub/grub.cfg").as_deref(),
+            Some("/boot/grub/grub.cfg")
+        );
         assert_eq!(g("/@home/u/x").as_deref(), Some("/home/u/x"));
         assert_eq!(g("/@log").as_deref(), Some("/var/log"));
         assert_eq!(g("/@/").as_deref(), Some("/"));
         // A nested subvolume is a directory of its mount's.
-        assert_eq!(g("/@/var/lib/portables/p").as_deref(), Some("/var/lib/portables/p"));
+        assert_eq!(
+            g("/@/var/lib/portables/p").as_deref(),
+            Some("/var/lib/portables/p")
+        );
         // The top level isn't mounted; @snapshots isn't; @home's mount hides @/home.
         assert_eq!(g("/boot/grub"), None);
         assert_eq!(g("/@snapshots/1"), None);
         assert_eq!(g("/@/home/u"), None);
         assert_eq!(g("@/boot/grub"), None);
         // btrfs_relative_path: from the default subvolume (the top level here).
-        assert_eq!(grub_path(&v, &c, "/@/boot/grub", true).as_deref(), Some("/boot/grub"));
-        let def = crate::json::parse(&v.compact().replace(r#""default_subvolume":{"id":5}"#, r#""default_subvolume":{"id":256}"#)).unwrap();
+        assert_eq!(
+            grub_path(&v, &c, "/@/boot/grub", true).as_deref(),
+            Some("/boot/grub")
+        );
+        let def = crate::json::parse(&v.compact().replace(
+            r#""default_subvolume":{"id":5}"#,
+            r#""default_subvolume":{"id":256}"#,
+        ))
+        .unwrap();
         assert_eq!(grub_path(&def, &c, "/boot/grub2", true), None);
         assert_eq!(grub_path(&def, &c, "/boot/grub2", false), None);
         // Off ext4 or XFS, nothing moves.
-        let ext4 = crate::json::parse(&v.compact().replace(r#""type":"btrfs","uuid":"1b64"#, r#""type":"ext4","uuid":"1b64"#).replace(r#""file":"/","type":"btrfs""#, r#""file":"/","type":"ext4""#)).unwrap();
+        let ext4 = crate::json::parse(
+            &v.compact()
+                .replace(
+                    r#""type":"btrfs","uuid":"1b64"#,
+                    r#""type":"ext4","uuid":"1b64"#,
+                )
+                .replace(
+                    r#""file":"/","type":"btrfs""#,
+                    r#""file":"/","type":"ext4""#,
+                ),
+        )
+        .unwrap();
         let c2 = work_out(&ext4, &re(&[("/", "btrfs")])).changes.remove(0);
         assert_eq!(grub_path(&ext4, &c2, "/boot/grub", false), None);
     }
@@ -1009,7 +1750,12 @@ mod tests {
     #[test]
     fn grub_paths_with_the_top_level_mounted() {
         let top = r#"{"spec": "UUID=1b64a017-659b-4484-bf36-b97f639c3c35", "file": "/mnt/top", "type": "btrfs", "options": "subvolid=5,noatime", "passno": 0, "resolves_to": "nvme0n1p2"},"#;
-        let v = crate::json::parse(&eos().compact().replacen(r#""fstab":["#, &format!(r#""fstab":[{top}"#), 1)).unwrap();
+        let v = crate::json::parse(&eos().compact().replacen(
+            r#""fstab":["#,
+            &format!(r#""fstab":[{top}"#),
+            1,
+        ))
+        .unwrap();
         let r = work_out(&v, &re(&[("/", "ext4")]));
         assert!(r.problems.is_empty(), "{:?}", r.problems);
         let c = &r.changes[0];
@@ -1032,7 +1778,13 @@ mod tests {
 
     #[test]
     fn options() {
-        assert_eq!(generic_options("subvol=/@,noatime,compress=zstd,x-systemd.device-timeout=0"), ("noatime,x-systemd.device-timeout=0".to_string(), vec!["subvol=/@".to_string(), "compress=zstd".to_string()]));
+        assert_eq!(
+            generic_options("subvol=/@,noatime,compress=zstd,x-systemd.device-timeout=0"),
+            (
+                "noatime,x-systemd.device-timeout=0".to_string(),
+                vec!["subvol=/@".to_string(), "compress=zstd".to_string()]
+            )
+        );
         assert_eq!(generic_options("subvol=@").0, "defaults");
         assert_eq!(kernel_version("6.18.60-1-lts"), Some((6, 18)));
         assert_eq!(package_version("1:1.47.2-3"), Some((1, 47)));
@@ -1045,25 +1797,68 @@ mod tests {
     fn slackware_root_refusals() {
         let j = |t: &str| crate::json::parse(t).unwrap();
         let w = "--reformat /=ext4";
-        let mk = |m: &str| j(&format!(r#"{{"boot":{{"initramfs":{{"generator":"mkinitrd","mkinitrd":{m}}}}}}}"#));
+        let mk = |m: &str| {
+            j(&format!(
+                r#"{{"boot":{{"initramfs":{{"generator":"mkinitrd","mkinitrd":{m}}}}}}}"#
+            ))
+        };
         // 15.0's mkinitrd by its command line: made again (commands.rs).
-        assert_eq!(root_boot_refusal(&mk(r#"{"command_line":"/sbin/mkinitrd -c -k 5.15.19 -f xfs -m xfs","kernels":["5.15.19"]}"#), w), None);
+        assert_eq!(
+            root_boot_refusal(
+                &mk(
+                    r#"{"command_line":"/sbin/mkinitrd -c -k 5.15.19 -f xfs -m xfs","kernels":["5.15.19"]}"#
+                ),
+                w
+            ),
+            None
+        );
         let r = |v: &Value| root_boot_refusal(v, w).unwrap_or_default();
-        assert!(r(&mk(r#"{"command_line":"/sbin/mkinitrd -F -k 5.15.19","kernels":["5.15.19"]}"#)).contains("its command (mkinitrd -F) reads /etc/mkinitrd.conf"));
-        assert!(r(&mk(r#"{"command_line":null,"conf":"/etc/mkinitrd.conf","kernels":["5.15.19"]}"#)).contains("there's no /boot/initrd-tree/command_line"));
-        assert!(r(&mk(r#"{"command_line":"dracut -f","kernels":["5.15.19"]}"#)).contains("isn't a mkinitrd command"));
-        assert!(r(&mk(r#"{"command_line":"mkinitrd -c -f xfs","kernels":[]}"#)).contains("no kernel has /lib/modules"));
+        assert!(
+            r(&mk(
+                r#"{"command_line":"/sbin/mkinitrd -F -k 5.15.19","kernels":["5.15.19"]}"#
+            ))
+            .contains("its command (mkinitrd -F) reads /etc/mkinitrd.conf")
+        );
+        assert!(
+            r(&mk(
+                r#"{"command_line":null,"conf":"/etc/mkinitrd.conf","kernels":["5.15.19"]}"#
+            ))
+            .contains("there's no /boot/initrd-tree/command_line")
+        );
+        assert!(
+            r(&mk(r#"{"command_line":"dracut -f","kernels":["5.15.19"]}"#))
+                .contains("isn't a mkinitrd command")
+        );
+        assert!(
+            r(&mk(r#"{"command_line":"mkinitrd -c -f xfs","kernels":[]}"#))
+                .contains("no kernel has /lib/modules")
+        );
         // -current's geninitrd: only by its command generator, which
         // probes the new filesystem.
-        let geninitrd = |runs: &str| j(&format!(r#"{{"boot":{{"initramfs":{{"generator":"geninitrd","geninitrd":{{"runs":"{runs}"}}}}}}}}"#));
-        assert_eq!(root_boot_refusal(&geninitrd("mkinitrd_command_generator.sh"), w), None);
+        let geninitrd = |runs: &str| {
+            j(&format!(
+                r#"{{"boot":{{"initramfs":{{"generator":"geninitrd","geninitrd":{{"runs":"{runs}"}}}}}}}}"#
+            ))
+        };
+        assert_eq!(
+            root_boot_refusal(&geninitrd("mkinitrd_command_generator.sh"), w),
+            None
+        );
         assert!(r(&geninitrd("mkinitrd")).contains("GENERATOR=mkinitrd reads /etc/mkinitrd.conf"));
         assert!(r(&geninitrd("override")).contains("GENINITRD_OVERRIDE_SCRIPT"));
         // The huge kernel, no initrd: nothing to make; LILO's and ELILO's
         // append= (global or an image's, addappend= too) with the root's
         // type or options: refused.
         let none = r#""initramfs":{"generator":"none"}"#;
-        assert_eq!(root_boot_refusal(&j(&format!(r#"{{"boot":{{{none},"lilo":{{"conf":"/etc/lilo.conf","append":" vt.default_utf8=0","images":[{{"append":null}}]}}}}}}"#)), w), None);
+        assert_eq!(
+            root_boot_refusal(
+                &j(&format!(
+                    r#"{{"boot":{{{none},"lilo":{{"conf":"/etc/lilo.conf","append":" vt.default_utf8=0","images":[{{"append":null}}]}}}}}}"#
+                )),
+                w
+            ),
+            None
+        );
         assert!(r(&j(&format!(r#"{{"boot":{{{none},"lilo":{{"conf":"/etc/lilo.conf","append":" rootflags=noatime","images":[]}}}}}}"#))).contains("/etc/lilo.conf's append= gives the kernel rootflags=noatime"));
         assert!(r(&j(&format!(r#"{{"boot":{{{none},"lilo":{{"conf":"/etc/lilo.conf","images":[{{"addappend":"rootfs=ext4"}}]}}}}}}"#))).contains("gives the kernel rootfs=ext4"));
         assert!(r(&j(&format!(r#"{{"boot":{{{none},"elilo":{{"configs":[{{"conf":"EFI/BOOT/elilo.conf","images":[{{"append":"root=/dev/vda3 rootfstype=xfs"}}]}}]}}}}}}"#))).contains("EFI/BOOT/elilo.conf's append= gives the kernel rootfstype=xfs"));

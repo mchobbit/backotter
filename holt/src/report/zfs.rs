@@ -16,20 +16,50 @@ use std::collections::BTreeMap;
 /// (commands::build): no pools or no datasets would be a wrong answer.
 pub fn zfs_tools_json(sys: &Sys, zfs_mounted: bool) -> Value {
     let tool_error = |prog: &str, what: &str, lacks: &str| -> String {
-        let why = if sys.installed(prog) { format!("`{prog} list` failed") } else { format!("{prog} isn't installed") };
-        let e = format!("{what}, but {why}, so the dump records {lacks}; bko-holt load refuses this dump: make {prog} work and dump again");
+        let why = if sys.installed(prog) {
+            format!("`{prog} list` failed")
+        } else {
+            format!("{prog} isn't installed")
+        };
+        let e = format!(
+            "{what}, but {why}, so the dump records {lacks}; bko-holt load refuses this dump: make {prog} work and dump again"
+        );
         sys.warn(e.clone());
         e
     };
     let Some(list) = sys.run("zpool", &["list", "-H", "-o", "name"]) else {
-        return if zfs_mounted { Obj::new().set("error", tool_error("zpool", "ZFS file systems are mounted", "no pools or datasets")).build() } else { Value::Null };
+        return if zfs_mounted {
+            Obj::new()
+                .set(
+                    "error",
+                    tool_error(
+                        "zpool",
+                        "ZFS file systems are mounted",
+                        "no pools or datasets",
+                    ),
+                )
+                .build()
+        } else {
+            Value::Null
+        };
     };
     let mut pools = Vec::new();
     for name in list.lines().map(str::trim).filter(|l| !l.is_empty()) {
         let mut props = Obj::new();
         let mut local = Obj::new();
         let mut features = Obj::new();
-        if let Some(out) = sys.run("zpool", &["get", "-H", "-p", "-o", "property,value,source", "all", name]) {
+        if let Some(out) = sys.run(
+            "zpool",
+            &[
+                "get",
+                "-H",
+                "-p",
+                "-o",
+                "property,value,source",
+                "all",
+                name,
+            ],
+        ) {
             for l in out.lines() {
                 let f: Vec<&str> = l.split('\t').collect();
                 if f.len() < 3 {
@@ -37,7 +67,26 @@ pub fn zfs_tools_json(sys: &Sys, zfs_mounted: bool) -> Value {
                 }
                 if let Some(feat) = f[0].strip_prefix("feature@") {
                     features.put(feat, f[1]);
-                } else if !matches!(f[0], "free" | "allocated" | "fragmentation" | "capacity" | "freeing" | "leaked" | "expandsize" | "checkpoint" | "dedupratio" | "load_guid" | "bcloneused" | "bclonesaved" | "bcloneratio" | "dedup_table_size" | "dedupcached" | "dedupsaved" | "dedupused") {
+                } else if !matches!(
+                    f[0],
+                    "free"
+                        | "allocated"
+                        | "fragmentation"
+                        | "capacity"
+                        | "freeing"
+                        | "leaked"
+                        | "expandsize"
+                        | "checkpoint"
+                        | "dedupratio"
+                        | "load_guid"
+                        | "bcloneused"
+                        | "bclonesaved"
+                        | "bcloneratio"
+                        | "dedup_table_size"
+                        | "dedupcached"
+                        | "dedupsaved"
+                        | "dedupused"
+                ) {
                     props.put(f[0], f[1]);
                     // What `zpool create -o` must set again: the properties
                     // set on this pool rather than defaulted.
@@ -60,22 +109,57 @@ pub fn zfs_tools_json(sys: &Sys, zfs_mounted: bool) -> Value {
     let cols = "name,type,used,available,referenced,mountpoint,canmount,mounted,encryption,encryptionroot,keyformat,keylocation,keystatus,origin,compression,recordsize,volsize,volblocksize,acltype,xattr,dnodesize,normalization,utf8only,casesensitivity,atime,relatime,copies,com.sun:auto-snapshot";
     // A zfs without some of them (illumos': no acltype, no relatime)
     // refuses the list: then only the columns its datasets have.
-    let first = list.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").to_string();
-    let cols: String = match sys.run("zfs", &["list", "-H", "-p", "-t", "filesystem,volume", "-o", cols]) {
+    let first = list
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .to_string();
+    let cols: String = match sys.run(
+        "zfs",
+        &["list", "-H", "-p", "-t", "filesystem,volume", "-o", cols],
+    ) {
         Some(_) => cols.to_string(),
         None => {
             // Every dataset's: a volume's (volsize) aren't a filesystem's.
-            let known: Vec<String> = sys.run("zfs", &["get", "-H", "-o", "property", "all"]).unwrap_or_default().lines().map(|l| l.trim().to_string()).collect();
+            let known: Vec<String> = sys
+                .run("zfs", &["get", "-H", "-o", "property", "all"])
+                .unwrap_or_default()
+                .lines()
+                .map(|l| l.trim().to_string())
+                .collect();
             let _ = &first;
             // (origin, volsize and the like show only on datasets that have
             // one: kept, as every zfs has them.)
-            const CLASSIC: [&str; 9] = ["type", "origin", "volsize", "volblocksize", "mounted", "encryption", "encryptionroot", "keyformat", "keylocation"];
-            cols.split(',').filter(|c| *c == "name" || c.contains(':') || CLASSIC.contains(c) || known.iter().any(|k| k == c)).collect::<Vec<_>>().join(",")
+            const CLASSIC: [&str; 9] = [
+                "type",
+                "origin",
+                "volsize",
+                "volblocksize",
+                "mounted",
+                "encryption",
+                "encryptionroot",
+                "keyformat",
+                "keylocation",
+            ];
+            cols.split(',')
+                .filter(|c| {
+                    *c == "name"
+                        || c.contains(':')
+                        || CLASSIC.contains(c)
+                        || known.iter().any(|k| k == c)
+                })
+                .collect::<Vec<_>>()
+                .join(",")
         }
     };
     let cols = cols.as_str();
-    let listed = sys.run("zfs", &["list", "-H", "-p", "-t", "filesystem,volume", "-o", cols]);
-    let error = (listed.is_none() && !pools.is_empty()).then(|| tool_error("zfs", "ZFS pools are imported", "none of their datasets"));
+    let listed = sys.run(
+        "zfs",
+        &["list", "-H", "-p", "-t", "filesystem,volume", "-o", cols],
+    );
+    let error = (listed.is_none() && !pools.is_empty())
+        .then(|| tool_error("zfs", "ZFS pools are imported", "none of their datasets"));
     let datasets: Vec<Value> = listed
         .map(|out| {
             let names: Vec<&str> = cols.split(',').collect();
@@ -83,7 +167,13 @@ pub fn zfs_tools_json(sys: &Sys, zfs_mounted: bool) -> Value {
                 .map(|l| {
                     let mut o = Obj::new();
                     for (k, v) in names.iter().zip(l.split('\t')) {
-                        let v = if v == "-" { Value::Null } else { v.parse::<u64>().map(Value::UInt).unwrap_or_else(|_| Value::from(v)) };
+                        let v = if v == "-" {
+                            Value::Null
+                        } else {
+                            v.parse::<u64>()
+                                .map(Value::UInt)
+                                .unwrap_or_else(|_| Value::from(v))
+                        };
                         o.put(k, v);
                     }
                     o.build()
@@ -95,22 +185,53 @@ pub fn zfs_tools_json(sys: &Sys, zfs_mounted: bool) -> Value {
     // included: the fixed columns above are for people to read, these are
     // what `zfs create -o` needs to make the dataset again.
     let mut props: BTreeMap<String, Obj> = BTreeMap::new();
-    if let Some(out) = sys.run("zfs", &["get", "-H", "-p", "-t", "filesystem,volume", "-s", "local,received", "-o", "name,property,value,source", "all"]) {
+    if let Some(out) = sys.run(
+        "zfs",
+        &[
+            "get",
+            "-H",
+            "-p",
+            "-t",
+            "filesystem,volume",
+            "-s",
+            "local,received",
+            "-o",
+            "name,property,value,source",
+            "all",
+        ],
+    ) {
         for (ds, prop, value, source) in parse_zfs_get(&out) {
-            props.entry(ds).or_default().put(&prop, Obj::new().set("value", value).set("source", source));
+            props
+                .entry(ds)
+                .or_default()
+                .put(&prop, Obj::new().set("value", value).set("source", source));
         }
     }
     let datasets: Vec<Value> = datasets
         .into_iter()
         .map(|mut d| {
-            let name = d.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+            let name = d
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             if let Value::Obj(o) = &mut d {
-                o.push(("properties".into(), props.remove(&name).map(Obj::build).unwrap_or_else(|| Obj::new().build())));
+                o.push((
+                    "properties".into(),
+                    props
+                        .remove(&name)
+                        .map(Obj::build)
+                        .unwrap_or_else(|| Obj::new().build()),
+                ));
             }
             d
         })
         .collect();
-    Obj::new().set("imported_pools", pools).set("datasets", datasets).set_some("error", error).build()
+    Obj::new()
+        .set("imported_pools", pools)
+        .set("datasets", datasets)
+        .set_some("error", error)
+        .build()
 }
 
 /// `zfs get -H -o name,property,value,source` lines.
@@ -118,7 +239,14 @@ pub fn parse_zfs_get(out: &str) -> Vec<(String, String, String, String)> {
     out.lines()
         .filter_map(|l| {
             let f: Vec<&str> = l.splitn(4, '\t').collect();
-            (f.len() == 4).then(|| (f[0].to_string(), f[1].to_string(), f[2].to_string(), f[3].to_string()))
+            (f.len() == 4).then(|| {
+                (
+                    f[0].to_string(),
+                    f[1].to_string(),
+                    f[2].to_string(),
+                    f[3].to_string(),
+                )
+            })
         })
         .collect()
 }
@@ -151,7 +279,10 @@ fn zpool_vdevs(sys: &Sys, name: &str) -> Value {
                 .build()
         }
         Err(e) => {
-            sys.warn(format!("zpool status -j {name}: unreadable JSON ({} at {})", e.message, e.offset));
+            sys.warn(format!(
+                "zpool status -j {name}: unreadable JSON ({} at {})",
+                e.message, e.offset
+            ));
             Value::Null
         }
     }
@@ -223,9 +354,21 @@ pub fn parse_zpool_status_text(text: &str, pool: &str) -> Option<Value> {
                 sections.push((key, Vec::new()));
             }
             2 => sections.last_mut()?.1.push((name.to_string(), Vec::new())),
-            4 => sections.last_mut()?.1.last_mut()?.1.push((name.to_string(), Vec::new())),
+            4 => sections
+                .last_mut()?
+                .1
+                .last_mut()?
+                .1
+                .push((name.to_string(), Vec::new())),
             // A replacing or spare vdev inside a mirror or raidz.
-            6 => sections.last_mut()?.1.last_mut()?.1.last_mut()?.1.push((name.to_string(), vdev(name, vec![]))),
+            6 => sections
+                .last_mut()?
+                .1
+                .last_mut()?
+                .1
+                .last_mut()?
+                .1
+                .push((name.to_string(), vdev(name, vec![]))),
             _ => return None,
         }
     }
@@ -240,12 +383,27 @@ pub fn parse_zpool_status_text(text: &str, pool: &str) -> Option<Value> {
         };
         let mut t = Obj::new();
         for (n, kids) in tops {
-            let kids: Vec<(String, Value)> = kids.iter().map(|(cn, gk)| (cn.clone(), vdev(cn, gk.clone()))).collect();
+            let kids: Vec<(String, Value)> = kids
+                .iter()
+                .map(|(cn, gk)| (cn.clone(), vdev(cn, gk.clone())))
+                .collect();
             t.put(n, vdev(n, kids));
         }
         let t = t.build();
         if key == "vdevs" {
-            out.put(key, Obj::new().set(pool, Obj::new().set("name", pool).set("vdev_type", "root").set("vdevs", t).build()).build());
+            out.put(
+                key,
+                Obj::new()
+                    .set(
+                        pool,
+                        Obj::new()
+                            .set("name", pool)
+                            .set("vdev_type", "root")
+                            .set("vdevs", t)
+                            .build(),
+                    )
+                    .build(),
+            );
         } else {
             out.put(key, t);
         }
@@ -254,24 +412,46 @@ pub fn parse_zpool_status_text(text: &str, pool: &str) -> Option<Value> {
 }
 
 pub(super) fn zfs_json(sys: &Sys, ctx: &Ctx) -> Value {
-    let members: Vec<(String, &Content)> = ctx.devs.iter().flat_map(|d| d.contents.iter().map(move |c| (d.b.name.clone(), c))).collect();
-    zfs_section(sys, &members, &["/etc/zfs/zpool.cache"], ctx.mounts.iter().any(|m| m.fstype == "zfs"))
+    let members: Vec<(String, &Content)> = ctx
+        .devs
+        .iter()
+        .flat_map(|d| d.contents.iter().map(move |c| (d.b.name.clone(), c)))
+        .collect();
+    zfs_section(
+        sys,
+        &members,
+        &["/etc/zfs/zpool.cache"],
+        ctx.mounts.iter().any(|m| m.fstype == "zfs"),
+    )
 }
 
 /// The report's zfs section from the devices' signatures (name, content):
 /// pools from their vdev labels, the first zpool.cache of `caches` there
 /// is, and what zpool and zfs say of the imported pools (ZFS_MOUNTED: the
 /// mount table has a file system of type zfs; see zfs_tools_json).
-pub fn zfs_section(sys: &Sys, members: &[(String, &Content)], caches: &[&str], zfs_mounted: bool) -> Value {
+pub fn zfs_section(
+    sys: &Sys,
+    members: &[(String, &Content)],
+    caches: &[&str],
+    zfs_mounted: bool,
+) -> Value {
     // Pools from the labels of their vdevs: each label has the pool's
     // config with its own top-level vdev; merge top-level vdevs by id.
     // pool GUID -> (first label's config, top-level vdevs by id, member devices)
     type Pool = (Value, BTreeMap<u64, Value>, Vec<String>);
     let mut pools: BTreeMap<String, Pool> = BTreeMap::new();
     for (name, c) in members {
-        let (Some(cfg), "zfs_member") = (&c.extra, c.kind.as_str()) else { continue };
-        let guid = cfg.get("pool_guid").and_then(Value::as_u64).map(|g| g.to_string()).unwrap_or_default();
-        let e = pools.entry(guid).or_insert_with(|| (cfg.clone(), BTreeMap::new(), Vec::new()));
+        let (Some(cfg), "zfs_member") = (&c.extra, c.kind.as_str()) else {
+            continue;
+        };
+        let guid = cfg
+            .get("pool_guid")
+            .and_then(Value::as_u64)
+            .map(|g| g.to_string())
+            .unwrap_or_default();
+        let e = pools
+            .entry(guid)
+            .or_insert_with(|| (cfg.clone(), BTreeMap::new(), Vec::new()));
         e.2.push(name.clone());
         if let Some(t) = cfg.get("vdev_tree") {
             let id = t.get("id").and_then(Value::as_u64).unwrap_or(0);
@@ -297,9 +477,15 @@ pub fn zfs_section(sys: &Sys, members: &[(String, &Content)], caches: &[&str], z
                 .build()
         })
         .collect();
-    let cache = caches.iter().find_map(|p| sys.read_bytes(p)).map(|b| match crate::probe::zfs::unpack(&b) {
-        Ok(v) => v,
-        Err(e) => Obj::new().set("error", e).build(),
+    let cache = caches.iter().find_map(|p| sys.read_bytes(p)).map(|b| {
+        match crate::probe::zfs::unpack(&b) {
+            Ok(v) => v,
+            Err(e) => Obj::new().set("error", e).build(),
+        }
     });
-    Obj::new().set("pools_from_labels", label_pools).set("zpool_cache", cache).set("tools", zfs_tools_json(sys, zfs_mounted)).build()
+    Obj::new()
+        .set("pools_from_labels", label_pools)
+        .set("zpool_cache", cache)
+        .set("tools", zfs_tools_json(sys, zfs_mounted))
+        .build()
 }

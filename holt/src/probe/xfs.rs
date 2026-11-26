@@ -2,7 +2,7 @@
 //! same filesystem again.
 
 use super::Content;
-use crate::bytes::{be16, be32, be64, sub, u8_at, uuid, ByteSource};
+use crate::bytes::{ByteSource, be16, be32, be64, sub, u8_at, uuid};
 use crate::json::Obj;
 
 const VERSION_BITS: &[(u16, &str)] = &[
@@ -27,7 +27,12 @@ const FEATURES2: &[(u32, &str)] = &[
     (0x0100, "crc"),
     (0x0200, "ftype"),
 ];
-const RO_COMPAT: &[(u32, &str)] = &[(0x1, "finobt"), (0x2, "rmapbt"), (0x4, "reflink"), (0x8, "inobtcount")];
+const RO_COMPAT: &[(u32, &str)] = &[
+    (0x1, "finobt"),
+    (0x2, "rmapbt"),
+    (0x4, "reflink"),
+    (0x8, "inobtcount"),
+];
 const INCOMPAT: &[(u32, &str)] = &[
     (0x01, "ftype"),
     (0x02, "sparse"),
@@ -61,17 +66,29 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
     }
     let block_size = be32(&b, 4) as u64;
     let sect = be16(&b, 102);
-    if !(512..=65536).contains(&block_size) || !block_size.is_power_of_two() || !(512..=32768).contains(&sect) {
+    if !(512..=65536).contains(&block_size)
+        || !block_size.is_power_of_two()
+        || !(512..=32768).contains(&sect)
+    {
         return None;
     }
     let versionnum = be16(&b, 100);
     let v5 = versionnum & 0xf == 5;
     let mut version_flags = Vec::new();
-    bits(versionnum & 0xfff0, VERSION_BITS, "version", &mut version_flags);
+    bits(
+        versionnum & 0xfff0,
+        VERSION_BITS,
+        "version",
+        &mut version_flags,
+    );
     let f2 = be32(&b, 200);
     let mut features = Vec::new();
     bits(f2, FEATURES2, "features2", &mut features);
-    let (ro, inc, logi) = if v5 { (be32(&b, 212), be32(&b, 216), be32(&b, 220)) } else { (0, 0, 0) };
+    let (ro, inc, logi) = if v5 {
+        (be32(&b, 212), be32(&b, 216), be32(&b, 220))
+    } else {
+        (0, 0, 0)
+    };
     bits(ro, RO_COMPAT, "ro_compat", &mut features);
     bits(inc, INCOMPAT, "incompat", &mut features);
     let mut log_features = Vec::new();
@@ -129,21 +146,31 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
 pub fn external_log(src: &dyn ByteSource) -> Option<Content> {
     const XLOG_MAGIC: u32 = 0xfeed_babe;
     let head = src.read_at(0, 256 << 10);
-    let (off, rec) = (0..head.len() / 512).map(|i| (i * 512, sub(&head, i * 512, 512))).find(|(_, r)| {
-        // magic, version 1 or 2, a record length within the log buffer
-        // size limit, a known format, and a filesystem UUID.
-        be32(r, 0) == XLOG_MAGIC
-            && matches!(be32(r, 8), 1 | 2)
-            && be32(r, 12) <= 256 << 10
-            && matches!(be32(r, 300), 1..=3)
-            && sub(r, 304, 16).iter().any(|&b| b != 0)
-    })?;
+    let (off, rec) = (0..head.len() / 512)
+        .map(|i| (i * 512, sub(&head, i * 512, 512)))
+        .find(|(_, r)| {
+            // magic, version 1 or 2, a record length within the log buffer
+            // size limit, a known format, and a filesystem UUID.
+            be32(r, 0) == XLOG_MAGIC
+                && matches!(be32(r, 8), 1 | 2)
+                && be32(r, 12) <= 256 << 10
+                && matches!(be32(r, 300), 1..=3)
+                && sub(r, 304, 16).iter().any(|&b| b != 0)
+        })?;
     let d = Obj::new()
         .set("filesystem_uuid", uuid(sub(rec, 304, 16)))
         .set("record_offset", off as u64)
         .set("log_version", be32(rec, 8))
         .set("cycle", be32(rec, 4));
-    Some(Content { kind: "xfs_external_log".into(), usage: "other", uuid: None, label: None, version: None, details: d, extra: None })
+    Some(Content {
+        kind: "xfs_external_log".into(),
+        usage: "other",
+        uuid: None,
+        label: None,
+        version: None,
+        details: d,
+        extra: None,
+    })
 }
 
 #[cfg(test)]
@@ -202,26 +229,69 @@ mod tests {
         let c = probe(&MemSource(image("data"))).unwrap();
         assert_eq!(c.kind, "xfs");
         assert_eq!(c.label.as_deref(), Some("data"));
-        assert_eq!(c.uuid.as_deref(), Some("a0a1a2a3-a4a5-a6a7-a8a9-aaabacadaeaf"));
+        assert_eq!(
+            c.uuid.as_deref(),
+            Some("a0a1a2a3-a4a5-a6a7-a8a9-aaabacadaeaf")
+        );
         assert_eq!(c.version.as_deref(), Some("5"));
         let d = c.details.build();
         assert_eq!(
             d.get("features"),
             Some(&Value::from(vec![
-                "lazysbcount", "attr2", "projid32bit", "crc", "finobt", "rmapbt", "reflink", "inobtcount", "ftype",
-                "sparse", "bigtime", "nrext64"
+                "lazysbcount",
+                "attr2",
+                "projid32bit",
+                "crc",
+                "finobt",
+                "rmapbt",
+                "reflink",
+                "inobtcount",
+                "ftype",
+                "sparse",
+                "bigtime",
+                "nrext64"
             ]))
         );
-        let f: Vec<&str> = d.get("features").unwrap().as_array().unwrap().iter().filter_map(Value::as_str).collect();
-        for want in ["crc", "finobt", "sparse", "rmapbt", "reflink", "bigtime", "inobtcount", "nrext64", "ftype"] {
+        let f: Vec<&str> = d
+            .get("features")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        for want in [
+            "crc",
+            "finobt",
+            "sparse",
+            "rmapbt",
+            "reflink",
+            "bigtime",
+            "inobtcount",
+            "nrext64",
+            "ftype",
+        ] {
             assert!(f.contains(&want), "{want} missing from {f:?}");
         }
         assert_eq!(d.get("ag_count").and_then(Value::as_u64), Some(4));
-        assert_eq!(d.get("size_bytes").and_then(Value::as_u64), Some(262144 * 4096));
+        assert_eq!(
+            d.get("size_bytes").and_then(Value::as_u64),
+            Some(262144 * 4096)
+        );
         assert_eq!(d.get("log_internal"), Some(&Value::Bool(true)));
         assert_eq!(d.get("imax_pct").and_then(Value::as_u64), Some(25));
-        let vf: Vec<&str> = d.get("version_flags").unwrap().as_array().unwrap().iter().filter_map(Value::as_str).collect();
-        assert_eq!(vf, vec!["nlink", "align", "logv2", "extflg", "dirv2", "morebits"]);
+        let vf: Vec<&str> = d
+            .get("version_flags")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert_eq!(
+            vf,
+            vec!["nlink", "align", "logv2", "extflg", "dirv2", "morebits"]
+        );
         assert!(d.get("meta_uuid").is_none());
     }
 
@@ -244,8 +314,21 @@ mod tests {
         img[248] = 0x77;
         img[176..178].copy_from_slice(&0x0005u16.to_be_bytes());
         let d = probe(&MemSource(img)).unwrap().details.build();
-        assert!(d.get("meta_uuid").unwrap().as_str().unwrap().starts_with("77"));
-        let f: Vec<&str> = d.get("features").unwrap().as_array().unwrap().iter().filter_map(Value::as_str).collect();
+        assert!(
+            d.get("meta_uuid")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .starts_with("77")
+        );
+        let f: Vec<&str> = d
+            .get("features")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
         assert!(f.contains(&"incompat_bit15"));
         assert_eq!(d.get("quota_flags").and_then(Value::as_str), Some("0x0005"));
     }
@@ -257,7 +340,10 @@ mod tests {
         assert_eq!(c.usage, "other");
         assert_eq!(c.uuid, None);
         let d = c.details.build();
-        assert_eq!(d.get("filesystem_uuid").and_then(Value::as_str), Some("a0a1a2a3-a4a5-a6a7-a8a9-aaabacadaeaf"));
+        assert_eq!(
+            d.get("filesystem_uuid").and_then(Value::as_str),
+            Some("a0a1a2a3-a4a5-a6a7-a8a9-aaabacadaeaf")
+        );
         assert_eq!(d.get("record_offset").and_then(Value::as_u64), Some(1024));
         // Not on a filesystem, an empty device, or a header with no UUID.
         assert!(external_log(&MemSource(image("x"))).is_none());

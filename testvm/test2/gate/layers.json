@@ -1,7 +1,7 @@
 {
  "v": 1,
  "family": "gate",
- "notes": "GateTest2's layers (testvm/test2/t2lib/gate.py runs them; keys.py reads this file like every spec, contract 1.3). An entry's bins, harness, judge, host, host_inputs and gitrepos are its cell's inputs; part, per_host, pin, families, reserve, host_reserve, peak_reserve, timeout_s, runs and needs aren't. host_reserve {CLASS: [D, M]} is a small host's reserve before its own peaks (the small hosts' run-all.sh profile runs one fs_roundtrip.py and one sparse-rt.sh at a time, JOBS_CAP 1, so the loop fits their cmp-run.sh ceiling, 9.0 9.2), in place of reserve: CLASS is the host's class in testvm/hosts.json (a HOST name as key is read too, and comes first). bins are the set under test's (OS/NAME, globs), PLAT/bko-holt bko-holt's HOST_ROOT/holt-bin/CODE build (sha256, or absent until it is built: R14). gate:holt's host input is the raw dumps' default place (collect-dumps.sh's OUT): facts_host.py expands ~ only, not T2_HOST_ROOT. The fork layers' judge inputs include the hosts' stock baselines (testvm/audit/stock-baseline.sh): a new STOCK in audit-lib.sh needs its paths here too.",
+ "notes": "GateTest2's layers (testvm/test2/t2lib/gate.py runs them; keys.py reads this file like every spec, contract 1.3). An entry's bins, harness, judge, host, host_inputs and gitrepos are its cell's inputs; part, per_host, pin, place_with, families, reserve, host_reserve, peak_reserve, timeout_s, runs and needs aren't. host_reserve {CLASS: [D, M]} is a small host's reserve before its own peaks (the small hosts' run-all.sh profile runs one fs_roundtrip.py and one sparse-rt.sh at a time, JOBS_CAP 1, so the loop fits their cmp-run.sh ceiling, 9.0 9.2), in place of reserve: CLASS is the host's class in testvm/hosts.json (a HOST name as key is read too, and comes first). bins are the set under test's (OS/NAME, globs), PLAT/bko-holt bko-holt's HOST_ROOT/holt-bin/CODE build (sha256, or absent until it is built: R14). No fast layer is pinned (F7, docs/design/img-speed.md FD6): the plan places each where it can run, the shared host (Chopin) last and the forks spread (gate.fast_place); a host input {\"path\", \"need\": true} is one the layer can't run without, and the plan keeps the layer off a host whose facts say it is absent (gate.needed_inputs); place_with W runs a layer where W's run is (fork-root:restic beside fork:restic, whose m run its root-list need reads). gate:holt has no host input since F7: the raw dumps (h1-raw, collect-dumps.sh's OUT) are on no host, and holt-test.sh skips redact-raw without --raw. The fork layers' judge inputs include the hosts' stock baselines (testvm/audit/stock-baseline.sh --host H --restic-host H makes them on any host): a new STOCK in audit-lib.sh needs its paths here too (test_gate checks). Their reserve is fork-tests.sh's RESERVE (audit-lib.sh's default 6 12), host_reserve's on a small host, whose ceiling (MEM 10.1) 12 is over.",
  "plumbing": [],
  "soft": [],
  "layers": {
@@ -11,8 +11,7 @@
     "gate",
     "holt"
    ],
-   "pin": "chopin",
-   "runs": "gate/holt-test.sh under cmp-run.sh --reserve 2 4 (fixed: the whole job peaks at 1.1 GiB since the tests write sparse images and build one scenario at a time, 2026-11-17; before, 19 GiB of dense images; its own 0.2 s sampler reads 0.84, so a learned peak would undercount): cargo test -- --skip golden_; the golden plans (BKO_HOLT_GOLDEN=report); redact_dumps over h1-raw and the corpus",
+   "runs": "gate/holt-test.sh under cmp-run.sh --reserve 2 4 (fixed: the whole job peaks at 1.1 GiB since the tests write sparse images and build one scenario at a time, 2026-11-17; before, 19 GiB of dense images; its own 0.2 s sampler reads 0.84, so a learned peak would undercount): cargo test -- --skip golden_; the golden plans (BKO_HOLT_GOLDEN=report); redact_dumps over the corpus",
    "needs": [
     "cargo-test",
     "golden-plans",
@@ -41,9 +40,6 @@
     "pkg:btrfs-progs",
     "pkg:dosfstools",
     "pkg:cryptsetup-bin"
-   ],
-   "host_inputs": [
-    "/bkoscratch/test2/h1-raw"
    ]
   },
   "fork:restic": {
@@ -52,8 +48,7 @@
     "gate",
     "stic"
    ],
-   "pin": "chopin",
-   "runs": "testvm/audit/fork-tests.sh --force restic=HEAD on the Mac, the job on Chopin; restic.report against baseline.json",
+   "runs": "testvm/audit/fork-tests.sh --force restic=HEAD on the Mac, the job on its placed host under cmp-run.sh --reserve (RESERVE: reserve, a small host's host_reserve); restic.report against baseline.json",
    "needs": [
     "suite",
     "build-targets"
@@ -72,8 +67,9 @@
    ],
    "host_inputs": [
     {
-     "path": "~/backotter-work/bko-audit/stock/restic-0.19.1/results.tsv",
-     "group": "judge"
+     "path": "~/backotter-work/bko-audit/stock/restic-0.20.0/results.tsv",
+     "group": "judge",
+     "need": true
     }
    ],
    "gitrepos": [
@@ -81,7 +77,17 @@
    ],
    "host": [
     "go"
-   ]
+   ],
+   "reserve": [
+    6,
+    12
+   ],
+   "host_reserve": {
+    "small": [
+     6,
+     10
+    ]
+   }
   },
   "fork:rustic_core": {
    "part": "fast",
@@ -89,8 +95,7 @@
     "gate",
     "stic"
    ],
-   "pin": "cinqcent",
-   "runs": "testvm/audit/fork-tests.sh --force rustic_core=HEAD on the Mac, the job on Cinqcent; rustic_core.report against baseline.json",
+   "runs": "testvm/audit/fork-tests.sh --force rustic_core=HEAD on the Mac, the job on its placed host under cmp-run.sh --reserve (RESERVE: reserve, a small host's host_reserve); rustic_core.report against baseline.json",
    "needs": [
     "suite",
     "build-targets"
@@ -109,14 +114,28 @@
    ],
    "host_inputs": [
     {
-     "path": "~/backotter-work/bko-audit/stock/rustic_core-0.13.0/results.tsv",
-     "group": "judge"
+     "path": "~/backotter-work/bko-audit/stock/rustic_core-0.14.0/results.tsv",
+     "group": "judge",
+     "need": true
     },
-    "~/.rustup/toolchains/1.94.1-x86_64-unknown-linux-gnu/bin/rustc"
+    {
+     "path": "~/.rustup/toolchains/1.94.1-x86_64-unknown-linux-gnu/bin/rustc",
+     "need": true
+    }
    ],
    "gitrepos": [
     "rustic_core"
-   ]
+   ],
+   "reserve": [
+    6,
+    12
+   ],
+   "host_reserve": {
+    "small": [
+     6,
+     10
+    ]
+   }
   },
   "fork:rustic": {
    "part": "fast",
@@ -124,8 +143,7 @@
     "gate",
     "stic"
    ],
-   "pin": "cinqcent",
-   "runs": "testvm/audit/fork-tests.sh --force rustic=HEAD on the Mac (built against rustic_core's HEAD), the job on Cinqcent; rustic.report against baseline.json",
+   "runs": "testvm/audit/fork-tests.sh --force rustic=HEAD on the Mac (built against rustic_core's HEAD), the job on its placed host under cmp-run.sh --reserve (RESERVE: reserve, a small host's host_reserve); rustic.report against baseline.json",
    "needs": [
     "suite",
     "build-targets"
@@ -144,15 +162,29 @@
    ],
    "host_inputs": [
     {
-     "path": "~/backotter-work/bko-audit/stock/rustic-0.11.4/results.tsv",
-     "group": "judge"
+     "path": "~/backotter-work/bko-audit/stock/rustic-0.12.0/results.tsv",
+     "group": "judge",
+     "need": true
     },
-    "~/.rustup/toolchains/1.94.1-x86_64-unknown-linux-gnu/bin/rustc"
+    {
+     "path": "~/.rustup/toolchains/1.94.1-x86_64-unknown-linux-gnu/bin/rustc",
+     "need": true
+    }
    ],
    "gitrepos": [
     "rustic",
     "rustic_core"
-   ]
+   ],
+   "reserve": [
+    6,
+    12
+   ],
+   "host_reserve": {
+    "small": [
+     6,
+     10
+    ]
+   }
   },
   "fork-root:restic": {
    "part": "fast",
@@ -160,7 +192,6 @@
     "gate",
     "stic"
    ],
-   "pin": "chopin",
    "runs": "gate/fork-root.sh under cmp-run.sh --reserve 1 2: the tests restic-root-tests.txt lists, compiled as m, run as root with TMPDIR in RAM",
    "needs": [
     "one per listed test",
@@ -192,7 +223,8 @@
    ],
    "host_inputs": [
     "/bkoscratch/tools/arch-root/usr/bin/bcachefs"
-   ]
+   ],
+   "place_with": "fork:restic"
   },
   "bin:abi": {
    "part": "fast",

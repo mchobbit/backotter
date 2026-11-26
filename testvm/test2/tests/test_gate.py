@@ -10,6 +10,7 @@ loop/summary-linux.json run-all.sh's summary of a linux run on Chopin (2026-11-0
 The rest are written in those tools' formats."""
 
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -24,6 +25,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 import t2lib  # noqa: E402
 from t2lib import canonical, gate, keys  # noqa: E402
+from t2lib import hosts as hosts_table  # noqa: E402
 
 FX = os.path.join(HERE, "fixtures", "p3")
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
@@ -73,7 +75,13 @@ SETS = {"bko-bin": {"path": "/home/m/backotter-work/bko-bin", "sums": SUMS, "com
                     "build_info": "bko-bin set"}}
 
 
-def facts(host="chopin", holt_code=None, raw=None, pkgs=None):
+# The fork layers' stock baselines (audit-lib.sh's STOCK: restic 0.20.0, rustic_core 0.14.0,
+# rustic 0.12.0 since 2026-11-22), as layers.json names them.
+STOCK_TSV = {n: f"~/backotter-work/bko-audit/stock/{n}-{v}/results.tsv"
+             for n, v in (("restic", "0.20.0"), ("rustic_core", "0.14.0"), ("rustic", "0.12.0"))}
+
+
+def facts(host="chopin", holt_code=None, pkgs=None, stock=True):
     f = {"host": host, "t": "2026-11-08T05:00:00Z",
          "versions": {"kernel": "6.12.115+deb13-amd64", "zfs": "zfs-2.3.9-1", "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)",
                       "go": "go version go1.25.10 linux/amd64",
@@ -83,10 +91,9 @@ def facts(host="chopin", holt_code=None, raw=None, pkgs=None):
                                     "jfsutils": "1.1.15-6", "zfsutils-linux": "2.3.9-1", "attr": "1:2.5.2-3",
                                     "acl": "2.3.2-2"}, **(pkgs or {}))},
          "sets": json.loads(json.dumps(SETS)), "holt_bins": {}, "guests": {}, "rescuers": {"images": {}, "bin": {}},
-         "plumbing": {}, "host_inputs": {"/bkoscratch/test2/h1-raw": raw or "absent",
-                                         "~/backotter-work/bko-audit/stock/restic-0.19.1/results.tsv": "sha256:" + H["c"],
-                                         "~/backotter-work/bko-audit/stock/rustic_core-0.13.0/results.tsv": "sha256:" + H["d"],
-                                         "~/backotter-work/bko-audit/stock/rustic-0.11.4/results.tsv": "sha256:" + H["e"],
+         "plumbing": {}, "host_inputs": {STOCK_TSV["restic"]: "sha256:" + H["c"] if stock else "absent",
+                                         STOCK_TSV["rustic_core"]: "sha256:" + H["d"] if stock else "absent",
+                                         STOCK_TSV["rustic"]: "sha256:" + H["e"] if stock else "absent",
                                          "~/.rustup/toolchains/1.94.1-x86_64-unknown-linux-gnu/bin/rustc": "sha256:" + H["f"],
                                          "/bkoscratch/tools/arch-root/usr/bin/bcachefs": "absent"}}
     if holt_code:
@@ -143,12 +150,14 @@ class LayersJson(unittest.TestCase):
 
     def test_pins_and_parts_as_the_planner_reads_them(self):
         e = dict(gate.layer_entries(self.layers))
-        self.assertEqual(e["holt"]["pin"], "chopin")         # R18: h1-raw is on Chopin
-        self.assertEqual(e["fork:restic"]["pin"], "chopin")
-        self.assertEqual(e["fork:rustic_core"]["pin"], "cinqcent")
-        self.assertEqual(e["fork:rustic"]["pin"], "cinqcent")
-        self.assertEqual(e["fork-root:restic"]["pin"], "chopin")
-        self.assertEqual(e["selftest"]["pin"], "mac")
+        # F7 (docs/design/img-speed.md, FD6): no fast layer is pinned but the Mac's; the plan
+        # places them by what they need (gate.needed_inputs: the forks' stock baselines).
+        self.assertEqual({n: x["pin"] for n, x in e.items() if x.get("pin")}, {"selftest": "mac"})
+        self.assertNotIn("host_inputs", e["holt"])            # h1-raw is on no host
+        for n in ("restic", "rustic_core", "rustic"):
+            self.assertIn(STOCK_TSV[n], gate.needed_inputs(e["fork:" + n]), n)
+            self.assertEqual(e["fork:" + n]["reserve"], [6, 12])                 # audit-lib.sh's RESERVE
+            self.assertEqual(e["fork:" + n]["host_reserve"], {"small": [6, 10]})  # within a small ceiling
         for n in ("loop:linux", "loop:sparse"):
             self.assertTrue(e[n]["per_host"])
             self.assertEqual(e[n]["part"], "slow")
@@ -281,6 +290,41 @@ class LayerInputs(unittest.TestCase):
         self.assertEqual(sorted(n for n in r.inputs["bin"] if not n.endswith("#digest")),
                          ["linux/restic-bko", "linux/rustic-bko"])
 
+    def test_stock_paths_follow_audit_lib(self):
+        """Each fork layer's stock baseline is audit-lib.sh's STOCK version (a new STOCK needs its
+        paths here too: until F7 they named 0.19.1, 0.13.0 and 0.11.4, a path absent everywhere
+        while fork-tests.sh read 0.20.0's), and needed: fork-tests.sh exits 2 without it."""
+        text = read_file(os.path.join(REPO, "testvm", "audit", "audit-lib.sh"))
+        stock = re.search(r'^STOCK="([^"]*)"', text, re.M).group(1)
+        e = dict(gate.layer_entries(gate.load_layers(REPO)))
+        for line in stock.splitlines():
+            n, v, _ = line.split()
+            want = f"~/backotter-work/bko-audit/stock/{n}-{v}/results.tsv"
+            self.assertEqual([x for x in gate.needed_inputs(e["fork:" + n]) if "/stock/" in x], [want], n)
+            self.assertEqual(STOCK_TSV[n], want)
+
+    def test_needed_inputs_and_what_a_host_lacks(self):
+        e = {"host_inputs": ["/plain", {"path": "/judge", "group": "judge"}, {"path": "/need", "need": True}]}
+        self.assertEqual(gate.needed_inputs(e), ["/need"])
+        self.assertEqual(gate.lacking(e, {"host_inputs": {"/need": "absent", "/plain": "absent"}}), ["/need"])
+        self.assertEqual(gate.lacking(e, {"host_inputs": {"/need": "sha256:" + H["c"]}}), [])
+        self.assertEqual(gate.lacking(e, {"host_inputs": {}}), [])        # not measured: its key says so
+        self.assertEqual(gate.lacking(e, {}), [])                          # old facts
+        self.assertEqual(gate.lacking({}, {"host_inputs": {"/need": "absent"}}), [])
+
+    def test_fast_place_spreads_the_forks_and_puts_the_shared_host_last(self):
+        every = ["chopin", "cinqcent", "copland", "cage"]
+        cells = {"gate:fork:restic": every, "gate:fork:rustic_core": every, "gate:fork:rustic": every,
+                 "gate:holt": every, "gate:fork-root:restic": every, "gate:bin:abi": ["chopin"]}
+        got = gate.fast_place(list(cells), cells, {"chopin"})
+        self.assertEqual(got["gate:holt"], "cinqcent")              # a big host, not the shared one
+        self.assertEqual(len({got[f"gate:fork:{n}"] for n in ("restic", "rustic_core", "rustic")}), 3)
+        self.assertNotIn("chopin", {got[c] for c in cells if c != "gate:bin:abi"})
+        self.assertEqual(got["gate:bin:abi"], "chopin")             # its one host, shared or not
+        self.assertEqual(got["gate:fork-root:restic"], "cinqcent")  # runs alone: not spread
+        self.assertEqual(gate.fast_place(["gate:holt"], {"gate:holt": []}, set()), {})
+        self.assertIn("chopin", gate.shared_hosts())                # the fleet role
+
     def test_holt_keys_its_tree_and_the_raw_dumps(self):
         a = self.res("gate:holt")
         self.assertIn("holt/src/main.rs", a.inputs["harness"])
@@ -289,21 +333,18 @@ class LayerInputs(unittest.TestCase):
         self.assertEqual(a.inputs["host"]["rustc"], "ver:rustc 1.94.1 (e408947bf 2026-03-25)")
         for p in ("util-linux", "fdisk", "gdisk", "e2fsprogs", "xfsprogs", "btrfs-progs", "dosfstools", "cryptsetup-bin"):
             self.assertIn("pkg:" + p, a.inputs["host"])                  # R23
-        self.assertEqual(a.inputs["host"]["host:/bkoscratch/test2/h1-raw"], "absent")
+        self.assertNotIn("host:/bkoscratch/test2/h1-raw", a.inputs["host"])   # F7: on no host
         self.assertNotIn("bin", a.inputs)
-        b = self.res("gate:holt", facts(raw="dir:" + H["9"]))
-        self.assertNotEqual(a.key, b.key)                                # R18: h1-raw is a host input
         c = self.res("gate:holt", facts(pkgs={"gdisk": "1.0.10-3"}))
         self.assertNotEqual(a.key, c.key)
-        self.assertEqual(a.pin, "chopin")
+        self.assertIsNone(a.pin)
 
     def test_fork_layers_key_the_commits_tested(self):
         r = self.res("gate:fork:restic")
         self.assertEqual(r.inputs["harness"]["git:restic"], "git:" + "1" * 40)
         self.assertIn("testvm/audit/fork-tests.sh", r.inputs["harness"])
         self.assertIn("testvm/audit/audit-lib.sh", r.inputs["harness"])
-        self.assertEqual(r.inputs["judge"]["host:~/backotter-work/bko-audit/stock/restic-0.19.1/results.tsv"],
-                         "sha256:" + H["c"])
+        self.assertEqual(r.inputs["judge"]["host:" + STOCK_TSV["restic"]], "sha256:" + H["c"])
         self.assertEqual(r.inputs["host"], {"go": "ver:go version go1.25.10 linux/amd64"})
         u = self.res("gate:fork:rustic")
         self.assertEqual(u.inputs["harness"]["git:rustic"], "git:" + "3" * 40)
@@ -778,7 +819,7 @@ class Runner(unittest.TestCase):
         self.assertEqual(env.copy_path("chopin"), "/home/m/c/6fff54b")
         self.assertEqual(env.out_dir("loop:linux", 2), "/bkoscratch/t2core-p3-test/runs/t2g-20261108T0500-4f2a-r2/gate/loop-linux")
         self.assertEqual(env.ram_dir("fork-root:restic", 1), "/mnt/bko-ram/t2g-20261108T0500-4f2a-fork-root-restic")
-        self.assertEqual(env.host_for("gate:holt"), "chopin")
+        self.assertEqual(env.host_for("gate:holt"), "cinqcent")      # no pin (F7), no placement: the tie
         self.assertEqual(env.host_for("gate:fork:rustic"), "cinqcent")
         self.assertEqual(env.host_for("gate:loop:sparse@cinqcent"), "cinqcent")
         self.assertEqual(env.host_for("gate:selftest"), "mac")
@@ -1232,6 +1273,29 @@ class RunnerFailures(unittest.TestCase):
         self.assertIn("""trap 'trap "" INT TERM HUP; echo "run-all: interrupted\"""", text)
         text = read_file(os.path.join(REPO, "testvm", "test2", "gate", "loop.sh"))
         self.assertIn('[[ -z ${stopped:-} ]] || sudo -n rm -rf --one-file-system /mnt/bko-ram/"$pfx"-*', text)
+
+    def test_fork_tests_gets_the_reserve_of_its_host(self):
+        """fork-tests.sh's RESERVE is the layers' reserve on the host it runs on: 6 12 on a big
+        host, host_reserve's 6 10 on a small one (12 is over its ceiling's MEM 10.1)."""
+        seen = []
+
+        class IO(FakeIO):
+            def local(self, argv, cwd=None, env=None, timeout=None):
+                if argv and argv[0] == "bash" and argv[1].endswith("fork-tests.sh"):
+                    seen.append((argv[4], env["RESERVE"]))
+                return 1, ""
+        for hosts, want in ((["chopin", "cinqcent"], ("cinqcent", "6 12")), (["chopin", "copland"], ("copland", "6 10"))):
+            ctx = Ctx()
+            ctx.hosts = hosts
+            ctx.facts = {h: facts(h) for h in hosts}
+            ctx.facts["chopin"] = facts("chopin", stock=False)
+            env, _ = env_with(IO(), ["gate:fork:rustic"], ctx)
+            del seen[:]
+            o = gate.run_forks(env, ["rustic"], 1, {"rustic": "3" * 40, "rustic_core": "2" * 40})
+            self.assertEqual(seen, [want])
+            self.assertEqual(o["rustic"].extra["reserve_gib"], [float(x) for x in want[1].split()])
+            self.assertEqual(env.host_for("gate:fork:restic"), want[0])   # chopin hasn't the baseline
+            self.assertEqual(env.host_for("gate:holt"), hosts_table.tie_first(hosts))   # it needs none
 
     def test_fork_job_that_may_still_run_keeps_its_tools(self):
         o, _, sh = self.fork_env(2, ans="runs")

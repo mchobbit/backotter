@@ -848,6 +848,7 @@ class Planner:
             v.hosts = reach
             self.fit_arch(v, GATE_ARCH)
             self.fit_ceilings(v, self.gate_need(v))
+            self.fit_gate_inputs(v)
         elif v.family == "holt":
             pin = self.cls["holt"].get("pins", {}).get(v.name)
             if pin:
@@ -1190,18 +1191,57 @@ class Planner:
         if len(v.hosts) == 1 and v.pc.host == "any":
             v.pc.host = v.hosts[0]
 
+    def gate_entry(self, name):
+        sf = self.ctx.specs.get("gate")
+        try:
+            return sf.entry(name) if sf else {}
+        except KeyError:
+            return None
+
     def gate_need(self, v):
-        """A gate cell's cmp-run.sh --reserve (gate.reserve_for: the layer's host_reserve or
-        reserve, its own rows' peaks), or None for one that runs on the Mac."""
+        """A gate cell's cmp-run.sh --reserve on a host (gate.reserve_for: the layer's
+        host_reserve for it or reserve, its own rows' peaks), or None for one that runs on the
+        Mac."""
         if v.chost == "mac" or v.name == "selftest" or not self.any_ceiling():
             return None
         from . import gate as gatemod
-        sf = self.ctx.specs.get("gate")
-        try:
-            e = sf.entry(v.name) if sf else {}
-        except KeyError:
+        e = self.gate_entry(v.name)
+        if e is None:
             return None
-        return gatemod.reserve_for(e, self.ctx.ledger, v.cell)
+        return lambda h: gatemod.reserve_for(e, self.ctx.ledger, v.cell, h)
+
+    def newest_host(self, cell):
+        """The host of CELL's newest run row in the ledger, or None."""
+        best = None
+        for r in self.ctx.ledger:
+            if r.get("cell") == cell and r.get("kind") == "run" and r.get("host") and \
+                    (best is None or (r.get("t") or "") > (best.get("t") or "")):
+                best = r
+        return best.get("host") if best else None
+
+    def fit_gate_inputs(self, v):
+        """Keep unpinned gate cell V off each host whose facts say a host input its layer needs
+        is absent (gate.needed_inputs: a fork's stock baseline, made by
+        testvm/audit/stock-baseline.sh; F7).  With no host left, V is not runnable and says
+        which input no host has."""
+        if not v.hosts:
+            return
+        from . import gate as gatemod
+        e = self.gate_entry(v.name) or {}
+        off = {h: gatemod.lacking(e, self.ctx.facts.get(h)) for h in v.hosts}
+        off = {h: x for h, x in off.items() if x}
+        if not off:
+            return
+        v.hosts = [h for h in v.hosts if h not in off]
+        miss = sorted({p for x in off.values() for p in x})
+        if v.hosts:
+            v.pc.reasons_extra = list(getattr(v.pc, "reasons_extra", None) or []) + [
+                f"kept off {', '.join(sorted(off))}: no {', '.join(miss)} there"]
+            if len(v.hosts) == 1 and v.pc.host == "any":
+                v.pc.host = v.hosts[0]
+        else:
+            v.why_not = (f"no host in --hosts has {', '.join(miss)}"
+                         + (" (testvm/audit/stock-baseline.sh makes it)" if any("/stock/" in p for p in miss) else ""))
 
     def holt_need(self, v, h):
         """A holt cell's --reserve D M on host H, as ht1-queue.sh takes it: ram-size.sh with the
@@ -2667,7 +2707,8 @@ class Planner:
             for v in due:
                 v.pc.placed = place.get(v.cell)
         else:
-            part, host_of = {}, {}
+            from . import gate as gatemod
+            part, host_of, spread = {}, {}, {}
             sf = ctx.specs.get("gate")
             for v in views:
                 e = {}
@@ -2679,6 +2720,22 @@ class Planner:
                 v.pc.part = e.get("part") or ("slow" if v.name.startswith("loop:") else "fast")
                 part[v.cell] = v.pc.part
                 host_of[v.cell] = hosts_table.tie_first(v.hosts) if v.hosts else v.pc.host
+                if v.pc.part == "fast" and not e.get("pin") and v.chost is None and len(v.hosts) > 1 \
+                        and v.pc.status == "due":
+                    spread[v.cell] = v.hosts
+            # (F7: the unpinned fast layers, the shared host last and the forks spread)
+            host_of.update(gatemod.fast_place(list(spread), spread, gatemod.shared_hosts()))
+            # A layer with place_with W runs where W's run is (fork-root:restic reads fork:restic's
+            # m run of the commit, on that host): W's placement here, else W's newest row's host.
+            for v in views:
+                w = (self.gate_entry(v.name) or {}).get("place_with")
+                if not w or v.cell not in spread:
+                    continue
+                h = host_of.get("gate:" + w) if any(x.cell == "gate:" + w and x.pc.status == "due" for x in views) \
+                    else self.newest_host("gate:" + w)
+                if h in v.hosts:
+                    host_of[v.cell] = h
+            for v in views:
                 v.pc.placed = host_of[v.cell] if v.pc.status == "due" else None
             wall = estimates.gate_wall([v.cell for v in due], {v.cell: v.pc.est for v in due}, part, host_of)
         for v in due:

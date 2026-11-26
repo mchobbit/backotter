@@ -1022,6 +1022,40 @@ this spec's speedups 2 and 7.
   (to check). *Proof:* each unpinned layer PASSes on a small host with the
   same counts as its last pinned run. *Gain:* est. 5-15 min of fast-part
   wall time per GateTest2, with the heaviest compiles off Chopin.
+  *As built:* no fast layer has a pin but gate:selftest (the Mac's), fork-root
+  included: its reserve is 1 2 and the small hosts have their own
+  mkfs.bcachefs. The plan keeps an unpinned layer off a host its arch or
+  ceiling rules out, and off one whose facts say a host input marked
+  `"need": true` is absent (`gate.needed_inputs`: each fork's stock
+  `results.tsv` and the rustic toolchain), then places it with
+  `gate.fast_place`: the shared host (the fleet role, Chopin) last, the three
+  forks (one fork-tests.sh per host, run at once) on distinct hosts where it
+  can, then the tie order. fork-root:restic has `"place_with":
+  "fork:restic"`: its root-list need reads fork:restic's m run of the commit
+  on its own host (elsewhere the need is SKIP, 30 PASS instead of 31: the
+  first small-host run found it), so it goes where fork:restic is placed, or
+  where its newest row ran. The code's reality differed from the text in two
+  places, fixed with it: the forks' stock paths in layers.json still named
+  restic 0.19.1, rustic_core 0.13.0 and rustic 0.11.4, absent on every host
+  since the 2026-11-22 STOCK move, so the judge key never saw the baseline
+  fork-tests.sh read (test_gate now checks them against audit-lib.sh); and
+  fork-tests.sh's `--reserve 6 12` is over a small host's ceiling (MEM
+  10.1), so the fork layers got `reserve` 6 12 and `host_reserve` small 6 10,
+  which the plan checks and run_forks passes as RESERVE. The baselines were
+  built off Chopin on 2026-11-26 (`stock-baseline.sh --restic-host cage
+  --host copland`, RESERVE 6 10): restic on cage, rustic_core and rustic on
+  copland, 7 min, the same counts as Chopin's and Cinqcent's (1728/0/33,
+  363/0/0, 76/0/6) and byte-identical `results.tsv`, so a fork cell's key is
+  the same wherever it runs. *Proof run 2026-11-26* (`GateTest2 holt
+  fork:restic fork:rustic_core fork:rustic fork-root:restic --hosts
+  copland,cage,czerny`, then fork:restic and fork-root again with
+  place_with): every layer PASS on a small host with its last pinned run's
+  counts. gate:holt on copland 985 passed, 17 filtered, 4 ignored, corpus 98
+  (Chopin's 135 s, copland's 142 s); fork:restic on cage 1930/0/73, builds
+  13; fork:rustic_core on copland 706/0/0, builds 3; fork:rustic on copland
+  85/0/6 (builds 3, not 2: the one-time prep-rustic-src row of a tree new to
+  that host); fork-root:restic on cage 31 PASS, root-list PASS, each fork job
+  under `--reserve 6 10`. Choubox (ceiling 3.0) takes no fork layer.
 - **F8. bko-holt and bko-rescue builds on big hosts only (yes).**
   `holt.py:255-263` `big_build_hosts` needs class_rank 0, and t2 batch
   refuses a HoltTest2 set without a big builder. Change: drop the class

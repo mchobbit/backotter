@@ -28,18 +28,25 @@ is host-lost; the gate first waits for the host to be back and settled, then rer
 still run there, no reboot seen; a slow layer's host-lost result stops nothing, run_layers' "go").  A fast layer that doesn't pass answers stop-family (no guest
 of the calling family starts), a slow one stop-starts.
 
-    gate:holt          holt-test.sh on Chopin (pinned there: the raw dumps of
-                       /bkoscratch/test2/h1-raw are), under cmp-run.sh --reserve 2 4, in
-                       RAM: cargo test (--skip golden_), the golden plans in report mode
-                       (diff.json goes into extra.plan_diff; a DIFF passes, R23) with their
-                       invariants, and redact_dumps over h1-raw and the corpus
-    gate:fork:NAME     testvm/audit/fork-tests.sh --force, run on the Mac (restic on
-                       Chopin, rustic_core and rustic on Cinqcent), BKO_AUDIT_TAG=RUN, the
-                       job's WEAR_TAG gate:RUN:fork@HOST; NAME.report judged against
+    gate:holt          holt-test.sh under cmp-run.sh --reserve 2 4, in RAM: cargo test
+                       (--skip golden_), the golden plans in report mode (diff.json goes
+                       into extra.plan_diff; a DIFF passes, R23) with their invariants, and
+                       redact_dumps over the corpus (and over a host input h1-raw, when the
+                       entry names one: none since F7, the dumps being on no host)
+    gate:fork:NAME     testvm/audit/fork-tests.sh --force, run on the Mac, each fork's job
+                       on its placed host (with RESERVE its reserve there), BKO_AUDIT_TAG=RUN,
+                       the job's WEAR_TAG gate:RUN:fork@HOST; NAME.report judged against
                        gate/baseline.json (R13)
     gate:fork-root:restic
-                       fork-root.sh on Chopin: the reviewed root-only tests of
-                       restic-root-tests.txt as root, in RAM (R25: the rest stays m's)
+                       fork-root.sh: the reviewed root-only tests of restic-root-tests.txt
+                       as root, in RAM (R25: the rest stays m's)
+
+The fast layers have no pin since F7 (docs/design/img-speed.md, FD6): the plan places each
+on a host that can run it (arch, ceiling, and its needed host inputs: a fork's stock
+baseline, testvm/audit/stock-baseline.sh, needed_inputs), the shared host (Chopin) last,
+the forks, which run at once, spread over hosts (fast_place), and a layer with
+"place_with": W where W's run is (fork-root:restic's root-list need reads fork:restic's m
+run of the commit, on that host; elsewhere it is SKIP).
     gate:bin:abi|static|version
                        bincheck.sh on one host, on the set under test (and on bko-holt's
                        HOST_ROOT/holt-bin/CODE); version's agreement across OSes, with
@@ -187,24 +194,26 @@ def full_run(row):
     return all(lp.get(k) in (None, "default") for k in ("linux_fs", "sparse_fs"))
 
 
-def base_reserve(entry, cell):
+def base_reserve(entry, cell, host=None):
     """[DISK_GIB, MEM_GIB] before any peak: the entry's "host_reserve" for the cell's host (a
     small host's: its run-all.sh profile runs one job at a time, so less fits its ceiling),
     keyed by the host's name or, failing that, its class in testvm/hosts.json (small), else
-    its "reserve", else 2 4."""
-    _, host = split_cell(cell)
+    its "reserve", else 2 4.  The cell's host is its @HOST, else HOST (where the plan placed
+    a layer that runs on one host: a fork layer's fork-tests.sh RESERVE)."""
+    _, h = split_cell(cell)
+    host = h or host
     hr = entry.get("host_reserve") or {}
     r = (hr.get(host) or hr.get(host_class(host))) if host else None
     return (list(r or entry.get("reserve") or [2, 4]) + [4])[:2]
 
 
-def reserve_for(entry, rows, cell):
+def reserve_for(entry, rows, cell, host=None):
     """(DISK_GIB, MEM_GIB) of a layer's cmp-run.sh --reserve: base_reserve's (the entry's
-    "host_reserve" for the cell's host, else its "reserve"); with "peak_reserve", once the
-    cell's rows have RAM peaks, 1.1 x the largest of the last 3 plus 0.25 GiB (contract 2.1).
-    Only whole runs' peaks count (full_run).  The plan keeps a cell off a host whose ceiling
-    (facts.ceiling) this exceeds."""
-    d, m = base_reserve(entry, cell)
+    "host_reserve" for the cell's host, its @HOST else HOST, else its "reserve"); with
+    "peak_reserve", once the cell's rows have RAM peaks, 1.1 x the largest of the last 3 plus
+    0.25 GiB (contract 2.1).  Only whole runs' peaks count (full_run).  The plan keeps a cell
+    off a host whose ceiling (facts.ceiling) this exceeds."""
+    d, m = base_reserve(entry, cell, host)
     if entry.get("peak_reserve"):
         mine = sorted((r for r in rows if r.get("cell") == cell and r.get("kind") == "run" and full_run(r)
                        and isinstance(r.get("ram_peak_kib"), int) and r["ram_peak_kib"] > 0),
@@ -212,6 +221,62 @@ def reserve_for(entry, rows, cell):
         if mine:
             d = round(1.1 * max(r["ram_peak_kib"] for r in mine) / 1048576 + 0.25, 1)
     return float(d), float(m)
+
+
+def needed_inputs(entry):
+    """The host inputs a layer can't run without: its host_inputs given as {"path", "need":
+    true} (a fork layer's stock baseline and toolchain: fork-tests.sh exits 2 without the
+    baseline on its host).  The plan places the layer only where the facts have them."""
+    return [x["path"] for x in (entry.get("host_inputs") or [])
+            if isinstance(x, dict) and x.get("need") and x.get("path")]
+
+
+def lacking(entry, facts):
+    """needed_inputs(ENTRY) that FACTS (one host's) say are absent.  An input the facts didn't
+    measure, and facts with no host_inputs at all (old facts), lack nothing: their key says so."""
+    hi = (facts or {}).get("host_inputs")
+    if not isinstance(hi, dict):
+        return []
+    return [p for p in needed_inputs(entry) if p in hi and hi[p] in (None, "absent")]
+
+
+# The fast layers that run at once (run_fork_cells: one fork-tests.sh per host, in parallel):
+# their placement spreads them over hosts.
+FAST_TOGETHER = ("fork:restic", "fork:rustic_core", "fork:rustic")
+
+
+def fast_place(cells, hosts_of, shared=()):
+    """{cell: host} for the unpinned fast layers CELLS (F7, docs/design/img-speed.md), each
+    over its hosts HOSTS_OF[cell] (already kept to the hosts that can run it: arch, ceiling,
+    needed inputs): the shared host (SHARED, Chopin: the fleet host) last, then the host
+    with the fewest of FAST_TOGETHER placed on it so far (they run at once, so two on one
+    host run one after the other), then hosts.tie_order (class, heat, the table).  Cells
+    go in FAST_ORDER; a cell with no host is left out."""
+    order = {n: i for i, n in enumerate(FAST_ORDER)}
+    out, together = {}, {}
+    for c in sorted(cells, key=lambda c: (order.get(split_cell(c)[0], len(order)), c)):
+        hs = list(hosts_of.get(c) or [])
+        if not hs:
+            continue
+        ties = {h: i for i, h in enumerate(hosts_table.tie_order(hs))}
+        joint = split_cell(c)[0] in FAST_TOGETHER
+        h = min(hs, key=lambda h: (h in shared, together.get(h, 0) if joint else 0, ties[h]))
+        out[c] = h
+        if joint:
+            together[h] = together.get(h, 0) + 1
+    return out
+
+
+def shared_hosts(table=None):
+    """The shared host's names (the fleet and store-mirror roles: Chopin), which fast_place
+    puts last, as pick-host and the batch scheduler do."""
+    out = set()
+    for role in ("fleet", "store-mirror"):
+        try:
+            out |= set(hosts_table.with_role(role, table))
+        except Exception:  # noqa: BLE001 - no table: nothing is shared
+            pass
+    return out
 
 
 # --- the run's environment ---------------------------------------------------------------
@@ -302,22 +367,27 @@ class RunEnv:
         return None
 
     def host_for(self, cell):
-        """The host a cell runs on: its @HOST, its pin, the plan's placement, else the host
-        with facts a tie goes to (hosts.tie_order: class, heat, then the table's order)."""
+        """The host a cell runs on: its @HOST, its pin, the plan's placement (fast_place for an
+        unpinned fast layer), else the host with facts a tie goes to (hosts.tie_order: class,
+        heat, then the table's order), one that lacks none of its needed inputs first."""
         name, h = split_cell(cell)
         if name == "selftest":
             return "mac"
         if h:
             return h
-        pin = entry_or_empty(self.layers, name).get("pin")
+        e = entry_or_empty(self.layers, name)
+        pin = e.get("pin")
         if pin:
             return pin
         pc = self.plan_cell(cell)
-        for x in (getattr(pc, "placed", None), getattr(pc, "host", None)):
+        wc = self.plan_cell("gate:" + e["place_with"]) if e.get("place_with") else None
+        for x in (getattr(pc, "placed", None), getattr(pc, "host", None), getattr(wc, "placed", None)):
             if x and x in self.hosts:
                 return x
+        # (no placement: the tie's host of those with facts, one with the inputs it needs first)
         ties = hosts_table.tie_order(self.hosts)
-        return next((x for x in ties if x in self.facts), ties[0])
+        return next((x for x in ties if x in self.facts and not lacking(e, self.facts[x])),
+                    next((x for x in ties if x in self.facts), ties[0]))
 
 
 def new_run_id(prefix="t2g", t=None):
@@ -388,7 +458,7 @@ def run_holt(env, host, attempt):
     cmd = (f"bash {_q(env.copy_path(host) + '/testvm/test2/gate/holt-test.sh')} --out {_q(out)} --ram {_q(env.ram_dir(name, attempt))}"
            + (f" --raw {_q(raw)}" if raw else ""))
     tag = f"gate:{env.attempt_run(attempt)}:holt"
-    res = reserve_for(e, env.rows, "gate:holt")
+    res = reserve_for(e, env.rows, "gate:holt", host)
     rc, out, t, why = host_job(env, host, name, attempt, cmd, res, tag,
                                int(e.get("timeout_s", 3600)), ram=env.ram_dir(name, attempt))
     if rc is None:
@@ -469,11 +539,15 @@ def run_forks(env, names, attempt, commits):
     groups = {}
     for n in names:
         groups.setdefault(env.host_for(f"gate:fork:{n}"), []).append(n)
-    results, lock = {}, threading.Lock()
+    results, reserves, lock = {}, {}, threading.Lock()
 
     def one(host, ns):
+        # fork-tests.sh's cmp-run.sh --reserve (audit-lib.sh's RESERVE): the layers' reserve for
+        # HOST (a small host's host_reserve fits its ceiling), the largest of the host's layers.
+        rs = [reserve_for(entry_or_empty(env.layers, f"fork:{n}"), env.rows, f"gate:fork:{n}", host) for n in ns]
         e = dict(os.environ, BKO_AUDIT_TAG=run, BKO_WEAR_TAG=f"gate:{run}:fork@{host}", BKO_AUDIT_LOCAL=local,
-                 PYTHONDONTWRITEBYTECODE="1", BKO_GIT=getattr(env.ctx, "bko_git", None) or bko_git())
+                 PYTHONDONTWRITEBYTECODE="1", BKO_GIT=getattr(env.ctx, "bko_git", None) or bko_git(),
+                 RESERVE="%g %g" % (max(r[0] for r in rs), max(r[1] for r in rs)))
         hostopt = ["--restic-host", host] if ns == ["restic"] else ["--rustic-host", host]
         if "restic" in ns and len(ns) > 1:
             hostopt += ["--restic-host", host]
@@ -484,6 +558,7 @@ def run_forks(env, names, attempt, commits):
         r = env.io.local(argv, cwd=os.path.join(env.checkout, "testvm", "audit"), env=e, timeout=4 * 3600)
         with lock:
             results[host] = (r[0], r[1], start, t0, int(time.time() - t0))
+            reserves[host] = [float(x) for x in e["RESERVE"].split()]
 
     ths = [threading.Thread(target=one, args=(h, ns)) for h, ns in groups.items()]
     for th in ths:
@@ -520,6 +595,8 @@ def run_forks(env, names, attempt, commits):
             o.wear = {f"gate:{run}:fork@{host}": None}
             o.meta["commits"] = {k: v for k, v in commits.items() if k == n or (n == "rustic" and k == "rustic_core")}
             o.extra["fork_tests_exit"] = rc
+            if host in reserves:
+                o.extra["reserve_gib"] = reserves[host]
             out[n] = o
         if may_run:     # its host jobs may still run and use them
             env.log(f"{host}: fork-tests.sh exit {rc} and its job may still run: "
@@ -550,7 +627,7 @@ def run_fork_root(env, host, attempt, commit):
     cmd = (f"bash {_q(env.copy_path(host) + '/testvm/test2/gate/fork-root.sh')} --commit {commit} --out {_q(out)} "
            f"--ram {_q(env.ram_dir(name, attempt))}")
     tag = f"gate:{env.attempt_run(attempt)}:{name}"
-    res = reserve_for(e, env.rows, "gate:" + name)
+    res = reserve_for(e, env.rows, "gate:" + name, host)
     rc, out, t, why = host_job(env, host, name, attempt, cmd, res, tag,
                                int(e.get("timeout_s", 3600)), ram=env.ram_dir(name, attempt))
     if rc is None:

@@ -289,6 +289,97 @@ class Placement(unittest.TestCase):
             self.assertTrue(facts.over_ceiling(gate.reserve_for(layers[n], [], f"gate:{n}@chopin"), SMALL), n)
 
 
+class GatePlacement(unittest.TestCase):
+    """F7 (docs/design/img-speed.md, FD6): the fast gate layers unpinned.  The plan keeps each
+    off a host without a host input it needs (a fork's stock baseline) and over whose ceiling
+    its reserve is, puts the shared host (Chopin) last and spreads the forks, which run at once."""
+
+    STOCK = {"restic": "~/b/stock/restic-0.20.0/results.tsv", "rustic_core": "~/b/stock/rustic_core-0.14.0/results.tsv",
+             "rustic": "~/b/stock/rustic-0.12.0/results.tsv"}
+    HOSTS = ["chopin", "cinqcent", "copland", "cage"]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="t2-small-gate-")
+        cls.w = world.World(cls.tmp)
+        layers = json.loads(cls.w.read("testvm/test2/gate/layers.json"))
+        e = layers["entries"]
+        for n, path in cls.STOCK.items():
+            e["fork:" + n].pop("pin")
+            e["fork:" + n].update(reserve=[6, 12], host_reserve={"small": [6, 10]},
+                                  host_inputs=[{"path": path, "group": "judge", "need": True}])
+        for n in ("holt", "fork-root:restic"):
+            e[n].pop("pin")
+        e["fork-root:restic"]["place_with"] = "fork:restic"
+        cls.w.edit("testvm/test2/gate/layers.json", json.dumps(layers, indent=1, sort_keys=True), commit=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def plan(self, have, hosts=None):
+        """GateTest2's fast layers on HOSTS (default all four), HAVE {host: [fork names whose
+        baseline it has]}; the big hosts' ceilings BIG, the small ones' 9.0 10.1."""
+        hosts = hosts or self.HOSTS
+        fx = self.w.facts(hosts=hosts)
+        for h in hosts:
+            fx[h]["preflight"]["ram"]["ceiling"] = BIG if hosts_table.host_class(h) == "big" else [9.0, 10.1]
+            fx[h]["host_inputs"] = {p: ("sha256:" + "ab" * 32 if n in have.get(h, ()) else "absent")
+                                    for n, p in self.STOCK.items()}
+        return self.w.plan("GateTest2 rel4 holt fork:restic fork:rustic_core fork:rustic fork-root:restic plan",
+                           facts=fx, hosts=hosts)
+
+    def test_forks_go_where_their_baselines_are_spread_and_off_the_shared_host(self):
+        every = ("restic", "rustic_core", "rustic")
+        p = self.plan({"chopin": ["restic"], "cinqcent": ["rustic_core", "rustic"],
+                       "cage": ["restic"], "copland": ["rustic_core", "rustic"]})
+        placed = {c: p.cell(c).placed for c in ("gate:fork:restic", "gate:fork:rustic_core", "gate:fork:rustic",
+                                                "gate:holt", "gate:fork-root:restic")}
+        self.assertEqual(placed, {"gate:fork:restic": "cage",          # chopin has it too: the shared host last
+                                  "gate:fork:rustic_core": "cinqcent",  # a big host first
+                                  "gate:fork:rustic": "copland",        # not beside rustic_core: they run at once
+                                  "gate:holt": "cinqcent",
+                                  "gate:fork-root:restic": "cage"})     # place_with: beside fork:restic's m run
+        self.assertEqual(sorted(p.cell("gate:fork:restic").keys), ["cage", "chopin"])
+        self.assertTrue(any("kept off cinqcent, copland" in r for r in p.cell("gate:fork:restic").reasons),
+                        p.cell("gate:fork:restic").reasons)
+        p = self.plan({h: every for h in self.HOSTS})
+        self.assertEqual(len({p.cell(f"gate:fork:{n}").placed for n in every}), 3)
+        self.assertNotIn("chopin", {p.cell(f"gate:fork:{n}").placed for n in every})
+
+    def test_place_with_a_layer_not_due_goes_to_its_newest_row(self):
+        """fork-root:restic alone: where fork:restic's newest row ran (its m run of the commit
+        is there), not where the tie would put it."""
+        have = {h: ("restic", "rustic_core", "rustic") for h in self.HOSTS}
+        p = self.plan(have)
+        fr = p.cell("gate:fork:restic")
+        self.assertNotEqual(fr.placed, "copland")
+        rows = [self.w.row(fr, "copland", plan_=p)]
+        fx = self.w.last_facts
+        p2 = self.w.plan("GateTest2 rel4 fork-root:restic plan", rows=rows, facts=fx, hosts=self.HOSTS)
+        self.assertEqual(p2.cell("gate:fork-root:restic").placed, "copland")
+        p3 = self.w.plan("GateTest2 rel4 fork-root:restic plan", facts=fx, hosts=self.HOSTS)
+        self.assertEqual(p3.cell("gate:fork-root:restic").placed, "cinqcent")   # no row: the tie, Chopin last
+
+    def test_the_small_hosts_alone(self):
+        """--hosts copland,cage: each fork on a host with its baseline, its reserve within the
+        small ceiling (host_reserve 6 10; the big reserve 6 12 is over MEM 10.1)."""
+        p = self.plan({"cage": ["restic"], "copland": ["rustic_core", "rustic"]}, ["copland", "cage"])
+        self.assertEqual({n: p.cell(f"gate:fork:{n}").placed for n in self.STOCK},
+                         {"restic": "cage", "rustic_core": "copland", "rustic": "copland"})
+        self.assertEqual(p.cell("gate:fork:rustic").status, "due")
+        self.assertEqual(gate.reserve_for({"reserve": [6, 12], "host_reserve": {"small": [6, 10]}}, [],
+                                          "gate:fork:rustic", "copland"), (6.0, 10.0))
+        self.assertTrue(facts.over_ceiling((6.0, 12.0), [9.0, 10.1]))
+
+    def test_no_host_with_the_baseline_is_not_runnable(self):
+        p = self.plan({"cage": ["restic"]}, ["copland", "cage"])
+        c = p.cell("gate:fork:rustic")
+        self.assertEqual(c.status, "not-runnable")
+        self.assertIn("no host in --hosts has ~/b/stock/rustic-0.12.0/results.tsv (testvm/audit/stock-baseline.sh makes it)",
+                      c.reasons)
+
+
 class SticReport(unittest.TestCase):
     """SticTest2's result names a guest drive.py found over every host's ceiling as too big."""
 

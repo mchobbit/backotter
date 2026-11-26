@@ -1955,9 +1955,27 @@ class FsSlackware(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertNotIn("DIFF", out)
         self.assertIn("boot stage (load runs the source's mkinitrd command again: /boot/initrd.gz): 2: boot/initrd.gz, boot/initrd.gz", out)
-        self.assertIn("boot stage (mkinitrd remakes its tree, /boot/initrd-tree (its -c clears it first)): 4: boot/initrd-tree/init, boot/initrd-tree, boot/initrd-tree/rootdev, boot/initrd-tree/rootdev", out)
+        self.assertIn("boot stage (mkinitrd remakes its tree, /boot/initrd-tree (its -c clears it first; its library links too)): 4: boot/initrd-tree/init, boot/initrd-tree, boot/initrd-tree/rootdev, boot/initrd-tree/rootdev", out)
         self.assertIn(f"boot stage (load copies the remade /boot/initrd.gz over the ESP's (as eliloconfig does)): 4: {self.INITRDS[0]}", out)
         self.assertIn("ELILO kept: 9 paths of EFI/Slackware and EFI/BOOT held to the source's bytes; 2 ESP initrd.gz", out)
+
+    def test_mkinitrd_tree_symlinks_remade_pass(self):
+        """mkinitrd -c remakes the tree's library links (lib64/libc.so.6 and
+        the like) with new times: the tree's rule covers them, and nothing
+        outside the tree."""
+        src = copy.deepcopy(self.UEFI)
+        src["boot/initrd-tree/lib64"] = meta("dir")
+        src["boot/initrd-tree/lib64/libc.so.6"] = meta("symlink", target="libc-2.33.so")
+        src["etc/localtime"] = meta("symlink", target="/usr/share/zoneinfo/UTC")
+        a = self.remade(src)
+        a["boot/initrd-tree/lib64/libc.so.6"]["mtime"] = 5
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+        a["etc/localtime"]["mtime"] = 5
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF mtime (symlinks): 1: etc/localtime", out)
 
     def test_elilo_files_held(self):
         """grub-install's ESP rule must not excuse ELILO, its elilo.conf or
@@ -2212,6 +2230,22 @@ class Reformat(unittest.TestCase):
     def test_without_the_flag_it_differs(self):
         src = btrfs_root_guest()
         self.bad(src, reformatted(src))
+
+    def test_slackware_mkinitrd_command(self):
+        """Slackware's mkinitrd (8ff49dc): the initrd remade with -f and -m's
+        root module the new type's, the rest of the command as it was."""
+        def mk(line):
+            return {"generator": "mkinitrd", "evidence": ["/boot/initrd.gz exists", f'/boot/initrd-tree/command_line says "{line}"'],
+                    "mkinitrd": {"command_line": line, "kernels": ["5.15.19"], "output": "/boot/initrd.gz"}}
+        old = "/sbin/mkinitrd -c -k 5.15.19 -f btrfs -r /dev/vda3 -m virtio_blk:btrfs -u -o /boot/initrd.gz"
+        new = "/sbin/mkinitrd -c -k 5.15.19 -f ext4 -r /dev/vda3 -m virtio_blk:ext4 -u -o /boot/initrd.gz"
+        src = btrfs_root_guest()
+        src.setdefault("boot", {})["initramfs"] = mk(old)
+        dst = reformatted(src)
+        dst["boot"]["initramfs"] = mk(new)
+        self.assertIn("mkinitrd's command line with -f ext4", self.good(src, dst, "--reformat", "/=ext4"))
+        dst["boot"]["initramfs"] = mk(old)
+        self.assertIn("DIFF boot.initramfs.mkinitrd.command_line", self.bad(src, dst, "--reformat", "/=ext4"))
 
     def test_wrong_type(self):
         src = btrfs_root_guest()

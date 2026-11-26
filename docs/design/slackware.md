@@ -201,6 +201,15 @@ yet. Code references are to local `main` at 1edb4b5.
   the ESP's `EFI/*/initrd.gz`, geninitrd's `initrd-VERSION.img`) with the
   restored system's gzip and cpio: its `/rootfs` must say the new type and
   it must hold the new type's module, or its kernel have it built in.
+  Proved on the farm 2026-11-26 (Cinqcent, bko-holt 8ff49dc): a
+  BackShot2 tier 1 case of slackware15-uefi with `--reformat /=ext4`
+  booted the rebuilt initrd onto an ext4 / (`root vda3 ext4 rw`), and both
+  judges, given `--reformat /=ext4`, found 0 differences. That exercises
+  load's rebuild path end to end: the tree's /dev put back, ld.so.cache
+  and aux-cache kept, the image repacked. The judge now expects the
+  rebuilt tree's library links' times and the `-f`/`-m` edit (judge.py).
+  BackShot2's own verify doesn't yet pass `--reformat` to the judges (the
+  sweep's `--reformat` item), so the case's own verdict is FAIL there.
 - **LILO (BIOS), a new arm:** `chroot /mnt/bko-target lilo -v`, after the
   initrd step. It needs `/dev`, `/proc` and `/sys` in the chroot (the boot
   stage binds them already) and `boot=` naming the target disk. `lilo -t`

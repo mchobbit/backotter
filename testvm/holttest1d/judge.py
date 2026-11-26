@@ -403,7 +403,7 @@ LILO_STAGE = [
 # /boot/initrd.gz.  A source is one with /etc/slackware-version.
 MKINITRD_STAGE = [
     (r"^boot/initrd\.gz$", _WRITTEN - {"extra"}, "load runs the source's mkinitrd command again: /boot/initrd.gz"),
-    (r"^boot/initrd-tree(/.*)?$", _WRITTEN | {"missing"}, "mkinitrd remakes its tree, /boot/initrd-tree (its -c clears it first)"),
+    (r"^boot/initrd-tree(/.*)?$", _WRITTEN | {"missing", "mtime (symlinks)"}, "mkinitrd remakes its tree, /boot/initrd-tree (its -c clears it first; its library links too)"),
 ]
 # ELILO (slackware15-uefi, S6): load installs nothing, so elilo.efi,
 # elilo.conf and the kernel in EFI/Slackware and the fallback EFI/BOOT
@@ -1905,6 +1905,48 @@ def _under(p, m):
     return m == "/" or p == m or p.startswith(m + "/")
 
 
+def _mkinitrd_modules(lst, frm, to):
+    """holt's mkinitrd_modules: -m's colon list with each FRM entry (by its
+    first word, - read as _) made TO in its place, TO kept once, and TO
+    added at the end when FRM wasn't listed."""
+    name = lambda e: (e.split() or [""])[0].replace("-", "_")
+    fn, tn = frm.replace("-", "_"), to.replace("-", "_")
+    out, had = [], False
+    for e in lst.split(":"):
+        n = name(e)
+        if n == fn:
+            had = True
+            if not any(name(x) == tn for x in out):
+                out.append(to)
+        elif n == tn and any(name(x) == tn for x in out):
+            continue
+        else:
+            out.append(e)
+    if not had and not any(name(x) == tn for x in out):
+        if out and out[-1] == "":
+            out.pop()
+        out.append(to)
+    return ":".join(out)
+
+
+def slackware_mkinitrd_reformat(line, frm, to):
+    """mkinitrd_replay's edit of Slackware's mkinitrd command for a reformat
+    of / from FRM to TO: -f TO (appended when there is no -f), and in -m the
+    FRM module made TO's in its place (TO's appended when FRM's isn't listed
+    and TO's isn't either); every other word kept."""
+    w = line.split()
+    if "-f" in w and w.index("-f") + 1 < len(w):
+        w[w.index("-f") + 1] = to
+    else:
+        w += ["-f", to]
+    if "-m" in w and w.index("-m") + 1 < len(w):
+        i = w.index("-m") + 1
+        w[i] = _mkinitrd_modules(w[i], frm, to)
+    else:
+        w += ["-m", to]
+    return " ".join(w)
+
+
 def reformat_expect(src, dst, reforms):
     """SRC's dump edited into what each --reformat (MOUNT, TYPE) of REFORMS
     predicts, and the fields it can't predict taken out of both: problems
@@ -1965,6 +2007,18 @@ def reformat_expect(src, dst, reforms):
             ss["fstab"] = [e for e in ss["fstab"] if not (e.get("resolves_to") == dev and e.get("file") in folded)]
             entry.update(type=to, options=generic_options(entry.get("options")),
                          passno=(1 if mount == "/" else 2) if to == "ext4" else 0)
+        # Slackware's mkinitrd (load's mkinitrd_replay, 8ff49dc): a reformat
+        # of / remakes the initrd by the source's command with -f the new
+        # type (added when it had none) and the old type's module in -m the
+        # new type's, in its place (added at the end when it wasn't listed);
+        # mkinitrd writes that command to its tree's command_line.
+        mk = (src.get("boot") or {}).get("initramfs") or {}
+        if mount == "/" and mk.get("generator") == "mkinitrd" and isinstance((mk.get("mkinitrd") or {}).get("command_line"), str):
+            old = mk["mkinitrd"]["command_line"]
+            new = slackware_mkinitrd_reformat(old, frm, to)
+            mk["mkinitrd"]["command_line"] = new
+            mk["evidence"] = [e.replace(f'"{old}"', f'"{new}"') if isinstance(e, str) else e for e in mk.get("evidence") or []]
+            notes.append(f"--reformat {mount}={to}: mkinitrd's command line with -f {to} and the {to} module in -m")
         # The subvolume MOUNT was (the source's mount root, /@): GRUB's paths
         # on the btrfs began with it, the new type's begin at MOUNT's root.
         sub = next((m.get("root") for m in ss.get("mounts") or [] if m.get("device") == dev and m.get("target") == mount), None)

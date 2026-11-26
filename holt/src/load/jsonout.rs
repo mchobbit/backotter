@@ -5,13 +5,13 @@
 //! own table of the flags that take a value, the `bko-holt-error` document,
 //! `bko-holt --version --json`'s `bko-holt-api` document, the dry-run lock,
 //! and writing a document on standard output without ever panicking
-//! (RT10a); the plan document and its hash (RT10c), with the size verdicts
-//! of each candidate (RT10d).  The status document is status.rs's
-//! (RT10e), made with header and line here.  The writing stages' events
-//! (RT10f, RT10g) are made here and written by exec.rs as they happen.
-//! `bko-holt stick --json`'s document is stick.rs's (RT10k), as is `stick
+//! (`RT10a`); the plan document and its hash (`RT10c`), with the size verdicts
+//! of each candidate (`RT10d`).  The status document is status.rs's
+//! (`RT10e`), made with header and line here.  The writing stages' events
+//! (`RT10f`, `RT10g`) are made here and written by exec.rs as they happen.
+//! `bko-holt stick --json`'s document is stick.rs's (`RT10k`), as is `stick
 //! --copy`'s (open question 8), and `recovery-words`' recoverycmd.rs's
-//! (RT10p).
+//! (`RT10p`).
 //! Text mode never comes here: everything is behind `--json` or the
 //! variable.
 
@@ -46,9 +46,9 @@ pub const FEATURES: &[&str] = &[
 ];
 
 /// The documents this bko-holt writes, each with the schemas it writes.
-/// Grows with RT10's steps (plan: RT10c, status: RT10e, events: RT10f,
-/// stick: RT10k, recovery: RT10p, stick_copy: open question 8,
-/// luks_headers: open question 12).
+/// Grows with RT10's steps (plan: `RT10c`, status: `RT10e`, events: `RT10f`,
+/// stick: `RT10k`, recovery: `RT10p`, `stick_copy`: open question 8,
+/// `luks_headers`: open question 12).
 pub const DOCUMENTS: &[(&str, &[u64])] = &[
     ("plan", &[SCHEMA]),
     ("status", &[SCHEMA]),
@@ -71,7 +71,7 @@ pub enum ErrorCode {
     ArchMismatch,
     SchemaUnknown,
     JsonNotHere,
-    /// recovery-words' OUT isn't a new file in a private directory (RT10p).
+    /// recovery-words' OUT isn't a new file in a private directory (`RT10p`).
     OutUnsafe,
     /// `stick --copy`'s refusals (exit 1, open question 8): the config
     /// partition isn't `ok`; no machine of that install ID; two directories
@@ -134,7 +134,7 @@ impl ErrorCode {
     }
 }
 
-/// BKO_HOLT_NO_COMMIT's value when it is in force: set, not empty and not
+/// `BKO_HOLT_NO_COMMIT`'s value when it is in force: set, not empty and not
 /// `0`; any other value counts, so a typo can't turn the lock off (J12).
 /// A value that isn't UTF-8 counts too, shown lossily.
 pub fn no_commit_value(v: Option<&std::ffi::OsStr>) -> Option<String> {
@@ -145,7 +145,7 @@ pub fn no_commit_value(v: Option<&std::ffi::OsStr>) -> Option<String> {
     Some(v.to_string_lossy().into_owned())
 }
 
-/// BKO_HOLT_NO_COMMIT's value, when it is in force for this process.
+/// `BKO_HOLT_NO_COMMIT`'s value, when it is in force for this process.
 pub fn no_commit() -> Option<String> {
     no_commit_value(std::env::var_os(NO_COMMIT_VAR).as_deref())
 }
@@ -177,7 +177,7 @@ pub fn exists_refusal(command: &str, path: &str) -> String {
 }
 
 /// The first `--json` or `--json=N` in ARGS that stands in a flag's place:
-/// an argument that is the value of one of VALUE_FLAGS (`--snapshot
+/// an argument that is the value of one of `VALUE_FLAGS` (`--snapshot
 /// --json` names a snapshot) isn't one.  The walk ends at `--`, after
 /// which the arguments are another command's (report-bug's load
 /// arguments).
@@ -187,8 +187,8 @@ pub fn find_json_flag<'a>(args: &'a [String], value_flags: &[&str]) -> Option<&'
         .find(|a| is_json_flag(a))
 }
 
-/// The first `--json=N` in a flag's place (as find_json_flag finds them)
-/// that asks for a schema this bko-holt doesn't write, as check_schema
+/// The first `--json=N` in a flag's place (as `find_json_flag` finds them)
+/// that asks for a schema this bko-holt doesn't write, as `check_schema`
 /// says it: wherever it stands, beside a good `--json` too.
 pub fn schema_error(args: &[String], value_flags: &[&str]) -> Option<String> {
     in_flag_place(args, value_flags)
@@ -206,7 +206,7 @@ pub fn asks_for_help(args: &[String], value_flags: &[&str]) -> bool {
 }
 
 /// Every argument of ARGS in a flag's place, up to `--`: an argument that
-/// is the value of one of VALUE_FLAGS isn't one.
+/// is the value of one of `VALUE_FLAGS` isn't one.
 fn in_flag_place<'a>(args: &'a [String], value_flags: &[&str]) -> Vec<&'a str> {
     let mut out = Vec::new();
     let mut it = args.iter();
@@ -307,7 +307,7 @@ pub(crate) fn kind(c: &Cmd) -> &'static str {
     }
 }
 
-/// A command's environment as it runs: LC_ALL=C first, which run_cmd adds
+/// A command's environment as it runs: `LC_ALL=C` first, which `run_cmd` adds
 /// to every command, then the step's own.  Nothing for a step load makes
 /// itself.
 pub(crate) fn env_of(c: &Cmd) -> Value {
@@ -346,7 +346,7 @@ fn cmd_json(c: &Cmd) -> Value {
 }
 
 /// What the kernel says of target T, as the partition record names it
-/// (target::table_record_text): its serial and WWID from sysfs, empty when
+/// (`target::table_record_text)`: its serial and WWID from sysfs, empty when
 /// its driver gives none.  Off Linux, the scan's.
 fn kernel_identity(sys: &Sys, t: &TargetDisk) -> (String, String) {
     if crate::other::Family::current().is_some() {
@@ -563,7 +563,7 @@ fn source_json(layout: &Layout) -> Value {
 }
 
 /// Whether --reformat is built for this source at all: not off Linux, not
-/// for ostree, ABRoot, NixOS or Guix (their own tools write what names
+/// for ostree, `ABRoot`, NixOS or Guix (their own tools write what names
 /// their filesystems).  A layout --reformat edited already is one it is.
 fn reformat_possible(v: &Value) -> bool {
     if v.get("load_reformat").is_some() {
@@ -702,7 +702,7 @@ fn keys_json(layout: &Layout, opts: &Options, p: &Planned) -> Value {
 /// Each ZFS encryption root the plan makes, as a key ask (the plan's
 /// `keys`; status's `temporary_keys` too): keyformat passphrase asks for
 /// one, raw or hex without --key-file is load's random key at
-/// RUN_DIR/keys/NAME (commands.rs, Builder::new_key), `temporary`.
+/// `RUN_DIR/keys/NAME` (commands.rs, `Builder::new_key`), `temporary`.
 pub(crate) fn zfs_key_asks(
     layout: &Layout,
     opts: &Options,
@@ -821,8 +821,8 @@ fn tokens_json(layout: &Layout) -> Value {
 }
 
 /// For each mount point --reformat could name, the types it could become
-/// and, per type, null or the refusal it would get: reformat::work_out as a
-/// trial.  With --reformat given, the trials are the dump's (LAYOUT_TEXT,
+/// and, per type, null or the refusal it would get: `reformat::work_out` as a
+/// trial.  With --reformat given, the trials are the dump's (`LAYOUT_TEXT`,
 /// as read), each with the run's other --reformat choices beside it, and
 /// `type` the dump's.  Empty where --reformat isn't built for the source,
 /// and for a layout that was edited by --reformat before it was given.
@@ -902,7 +902,7 @@ fn reformat_json(layout: &Layout, layout_text: &str, opts: &Options) -> Value {
     Value::Arr(out)
 }
 
-/// What --fit-largest makes of each disk (Fit::report's figures).
+/// What --fit-largest makes of each disk (`Fit::report`'s figures).
 fn fit_json(opts: &Options, fit: &super::fit::Fit) -> Value {
     let Some(pct) = opts.fit_largest else {
         return Value::Arr(Vec::new());
@@ -960,7 +960,7 @@ fn fit_json(opts: &Options, fit: &super::fit::Fit) -> Value {
 }
 
 /// The `bko-holt-plan` document (holt-json.md): P, the --json run's checks
-/// of LAYOUT (LAYOUT_TEXT as read), with TEXT, what text mode prints for
+/// of LAYOUT (`LAYOUT_TEXT` as read), with TEXT, what text mode prints for
 /// these arguments (J18), and CODE, the run's exit status.
 pub fn plan_doc(
     layout: &Layout,
@@ -1153,7 +1153,7 @@ pub fn write_stdout(text: &str) {
 // ---- the events (RT10f, RT10g) -------------------------------------------
 
 /// The longest event line a reader takes (rescue-tui.md, "Security"; the
-/// demo's EVENT_LINE_MAX).
+/// demo's `EVENT_LINE_MAX`).
 pub const EVENT_LINE_MAX: usize = 64 << 10;
 
 /// An argv element (or other long text) over this is given in an event as
@@ -1191,7 +1191,7 @@ pub(crate) fn clipped(text: &str, max: usize) -> String {
     text[..end].to_string()
 }
 
-/// Every string in V longer than MAX as bounded() gives it, for an event
+/// Every string in V longer than MAX as `bounded()` gives it, for an event
 /// line that would be too long for a reader.
 fn shrink(v: Value, max: usize) -> Value {
     match v {
@@ -1203,7 +1203,7 @@ fn shrink(v: Value, max: usize) -> Value {
 }
 
 /// One event as the stream carries it: one line, scrubbed of recovery keys
-/// as every document is, and within EVENT_LINE_MAX (its long strings given
+/// as every document is, and within `EVENT_LINE_MAX` (its long strings given
 /// by size and hash, smaller and smaller, until it fits).
 pub fn event_line(v: Value) -> String {
     let l = line(&v);
@@ -1222,7 +1222,7 @@ pub fn event_line(v: Value) -> String {
     }
 }
 
-/// A step's argv in an event: each element over EVENT_TEXT_MAX by size
+/// A step's argv in an event: each element over `EVENT_TEXT_MAX` by size
 /// and hash.
 fn argv_json(c: &Cmd) -> Value {
     Value::Arr(c.argv.iter().map(|a| bounded(a, EVENT_TEXT_MAX)).collect())
@@ -1682,7 +1682,7 @@ mod tests {
 
     /// A rescue system: vdb blank and 16 GiB (the sample's size), its udev
     /// by-id link and serial; vdc 8 GiB with an ext4 on it; sda the stick;
-    /// every tool, and BackOtter's rustic-bko.
+    /// every tool, and `BackOtter`'s rustic-bko.
     fn rescue(name: &str) -> Tree {
         let t = Tree::new(name);
         t.disk("vdb", "253:16", &[], 512)
@@ -1730,7 +1730,7 @@ mod tests {
         }
     }
 
-    /// load::run with A: its exit, and its standard output as a document.
+    /// `load::run` with A: its exit, and its standard output as a document.
     fn plan(layout: &str, a: &[&str], s: &Sys) -> (u8, Value, String) {
         let (code, out, err) = crate::load::run(&opts(a), layout, s);
         assert!(
@@ -2085,12 +2085,12 @@ mod tests {
 
     /// A BIOS dump of two 4 GiB disks, vda and vdb, each with one
     /// partition (vda1, vdb1) holding VDA1 and VDB1, and STORAGE's other
-    /// fields (md_arrays, dm_devices, fstab, crypttab).
+    /// fields (`md_arrays`, `dm_devices`, fstab, crypttab).
     fn two_disks(vda1: &str, vdb1: &str, storage: &str) -> String {
         two_named([("vda", "vda1"), ("vdb", "vdb1")], vda1, vdb1, storage)
     }
 
-    /// two_disks with the disks and their partitions named NAMES.
+    /// `two_disks` with the disks and their partitions named NAMES.
     fn two_named(names: [(&str, &str); 2], vda1: &str, vdb1: &str, storage: &str) -> String {
         let disk = |(n, p): (&str, &str), sig: &str, content: &str| {
             format!(
@@ -2125,7 +2125,7 @@ mod tests {
         writes_mapped(name, layout, ["vda", "vdb"])
     }
 
-    /// writes_of with source disks SRC on vdb and vdc.
+    /// `writes_of` with source disks SRC on vdb and vdc.
     fn writes_mapped(name: &str, layout: &str, src: [&str; 2]) -> Vec<(String, Vec<String>)> {
         let t = rescue(name);
         let s = sys_of(&t);
@@ -2148,7 +2148,7 @@ mod tests {
             .collect()
     }
 
-    /// RustAudit1 HD2-01: an md RAID1 over both disks, its ext4 made on
+    /// `RustAudit1` HD2-01: an md RAID1 over both disks, its ext4 made on
     /// /dev/md/0, which names neither target: both targets are written by
     /// assemble (mdadm --create) and by format (mke2fs on the array).
     #[test]
@@ -2176,7 +2176,7 @@ mod tests {
         }
     }
 
-    /// RustAudit1 HD2-01: LUKS on vda1 (its ext4 made on /dev/mapper/NAME)
+    /// `RustAudit1` HD2-01: LUKS on vda1 (its ext4 made on /dev/mapper/NAME)
     /// beside a plain ext4 on vdb1: vda's target is written by assemble and
     /// format, vdb's by format alone.
     #[test]
@@ -2212,7 +2212,7 @@ mod tests {
         );
     }
 
-    /// RustAudit1 HD2-01: a stage is a target's only where it makes
+    /// `RustAudit1` HD2-01: a stage is a target's only where it makes
     /// something on that target's source disk: vdb1 holds nothing to
     /// format, so vdb's target gets no format.
     #[test]
@@ -2237,7 +2237,7 @@ mod tests {
         );
     }
 
-    /// RustAudit1 HD2-01's over-report half: source disks whose names
+    /// `RustAudit1` HD2-01's over-report half: source disks whose names
     /// start alike (sda and sdab, nvme0n1 and nvme0n10) are each their own,
     /// whichever of the two holds the filesystem: the other's target gets
     /// no format.
@@ -2282,7 +2282,7 @@ mod tests {
 
     /// The plan's hash binds the run to what was reviewed (J20): the same
     /// for the same plan; another for another target size or serial, and
-    /// then --expect-plan with the old one is plan_changed.
+    /// then --expect-plan with the old one is `plan_changed`.
     #[test]
     fn plan_hash() {
         let t = rescue("json-plan-hash");
@@ -2339,7 +2339,7 @@ mod tests {
     }
 
     /// The erase gate (J19) under --json: the source's own disk as found
-    /// (its table the layout's, so is_ours) needs --erase or this
+    /// (its table the layout's, so `is_ours`) needs --erase or this
     /// session's record; text mode takes it as before.
     #[test]
     fn erase_gate() {
@@ -2488,7 +2488,7 @@ mod tests {
     }
 
     /// The keys: one group per container, or one for the containers the
-    /// source unlocked with one passphrase (decrypt_keyctl); key_needed
+    /// source unlocked with one passphrase (`decrypt_keyctl`); `key_needed`
     /// under --json for each without --key-file; the key files' checks;
     /// the tokens not restored.
     #[test]

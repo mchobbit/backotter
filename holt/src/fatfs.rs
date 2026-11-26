@@ -261,7 +261,7 @@ impl<'a> Volume<'a> {
         self.data_start + u64::from(c - 2) * self.cluster_bytes
     }
 
-    /// Each run of adjacent clusters is one read, up to RUN_MAX bytes: on a
+    /// Each run of adjacent clusters is one read, up to `RUN_MAX` bytes: on a
     /// BSD's or illumos' raw device, with no readahead, a 64 MiB
     /// system.json read a cluster at a time is 16384 USB reads.
     fn read_chain(&self, first: u32, max_clusters: u64) -> Result<Vec<u8>, String> {
@@ -403,7 +403,7 @@ impl<'a> Volume<'a> {
     }
 }
 
-/// The most read_chain reads at once.
+/// The most `read_chain` reads at once.
 const RUN_MAX: usize = 1 << 20;
 
 /// CHAIN as runs of adjacent clusters (the first, how many), each at most
@@ -505,7 +505,7 @@ pub mod testimg {
     }
 
     /// A volume's layout, in 512-byte sectors: two FATs of FATSZ sectors
-    /// each after RESERVED, then (FAT12/16) ROOT_ENTRIES root entries, then
+    /// each after RESERVED, then (FAT12/16) `ROOT_ENTRIES` root entries, then
     /// clusters of SPC sectors; FIRST the first cluster stored (2, or past
     /// 65535 to try FAT32's high cluster bits).
     #[derive(Clone, Copy)]

@@ -1,7 +1,7 @@
 //! bko-holt: records a system's disk layout and boot setup
 //! (disks, partition tables, RAID, LVM, LUKS, ZFS, btrfs, filesystems,
 //! mounts, firmware, boot loader, kernels) as JSON (`dump`), and rebuilds the
-//! disks from that JSON in stages (`load`), for BackOtter to record with each
+//! disks from that JSON in stages (`load`), for `BackOtter` to record with each
 //! backup and to rebuild the machine from.  Both sides share the on-disk
 //! parsers: `load` checks every stage by reading the disks back with them.
 
@@ -50,13 +50,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The largest layout (a dump's JSON) bko-holt writes, and so the largest
 /// load, write-table, rewrite and report-bug read.  What makes a layout big
-/// is its unmounted ESPs' images (other::ESP_IMAGE_MAX of raw bytes each,
+/// is its unmounted ESPs' images (`other::ESP_IMAGE_MAX` of raw bytes each,
 /// about 1.4 times that as base64 in JSON chunks) and boot areas (2 MiB
 /// each): this holds ten such ESPs with room to spare, and a dump that
 /// would be bigger fails rather than writing what load would refuse.
 pub const LAYOUT_MAX: u64 = 1 << 30;
 
-/// The report's timestamp: now, or SOURCE_DATE_EPOCH when set (for
+/// The report's timestamp: now, or `SOURCE_DATE_EPOCH` when set (for
 /// reproducible output).
 pub fn timestamp() -> String {
     let secs = std::env::var("SOURCE_DATE_EPOCH")
@@ -83,7 +83,7 @@ pub fn dump_only(sys: &sys::Sys, only: &[String]) -> Result<json::Value, String>
 }
 
 /// `bko-holt dump` with --keep-luks-header and --luks-header-dir
-/// (crate::luksheader).
+/// (`crate::luksheader`).
 pub fn dump_with(
     sys: &sys::Sys,
     only: &[String],

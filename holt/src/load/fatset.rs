@@ -10,7 +10,7 @@
 //! boot-sector fields.  This sets them in the FAT just made on DEV, in
 //! place: in the boot sector (the volume ID at 39 or, for FAT32, 67; the
 //! media byte at 21; the OEM name at 3..11; the hidden sectors at 28..32),
-//! in FAT32's backup boot sector (BPB_BkBootSec) the same, and, for the
+//! in FAT32's backup boot sector (`BPB_BkBootSec`) the same, and, for the
 //! media byte, in the first byte of each FAT's entry 0, which repeats it.
 //! Nothing else is written.  Every read and write is a whole sector at a
 //! sector's offset, as illumos' raw (character) disk nodes take them.

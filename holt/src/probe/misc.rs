@@ -149,7 +149,7 @@ pub mod sample {
     }
 
     /// A JFS superblock at 32 KiB, as mkfs.jfs -L LABEL leaves it (4 KiB
-    /// blocks, inline log) and, for version 2, jfs_tune -U after it.
+    /// blocks, inline log) and, for version 2, `jfs_tune` -U after it.
     pub fn jfs(version: u32, label: &str) -> Vec<u8> {
         let mut img = vec![0u8; 0x10000];
         let b = &mut img[0x8000..0x8100];

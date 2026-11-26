@@ -6,7 +6,7 @@
 //! can't fit (mke2fs ... 65536k on 28 MiB) or make something else than the
 //! source had.  The kernel refuses such a filesystem too: ext4's "block
 //! count exceeds size of device", XFS's "filesystem size mismatch", btrfs's
-//! device total_bytes check, swapon's "swap area shorter than signature
+//! device `total_bytes` check, swapon's "swap area shorter than signature
 //! indicates", md's "device too small".
 //!
 //! Each device's size is its own entry's (bytes; a partition's sectors are
@@ -21,7 +21,7 @@ use crate::json::Value;
 use crate::report::human;
 
 /// A dump's number in any spelling dump writes (a number, decimal text,
-/// 0x-hex text): Value::get_u64_lenient, load's one rule.
+/// 0x-hex text): `Value::get_u64_lenient`, load's one rule.
 fn u(v: &Value, k: &str) -> Option<u64> {
     v.get_u64_lenient(k)
 }
@@ -166,7 +166,7 @@ mod tests {
     const M: u64 = 1 << 20;
 
     /// A dump with one 32 MiB disk vda whose partition vda1 is PART bytes
-    /// and holds CONTENT, and DM (dm_devices entries).
+    /// and holds CONTENT, and DM (`dm_devices` entries).
     fn dump(part: u64, content: &str, dm: &str) -> Value {
         parse(&format!(
             r#"{{"storage": {{"disks": [{{"name": "vda", "kind": "disk", "size_bytes": {}, "logical_sector_size": 512, "content": null,
@@ -326,7 +326,7 @@ mod tests {
         }
     }
 
-    /// One device of a two-device btrfs: the filesystem's total_bytes is
+    /// One device of a two-device btrfs: the filesystem's `total_bytes` is
     /// both, its device item's this one.
     #[test]
     fn a_btrfs_of_two_devices_is_held_to_its_own_device_item() {

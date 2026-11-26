@@ -28,8 +28,8 @@ pub(crate) fn btrfs_allocation(sys: &Sys, uuid: &str) -> Option<Value> {
 }
 
 /// storage.btrfs.  KNOWN: (UUID, allocation profiles) read earlier while
-/// a mount of dump's own was there (ABRoot's future root,
-/// crate::abroot::Dump::btrfs_profiles), for a filesystem sysfs no longer
+/// a mount of dump's own was there (`ABRoot`'s future root,
+/// `crate::abroot::Dump::btrfs_profiles`), for a filesystem sysfs no longer
 /// shows.
 pub(super) fn btrfs_json(sys: &Sys, ctx: &Ctx<'_>, known: &[(String, Value)]) -> Value {
     let mut fss: BTreeMap<String, Vec<&Dev>> = BTreeMap::new();
@@ -251,7 +251,7 @@ pub fn parse_btrfs_qgroups(out: &str) -> Vec<Value> {
         .collect()
 }
 
-/// "ID 256 gen 10 parent 5 top level 5 parent_uuid - received_uuid - uuid ... path @rootfs"
+/// "ID 256 gen 10 parent 5 top level 5 `parent_uuid` - `received_uuid` - uuid ... path @rootfs"
 pub fn parse_btrfs_subvol_line(l: &str) -> Option<Value> {
     let w: Vec<&str> = l.split_whitespace().collect();
     if w.first() != Some(&"ID") {

@@ -1,4 +1,4 @@
-//! ABRoot (Vanilla OS 2 and 3): how to tell a system runs it, and what the
+//! `ABRoot` (Vanilla OS 2 and 3): how to tell a system runs it, and what the
 //! dump records of its two roots and their boot setup (boot.abroot).
 //! docs/design/vanillaos.md has the layout: two btrfs roots on LVM thin
 //! LVs (labels `vos-a` and `vos-b`, partLabelA and partLabelB in
@@ -6,21 +6,21 @@
 //! with both roots' kernels, initramfs and GRUB configs, an ext4 /boot with
 //! a static master grub.cfg whose literal `set default=0|1` picks the
 //! root, and /var on its own VG.  The running `/` is the present root,
-//! read-only, with an overlay on /etc; the other root ("future", ABRoot's
+//! read-only, with an overlay on /etc; the other root ("future", `ABRoot`'s
 //! word) and `init` aren't mounted at all.  dump mounts each of those two
 //! read-only in its run directory to read it, and unmounts it at once (as
-//! ABRoot itself mounts them only while it works), and lists both in
-//! storage.backup_sources at ABRoot's own mount points (`/part-future`,
+//! `ABRoot` itself mounts them only while it works), and lists both in
+//! `storage.backup_sources` at `ABRoot`'s own mount points (`/part-future`,
 //! `/boot/init`) with the read-only mount a backup must make there.
 //!
-//! ABRoot finds every filesystem by its label (first match in lsblk), so
+//! `ABRoot` finds every filesystem by its label (first match in lsblk), so
 //! the dump does too.
 
 use crate::json::{Obj, Value};
 use crate::report::{BackupSource, MountHint};
 use crate::sys::{RUN_DIR, RoMountWords, Sys, safe_name};
 
-/// abroot.json: the image's, then /etc's, merged (viper's MergeInConfig:
+/// abroot.json: the image's, then /etc's, merged (viper's `MergeInConfig`:
 /// a key in the later file wins).
 pub(crate) const CONFIGS: [&str; 2] = ["/usr/share/abroot/abroot.json", "/etc/abroot/abroot.json"];
 /// The master GRUB config on `vos-boot`, installed once and swapped with
@@ -29,12 +29,12 @@ pub(crate) const GRUB_CFG: &str = "/boot/grub/grub.cfg";
 pub(crate) const KARGS: &str = "/etc/abroot/kargs";
 /// There while `abroot upgrade` (or `abroot pkg`) runs.
 pub(crate) const LOCK: &str = "/run/abroot/operation.lock";
-/// Where ABRoot mounts `init` and the future root itself, and where the
+/// Where `ABRoot` mounts `init` and the future root itself, and where the
 /// backup tree has them.
 pub(crate) const INIT_AT: &str = "/boot/init";
 pub(crate) const FUTURE_AT: &str = "/part-future";
 /// The options of dump's read-only mounts of a filesystem of type TY, and
-/// of those backup_sources asks a backup to make: `ro` alone still replays
+/// of those `backup_sources` asks a backup to make: `ro` alone still replays
 /// a dirty ext4 journal or a btrfs log tree (a write to the source disk
 /// after an unclean shutdown), so ext3/ext4 get `noload` and btrfs
 /// `rescue=nologreplay` (the bare `nologreplay` is its deprecated alias;
@@ -74,7 +74,7 @@ impl Config {
             .map(str::to_string)
     }
 
-    /// thinProvisioning, as viper's GetBool reads it.
+    /// thinProvisioning, as viper's `GetBool` reads it.
     pub(crate) fn thin(&self) -> bool {
         match self.get("thinProvisioning") {
             Some(Value::Bool(b)) => *b,
@@ -85,7 +85,7 @@ impl Config {
 }
 
 /// abroot.json on the running root, when there is one: the marker of an
-/// ABRoot system (os-release says `vanilla`, but ABRoot is what matters).
+/// `ABRoot` system (os-release says `vanilla`, but `ABRoot` is what matters).
 pub(crate) fn config(sys: &Sys) -> Option<Config> {
     let mut keys = Vec::new();
     let mut files = Vec::new();
@@ -102,7 +102,7 @@ pub(crate) fn config(sys: &Sys) -> Option<Config> {
     (!files.is_empty()).then_some(Config { keys, files })
 }
 
-/// A filesystem the dump found, with its label: ABRoot's way of finding
+/// A filesystem the dump found, with its label: `ABRoot`'s way of finding
 /// its roots, `init` and /var.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Fs {
@@ -236,7 +236,7 @@ pub(crate) fn parse_master(text: &str) -> (Option<String>, Vec<Entry>) {
 /// `(lvm/vos--root-init)/vos-a/vmlinuz-K`), its `root=`, the first `initrd`
 /// line after it, and the UUID of the last `search --fs-uuid` before it in
 /// the same block (an upgrade's abroot.cfg is grub-mkconfig's whole output,
-/// whose 00_header can `search --fs-uuid` for its font first; the
+/// whose `00_header` can `search --fs-uuid` for its font first; the
 /// installer's names `(lvm/vos--root-init)` and has no search).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct RootCfg {
@@ -292,7 +292,7 @@ pub(crate) fn parse_abroot_cfg(text: &str, label: &str) -> RootCfg {
 /// boot.abroot and what goes with it in the rest of the dump.
 pub(crate) struct Dump {
     pub json: Value,
-    /// The entries storage.backup_sources gets: `/boot/init` and
+    /// The entries `storage.backup_sources` gets: `/boot/init` and
     /// `/part-future`, unless something already mounts them there.
     pub sources: Vec<BackupSource>,
     /// The note the `/` entry gets.
@@ -301,17 +301,17 @@ pub(crate) struct Dump {
     pub kernels: Vec<Value>,
     /// (fs UUID, allocation profiles) of each btrfs root dump mounted
     /// itself (the future root): sysfs has them only while it is mounted,
-    /// so storage.btrfs takes them from here (crate::report::btrfs_json),
+    /// so storage.btrfs takes them from here (`crate::report::btrfs_json`),
     /// and load's mkfs.btrfs gets -d/-m as for any btrfs.
     pub btrfs_profiles: Vec<(String, Value)>,
 }
 
-/// The note for the `/` entry of backup_sources.
+/// The note for the `/` entry of `backup_sources`.
 const ROOT_NOTE: &str = "ABRoot's present root: its /etc is an overlay (upper /var/lib/abroot/etc/LABEL), so read / through a non-recursive bind mount (mount --bind / DIR) to back up the raw lower /etc, the tree load restores";
 const HINT_NOTE: &str = "not mounted on the running system: a backup mounts it read-only here as `mount` says, reads it, and unmounts it";
 
 /// F(BASE) with FS readable at BASE: where the running system mounts it,
-/// else a read-only mount of dump's own (unless MAY_MOUNT is false: an
+/// else a read-only mount of dump's own (unless `MAY_MOUNT` is false: an
 /// upgrade is running), removed after.  None when it can't be read (not
 /// root, or the mount failed: said).
 fn with_mounted<R>(sys: &Sys, fs: &Fs, may_mount: bool, f: impl FnOnce(&str) -> R) -> Option<R> {
@@ -382,7 +382,7 @@ fn init_dir(
     (v, kernels)
 }
 
-/// A root's /abimage.abr (ABRoot's record of the image extracted into
+/// A root's /abimage.abr (`ABRoot`'s record of the image extracted into
 /// it), and whether the root is empty (no usr/: a fresh install's other
 /// root), read at BASE.
 fn root_state(sys: &Sys, base: &str) -> (Value, bool) {
@@ -406,7 +406,7 @@ fn root_state(sys: &Sys, base: &str) -> (Value, bool) {
     )
 }
 
-/// boot.abroot for a running ABRoot system.  FSS are the filesystems the
+/// boot.abroot for a running `ABRoot` system.  FSS are the filesystems the
 /// dump found, with their labels and mounts.
 pub(crate) fn read(sys: &Sys, cfg: &Config, fss: &[Fs]) -> Dump {
     let by_label =
@@ -642,7 +642,7 @@ pub(crate) fn tests_master() -> &'static str {
     tests::MASTER
 }
 
-/// The 00_header an upgrade's abroot.cfg begins with, for other modules' tests.
+/// The `00_header` an upgrade's abroot.cfg begins with, for other modules' tests.
 #[cfg(test)]
 pub(crate) fn tests_upgrade_header() -> &'static str {
     tests::UPGRADE_HEADER
@@ -655,7 +655,7 @@ mod tests {
     use crate::testutil::Tree;
 
     /// Vanilla's installer's master grub.cfg (vanilla-installer's
-    /// processor.py, _BOOT_GRUB_CFG), its header cut short.
+    /// processor.py, _`BOOT_GRUB_CFG`), its header cut short.
     pub(crate) const MASTER: &str = "set default=0\nset timeout=5\n\n### BEGIN /etc/grub.d/00_header ###\nif [ -s $prefix/grubenv ]; then\n  set have_grubenv=true\n  load_env\nfi\nfunction savedefault {\n  if [ -z \"${boot_once}\" ]; then\n    saved_entry=\"${chosen}\"\n    save_env saved_entry\n  fi\n}\nif [ \"${recordfail}\" = 1 ] ; then\n  set timeout=30\nelse\n  set timeout=5\nfi\n### END /etc/grub.d/00_header ###\n\n# AUTO GENERATED BY ABROOT\nmenuentry \"Current State (A)\" --class abroot-a {\n    set root=(lvm/vos--root-init)\n    configfile \"/vos-a/abroot.cfg\"\n}\n\nmenuentry \"Previous State (B)\" --class abroot-b {\n    set root=(lvm/vos--root-init)\n    configfile \"/vos-b/abroot.cfg\"\n}\n# END - AUTO GENERATED BY ABROOT\n";
 
     #[test]
@@ -754,7 +754,7 @@ mod tests {
         );
     }
 
-    /// grub-mkconfig's 00_header as an upgrade's abroot.cfg begins: a
+    /// grub-mkconfig's `00_header` as an upgrade's abroot.cfg begins: a
     /// font search of / by UUID, which isn't the init LV.
     pub(crate) const UPGRADE_HEADER: &str = "### BEGIN /etc/grub.d/00_header ###\nif [ -s $prefix/grubenv ]; then\n  load_env\nfi\nfunction load_video {\n  insmod all_video\n}\nif [ x$feature_default_font_path = xy ] ; then\n   font=unicode\nelse\ninsmod part_gpt\ninsmod btrfs\nsearch --no-floppy --fs-uuid --set=root c0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf\n    font=\"/usr/share/grub/unicode.pf2\"\nfi\n### END /etc/grub.d/00_header ###\n";
 
@@ -807,8 +807,8 @@ mod tests {
     }
 
     /// Unprivileged, nothing is mounted: init and the other root unread,
-    /// both still in backup_sources with their mounts; one already mounted
-    /// (ABRoot's own, during an upgrade) is read there and not listed.
+    /// both still in `backup_sources` with their mounts; one already mounted
+    /// (`ABRoot`'s own, during an upgrade) is read there and not listed.
     #[test]
     fn unread_and_already_mounted() {
         let t = Tree::new("abroot-read");
@@ -931,7 +931,7 @@ mod tests {
         assert_eq!(d.json.get("thin_two_roots"), Some(&Value::Bool(false)));
     }
 
-    /// add_to_boot puts boot.abroot last and the init kernels after /boot's.
+    /// `add_to_boot` puts boot.abroot last and the init kernels after /boot's.
     #[test]
     fn adds_to_boot() {
         let boot = crate::json::parse(

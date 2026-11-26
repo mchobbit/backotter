@@ -1,7 +1,7 @@
 //! bko-holt's JSON protocol as a program (docs/design/holt-json.md, RT10a):
 //! `--version --json`, `bko-holt-error` documents for every refusal under
 //! `--json`, `--json` found only in a flag's place, the dry-run lock
-//! (BKO_HOLT_NO_COMMIT) on load, the hidden helpers and the two commands
+//! (`BKO_HOLT_NO_COMMIT`) on load, the hidden helpers and the two commands
 //! that write a file where they're told, and text mode left as it was.
 
 use bko_holt::json::{self, Value};
@@ -13,9 +13,9 @@ fn exe() -> String {
     std::env::var("BKO_HOLT_BIN").unwrap_or_else(|_| env!("CARGO_BIN_EXE_bko-holt").to_string())
 }
 
-/// bko-holt ARGS with ENV added and BKO_HOLT_NO_COMMIT removed unless ENV
+/// bko-holt ARGS with ENV added and `BKO_HOLT_NO_COMMIT` removed unless ENV
 /// sets it; STDIN on its standard input when given, else none.  A load run
-/// names --sysroot (or asks for the help), as load_cli.rs's do: without
+/// names --sysroot (or asks for the help), as `load_cli.rs`'s do: without
 /// it, load records RUN_DIR/last-load.json on the test host.
 fn run(args: &[&str], env: &[(&str, &str)], stdin: Option<&str>) -> Output {
     run_in(args, env, stdin).0
@@ -95,7 +95,7 @@ fn assert_error(o: &Output, exit: u64, code: &str) -> Value {
 }
 
 /// A Debian 13 dump with one BIOS + MBR disk holding a single ext4 (as
-/// load_cli.rs's).
+/// `load_cli.rs`'s).
 const LAYOUT: &str = r#"{
   "format": "bko-holt", "schema": 1, "privileged": true,
   "host": {"hostname": "t"}, "os": {"id": "debian", "version_id": "13"},
@@ -826,8 +826,8 @@ fn no_commit_writes_only_new_files() {
     assert_eq!(std::fs::read_to_string(&rep).unwrap(), "an old report");
 }
 
-/// `bko-holt stick --json` (RT10k) on a Linux tree booted from a stick
-/// (bko_holt::stick::sample), as a program: one document, its exit.
+/// `bko-holt stick --json` (`RT10k`) on a Linux tree booted from a stick
+/// (`bko_holt::stick::sample`), as a program: one document, its exit.
 #[test]
 fn stick_is_a_document() {
     use bko_holt::stick::sample;

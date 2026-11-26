@@ -7,7 +7,7 @@
 //! the lines it removes and adds: fstab, the kernel command lines
 //! (/etc/kernel/cmdline, /etc/cmdline.d, BLS entries, grubenv,
 //! /etc/default/grub, limine.conf and /etc/default/limine, rEFInd's
-//! refind_linux.conf and refind.conf), systemd mount units,
+//! `refind_linux.conf` and refind.conf), systemd mount units,
 //! mkinitcpio's btrfs, and the ESPs' GRUB stubs (EFI/*/grub.cfg, whose
 //! prefix named a path inside a btrfs subvolume).  A file that
 //! isn't as expected stops it, rather than being edited by guesswork.
@@ -21,7 +21,7 @@
 //! as warnings.
 //!
 //! Both work the change out again from LAYOUT and the --reformats
-//! (reformat::work_out), exactly as load did.
+//! (`reformat::work_out`), exactly as load did.
 
 use super::reformat::{self, Change};
 use crate::json::Value;
@@ -115,7 +115,7 @@ pub fn fstab(text: &str, c: &Change) -> Result<String, String> {
     Ok(out)
 }
 
-/// A BLS entry: its `options` lines through cmdline().
+/// A BLS entry: its `options` lines through `cmdline()`.
 pub fn bls_entry(text: &str, c: &Change) -> String {
     text.split_inclusive('\n')
         .map(|l| {
@@ -130,7 +130,7 @@ pub fn bls_entry(text: &str, c: &Change) -> String {
         .collect()
 }
 
-/// GRUB's environment block: kernelopts= through cmdline(), padded with #
+/// GRUB's environment block: kernelopts= through `cmdline()`, padded with #
 /// back to the block's size (1024 bytes) so grub-editenv still takes it.
 pub fn grubenv(text: &str, c: &Change) -> Result<String, String> {
     let body = text.trim_end_matches('#');
@@ -149,12 +149,12 @@ pub fn grubenv(text: &str, c: &Change) -> Result<String, String> {
 }
 
 /// grubenv on a filesystem that had GRUB's environment block in btrfs's
-/// reserved area and doesn't now (--reformat from btrfs): its env_block=
+/// reserved area and doesn't now (--reformat from btrfs): its `env_block`=
 /// line taken out, so GRUB no longer reads a sector the new type uses, and
-/// the block's variables VARS (reformat::grub_env_block, as GRUB wrote
+/// the block's variables VARS (`reformat::grub_env_block`, as GRUB wrote
 /// them) put in, each over the file's own (GRUB reads the block after the
 /// file), padded with # back to the file's size.  A file with no
-/// env_block= is left as it is.
+/// `env_block`= is left as it is.
 pub fn grubenv_unblock(text: &str, vars: &Value) -> Result<String, String> {
     let body = text.trim_end_matches('#');
     if !body
@@ -198,7 +198,7 @@ pub fn grubenv_unblock(text: &str, vars: &Value) -> Result<String, String> {
     Ok(out)
 }
 
-/// A shell assignment's value through cmdline(), inside its quotes: the
+/// A shell assignment's value through `cmdline()`, inside its quotes: the
 /// lines whose variable NAMED says, `NAME=` or `NAME+=`.
 fn assignments(text: &str, c: &Change, named: impl Fn(&str) -> bool) -> String {
     text.split_inclusive('\n')
@@ -222,15 +222,15 @@ fn assignments(text: &str, c: &Change, named: impl Fn(&str) -> bool) -> String {
         .collect()
 }
 
-/// /etc/default/grub: GRUB_CMDLINE_LINUX and GRUB_CMDLINE_LINUX_DEFAULT
-/// through cmdline(), inside their quotes.
+/// /etc/default/grub: `GRUB_CMDLINE_LINUX` and `GRUB_CMDLINE_LINUX_DEFAULT`
+/// through `cmdline()`, inside their quotes.
 pub fn default_grub(text: &str, c: &Change) -> String {
     assignments(text, c, |k| {
         matches!(k, "GRUB_CMDLINE_LINUX" | "GRUB_CMDLINE_LINUX_DEFAULT")
     })
 }
 
-/// /etc/default/limine (limine-entry-tool, CachyOS): KERNEL_CMDLINE[...]=
+/// /etc/default/limine (limine-entry-tool, CachyOS): `KERNEL_CMDLINE`[...]=
 /// and +=, from which limine-mkinitcpio-hook writes limine.conf again when
 /// the boot stage runs mkinitcpio.
 pub fn default_limine(text: &str, c: &Change) -> String {
@@ -239,9 +239,9 @@ pub fn default_limine(text: &str, c: &Change) -> String {
     })
 }
 
-/// rEFInd's refind_linux.conf (`"TITLE" "OPTIONS"` a line) and refind.conf
+/// rEFInd's `refind_linux.conf` (`"TITLE" "OPTIONS"` a line) and refind.conf
 /// (a stanza's `options "..."`): each line's last quoted string, or an
-/// options line's value, through cmdline().
+/// options line's value, through `cmdline()`.
 pub fn refind(text: &str, c: &Change) -> String {
     text.split_inclusive('\n')
         .map(|l| {
@@ -272,7 +272,7 @@ pub fn refind(text: &str, c: &Change) -> String {
         .collect()
 }
 
-/// limine.conf: each `cmdline:` / `kernel_cmdline:` through cmdline().
+/// limine.conf: each `cmdline:` / `kernel_cmdline:` through `cmdline()`.
 pub fn limine(text: &str, c: &Change) -> String {
     text.split_inclusive('\n')
         .map(|l| {
@@ -330,10 +330,10 @@ pub fn mkinitcpio(text: &str) -> String {
 /// `configfile $prefix/grub.cfg`; Fedora's `search ... --fs-uuid
 /// --set=dev UUID`, `set prefix=($dev)/root/boot/grub2`) that finds the
 /// reformatted filesystem by UUID: each path on a GRUB device,
-/// `(DEV)/PATH` or `(DEV)'PATH'`, through MAP (reformat::grub_path,
-/// whose bool says btrfs_relative_path is set), so a path inside a
+/// `(DEV)/PATH` or `(DEV)'PATH'`, through MAP (`reformat::grub_path`,
+/// whose bool says `btrfs_relative_path` is set), so a path inside a
 /// subvolume names where the new filesystem has it.  The signed GRUB
-/// behind shim reads the stub and isn't installed again (AnduinOS's, the
+/// behind shim reads the stub and isn't installed again (`AnduinOS`'s, the
 /// grub2 distributions'), and Debian's grub-install remakes only its own
 /// EFI/ID one, not the fallback EFI/BOOT copy.  A file not naming UUID
 /// is left as it is.
@@ -533,7 +533,7 @@ fn resolve_in_target(target: &str, path: &Path) -> Result<Option<PathBuf>, Strin
 }
 
 /// CONTENT written over the regular file at PATH, in place: the same
-/// inode, so its owner, mode, ACLs, SELinux label and other xattrs (the
+/// inode, so its owner, mode, ACLs, `SELinux` label and other xattrs (the
 /// restore's) stay, whatever the umask.  The file opened must be the one
 /// PATH named before (not a symlink swapped in since): nothing is written
 /// otherwise.
@@ -609,7 +609,7 @@ fn initrd_mounts(c: &Change) -> bool {
 /// and RHEL's kdumpctl's initramfs-KVERkdump.img.  It mounts only the dump
 /// target (kdump.conf's path, /var/crash on /), and load doesn't remake
 /// it: kdump.service's kdumpctl does, at its start, when /etc/fstab (which
-/// the rewrite edits) is newer than the image (check_files_modified).
+/// the rewrite edits) is newer than the image (`check_files_modified`).
 /// openSUSE's and Debian's kdump keep theirs in /var/lib/kdump, not listed.
 fn is_kdump_image(name: &str) -> bool {
     name.starts_with("initramfs-") && name.ends_with("kdump.img")
@@ -645,7 +645,7 @@ impl Run<'_> {
     }
 
     /// The text of the file at PATH in the target, its symlinks followed
-    /// inside it (resolve_in_target); None if it isn't there or a link
+    /// inside it (`resolve_in_target`); None if it isn't there or a link
     /// leads out.
     fn read_confined(&self, path: &Path) -> Option<String> {
         let p = resolve_in_target(self.t, path).ok()??;
@@ -827,7 +827,7 @@ impl Run<'_> {
     }
 
     /// An ESP's GRUB stub that still names a path inside the old btrfs's
-    /// subvolumes (a form grub_stub doesn't know): its GRUB would stop at
+    /// subvolumes (a form `grub_stub` doesn't know): its GRUB would stop at
     /// the grub> prompt.
     fn check_grub_stubs(&mut self, c: &Change, layout: &Value) {
         if c.from != "btrfs" {
@@ -855,8 +855,8 @@ impl Run<'_> {
 
     /// Each initramfs image, by the generator's own lister, must have the
     /// new type's module or a kernel with it built in: for a filesystem
-    /// the initramfs mounts (initrd_mounts) only.  kdump's images aren't
-    /// checked (is_kdump_image).
+    /// the initramfs mounts (`initrd_mounts`) only.  kdump's images aren't
+    /// checked (`is_kdump_image`).
     fn check_initramfs(&mut self, c: &Change, layout: &Value) {
         let generator = layout
             .at(&["boot", "initramfs", "generator"])
@@ -1544,8 +1544,8 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
     }
 
     /// --reformat from a btrfs with GRUB's environment block (Leap 16's
-    /// env_block=512+1): grubenv loses env_block= and gets the block's
-    /// variables, still 1024 bytes; without env_block= it's left alone.
+    /// `env_block=512+1)`: grubenv loses `env_block`= and gets the block's
+    /// variables, still 1024 bytes; without `env_block`= it's left alone.
     #[test]
     fn grubenv_unblock_moves_the_block_in() {
         let mut env =
@@ -1597,7 +1597,7 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
     const ANDUINOS_UUID: &str = "6952b714-eb5b-4747-a32b-95b6fa1f800a";
 
     /// The GRUB stubs' forms: grub-install --uefi-secure-boot's (Debian,
-    /// Ubuntu, AnduinOS), Fedora's grub2, openSUSE's relative one.
+    /// Ubuntu, `AnduinOS`), Fedora's grub2, openSUSE's relative one.
     #[test]
     fn grub_stubs_out_of_the_subvolume() {
         let map = |p: &str, rel: bool| match (p, rel) {
@@ -1653,7 +1653,7 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         assert_eq!(grub_stub(&anduinos, "", map), anduinos);
     }
 
-    /// AnduinOS's / onto ext4 (HoltTest1 HT_REFORMAT=/=ext4): both ESP stubs
+    /// `AnduinOS`'s / onto ext4 (`HoltTest1` `HT_REFORMAT=/=ext4)`: both ESP stubs
     /// read GRUB's directory from the old @root, then from the new root.
     #[test]
     fn anduinos_esp_stubs() {
@@ -2084,7 +2084,7 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
     }
 
     /// The module check is for what the initramfs mounts: /, /usr and an
-    /// x-initrd.mount entry, not /boot (BackShot2 rocky10 `/boot=ext4`).
+    /// x-initrd.mount entry, not /boot (`BackShot2` rocky10 `/boot=ext4`).
     #[test]
     fn only_what_the_initramfs_mounts_needs_its_module() {
         let at = |m: &str, o: &str| Change {
@@ -2194,7 +2194,7 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
     }
 
     /// An edited file is written in place: the same inode, so the
-    /// restore's owner, mode, ACLs, SELinux label and other xattrs stay;
+    /// restore's owner, mode, ACLs, `SELinux` label and other xattrs stay;
     /// its mode doesn't depend on the umask.
     #[test]
     fn edits_keep_the_inode_mode_and_xattrs() {

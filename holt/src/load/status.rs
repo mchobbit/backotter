@@ -1,7 +1,7 @@
 //! `bko-holt load --only status`: what's on the target disks now, read from
 //! the disks themselves, and which stage is next.  The boot stage is the one
 //! exception, since nothing on the disks can tell this restore's boot stage
-//! from the one before the backup: it's a mark in RUN_DIR, so after the rescue
+//! from the one before the backup: it's a mark in `RUN_DIR`, so after the rescue
 //! system reboots the stage runs again, which is harmless.
 
 use super::codes::{Problem, ProblemCode, Problems};
@@ -14,7 +14,7 @@ use crate::other::Family;
 use crate::sys::Sys;
 use std::borrow::Cow;
 
-/// Exists once the boot stage has run for the tree restored in this RUN_DIR.
+/// Exists once the boot stage has run for the tree restored in this `RUN_DIR`.
 pub fn boot_marker() -> String {
     format!("{RUN_DIR}/boot.done")
 }
@@ -22,7 +22,7 @@ pub fn boot_marker() -> String {
 /// The copy marks (holt-json.md, J10), beside boot.done and never in the
 /// restored tree: restore.started is written as the restore stage begins
 /// and restore.done after its last command and its read-back, both with
-/// restore_mark_text.  A partition stage that runs removes both (the disks
+/// `restore_mark_text`.  A partition stage that runs removes both (the disks
 /// are new again).  Written in text mode too, where nothing reads them, so
 /// a --json run after a text one sees the truth; under --json the restore
 /// row is done only with restore.done, so a stopped or failed copy always
@@ -31,7 +31,7 @@ pub fn restore_started_marker() -> String {
     format!("{RUN_DIR}/restore.started")
 }
 
-/// The copy's complete mark: see restore_started_marker.
+/// The copy's complete mark: see `restore_started_marker`.
 pub fn restore_done_marker() -> String {
     format!("{RUN_DIR}/restore.done")
 }
@@ -81,10 +81,10 @@ fn restore_complete(layout: &Layout, mapping: &target::Mapping, sys: &Sys) -> bo
         .is_some_and(|t| t == restore_mark_text(layout, mapping))
 }
 
-/// The file a container's temporary key is in (KeyAsk's `temporary`: the
+/// The file a container's temporary key is in (`KeyAsk`'s `temporary`: the
 /// source unlocked it with a key file the restore brings back), as the
 /// builders name it.  A ZFS encryption root's is load's random key, named
-/// as Builder::new_key and the keylocation name it.
+/// as `Builder::new_key` and the keylocation name it.
 fn temporary_key(k: &commands::KeyAsk) -> Option<String> {
     match k.kind {
         "luks" => commands::temp_key_name(k.names.first()?).map(|n| format!("{RUN_DIR}/keys/{n}")),
@@ -119,7 +119,7 @@ impl State {
         }
     }
 
-    /// The word the status document gives it: State::word in snake case.
+    /// The word the status document gives it: `State::word` in snake case.
     pub fn json_word(self) -> &'static str {
         match self {
             State::Done => "done",
@@ -145,7 +145,7 @@ fn tally(ok: usize, total: usize) -> State {
 /// OpenBSD won't open the block device of a mounted filesystem (EBUSY):
 /// once mount had run, format read as not done, /dev/sd1a or a softraid
 /// volume's 739d98841b65e745.a (/dev/sd3a) unreadable.  There it's the raw
-/// device (/dev/rsd3a), which reads the same; open_dev sizes it.
+/// device (/dev/rsd3a), which reads the same; `open_dev` sizes it.
 fn read_path(sys: &Sys, fam: Option<Family>, node: &str) -> String {
     let p = crate::other::node_path(sys, node);
     match fam {
@@ -174,8 +174,8 @@ fn uuid_at(sys: &Sys, fam: Option<Family>, node: &str) -> Option<String> {
 
 /// The mount points of the tree still to mount, of UNMOUNTED (those not
 /// mounted now): the inactive boot environments' under T/run/bko-be
-/// (load/zfs_be.rs) are the restore's only, and the boot stage unmounts
-/// them first, so once it has run (BOOT_RAN) they count as done.
+/// (`load/zfs_be.rs`) are the restore's only, and the boot stage unmounts
+/// them first, so once it has run (`BOOT_RAN`) they count as done.
 fn tree_unmounted(unmounted: &[String], target: &str, boot_ran: bool) -> Vec<String> {
     let be_dir = format!("{target}{}", crate::zfs_be::BE_DIR);
     unmounted
@@ -594,7 +594,7 @@ const STATUS_PROBLEMS: &str = "bko-holt load: status: see the problems above\n";
 /// assemble or format would run, with no partition stage of its own wiping
 /// the targets first, is refused on each target the restore began on, a
 /// `remake_after_restore` per stage.  WOULD is what the run would run
-/// (plan::would_run).
+/// (`plan::would_run`).
 pub(crate) fn remake_problems(
     mapping: &target::Mapping,
     system: &target::System,
@@ -643,7 +643,7 @@ pub fn json_run(layout: &Layout, opts: &Options, sys: &Sys) -> (u8, String, Stri
 
 /// The status document's `temporary_keys`: the builders' asks and each
 /// ZFS encryption root's (as the plan's `keys` gives them) whose only key
-/// is load's, with whether its file is still there; and, when LOST_MATTERS
+/// is load's, with whether its file is still there; and, when `LOST_MATTERS`
 /// (the copy began or they're open, and boot hasn't run), why each gone
 /// one is no Go on.
 fn temporary_keys(
@@ -1153,7 +1153,7 @@ mod tests {
     ];
 
     /// A rescue system: vdb 16 GiB (the sample's size) holding TABLE, every
-    /// tool, BackOtter's rustic-bko, and a private password file /k/pw.
+    /// tool, `BackOtter`'s rustic-bko, and a private password file /k/pw.
     fn rescue_j(name: &str, table: &[u8]) -> Tree {
         let t = Tree::new(name);
         t.disk("vdb", "253:16", table, 512)
@@ -1205,7 +1205,7 @@ mod tests {
         }
     }
 
-    /// load::run with A: its exit, its standard output as one document,
+    /// `load::run` with A: its exit, its standard output as one document,
     /// its standard error.
     fn doc_of(layout: &str, a: &[&str], s: &Sys) -> (u8, Value, String) {
         let (code, out, err) = crate::load::run(&opts_j(a), layout, s);
@@ -1255,7 +1255,7 @@ mod tests {
     }
 
     /// The document as tests/fixtures/status-json/NAME.json keeps it: pretty,
-    /// its `generated` and `version` replaced.  BKO_HOLT_JSON_GOLDEN=bless
+    /// its `generated` and `version` replaced.  `BKO_HOLT_JSON_GOLDEN=bless`
     /// writes it again.
     fn golden(name: &str, v: &Value) {
         let mut v = v.clone();
@@ -1673,7 +1673,7 @@ mod tests {
 
     /// A ZFS encryption root keyed by a raw file (Ubuntu's rpool, its key
     /// in the keystore) and no --key-file: load's random key at
-    /// RUN_DIR/keys/rpool is its only one, so it's listed, and a lost one
+    /// `RUN_DIR/keys/rpool` is its only one, so it's listed, and a lost one
     /// is no Go on; with --key-file rpool=FILE there's none.
     #[test]
     fn a_zfs_encryption_roots_temporary_key() {
@@ -1817,7 +1817,7 @@ mod tests {
         );
     }
 
-    /// remake_after_restore (J19): once a restore began on a target, a run
+    /// `remake_after_restore` (J19): once a restore began on a target, a run
     /// that would make assemble's or format's anew there without its own
     /// partition stage wiping it first is refused, in the plan and the
     /// writing runs alike (a dry run's too); text mode doesn't refuse it.

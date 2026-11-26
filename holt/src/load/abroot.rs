@@ -1,12 +1,12 @@
-//! `load` for an ABRoot system (Vanilla OS: docs/design/vanillaos.md).
-//! The mount stage builds ABRoot's own tree: fstab's (the present root at
+//! `load` for an `ABRoot` system (Vanilla OS: docs/design/vanillaos.md).
+//! The mount stage builds `ABRoot`'s own tree: fstab's (the present root at
 //! `/`, /boot, the ESP), then the init LV at `boot/init`, the other root at
-//! `part-future`, and /var, which ABRoot's mount-sys mounts by label and
+//! `part-future`, and /var, which `ABRoot`'s mount-sys mounts by label and
 //! drops from fstab.  Its boot stage regenerates nothing: the master
 //! grub.cfg on /boot, each root's abroot.cfg, kernels and initramfs in the
 //! init LV, shim and GRUB on the ESP all come back as they were, every
 //! UUID, label and LV name they name kept; Vanilla's update-grub is a stub
-//! that fails, its initramfs is ABRoot's (made in a chroot of the root
+//! that fails, its initramfs is `ABRoot`'s (made in a chroot of the root
 //! during an upgrade), and the restored roots are read-only images.  It
 //! checks that the restored GRUB configs lead to kernels and roots that
 //! exist, makes the UEFI entries, writes its log, and ends as every Linux
@@ -16,14 +16,14 @@ use super::RUN_DIR;
 use super::commands::{Builder, Cmd, atimes_cmd};
 use crate::json::Value;
 
-/// What a restored ABRoot tree has once the restore is done: the present
+/// What a restored `ABRoot` tree has once the restore is done: the present
 /// root's record of its image.
 pub const MARKER: &str = "abimage.abr";
-/// The marker when the dump's present root had no /abimage.abr: ABRoot's
+/// The marker when the dump's present root had no /abimage.abr: `ABRoot`'s
 /// state directory in /var.
 pub const MARKER_NO_IMAGE: &str = "var/lib/abroot";
 
-/// The layout's boot.abroot, when the source is an ABRoot system.
+/// The layout's boot.abroot, when the source is an `ABRoot` system.
 pub fn of(layout: &Value) -> Option<&Value> {
     layout
         .at(&["boot", "abroot"])
@@ -49,7 +49,7 @@ fn present(a: &Value) -> Option<&Value> {
         .find(|r| r.get("present") == Some(&Value::Bool(true)))
 }
 
-/// The restore gate's file (crate::other::restored_marker).
+/// The restore gate's file (`crate::other::restored_marker`).
 pub fn marker(layout: &Value) -> &'static str {
     match of(layout).and_then(present) {
         Some(r) if r.get("abimage").is_some_and(Value::is_null) => MARKER_NO_IMAGE,
@@ -69,14 +69,14 @@ pub struct RootWant {
 
 /// The consistency check of a restored tree at T, as a shell script: the
 /// master grub.cfg has `set default=0` or `1` and two configfile lines, and
-/// its default entry leads to DEFAULT_LABEL (the root the dump's grub.cfg
-/// booted next); each `set root=(lvm/...)` names the init LV (INIT_LV);
+/// its default entry leads to `DEFAULT_LABEL` (the root the dump's grub.cfg
+/// booted next); each `set root=(lvm/...)` names the init LV (`INIT_LV`);
 /// each root's init/LABEL/abroot.cfg is there unless the dump found the root
 /// empty; in it, the first `linux` line with a kernel in /LABEL/ and the
 /// first `initrd` after it name files in init/LABEL/, its root= is that
 /// root's own filesystem (UUID=, /dev/mapper/ or /dev/VG/LV), and the last
 /// `search --fs-uuid` before it in its block names the init LV's
-/// filesystem (INIT_UUID), as crate::abroot::parse_abroot_cfg reads it.  A
+/// filesystem (`INIT_UUID`), as `crate::abroot::parse_abroot_cfg` reads it.  A
 /// mismatch is said and fails the stage (a backup taken across an
 /// upgrade's grub.cfg swap shows here); an empty root is a warning.  The
 /// errors come after the warnings, ended by a count, so the last lines of
@@ -160,7 +160,7 @@ echo "abroot: grub.cfg boots $dl by default; each root's abroot.cfg leads to its
 }
 
 impl Builder<'_> {
-    /// The mounts ABRoot's tree adds to fstab's (HAVE, the mount points
+    /// The mounts `ABRoot`'s tree adds to fstab's (HAVE, the mount points
     /// fstab gives): the init LV at /boot/init, the other root at
     /// /part-future, and /var when fstab hasn't it (mount-sys drops it).
     pub(crate) fn abroot_mounts(&mut self, a: &Value, have: &[String]) -> Vec<(String, Cmd)> {
@@ -207,7 +207,7 @@ impl Builder<'_> {
         out
     }
 
-    /// What version 1 doesn't restore on ABRoot (plan problems), and what
+    /// What version 1 doesn't restore on `ABRoot` (plan problems), and what
     /// the plan should say (notes).
     fn abroot_problems(&mut self, a: &Value) {
         if a.get("thin_two_roots") != Some(&Value::Bool(true))
@@ -314,7 +314,7 @@ impl Builder<'_> {
         )
     }
 
-    /// The boot stage on ABRoot (docs/design/vanillaos.md, "load").
+    /// The boot stage on `ABRoot` (docs/design/vanillaos.md, "load").
     pub(crate) fn abroot_boot(&mut self, a: &Value) -> Vec<Cmd> {
         self.abroot_problems(a);
         let t = self.opts.target.clone();

@@ -17,7 +17,7 @@ use crate::json::Obj;
 const MAGIC: u16 = 0x3434;
 
 /// Feature bits, by the names mkfs.nilfs2 -O takes: (word offset in the
-/// superblock, bit, name).  Only compat_ro's block_count exists so far.
+/// superblock, bit, name).  Only `compat_ro`'s `block_count` exists so far.
 pub const FEATURES: &[(usize, u64, &str)] = &[(264, 0x1, "block_count")];
 
 /// The volume name: up to 80 bytes, NUL-padded.

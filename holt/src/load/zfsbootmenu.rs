@@ -1,6 +1,6 @@
-//! `load`'s boot stage for a system booted by ZFSBootMenu
+//! `load`'s boot stage for a system booted by `ZFSBootMenu`
 //! (docs/design/zfsbootmenu.md, decisions 3, 5-7; boot.zfsbootmenu,
-//! crate::zfsbootmenu).  ZFSBootMenu is a standalone EFI image the OS
+//! `crate::zfsbootmenu`).  `ZFSBootMenu` is a standalone EFI image the OS
 //! doesn't manage; it imports the pool, lists every boot environment (BE)
 //! and kexecs the newest kernel in the chosen BE's own /boot.  So:
 //!
@@ -11,17 +11,17 @@
 //!    step (dracut on Void, for each kernel in its /lib/modules), with the
 //!    restored /etc/hostid and key file in it;
 //! 3. the inactive BEs, restored through their own backup sources
-//!    (load/zfs_be.rs) and unmounted when the stage starts, keep their
+//!    (`load/zfs_be.rs`) and unmounted when the stage starts, keep their
 //!    /boot as restored (decision 6): their initramfs hold the same hostid,
-//!    and ZFSBootMenu imports the pool by name;
-//! 4. efi_entries makes the source's NVRAM entries again, in its order.
+//!    and `ZFSBootMenu` imports the pool by name;
+//! 4. `efi_entries` makes the source's NVRAM entries again, in its order.
 //!
 //! Refused in the plan: a BE pool missing from the layout, a pool whose
 //! bootfs isn't among its datasets, and no image on an ESP that fstab
 //! mounts and the layout makes.  Without NVRAM entries (--no-nvram,
-//! --removable) a copy finds ZFSBootMenu only at EFI/BOOT/BOOTX64.EFI.
+//! --removable) a copy finds `ZFSBootMenu` only at EFI/BOOT/BOOTX64.EFI.
 //!
-//! Also here, for any ZFS encryption root, not ZFSBootMenu's only: a key
+//! Also here, for any ZFS encryption root, not `ZFSBootMenu`'s only: a key
 //! file inside the restored tree (keylocation=file:///etc/zfs/zroot.key on
 //! a dataset of the pool), whose content --key-file gave; after the restore
 //! the restored file must be that key, or the initramfs would carry one
@@ -38,10 +38,10 @@ fn s(v: &Value, k: &str) -> Option<String> {
 /// The shell test that key file RESTORED holds the key in file KEY, else
 /// MSG on stderr and exit 1.  A raw key (RAW) is read whole, 32 bytes, so
 /// it must be the same byte for byte.  A passphrase or hex key is read by
-/// libzfs's get_key_material_raw (lib/libzfs/libzfs_crypto.c, OpenZFS
-/// 2.4.4) with getline(), which drops one '\n' at the end and nothing else
+/// libzfs's `get_key_material_raw` (`lib/libzfs/libzfs_crypto.c`, `OpenZFS`
+/// 2.4.4) with `getline()`, which drops one '\n' at the end and nothing else
 /// ("\r" stays): so the two files may also differ by one '\n' at the end of
-/// either (a key file written by `echo PASSPHRASE >`, as the ZFSBootMenu
+/// either (a key file written by `echo PASSPHRASE >`, as the `ZFSBootMenu`
 /// guide has it).  Any other difference fails.
 pub(crate) fn key_file_check(key: &str, restored: &str, raw: bool, msg: &str) -> String {
     let (k, r) = (shell_quote(key), shell_quote(restored));
@@ -56,7 +56,7 @@ pub(crate) fn key_file_check(key: &str, restored: &str, raw: bool, msg: &str) ->
 }
 
 impl Builder<'_> {
-    /// boot.zfsbootmenu, when the source booted (or holds) ZFSBootMenu.
+    /// boot.zfsbootmenu, when the source booted (or holds) `ZFSBootMenu`.
     pub(crate) fn zbm(&self) -> Option<&Value> {
         self.layout
             .v
@@ -67,7 +67,7 @@ impl Builder<'_> {
     /// The path of an encryption root's key file when it lies inside the
     /// restored tree: keylocation=file://PATH and the deepest of the
     /// source's mounts above PATH is a ZFS dataset (not a keystore on
-    /// another filesystem, which keystores() fills).
+    /// another filesystem, which `keystores()` fills).
     pub(crate) fn key_file_in_tree(&self, ds: &Value) -> Option<String> {
         let path = s(ds, "keylocation")?.strip_prefix("file://")?.to_string();
         let mount = self
@@ -84,7 +84,7 @@ impl Builder<'_> {
     /// the restored tree and whose key --key-file gave: the restored file
     /// is that key under the target T, byte for byte but for the one
     /// newline at the end libzfs drops from a passphrase or hex key
-    /// (key_file_check).  The restored file is never rewritten.
+    /// (`key_file_check`).  The restored file is never rewritten.
     pub(crate) fn zfs_key_file_checks(&self, t: &str) -> Vec<Cmd> {
         let mut out = Vec::new();
         for ds in self.layout.arr(&["storage", "zfs", "tools", "datasets"]) {
@@ -115,7 +115,7 @@ impl Builder<'_> {
     }
 
     /// The zfsbootmenu boot arm's notes and refusals (it runs nothing: the
-    /// initramfs step and efi_entries are the stage's own).
+    /// initramfs step and `efi_entries` are the stage's own).
     pub(crate) fn zfsbootmenu_boot_cmds(&mut self) -> Vec<Cmd> {
         let zbm = self.zbm().cloned().unwrap_or(Value::Null);
         let images: Vec<Value> = zbm

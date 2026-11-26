@@ -462,12 +462,12 @@ pub struct Mapping {
     pub held: Vec<String>,
     pub release: Vec<super::release::Step>,
     /// Targets named with --erase that are busy and hold this layout's own
-    /// identifiers (TargetDisk::is_ours): what's there may be an earlier
+    /// identifiers (`TargetDisk::is_ours)`: what's there may be an earlier
     /// stage's, or the old system's on its own disk, started at boot.
-    /// release_holders tells them apart once the layout the stages build
+    /// `release_holders` tells them apart once the layout the stages build
     /// from is known.
     pub ours_busy: Vec<String>,
-    /// (path, text) of each target's table record (table_record), which the
+    /// (path, text) of each target's table record (`table_record`), which the
     /// partition stage writes once its commands have run: what lets a later
     /// run with --erase tell the table load wrote from the source's own
     /// disk as found.
@@ -755,7 +755,7 @@ pub fn partition_done(d: &Disk, t: &TargetDisk) -> bool {
 
 /// Where the partition stage records what it did to target disk TGT (a
 /// kernel name): the table it wrote, or, for a source disk with no table,
-/// the wipe its content goes on.  RUN_DIR is the rescue system's tmpfs: a
+/// the wipe its content goes on.  `RUN_DIR` is the rescue system's tmpfs: a
 /// reboot forgets the record along with the session's mounts, imports and
 /// activations, so a record always speaks of what this session did.
 pub fn table_record(tgt: &str) -> String {
@@ -769,8 +769,8 @@ pub fn table_record(tgt: &str) -> String {
 /// The target is named by what the kernel says of it in sysfs, which holds
 /// for as long as the disk stays attached: its name, its size, and the
 /// serial and WWID its driver gives (device/serial, device/wwid), empty
-/// when it gives none.  Not by udev's ID_SERIAL_SHORT or ID_WWN, which
-/// BlockDev falls back to for virtio and NVMe disks: udev rewrites its
+/// when it gives none.  Not by udev's `ID_SERIAL_SHORT` or `ID_WWN`, which
+/// `BlockDev` falls back to for virtio and `NVMe` disks: udev rewrites its
 /// database on every change event, and a field that came or went between
 /// two runs would make the record miss, so a --through rerun would wipe a
 /// disk load had already restored.  A disk swapped in under the same name,
@@ -778,26 +778,26 @@ pub fn table_record(tgt: &str) -> String {
 /// one case the record can't tell; the table check makes it a clone of the
 /// target load wrote, and a hot-swap mid-restore isn't one load supports.
 /// Off Linux, which has no sysfs, the serial and WWID are the scan's
-/// (kernel_identity), so a disk swapped in under the same node and size
+/// (`kernel_identity`), so a disk swapped in under the same node and size
 /// there is told apart by them too.
 pub fn table_record_text(layout: &Layout, d: &Disk, t: &TargetDisk, sys: &Sys) -> String {
     record_text(layout, d, t, &kernel_identity(sys, t))
 }
 
 /// What target T's kernel identity is, as its partition record
-/// (table_record_text) names it: (serial, WWID).  On Linux, what its
+/// (`table_record_text`) names it: (serial, WWID).  On Linux, what its
 /// driver gives in sysfs (device/serial, device/wwid), empty when it gives
 /// none; off Linux, the scan's (other/load.rs), empty when it found none.
 pub fn kernel_identity(sys: &Sys, t: &TargetDisk) -> (String, String) {
     identity_on(crate::other::Family::current(), sys, t)
 }
 
-/// kernel_identity as it is on FAM (None: Linux).  On OpenBSD and NetBSD
+/// `kernel_identity` as it is on FAM (None: Linux).  On OpenBSD and NetBSD
 /// the scan's serial is the disklabel's DUID (other/labelled.rs, from
 /// hw.disknames), which the partition stage itself writes: the record
 /// written for the target as it was would never be the one read back after
-/// it (RT10j review: openbsd8-crypt's partition stage "not done"), so there
-/// the record leaves it out, as before RustAudit1 HD2-04.
+/// it (`RT10j` review: openbsd8-crypt's partition stage "not done"), so there
+/// the record leaves it out, as before `RustAudit1` HD2-04.
 fn identity_on(fam: Option<crate::other::Family>, sys: &Sys, t: &TargetDisk) -> (String, String) {
     use crate::other::Family;
     if let Some(f) = fam {
@@ -860,13 +860,13 @@ pub fn load_wrote(layout: &Layout, d: &Disk, t: &TargetDisk, sys: &Sys) -> bool 
         .is_some_and(|r| r == table_record_text(layout, d, t, sys))
 }
 
-/// Whether the partition stage counts as done on T: partition_done, and,
+/// Whether the partition stage counts as done on T: `partition_done`, and,
 /// for a target named with --erase, a record that load wrote that table in
 /// this session.  The source's own disk as found carries the source's table
 /// too (same disk, same table: the usual bare-metal restore), and what the
 /// old system has on it (an active volume group, its filesystems, its
 /// /etc) isn't load's; --erase asked for it wiped (layload.md, "Safety",
-/// rule 4).  A source disk with no table has nothing for partition_done to
+/// rule 4).  A source disk with no table has nothing for `partition_done` to
 /// check, but the stage is the one that wipes and zeroes its target: named
 /// with --erase, it's done only by the record too, or the old filesystem
 /// there (the source's own, its UUID the layout's) would pass for format's.
@@ -880,7 +880,7 @@ pub fn partition_counts_done(
     partition_done(d, t) && (!is_erased(opts, t) || load_wrote(layout, d, t, sys))
 }
 
-/// A target named with --erase that passes partition_done (the source's
+/// A target named with --erase that passes `partition_done` (the source's
 /// table there, or the source disk has none), with no record that load
 /// wrote it: the partition stage runs.
 pub fn unrecorded(layout: &Layout, d: &Disk, t: &TargetDisk, opts: &Options, sys: &Sys) -> bool {
@@ -955,7 +955,7 @@ fn loads_own(sys: &Sys, system: &System, opts: &Options, pools: &[String], disk:
 
 /// What holds the targets named with --erase, let go of at the start of the
 /// partition stage (release.rs).  LAYOUT is the one the stages build from.
-/// A target that is_ours (an earlier stage's, or the source's own disk) goes
+/// A target that `is_ours` (an earlier stage's, or the source's own disk) goes
 /// the same way, with the same refusals, when the partition stage will run;
 /// when the stage won't run (done already, under --through: the table
 /// load's by its record), nothing is let go and nothing refused.  Load's own
@@ -1160,7 +1160,7 @@ pub fn contents(sys: &Sys, t: &TargetDisk) -> Vec<crate::json::Value> {
 
 /// The bytes a filesystem of KIND uses, from its probe's JSON J: ext's
 /// and XFS's blocks less free blocks, times the block size; btrfs's
-/// bytes_used.  None for another type, or a superblock whose figures
+/// `bytes_used`.  None for another type, or a superblock whose figures
 /// overflow a u64 (a damaged one: no real filesystem holds 2^64 bytes).
 fn used_bytes(kind: &str, j: &crate::json::Value) -> Option<u64> {
     let u = |k: &str| j.get(k).and_then(crate::json::Value::as_u64);
@@ -1173,7 +1173,7 @@ fn used_bytes(kind: &str, j: &crate::json::Value) -> Option<u64> {
     }
 }
 
-/// Whether the mount at MOUNT_POINT is of something on T: one of its
+/// Whether the mount at `MOUNT_POINT` is of something on T: one of its
 /// devices or what's stacked on them (LUKS, LVM, md), as scan reads mounts.
 fn holds_mount(sys: &Sys, system: &System, t: &TargetDisk, mount_point: &str) -> bool {
     let Some(m) = system.mounts.iter().find(|m| m.target == mount_point) else {
@@ -1272,7 +1272,7 @@ pub fn refusal(
 }
 
 /// Whether this session's partition stage wrote T for one of LAYOUT's used
-/// disks (load_wrote, for any of them): a candidate that isn't a target
+/// disks (`load_wrote`, for any of them): a candidate that isn't a target
 /// has no source of its own.
 pub fn recorded_for_any(layout: &Layout, t: &TargetDisk, sys: &Sys) -> bool {
     layout
@@ -1284,9 +1284,9 @@ pub fn recorded_for_any(layout: &Layout, t: &TargetDisk, sys: &Sys) -> bool {
 
 /// Never over the old system (holt-json.md, J19; under --json only): every
 /// target that isn't blank must be named with --erase, or have this
-/// session's partition record.  TargetDisk::is_ours is no exception: the
+/// session's partition record.  `TargetDisk::is_ours` is no exception: the
 /// source machine's own disk as found carries the layout's identifiers
-/// too.  A target the mapping refused already (not_blank, held, in_use)
+/// too.  A target the mapping refused already (`not_blank`, held, `in_use`)
 /// isn't refused twice.
 pub fn erase_gate(
     layout: &Layout,
@@ -1739,7 +1739,7 @@ mod tests {
         assert!(m.problems.is_empty(), "{:?}", m.problems);
     }
 
-    /// RustAudit1 HD2-07: a damaged superblock's figures (blocks about
+    /// `RustAudit1` HD2-07: a damaged superblock's figures (blocks about
     /// 2^60, 64 KiB blocks) give no used bytes, not a panic or a wrapped
     /// number.
     #[test]
@@ -1774,9 +1774,9 @@ mod tests {
         );
     }
 
-    /// RustAudit1 HD2-04: off Linux the partition record names the target
+    /// `RustAudit1` HD2-04: off Linux the partition record names the target
     /// by the scan's serial and WWID (there is no sysfs), so a disk swapped
-    /// in under the same node and size has another record and load_wrote
+    /// in under the same node and size has another record and `load_wrote`
     /// doesn't take it for the one load wrote; on Linux, sysfs's, as ever.
     #[test]
     fn the_record_names_the_scans_serial_off_linux() {
@@ -2116,7 +2116,7 @@ mod tests {
         assert!(p(&["--map", "vda=vdb", "--erase", "vdc"]).contains("isn't a target"));
     }
 
-    /// Every problem and note map_disks, check_target, release_holders and
+    /// Every problem and note `map_disks`, `check_target`, `release_holders` and
     /// prepare code: the code, the subject fields, and the text as before.
     #[test]
     fn problems_carry_their_codes() {
@@ -2575,7 +2575,7 @@ mod tests {
         }
     }
 
-    /// BackShot2's leftovers L3: the rescue system autoactivated the old
+    /// `BackShot2`'s leftovers L3: the rescue system autoactivated the old
     /// vg0 (root and swap LVs on vdb2) at boot.  Without --erase the target
     /// is refused as before; with it, vg0 is deactivated (LVM seeing vdb2
     /// only) before the partition stage's wipefs; a swap LV refuses it.
@@ -2659,8 +2659,8 @@ mod tests {
         s
     }
 
-    /// The source's own disk (BackShot1's case): its table carries the
-    /// layout's identifier, so the target is_ours, and the rescue system
+    /// The source's own disk (`BackShot1`'s case): its table carries the
+    /// layout's identifier, so the target `is_ours`, and the rescue system
     /// autoactivated the old vg0 on it.  With --erase it's let go of as on
     /// any other disk, when the partition stage will run and what holds it
     /// isn't load's own; otherwise nothing changes.

@@ -15,8 +15,8 @@ use super::codes::{Note, NoteCode, Notes, Problem, ProblemCode, Problems};
 use crate::json::Value;
 use crate::report::human;
 
-/// Why the fit refused a disk: fit_refused with one of codes::FIT_REASONS,
-/// or another code (fit_over_pct, data_wont_fit, data_unknown) with the
+/// Why the fit refused a disk: `fit_refused` with one of `codes::FIT_REASONS`,
+/// or another code (`fit_over_pct`, `data_wont_fit`, `data_unknown`) with the
 /// figures it knows (holt-json.md, "Codes").  Its text is the message the
 /// plan prints, as before.
 #[derive(Debug, Clone, PartialEq)]
@@ -27,7 +27,7 @@ pub struct Why {
     pub fields: Vec<(String, Value)>,
 }
 
-/// A fit_refused for REASON.
+/// A `fit_refused` for REASON.
 fn why(reason: &'static str, text: String) -> Why {
     Why {
         code: ProblemCode::FitRefused,
@@ -68,7 +68,7 @@ impl Why {
     }
 }
 
-/// A message with no reason of its own: fit_refused's `other`.
+/// A message with no reason of its own: `fit_refused`'s `other`.
 impl From<String> for Why {
     fn from(text: String) -> Why {
         why("other", text)
@@ -86,9 +86,9 @@ struct ExtResized {
     reserved_blocks: Option<u64>,
 }
 
-/// Whether ext block group G holds a superblock backup (ext2fs_bg_has_super):
-/// every group without sparse_super, else 0, 1 and the powers of 3, 5 and 7.
-/// With sparse_super2, mke2fs's two backups go in group 1 and the last.
+/// Whether ext block group G holds a superblock backup (`ext2fs_bg_has_super)`:
+/// every group without `sparse_super`, else 0, 1 and the powers of 3, 5 and 7.
+/// With `sparse_super2`, mke2fs's two backups go in group 1 and the last.
 fn ext_has_super(g: u64, feats: &[&str]) -> bool {
     if feats.contains(&"sparse_super2") {
         return true;
@@ -106,7 +106,7 @@ fn ext_has_super(g: u64, feats: &[&str]) -> bool {
 }
 
 /// The ext filesystem C on BLOCKS blocks, as resize2fs leaves it
-/// (e2fsprogs resize/resize2fs.c adjust_fs_info): the same blocks and inodes
+/// (e2fsprogs resize/resize2fs.c `adjust_fs_info)`: the same blocks and inodes
 /// a group, as many groups as the blocks need, a last group too small for
 /// its own overhead and 50 blocks dropped (mke2fs drops it too), the inodes
 /// those groups have, the reserved GDT blocks taking up or giving back what
@@ -201,7 +201,7 @@ const MIB: u64 = 1 << 20;
 /// What a shrinking filesystem must have free beyond the shrink itself.
 const SPARE_BYTES: u64 = 1 << 30;
 const SPARE_PCT: u64 = 5;
-/// xfsprogs' XFS_AG_MIN_BYTES: mkfs.xfs refuses a size whose last allocation
+/// xfsprogs' `XFS_AG_MIN_BYTES`: mkfs.xfs refuses a size whose last allocation
 /// group is a stub smaller than this, so the fit leaves that stub out.
 const XFS_AG_MIN_BYTES: u64 = 16 << 20;
 /// The last sector an MBR partition entry can reach: both its start and its
@@ -350,7 +350,7 @@ fn s(v: &Value, k: &str) -> Option<String> {
 }
 
 /// A dump's number in any spelling dump writes (a number, decimal text,
-/// 0x-hex text): Value::get_u64_lenient, load's one rule.
+/// 0x-hex text): `Value::get_u64_lenient`, load's one rule.
 fn u(v: &Value, k: &str) -> Option<u64> {
     v.get_u64_lenient(k)
 }
@@ -569,7 +569,7 @@ fn mount_entry<'a>(v: &'a Value, dev: &str) -> Option<&'a Value> {
     None
 }
 
-/// Where what's on source device DEV was mounted (mount_entry).
+/// Where what's on source device DEV was mounted (`mount_entry`).
 pub fn mount_of(v: &Value, dev: &str) -> Option<String> {
     mount_entry(v, dev).and_then(|m| s(m, "target"))
 }
@@ -610,7 +610,7 @@ pub fn holds(v: &Value, dev: &str) -> Option<String> {
 }
 
 /// The partition fit would change on source disk DISK: the largest that
-/// isn't an MBR extended container (one() chooses it so), its number and
+/// isn't an MBR extended container (`one()` chooses it so), its number and
 /// size in bytes; None where there's no one largest (no table, no
 /// partition, a tie).
 pub fn largest(v: &Value, disk: &str) -> Option<(String, u32, u64)> {
@@ -644,7 +644,7 @@ pub fn largest(v: &Value, disk: &str) -> Option<(String, u32, u64)> {
     big.next().is_none().then_some(first)
 }
 
-/// The size verdicts search to this percentage: RT10n's --fit takes up to
+/// The size verdicts search to this percentage: `RT10n`'s --fit takes up to
 /// 99; a disk a shrink of more than that would fit is no fit at all.
 pub const VERDICT_PCT_MAX: u64 = 99;
 
@@ -654,8 +654,8 @@ pub const VERDICT_PCT_MAX: u64 = 99;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Verdict {
     pub source: String,
-    /// same, smaller_slack, smaller, bigger, data_wont_fit, cant_resize,
-    /// beyond_limit.
+    /// same, `smaller_slack`, smaller, bigger, `data_wont_fit`, `cant_resize`,
+    /// `beyond_limit`.
     pub verdict: &'static str,
     pub fit_pct: Option<u64>,
     pub change_pct: Option<f64>,
@@ -702,8 +702,8 @@ fn change_pct(old: u64, new: u64) -> Option<f64> {
     (old > 0).then(|| ((old.abs_diff(new) as f64) * 1000.0 / old as f64).round() / 10.0)
 }
 
-/// The verdict for source disk DISK of V onto a disk NODE of SIZE_BYTES
-/// bytes: one() for the single pair at increasing percentages (fit's own
+/// The verdict for source disk DISK of V onto a disk NODE of `SIZE_BYTES`
+/// bytes: `one()` for the single pair at increasing percentages (fit's own
 /// rule, so the plan that follows agrees), the figures fit computes.
 pub fn verdict(v: &Value, disk: &str, node: &str, size_bytes: u64) -> Verdict {
     let t = Target {
@@ -935,7 +935,7 @@ struct One<'a> {
     /// always), or only records its figures (`one_lax`: the size verdicts'
     /// figures for a disk the data doesn't fit).
     strict: bool,
-    /// Bigger: the room left unused (DiskFit's unused_bytes).
+    /// Bigger: the room left unused (`DiskFit`'s `unused_bytes`).
     unused: u64,
 }
 
@@ -945,7 +945,7 @@ pub(crate) fn one(v: &Value, t: &Target, pct: u64) -> Result<Outcome, Vec<Proble
     one_with(v, t, pct, true)
 }
 
-/// one(), where data that wouldn't fit refuses nothing: its DataFit says
+/// `one()`, where data that wouldn't fit refuses nothing: its `DataFit` says
 /// so.  For the size verdicts' figures only; never a plan's.
 fn one_lax(v: &Value, t: &Target, pct: u64) -> Result<Outcome, Vec<Problem>> {
     one_with(v, t, pct, false)
@@ -1460,7 +1460,7 @@ impl One<'_> {
     }
 
     /// The dm device a LUKS container on DEV was opened as: its index in the
-    /// dump's dm_devices and its entry.
+    /// dump's `dm_devices` and its entry.
     fn crypt_dm(&self, dev: &str) -> Option<(usize, Value)> {
         let all = self
             .v
@@ -2184,7 +2184,7 @@ impl One<'_> {
         Some((i, all[i].get("content").cloned().unwrap_or(Value::Null)))
     }
 
-    /// The index (in its group's logical_volumes) of the thin pool whose
+    /// The index (in its group's `logical_volumes`) of the thin pool whose
     /// data LV is DATA, if it is one.
     fn pool_of_data(&self, vg: &str, data: &str) -> Option<usize> {
         let g = self
@@ -2203,7 +2203,7 @@ impl One<'_> {
     }
 
     /// A thin pool may give up NEED of its data LV's EXTENTS only down to
-    /// the data its source had in use (the dump's data_used_bytes), never
+    /// the data its source had in use (the dump's `data_used_bytes`), never
     /// below; a dump that doesn't say is refused.
     fn pool_shrink_ok(
         &self,
@@ -2688,7 +2688,7 @@ mod tests {
         )
     }
 
-    /// data_wont_fit's figures (RT10b; RT10d adds the mount and the most).
+    /// `data_wont_fit`'s figures (`RT10b`; `RT10d` adds the mount and the most).
     #[test]
     fn data_wont_fit_carries_its_figures() {
         let (total, d) = one_root(2 * GIB);
@@ -2747,7 +2747,7 @@ mod tests {
     }
 
     /// Why the fit of V onto a target of SIZE bytes was refused: the
-    /// problems' text, and the first one's code (RT10b).
+    /// problems' text, and the first one's code (`RT10b`).
     fn refused(v: &Value, size: u64, pct: u64) -> Refused {
         let f = fit(v, &one_target(size), pct);
         assert!(f.v.is_none(), "it wasn't refused: {:?}", f.disks);
@@ -2793,7 +2793,7 @@ mod tests {
     }
 
     impl Refused {
-        /// Asserts the first problem is fit_refused for REASON, or has the
+        /// Asserts the first problem is `fit_refused` for REASON, or has the
         /// code REASON.
         fn is(self, reason: &str) -> Refused {
             let got = if self.first.code == ProblemCode::FitRefused {
@@ -3191,7 +3191,7 @@ mod tests {
         );
     }
 
-    /// BackShot2's fail-005 ext4 (alpine324-uefi's vda3, drifted): 4 KiB
+    /// `BackShot2`'s fail-005 ext4 (alpine324-uefi's vda3, drifted): 4 KiB
     /// blocks, 32768 a group, 32096 inodes a group, 261 reserved GDT blocks.
     fn ext4_full(blocks: u64, free: u64) -> String {
         let groups = blocks.div_ceil(32768);
@@ -3870,7 +3870,7 @@ mod tests {
     }
 
     /// A 20 GiB LVM partition: a PV of 5119 extents of 4 MiB, root and
-    /// swap_1 on it, and FREE extents left over at the top.
+    /// `swap_1` on it, and FREE extents left over at the top.
     fn lvm_disk(free: u64) -> D {
         let root = 5119 - 256 - free;
         let part = 20 * G;
@@ -3898,7 +3898,7 @@ mod tests {
     const LVM_TOTAL: u64 = 2048 + 20 * G + 34;
 
     /// A thin pool's data LV the largest: it may shrink only down to the
-    /// data the pool had in use, and data_wont_fit says so with a
+    /// data the pool had in use, and `data_wont_fit` says so with a
     /// filesystem's figures (no margin, no mount).
     #[test]
     fn thin_pool_data_wont_fit_carries_its_figures() {

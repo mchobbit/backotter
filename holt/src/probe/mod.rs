@@ -33,7 +33,7 @@ use crate::json::{Obj, Value};
 
 #[derive(Debug, Clone)]
 pub struct Content {
-    /// blkid's TYPE: ext4, xfs, vfat, swap, crypto_LUKS, LVM2_member, ...
+    /// blkid's TYPE: ext4, xfs, vfat, swap, `crypto_LUKS`, `LVM2_member`, ...
     pub kind: String,
     /// blkid's USAGE: filesystem, raid, crypto, other.
     pub usage: &'static str,

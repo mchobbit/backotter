@@ -166,9 +166,9 @@ impl Tree {
 }
 
 /// A document kept as holt/tests/fixtures/DIR/NAME.json: pretty, its
-/// `generated` and `version` replaced (GENERATED, VERSION), as holt_schema.py
+/// `generated` and `version` replaced (GENERATED, VERSION), as `holt_schema.py`
 /// takes a golden; checked against the file, or written again with
-/// BKO_HOLT_JSON_GOLDEN=bless.
+/// `BKO_HOLT_JSON_GOLDEN=bless`.
 pub fn golden_json(dir: &str, name: &str, v: &crate::json::Value) {
     let mut v = v.clone();
     if let crate::json::Value::Obj(kv) = &mut v {

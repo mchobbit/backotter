@@ -132,7 +132,7 @@ impl FileSource {
 
     /// The same open file, with the size the caller knows.  Not a second
     /// open: NetBSD refuses to open a block device that is open already
-    /// (EBUSY; its rescue image's /dev/ld1a, HoltTest2's netbsd11+img).
+    /// (EBUSY; its rescue image's /dev/ld1a, `HoltTest2`'s netbsd11+img).
     pub fn with_size(self, size: u64) -> FileSource {
         FileSource {
             file: self.file,
@@ -376,7 +376,7 @@ const CRC_TABLE: [u32; 256] = {
 mod tests {
     use super::*;
 
-    /// read_bounded refuses a file over its limit; read_tail keeps its end.
+    /// `read_bounded` refuses a file over its limit; `read_tail` keeps its end.
     #[test]
     fn bounded_and_tail_reads() {
         let t = crate::testutil::TempDir::new("bytes-bounded");
@@ -518,8 +518,8 @@ mod tests {
         assert_eq!(f.read_at(6, 2), Vec::<u8>::new());
     }
 
-    /// RustAudit1 H1-01/H2-01: an offset from a damaged or hostile header
-    /// near u64::MAX reads nothing: no overflow panic (debug), and no
+    /// `RustAudit1` H1-01/H2-01: an offset from a damaged or hostile header
+    /// near `u64::MAX` reads nothing: no overflow panic (debug), and no
     /// device-sized buffer from a wrapped end (release).
     #[test]
     fn file_source_reads_near_u64_max() {

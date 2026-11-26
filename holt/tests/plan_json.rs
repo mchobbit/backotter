@@ -1,24 +1,24 @@
 //! The plan document's goldens (docs/design/holt-json.md, "Testing";
-//! RT10c, RT10d): beside each tests/corpus/GUEST/plan.txt, a plan.json,
+//! `RT10c`, RT10d): beside each tests/corpus/GUEST/plan.txt, a plan.json,
 //! `bko-holt load`'s `--json` document of the same dump with the same
-//! arguments plus `--json` (common::plan_onto), kept pretty-printed with its
+//! arguments plus `--json` (`common::plan_onto`), kept pretty-printed with its
 //! `generated` and `version` replaced, and its `plan_sha256`: a hash over
 //! the commands as they run, which name the test's own binary and tree
 //! (common names them `bko-holt` and HEADERS in the document only).  Each
 //! must hold:
 //!
-//!   - the document as kept (BKO_HOLT_JSON_GOLDEN=bless writes it again);
+//!   - the document as kept (`BKO_HOLT_JSON_GOLDEN=bless` writes it again);
 //!   - its `text` is the golden plan.txt's load output byte for byte, but
 //!     for a private write's text (J18), which it leaves out;
 //!   - the schema below: every field the plan document has, of its type;
 //!   - under the 8 MiB a reader takes;
-//!   - its size verdicts are fit's own: a `smaller` at fit_pct P fits with
+//!   - its size verdicts are fit's own: a `smaller` at `fit_pct` P fits with
 //!     --fit-largest P and not P - 1, and where the figures are given,
-//!     data_fits is needed_bytes <= most_bytes.
+//!     `data_fits` is `needed_bytes` <= `most_bytes`.
 //!
 //! The corpus's plans give --repo without --password-file and no --key-file
-//! for LUKS, so most plan.json's are ok: false with password_needed and
-//! key_needed: blessed as they are, since that is what a --json run of
+//! for LUKS, so most plan.json's are ok: false with `password_needed` and
+//! `key_needed`: blessed as they are, since that is what a --json run of
 //! those arguments is.  The documents are Linux's (load's run directory is
 //! /run/bko-holt there): bless refuses to run on another system.
 
@@ -79,7 +79,7 @@ fn document(guest: &str) -> (String, Value, usize) {
     (v.pretty() + "\n", v, line.len())
 }
 
-/// plan.txt's load output: the golden text up to golden_plans.rs's own
+/// plan.txt's load output: the golden text up to `golden_plans.rs`'s own
 /// lines.
 fn load_output(plan_txt: &str) -> String {
     let mut out = String::new();
@@ -235,7 +235,7 @@ const VERDICTS: [&str; 7] = [
 ];
 
 /// The plan document's schema (holt-json.md, "bko-holt-plan"): what bko-
-/// rescue reads.  RT10h's testvm/rescue/holt_schema.py is the shared one.
+/// rescue reads.  `RT10h`'s `testvm/rescue/holt_schema.py` is the shared one.
 fn schema(v: &Value) -> Vec<String> {
     let mut e = Vec::new();
     fields(
@@ -532,8 +532,8 @@ fn corpus_plan_documents() {
 /// disks 2, 10, 30 and 60 % smaller and 10 % bigger: a `smaller` at P fits
 /// with --fit-largest P and not P - 1, a `smaller_slack` at 1; a `bigger`
 /// at P takes the whole extra there and not at P - 1; a `beyond_limit` is
-/// refused at --fit-largest's most, its data fitting; and data_fits is
-/// needed_bytes <= most_bytes wherever both are given.
+/// refused at --fit-largest's most, its data fitting; and `data_fits` is
+/// `needed_bytes` <= `most_bytes` wherever both are given.
 #[test]
 fn corpus_size_verdicts_are_fits() {
     use bko_holt::load::fit::{Target, fit, verdict};

@@ -1,5 +1,5 @@
-//! common/invariants.rs reads a plan's words as sh does (RustAudit1
-//! H10-01): load quotes an operand with shell_quote, so a mount point with
+//! common/invariants.rs reads a plan's words as sh does (`RustAudit1`
+//! H10-01): load quotes an operand with `shell_quote`, so a mount point with
 //! a space or a quote is one word, and the fstab invariant takes the dump's
 //! `file` as dump decoded it, not decoded again.
 

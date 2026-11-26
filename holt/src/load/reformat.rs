@@ -25,12 +25,12 @@ use crate::load::shared::{self, Mount};
 /// The types --reformat converts between.
 pub const TYPES: [&str; 3] = ["ext4", "xfs", "btrfs"];
 
-/// mkfs.xfs's kernel profiles (/usr/share/xfsprogs/mkfs/lts_X.Y.conf): the
+/// mkfs.xfs's kernel profiles (/`usr/share/xfsprogs/mkfs/lts_X.Y.conf)`: the
 /// oldest kernel each is for, and the features it turns on, by the names
 /// bko-holt's XFS probe gives them (format reads the new filesystem back
 /// and holds it to these: load/readback.rs).  A v5 (crc) superblock always
 /// has ftype, lazysbcount, attr2 and projid32bit.  exchange, parent and
-/// metadir are in none of them: commands::mkfs_xfs names them off.
+/// metadir are in none of them: `commands::mkfs_xfs` names them off.
 const XFS_PROFILES: [((u32, u32), &[&str]); 7] = [
     (
         (4, 19),
@@ -202,7 +202,7 @@ pub struct Change {
     /// out of the restore, as for a btrfs load remakes.
     pub aliases: Vec<String>,
     pub features: Vec<String>,
-    /// btrfs's compat_ro features (free_space_tree), apart as a dump has them.
+    /// btrfs's `compat_ro` features (`free_space_tree`), apart as a dump has them.
     pub compat_ro: Vec<String>,
     /// Where the features came from, for the plan.
     pub features_from: String,
@@ -219,7 +219,7 @@ pub struct Reformat {
     pub notes: Notes,
 }
 
-/// reformat_refused for REASON (codes::REFORMAT_REASONS; `other` where
+/// `reformat_refused` for REASON (`codes::REFORMAT_REASONS`; `other` where
 /// the table has none), about MOUNT made as TYPE, each null when the
 /// refusal isn't about one (holt-json.md: a field not known is null).
 fn refused(reason: &str, mount: Option<&str>, to: Option<&str>, text: String) -> Problem {
@@ -257,7 +257,7 @@ fn package_version(v: &str) -> Option<(u32, u32)> {
 }
 
 /// The oldest kernel the source has: those installed, and the one it ran
-/// (os.kernel_release), which is all an Arch dump has (vmlinuz-linux names
+/// (`os.kernel_release`), which is all an Arch dump has (vmlinuz-linux names
 /// no version).
 fn oldest_kernel(v: &Value) -> Option<(u32, u32)> {
     let mut all: Vec<String> = arr(v, &["boot", "kernels", "installed"])
@@ -280,7 +280,7 @@ fn under(path: &str, top: &str) -> bool {
 /// (probe/btrfs.rs's `grub_env_block`: grubenv's `env_block=512+1`).  The
 /// new type has no such area, so mkfs leaves nothing there for GRUB to
 /// read: boot's rewrite moves the block's variables into grubenv itself
-/// and takes its env_block= out (rewrite::grubenv_unblock).
+/// and takes its `env_block`= out (`rewrite::grubenv_unblock`).
 pub fn grub_env_block(v: &Value, c: &Change) -> Option<Value> {
     if c.from != "btrfs" {
         return None;
@@ -307,10 +307,10 @@ pub fn holds(v: &Value, c: &Change, path: &str) -> bool {
 /// Where GRUB's PATH on C's old btrfs is on the new filesystem, from its
 /// root; None when it's the same there, or isn't in what the restore
 /// brings back.  GRUB names a btrfs path from the top level, subvolume
-/// and all (/@root/boot/grub), or with btrfs_relative_path (RELATIVE)
+/// and all (/@root/boot/grub), or with `btrfs_relative_path` (RELATIVE)
 /// from the default subvolume.  The fstab mount of it whose subvolume is
 /// the deepest above the path holds it, and the new filesystem (C's
-/// mount) has it at that mount's place below C's: AnduinOS's ESP stub
+/// mount) has it at that mount's place below C's: `AnduinOS`'s ESP stub
 /// prefix /@root/boot/grub is /boot/grub on the new ext4.  A path in none
 /// of its subvolumes is None, the new filesystem's already: a stub
 /// rewritten once, or written fresh, stays as it is.
@@ -540,9 +540,9 @@ fn layout_refusal(v: &Value) -> Option<Problem> {
 /// a Slackware initrd that load can't make again for the new type
 /// (docs/design/slackware.md): 15.0's mkinitrd is replayed from the
 /// source's /boot/initrd-tree/command_line with -f and -m for the new type
-/// (commands.rs mkinitrd_cmd), and /etc/mkinitrd.conf's ROOTFS and
-/// MODULE_LIST, which `mkinitrd -F` reads, aren't rewritten; -current's
-/// geninitrd is run as its mkinitrd_command_generator.sh, which probes the
+/// (commands.rs `mkinitrd_cmd`), and /etc/mkinitrd.conf's ROOTFS and
+/// `MODULE_LIST`, which `mkinitrd -F` reads, aren't rewritten; -current's
+/// geninitrd is run as its `mkinitrd_command_generator.sh`, which probes the
 /// new filesystem itself, and not by mkinitrd.conf or an override script.
 fn root_boot_refusal(v: &Value, what: &str) -> Option<String> {
     let mut appends: Vec<(String, String)> = Vec::new();
@@ -813,7 +813,7 @@ fn fold_mounts(
     (!bad).then_some(f)
 }
 
-/// The subvolumes of btrfs FS that aren't mounted (MOUNTED_SUBS): (those
+/// The subvolumes of btrfs FS that aren't mounted (`MOUNTED_SUBS)`: (those
 /// the backup doesn't hold, those below a mount, which the backup holds
 /// there, and the snapshots below a mount, each with where the backup has
 /// it, which the restore leaves out).
@@ -858,7 +858,7 @@ fn classify_subvolumes(
 }
 
 /// The features a new TO filesystem gets, and where they came from, for
-/// the oldest installed kernel KV, the source's TOOL_VERSION of TO's tools,
+/// the oldest installed kernel KV, the source's `TOOL_VERSION` of TO's tools,
 /// and whether GRUB READS it; Err, the refusal's text, for a kernel older
 /// than mkfs.xfs's oldest profile.
 fn features_for(
@@ -939,7 +939,7 @@ fn new_label(content: &Value, to: &str, what: &str, notes: &mut Notes) -> Option
 }
 
 /// Whether a swap file under MOUNT refuses it (hibernation into it: the
-/// file moves, and resume_offset= with it), with a note for one that
+/// file moves, and `resume_offset`= with it), with a note for one that
 /// doesn't.
 fn swap_refused(v: &Value, mount: &str, to: &str, what: &str, r: &mut Reformat) -> bool {
     let resume_offset = v
@@ -1183,7 +1183,7 @@ pub fn work_out(v: &Value, reformats: &[(String, String)]) -> Reformat {
 }
 
 impl Reformat {
-    /// The restore's exclusions, as --glob-file lines (shared::Plan::globs).
+    /// The restore's exclusions, as --glob-file lines (`shared::Plan::globs`).
     pub fn restore_globs(&self) -> Vec<String> {
         // Bug: restore_globs() and left_out_pool_globs() wrote raw paths into
         // rustic-bko --glob-file without glob_literal() escaping. Paths with
@@ -1229,7 +1229,7 @@ fn content(c: &Change) -> Value {
 /// The layout every stage works from: each change's device holds its new
 /// filesystem, its btrfs entry is gone, its fstab entry is rewritten and its
 /// folded mounts are out.  R's problems and notes go in as
-/// load_reformat.{problems,notes}, for the plan.
+/// `load_reformat.{problems,notes`}, for the plan.
 pub fn apply(mut v: Value, r: &Reformat) -> Value {
     for c in &r.changes {
         for_each_device_mut(&mut v, |d| {
@@ -1280,7 +1280,7 @@ pub fn apply(mut v: Value, r: &Reformat) -> Value {
 }
 
 /// LAYOUT as the stages work from it with OPTS's --reformats: edited once
-/// (load::run does it; `load_reformat` marks it done), else as it is.
+/// (`load::run` does it; `load_reformat` marks it done), else as it is.
 pub fn edited(
     layout: &crate::load::layout::Layout,
     reformats: &[(String, String)],
@@ -1459,7 +1459,7 @@ mod tests {
         );
     }
 
-    /// Every refusal is reformat_refused, its reason the table's, about
+    /// Every refusal is `reformat_refused`, its reason the table's, about
     /// the mount and type asked for; the change's own note is `reformat`;
     /// and both travel through the edited layout with their codes.
     #[test]
@@ -1651,7 +1651,7 @@ mod tests {
     }
 
     /// A btrfs whose reserved area holds GRUB's environment block (Leap
-    /// 16's, AnduinOS's, BigLinux's GRUB): the new type has none, which the
+    /// 16's, `AnduinOS`'s, `BigLinux`'s GRUB): the new type has none, which the
     /// plan says; the block's mounts are the files it holds.
     #[test]
     fn grub_env_block_on_a_reformatted_btrfs() {
@@ -1741,7 +1741,7 @@ mod tests {
     /// The top level mounted beside the subvolumes (btrbk's subvolid=5 at
     /// /mnt/top): only a path in a subvolume is the old btrfs's; the new
     /// filesystem's /boot/grub, or the ESP's /EFI/..., is left as it is,
-    /// so grub_path of its own answer is None.
+    /// so `grub_path` of its own answer is None.
     #[test]
     fn grub_paths_with_the_top_level_mounted() {
         let top = r#"{"spec": "UUID=1b64a017-659b-4484-bf36-b97f639c3c35", "file": "/mnt/top", "type": "btrfs", "options": "subvolid=5,noatime", "passno": 0, "resolves_to": "nvme0n1p2"},"#;
@@ -1787,7 +1787,7 @@ mod tests {
 
     /// What boots / on Slackware (and any LILO or ELILO) under --reformat
     /// of /: the initrd load can make again for the new type, and loader
-    /// command lines it doesn't rewrite (root_boot_refusal).
+    /// command lines it doesn't rewrite (`root_boot_refusal`).
     #[test]
     fn slackware_root_refusals() {
         let j = |t: &str| crate::json::parse(t).unwrap();

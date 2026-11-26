@@ -2,7 +2,7 @@
 //! can't run bko-holt itself, read off its disks from a Linux rescue system
 //! (Redox, whose sshd serves no logins and whose libc this doesn't build
 //! for, and Sculpt OS, Genode, which has no shell).  The system is told by
-//! what's on the disks: RedoxFS is Redox's; a GPT partition named GENODE*
+//! what's on the disks: `RedoxFS` is Redox's; a GPT partition named GENODE*
 //! holding ext2 is Sculpt's.  Neither has an fstab: the report makes up one
 //! line, its root filesystem's.  Raw boot areas (a BIOS boot partition, an
 //! ESP that nothing mounts, the MBR's code) are kept byte for byte, for

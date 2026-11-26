@@ -65,7 +65,7 @@ pub fn unquote(v: &str) -> String {
     }
 }
 
-/// /etc/os-release, else /usr/lib/os-release; else, on OpenIndiana, which
+/// /etc/os-release, else /usr/lib/os-release; else, on `OpenIndiana`, which
 /// has neither, one made from /etc/release.
 pub fn read(sys: &Sys) -> Option<OsRelease> {
     sys.read("/etc/os-release")
@@ -77,10 +77,10 @@ pub fn read(sys: &Sys) -> Option<OsRelease> {
         })
 }
 
-/// OpenIndiana Hipster's /etc/release, whose first line (indented) is
-/// "OpenIndiana Hipster 2026.10 (powered by illumos)": ID=openindiana,
-/// VERSION_ID the snapshot.  Another system's /etc/release (Oracle
-/// Solaris', OpenIndiana's before Hipster) makes none.
+/// `OpenIndiana` Hipster's /etc/release, whose first line (indented) is
+/// "`OpenIndiana` Hipster 2026.10 (powered by illumos)": ID=openindiana,
+/// `VERSION_ID` the snapshot.  Another system's /etc/release (Oracle
+/// Solaris', `OpenIndiana`'s before Hipster) makes none.
 pub fn openindiana_release(text: &str) -> Option<OsRelease> {
     let line = text.lines().map(str::trim).find(|l| !l.is_empty())?;
     let mut w = line.split_whitespace();
@@ -106,63 +106,63 @@ pub fn openindiana_release(text: &str) -> Option<OsRelease> {
 }
 
 /// The systems bko-holt supports, as os-release's ID and the major part of
-/// VERSION_ID ("*": any, for a rolling release that numbers its snapshots),
-/// with how people name them.  Each has a whole-machine test in HoltTest1All
+/// `VERSION_ID` ("*": any, for a rolling release that numbers its snapshots),
+/// with how people name them.  Each has a whole-machine test in `HoltTest1All`
 /// (testvm/holttest1d/README.md says which guests pass).  The Ubuntu-based ones use Debian's
 /// boot tools (update-initramfs, update-grub).  KDE neon (Ubuntu 24.04 with
 /// KDE's rolling Plasma) uses Ubuntu's; its test is `neon24` (UEFI, GRUB
-/// through shim in EFI/neon) in HoltTest1U, docs/design/kde-neon.md.
+/// through shim in EFI/neon) in `HoltTest1U`, docs/design/kde-neon.md.
 /// elementary OS 8 (Ubuntu 24.04 underneath, distinst's installer) does too:
 /// LVM VG `data` (LUKS `cryptdata` when encrypted), GRUB through shim in
 /// EFI/ubuntu with its grub.cfg on the ESP; its tests are `elementary8` and
-/// `elementary8-luks` in HoltTest1U, docs/design/elementary.md.  Arch
+/// `elementary8-luks` in `HoltTest1U`, docs/design/elementary.md.  Arch
 /// and Artix have mkinitcpio and grub-mkconfig, Alpine mkinitfs and
-/// grub-mkconfig, Fedora dracut and grub2-mkconfig; AerynOS's initramfs
+/// grub-mkconfig, Fedora dracut and grub2-mkconfig; `AerynOS`'s initramfs
 /// comes prebuilt with its kernel, and systemd-boot boots it.  Chimera
 /// Linux (musl, dinit, apk, FreeBSD's userland) has Debian's
 /// initramfs-tools (update-initramfs) but no debconf,
 /// and grub-mkconfig, or systemd-boot with gen-systemd-boot; its tests are
-/// `chimera`, `chimera-uefi` and `chimera-zfs` in HoltTest1Obscure, and
-/// BackShot1 on the Thinkpad (root on ZFS, the ESP as /boot).  Bazzite, and
+/// `chimera`, `chimera-uefi` and `chimera-zfs` in `HoltTest1Obscure`, and
+/// `BackShot1` on the Thinkpad (root on ZFS, the ESP as /boot).  Bazzite, and
 /// Fedora's atomic desktops under the Fedora row, are ostree systems
-/// (crate::ostree): the initramfs comes with the image and bootupd's GRUB
+/// (`crate::ostree)`: the initramfs comes with the image and bootupd's GRUB
 /// config is static, so load regenerates nothing there (load/ostree.rs).
 /// Their whole-machine test is `kinoite44`, Bazzite's Kinoite base, in
-/// HoltTest1F; BackShot1 runs Bazzite itself on real hardware.  Gentoo
-/// Linux (OpenRC or systemd, Portage) boots the way its owner put it
+/// `HoltTest1F`; `BackShot1` runs Bazzite itself on real hardware.  Gentoo
+/// Linux (`OpenRC` or systemd, Portage) boots the way its owner put it
 /// together: installkernel's install.conf names the initramfs generator,
 /// and only dracut's (or none) is supported, with GRUB and grub-mkconfig;
-/// its tests are `gentoo` (OpenRC, the Thinkpad's setup in small) and
-/// `gentoo-systemd` (LVM on LUKS) in HoltTest1G, and BackShot1 on the
-/// Thinkpad itself (docs/design/gentoo.md).  PikaOS 4 (Debian sid with its
+/// its tests are `gentoo` (`OpenRC`, the Thinkpad's setup in small) and
+/// `gentoo-systemd` (LVM on LUKS) in `HoltTest1G`, and `BackShot1` on the
+/// Thinkpad itself (docs/design/gentoo.md).  `PikaOS` 4 (Debian sid with its
 /// own kernel) boots by rEFInd, whose files are kept as restored, with
 /// booster's initramfs (docs/design/pikaos.md); its tests are `pikaos4` and
-/// `pikaos4-luks` in HoltTest1Obscure.  AnduinOS 2 (Ubuntu 26.04
-/// underneath, ID_LIKE=debian) has dracut for its initramfs and its own
+/// `pikaos4-luks` in `HoltTest1Obscure`.  `AnduinOS` 2 (Ubuntu 26.04
+/// underneath, `ID_LIKE=debian`) has dracut for its initramfs and its own
 /// GRUB, signed on the machine with a MOK behind shim, which load keeps as
 /// the ESP brings it back (docs/design/anduinos.md); its test is
-/// `anduinos2` in HoltTest1U.  Kali Linux (Debian testing with its own
+/// `anduinos2` in `HoltTest1U`.  Kali Linux (Debian testing with its own
 /// archive) boots as Debian 13 does on UEFI without shim: initramfs-tools,
 /// GRUB in EFI/kali and update-grub (docs/design/kali.md); its test is
-/// `kali` in HoltTest1Obscure.  GNU Guix System is a store system, as
-/// NixOS is (crate::store): each generation's kernel and initrd are store
+/// `kali` in `HoltTest1Obscure`.  GNU Guix System is a store system, as
+/// NixOS is (`crate::store)`: each generation's kernel and initrd are store
 /// items that GRUB reads from /, so nothing is rebuilt, and on BIOS the
 /// source's own boot.img and core.img are written to the new disk by the
 /// rescue's grub-bios-setup (docs/design/guix.md); its tests
-/// are `guix15` (UEFI) and `guix15-bios` in HoltTest1Obscure.  Vanilla OS 3
-/// (Debian sid) runs ABRoot v2 (crate::abroot): two roots on LVM thin LVs
+/// are `guix15` (UEFI) and `guix15-bios` in `HoltTest1Obscure`.  Vanilla OS 3
+/// (Debian sid) runs `ABRoot` v2 (`crate::abroot)`: two roots on LVM thin LVs
 /// and an init LV with their kernels, all restored as they were, with no
 /// initramfs, grub-install or update-grub (docs/design/vanillaos.md); its
-/// test is `vanilla3` in HoltTest1Obscure.  Ubuntu Core 24 (all-snap, its
+/// test is `vanilla3` in `HoltTest1Obscure`.  Ubuntu Core 24 (all-snap, its
 /// `/` the core24 base snap) is the files on the pc gadget's four
-/// partitions (crate::snapcore), restored as they were with every LUKS2
-/// header kept (crate::luksheader), and nothing regenerated
+/// partitions (`crate::snapcore`), restored as they were with every LUKS2
+/// header kept (`crate::luksheader`), and nothing regenerated
 /// (docs/design/ubuntu-core.md); its tests are `uc24` and `uc24-fde` in
-/// HoltTest1U.  Qubes OS 4.3's dom0 (Fedora 41 underneath, no ID_LIKE)
+/// `HoltTest1U`.  Qubes OS 4.3's dom0 (Fedora 41 underneath, no `ID_LIKE`)
 /// boots Xen through GRUB 2 without shim, with dracut and grub2-mkconfig's
-/// 20_linux_xen; its qubes' volumes are thin LVs and their snapshots, taken
-/// as raw images (crate::qubes, docs/design/qubes.md); its test is `qubes43`
-/// in HoltTest1Obscure.
+/// `20_linux_xen`; its qubes' volumes are thin LVs and their snapshots, taken
+/// as raw images (`crate::qubes`, docs/design/qubes.md); its test is `qubes43`
+/// in `HoltTest1Obscure`.
 pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("debian", "13", "Debian 13"),
     ("linuxmint", "22", "Linux Mint 22"),
@@ -295,12 +295,12 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("ubuntu-core", "24", "Ubuntu Core 24"),
 ];
 
-/// The VERSION_ID majors Slackware -current's os-release has carried
-/// (VERSION_CODENAME=current): 15 before aaa_base 16.0, 16 since.
+/// The `VERSION_ID` majors Slackware -current's os-release has carried
+/// (`VERSION_CODENAME=current)`: 15 before `aaa_base` 16.0, 16 since.
 pub const SLACKWARE_CURRENT_MAJORS: [&str; 2] = ["15", "16"];
 
-/// Whether ID, VERSION_ID and VERSION_CODENAME are Slackware -current at a
-/// VERSION_ID it has carried (check_supported; load's layout check too).
+/// Whether ID, `VERSION_ID` and `VERSION_CODENAME` are Slackware -current at a
+/// `VERSION_ID` it has carried (`check_supported`; load's layout check too).
 pub fn slackware_current(id: &str, version_id: &str, codename: Option<&str>) -> bool {
     id == "slackware"
         && codename == Some("current")
@@ -308,9 +308,9 @@ pub fn slackware_current(id: &str, version_id: &str, codename: Option<&str>) -> 
 }
 
 /// Ok unless this is Slackware -current on a MACHINE (`uname -m`) other
-/// than x86_64: -current's support was built and checked on
-/// Slackware64-current (ELILO and LILO, x86_64 kernels) only, and Slackware
-/// AArch64, -current only, says it is -current the same way.
+/// than `x86_64`: -current's support was built and checked on
+/// Slackware64-current (ELILO and LILO, `x86_64` kernels) only, and Slackware
+/// `AArch64`, -current only, says it is -current the same way.
 pub fn check_slackware_current_machine(
     os: Option<&OsRelease>,
     machine: &str,
@@ -328,8 +328,8 @@ pub fn check_slackware_current_machine(
     Ok(())
 }
 
-/// Whether ID and VERSION_ID name a supported system: the same major version
-/// ("22.3" is Mint 22).  Derivatives don't count by their ID_LIKE.
+/// Whether ID and `VERSION_ID` name a supported system: the same major version
+/// ("22.3" is Mint 22).  Derivatives don't count by their `ID_LIKE`.
 pub fn supported(id: &str, version_id: &str) -> bool {
     let major = version_id.split('.').next().unwrap_or("");
     SUPPORTED
@@ -556,7 +556,7 @@ pub(crate) mod tests {
     }
 
     /// The chimera guest's /etc/os-release (snapshot 20261103): ID quoted,
-    /// and no VERSION_ID line.
+    /// and no `VERSION_ID` line.
     const CHIMERA: &str = "NAME=\"Chimera\"\nID=\"chimera\"\nPRETTY_NAME=\"Chimera Linux\"\n";
 
     #[test]
@@ -577,7 +577,7 @@ pub(crate) mod tests {
     }
 
     /// The gentoo guest's /etc/os-release (baselayout 2.18), the same as the
-    /// Thinkpad's: single quotes, VERSION_ID baselayout's, no ID_LIKE.
+    /// Thinkpad's: single quotes, `VERSION_ID` baselayout's, no `ID_LIKE`.
     const GENTOO: &str = "NAME='Gentoo'\nID='gentoo'\nPRETTY_NAME='Gentoo Linux'\nVERSION='2.18'\nVERSION_ID='2.18'\nHOME_URL='https://www.gentoo.org/'\nSUPPORT_URL='https://www.gentoo.org/support/'\nBUG_REPORT_URL='https://bugs.gentoo.org/'\nANSI_COLOR='1;32'\n";
 
     #[test]
@@ -638,7 +638,7 @@ pub(crate) mod tests {
         );
     }
 
-    /// The Thinkpad's /etc/os-release, Fedora 45 Workstation (BackShot1,
+    /// The Thinkpad's /etc/os-release, Fedora 45 Workstation (`BackShot1`,
     /// 2026-11-20).
     const FEDORA45: &str = "NAME=\"Fedora Linux\"\nVERSION=\"45 (Workstation Edition)\"\nRELEASE_TYPE=stable\nID=fedora\nVERSION_ID=45\nVERSION_CODENAME=\"\"\nPRETTY_NAME=\"Fedora Linux 45 (Workstation Edition)\"\nANSI_COLOR=\"0;38;2;60;110;180\"\nLOGO=fedora-logo-icon\nCPE_NAME=\"cpe:/o:fedoraproject:fedora:45\"\nDEFAULT_HOSTNAME=\"fedora\"\nHOME_URL=\"https://fedoraproject.org/\"\nDOCUMENTATION_URL=\"https://docs.fedoraproject.org/en-US/fedora/f45/\"\nSUPPORT_URL=\"https://ask.fedoraproject.org/\"\nBUG_REPORT_URL=\"https://bugzilla.redhat.com/\"\nREDHAT_BUGZILLA_PRODUCT=\"Fedora\"\nREDHAT_BUGZILLA_PRODUCT_VERSION=45\nREDHAT_SUPPORT_PRODUCT=\"Fedora\"\nREDHAT_SUPPORT_PRODUCT_VERSION=45\nSUPPORT_END=2027-11-24\nVARIANT=\"Workstation Edition\"\nVARIANT_ID=workstation\n";
 
@@ -654,7 +654,7 @@ pub(crate) mod tests {
         assert!(supported_names().contains("Fedora 44, Fedora 45, Alpine Linux 3"));
     }
 
-    /// PikaOS 4's /etc/os-release (its base-files' source).
+    /// `PikaOS` 4's /etc/os-release (its base-files' source).
     const PIKA: &str = "PRETTY_NAME=\"PikaOS 4\"\nNAME=\"PikaOS\"\nVERSION_ID=\"4\"\nVERSION=\"4\"\nVERSION_CODENAME=nest\nID=pika\nID_LIKE=debian\nDEBIAN_CODENAME=sid\n";
 
     #[test]
@@ -690,7 +690,7 @@ pub(crate) mod tests {
     }
 
     /// elementary OS 8.1's /etc/os-release (the elementary8 guest, built from
-    /// elementaryos-8.1-stable-amd64.20260219.iso; UBUNTU_CODENAME is there
+    /// elementaryos-8.1-stable-amd64.20260219.iso; `UBUNTU_CODENAME` is there
     /// twice).
     const ELEMENTARY: &str = "PRETTY_NAME=\"elementary OS 8\"\nNAME=\"elementary OS\"\nVERSION_ID=\"8\"\nVERSION=\"8.1\"\nVERSION_CODENAME=circe\nID=elementary\nID_LIKE=\"ubuntu debian\"\nUBUNTU_CODENAME=noble\nUBUNTU_VERSION_ID=\"24.04\"\nUBUNTU_CODENAME=noble\n";
 
@@ -730,7 +730,7 @@ pub(crate) mod tests {
         assert!(check_supported(Some(&parse("ID=elementary-remix\nID_LIKE=\"elementary ubuntu debian\"\nVERSION_ID=\"8\"\nUBUNTU_CODENAME=noble\n"))).is_err());
     }
 
-    /// AnduinOS 2.0.5's /usr/lib/os-release (the anduinos2 guest's ISO,
+    /// `AnduinOS` 2.0.5's /usr/lib/os-release (the anduinos2 guest's ISO,
     /// docs/design/anduinos.md).
     const ANDUINOS: &str = "PRETTY_NAME=\"AnduinOS 2.0.5\"\nNAME=\"AnduinOS\"\nVERSION_ID=\"2.0.5\"\nVERSION=\"2.0.5 (Resolute Ringtail)\"\nVERSION_CODENAME=resolute\nID=anduinos\nID_LIKE=debian\nUBUNTU_CODENAME=resolute\n";
 
@@ -804,7 +804,7 @@ pub(crate) mod tests {
     }
 
     /// Guix System's /etc/os-release, as gnu/system.scm writes it (a link
-    /// into the store): ID=guix, no VERSION_ID (docs/design/guix.md; GX1
+    /// into the store): ID=guix, no `VERSION_ID` (docs/design/guix.md; GX1
     /// checks it on the guest).
     const GUIX: &str = "NAME=\"Guix System\"\nID=guix\nPRETTY_NAME=\"Guix System\"\nLOGO=guix-icon\nHOME_URL=\"https://guix.gnu.org\"\nDOCUMENTATION_URL=\"https://guix.gnu.org/en/manual\"\nSUPPORT_URL=\"https://guix.gnu.org/en/help\"\nBUG_REPORT_URL=\"https://lists.gnu.org/mailman/listinfo/bug-guix\"\n";
 
@@ -824,11 +824,11 @@ pub(crate) mod tests {
         assert!(check_supported(Some(&parse("ID=guixish\n"))).is_err());
     }
 
-    /// Slackware 15.0's /etc/os-release (aaa_base-15.0): VERSION_ID bare,
-    /// no ID_LIKE, VERSION_CODENAME=stable.
+    /// Slackware 15.0's /etc/os-release (aaa_base-15.0): `VERSION_ID` bare,
+    /// no `ID_LIKE`, `VERSION_CODENAME=stable`.
     const SLACKWARE: &str = "NAME=Slackware\nVERSION=\"15.0\"\nID=slackware\nVERSION_ID=15.0\nPRETTY_NAME=\"Slackware 15.0 x86_64\"\nANSI_COLOR=\"0;34\"\nCPE_NAME=\"cpe:/o:slackware:slackware_linux:15.0\"\nHOME_URL=\"http://slackware.com/\"\nSUPPORT_URL=\"http://www.linuxquestions.org/questions/slackware-14/\"\nBUG_REPORT_URL=\"http://www.linuxquestions.org/questions/slackware-14/\"\nVERSION_CODENAME=stable\n";
 
-    /// Slackware64-current's /etc/os-release since aaa_base 16.0, as the
+    /// Slackware64-current's /etc/os-release since `aaa_base` 16.0, as the
     /// Thinkpad's pinned current-20261121 has it.
     const SLACKWARE_CURRENT: &str = "NAME=Slackware\nVERSION=\"16.0\"\nID=slackware\nVERSION_ID=16.0\nPRETTY_NAME=\"Slackware 15.0 x86_64 (post 15.0 -current)\"\nANSI_COLOR=\"0;34\"\nCPE_NAME=\"cpe:/o:slackware:slackware_linux:15.0\"\nHOME_URL=\"http://slackware.com/\"\nSUPPORT_URL=\"http://www.linuxquestions.org/questions/slackware-14/\"\nBUG_REPORT_URL=\"http://www.linuxquestions.org/questions/slackware-14/\"\nVERSION_CODENAME=current\n";
 
@@ -1159,7 +1159,7 @@ pub(crate) mod tests {
         assert!(read(&s).is_none());
     }
 
-    /// The oi2610 guest's /etc/release (OpenIndiana 2026.10, which has no
+    /// The oi2610 guest's /etc/release (`OpenIndiana` 2026.10, which has no
     /// os-release anywhere).
     const OI_RELEASE: &str = "             OpenIndiana Hipster 2026.10 (powered by illumos)\n        OpenIndiana Project, part of The Illumos Foundation (C) 2010-2026\n                        Use is subject to license terms.\n                           Assembled 30 October 2026\n";
 

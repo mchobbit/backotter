@@ -1,5 +1,5 @@
 //! Slackware's boot setup: LILO, ELILO, mkinitrd and geninitrd, rc.d;
-//! part of crate::boot, which re-exports it.
+//! part of `crate::boot`, which re-exports it.
 
 use super::{Package, byte_copy_of, has_package, is_slackware, parse_shell_assignments};
 use crate::json::{Obj, Value};
@@ -20,7 +20,7 @@ pub(crate) const MKINITRD_OUTPUT: &str = "/boot/initrd.gz";
 pub(crate) const GENINITRD: &str = "/usr/sbin/geninitrd";
 /// geninitrd's settings (GENERATOR, KERNEL, the symlinks, ...).
 pub(crate) const GENINITRD_DEFAULT: &str = "/etc/default/geninitrd";
-/// The script geninitrd runs unless GENINITRD_OVERRIDE_SCRIPT names another.
+/// The script geninitrd runs unless `GENINITRD_OVERRIDE_SCRIPT` names another.
 pub(crate) const GENINITRD_SETUP: &str = "/var/lib/pkgtools/setup/setup.01.mkinitrd";
 /// mkinitrd's command generator, which prints a mkinitrd command for the
 /// running system's root and storage drivers.
@@ -197,7 +197,7 @@ fn lilo_conf_json(
         .set("images", images)
 }
 
-/// boot.lilo: /etc/lilo.conf parsed (lilo_conf_json), each image with
+/// boot.lilo: /etc/lilo.conf parsed (`lilo_conf_json`), each image with
 /// whether its file exists, and whether the map file lilo writes
 /// (/boot/map unless map= says) is there.  None without a lilo.conf.
 pub(crate) fn lilo_json(sys: &Sys) -> Option<Value> {
@@ -307,12 +307,12 @@ pub(crate) fn elilo_confs(sys: &Sys, esps: &[(String, String)]) -> Vec<EliloConf
     out
 }
 
-/// boot.elilo: each elilo.conf on the ESPs (elilo_confs), parsed as
-/// lilo.conf is (lilo_conf_json), with its ESP (device, mounted_at), its
+/// boot.elilo: each elilo.conf on the ESPs (`elilo_confs`), parsed as
+/// lilo.conf is (`lilo_conf_json`), with its ESP (device, `mounted_at`), its
 /// directory and file, its loader (the .efi beside it that is a byte copy
 /// of /boot/elilo-x86_64.efi, else its elilo.efi) and whether it is that
 /// copy; for each image, its file on the ESP and the /boot kernel it is a
-/// byte copy of (same_as: what the machine really boots), and the same for
+/// byte copy of (`same_as`: what the machine really boots), and the same for
 /// its initrd.  None when there is none.
 pub(crate) fn elilo_json(sys: &Sys, esps: &[(String, String)]) -> Option<Value> {
     let confs = elilo_confs(sys, esps);
@@ -426,8 +426,8 @@ pub(crate) fn slackware_kernels(sys: &Sys) -> Vec<(String, String, String)> {
 /// boot.slackware, on Slackware only: /etc/slackware-version; init,
 /// "slackware-rc" when /etc/inittab and /etc/rc.d/rc.M are there and
 /// /sbin/init is sysvinit's (its package, and a file, not a link); the rc.d
-/// scripts that are on (rc_enabled: executable /etc/rc.d/rc.*); the
-/// kernels (slackware_kernels), each with its flavor, version and whether
+/// scripts that are on (`rc_enabled`: executable /etc/rc.d/rc.*); the
+/// kernels (`slackware_kernels`), each with its flavor, version and whether
 /// /lib/modules has it; and the /boot links that name the kernel.
 pub(crate) fn slackware_json(sys: &Sys, packages: &[Package]) -> Option<Value> {
     if !is_slackware(sys) {
@@ -492,11 +492,11 @@ fn word_after<'a>(words: &[&'a str], flag: &str) -> Option<&'a str> {
 /// missing (the huge kernel, drivers built in), else `mkinitrd`.  The
 /// generator, then the boot.initramfs fields only Slackware's dumps have:
 /// evidence, and for mkinitrd, `mkinitrd`: conf (/etc/mkinitrd.conf or
-/// null), command_line (what mkinitrd last ran as, or null), kernels (the
-/// versions its image is for: command_line's -k, else mkinitrd.conf's
-/// KERNEL_VERSION, else the running kernel, else every /lib/modules/K;
+/// null), `command_line` (what mkinitrd last ran as, or null), kernels (the
+/// versions its image is for: `command_line`'s -k, else mkinitrd.conf's
+/// `KERNEL_VERSION`, else the running kernel, else every /lib/modules/K;
 /// those /lib/modules has), output (-o, else mkinitrd.conf's
-/// OUTPUT_IMAGE, else /boot/initrd-tree/initrd-name, else /boot/initrd.gz)
+/// `OUTPUT_IMAGE`, else /boot/initrd-tree/initrd-name, else /boot/initrd.gz)
 /// rootdev (-r, else mkinitrd.conf's ROOTDEV: the root the initrd
 /// mounts, by the name given, or null), luksdev (-C, else LUKSDEV) and
 /// resumedev (-h, else RESUMEDEV).  mkinitrd.conf counts only when the
@@ -677,18 +677,18 @@ pub(crate) fn kernel_version_word(v: &str) -> bool {
 /// -current"): None unless /usr/sbin/geninitrd is there and /boot has an
 /// image it made (a regular file initrd-VERSION.img).  Else boot.initramfs's
 /// `geninitrd`: default (/etc/default/geninitrd or null), its settings as
-/// setup.01.mkinitrd reads them (kernel, generator, dracut_opts,
-/// override_script, post_install_script, named_symlink, initrd_gz_symlink,
+/// setup.01.mkinitrd reads them (kernel, generator, `dracut_opts`,
+/// `override_script`, `post_install_script`, `named_symlink`, `initrd_gz_symlink`,
 /// each null when unset, or setup.01.mkinitrd's own default for the
-/// generator, the two symlinks and auto_remove_initrd_tree), initrd_tree
+/// generator, the two symlinks and `auto_remove_initrd_tree`), `initrd_tree`
 /// (whether /boot/initrd-tree is there: setup.01.mkinitrd removes the one
-/// mkinitrd leaves when AUTO_REMOVE_INITRD_TREE=true), `runs` (what setup.01.mkinitrd would
-/// run: `override` for an executable GENINITRD_OVERRIDE_SCRIPT, `mkinitrd`
+/// mkinitrd leaves when `AUTO_REMOVE_INITRD_TREE=true`), `runs` (what setup.01.mkinitrd would
+/// run: `override` for an executable `GENINITRD_OVERRIDE_SCRIPT`, `mkinitrd`
 /// for GENERATOR=mkinitrd with /etc/mkinitrd.conf, `mkinitrd_command_generator.sh`
 /// for it without one or by name, `dracut`, else the generator as given),
 /// conf (/etc/mkinitrd.conf or null), luksdev, rootdev and resumedev from
 /// it when it is read, images (each file, version, kernel: /boot/vmlinuz-VERSION or
-/// null, modules_installed) and links (each /boot initrd*.img or
+/// null, `modules_installed`) and links (each /boot initrd*.img or
 /// initrd.gz link, to its target).  Evidence lines go to `why`.
 fn geninitrd_json(sys: &Sys, why: &mut Vec<String>) -> Option<Value> {
     if !sys.is_file(GENINITRD) {
@@ -841,7 +841,7 @@ fn geninitrd_json(sys: &Sys, why: &mut Vec<String>) -> Option<Value> {
 /// when it had none (mkinitrd's own default, `uname -r`, would be the
 /// rescue system's kernel); an -o is given as `output`, absolute (a
 /// relative one would be against the chroot's cwd, /).  mkinitrd writes
-/// the words it ran with to command_line again, so only these two change.
+/// the words it ran with to `command_line` again, so only these two change.
 /// None when it isn't mkinitrd's or there's no kernel.
 ///
 /// With ROOT, (old type, new type) of a / that `--reformat` makes again
@@ -954,7 +954,7 @@ mod tests {
     use crate::sys::FakeRunner;
     use crate::testutil::Tree;
 
-    /// The first /boot file of the same size and bytes (byte_copy_of).
+    /// The first /boot file of the same size and bytes (`byte_copy_of`).
     #[test]
     fn same_file_first_copy() {
         let t = Tree::new("samefile");
@@ -976,10 +976,10 @@ mod tests {
         );
     }
 
-    /// RustAudit1 H4-06: elilo_json's loader is the first .efi beside
+    /// `RustAudit1` H4-06: `elilo_json`'s loader is the first .efi beside
     /// elilo.conf (in name order) that is a byte copy of /boot's
-    /// ELILO_EFI, by byte_copy_of: a same-size different file isn't it, a
-    /// copy larger than READ_MAX is found, and nothing is said in the
+    /// `ELILO_EFI`, by `byte_copy_of`: a same-size different file isn't it, a
+    /// copy larger than `READ_MAX` is found, and nothing is said in the
     /// dump's warnings; with no copy, elilo.efi by its name.
     #[test]
     fn elilo_loader_copy() {

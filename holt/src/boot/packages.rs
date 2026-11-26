@@ -1,6 +1,6 @@
 //! Installed packages from each system's package database (dpkg, pacman,
 //! apk, rpm, xbps, eopkg, Portage, pkgtools), the packages boot.packages
-//! lists, and debconf's answers: crate::boot's package state, which it
+//! lists, and debconf's answers: `crate::boot`'s package state, which it
 //! re-exports.
 
 use crate::sys::Sys;
@@ -103,7 +103,7 @@ pub(crate) fn parse_apk_installed(text: &str) -> Vec<Package> {
     out
 }
 
-/// Installed packages from rpm (Fedora): its database is SQLite, so rpm
+/// Installed packages from rpm (Fedora): its database is `SQLite`, so rpm
 /// itself reads it.
 pub(crate) fn rpm_packages(sys: &Sys) -> Vec<Package> {
     let Some(t) = sys.run(
@@ -211,7 +211,7 @@ fn xml_text<'a>(xml: &'a str, after: &str, tag: &str) -> Option<&'a str> {
 /// files.xml).  The name is metadata.xml's <Package><Name> (its first
 /// <Name> is the <Source>'s, which a subpackage doesn't share) when the
 /// directory's name starts with it, the version the rest of the directory's
-/// name (split_eopkg, as vm-update lists it), the arch <Architecture>.
+/// name (`split_eopkg`, as vm-update lists it), the arch <Architecture>.
 pub(crate) fn eopkg_packages(sys: &Sys) -> Vec<Package> {
     let mut out = Vec::new();
     for d in sys.list(EOPKG_PACKAGES) {
@@ -247,7 +247,7 @@ pub(crate) fn is_gentoo(sys: &Sys) -> bool {
 
 /// Whether `v` is a Portage version without its revision: `N(.N)*[a-z]?`
 /// then any of `_alpha`, `_beta`, `_pre`, `_rc` and `_p`, each with an
-/// optional number ("1.0.4", "2.03.39", "1.2.3b_p20250101", "9999").
+/// optional number ("1.0.4", "2.03.39", "`1.2.3b_p20250101`", "9999").
 /// Read from the end, as the suffixes come last.
 pub(crate) fn is_portage_version(v: &str) -> bool {
     let mut core = v;
@@ -313,12 +313,12 @@ pub(crate) fn portage_packages(sys: &Sys) -> Vec<Package> {
     out
 }
 
-/// Whether this is Slackware: aaa_base's /etc/slackware-version.
+/// Whether this is Slackware: `aaa_base`'s /etc/slackware-version.
 pub(crate) fn is_slackware(sys: &Sys) -> bool {
     sys.is_file("/etc/slackware-version")
 }
 
-/// pkgtools' database (Slackware): installpkg's ADM_DIR, where
+/// pkgtools' database (Slackware): installpkg's `ADM_DIR`, where
 /// /var/log/packages is a link to it since 15.0 (a directory before).
 pub(crate) fn pkgtools_dir(sys: &Sys) -> Option<&'static str> {
     ["/var/lib/pkgtools/packages", "/var/log/packages"]
@@ -331,7 +331,7 @@ pub(crate) fn pkgtools_dir(sys: &Sys) -> Option<&'static str> {
 /// as the version (as dpkg's and rpm's versions carry the packaging
 /// revision, and as testvm/update/pkgset.sh lists it: a rebuild is a new
 /// version), and the arch: kernel-huge-5.15.161-x86_64-1 is (kernel-huge,
-/// 5.15.161-1, x86_64).
+/// 5.15.161-1, `x86_64`).
 pub(crate) fn split_pkgtools(file: &str) -> Option<(&str, String, &str)> {
     let mut it = file.rsplitn(4, '-');
     let (build, arch, ver, name) = (it.next()?, it.next()?, it.next()?, it.next()?);
@@ -340,7 +340,7 @@ pub(crate) fn split_pkgtools(file: &str) -> Option<(&str, String, &str)> {
 }
 
 /// Installed packages from pkgtools' database (Slackware): a file a
-/// package, named NAME-VERSION-ARCH-BUILD (split_pkgtools).
+/// package, named NAME-VERSION-ARCH-BUILD (`split_pkgtools`).
 pub(crate) fn pkgtools_packages(sys: &Sys) -> Vec<Package> {
     let Some(dir) = pkgtools_dir(sys) else {
         return Vec::new();

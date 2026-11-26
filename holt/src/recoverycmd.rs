@@ -5,7 +5,7 @@
 //! OUT, a new 0600 file in a directory of our own, when they are a recovery
 //! key.  The document says what's wrong by the words' positions, never the
 //! words themselves nor the password.  It writes no disk, so the dry-run
-//! lock (BKO_HOLT_NO_COMMIT) allows it.
+//! lock (`BKO_HOLT_NO_COMMIT`) allows it.
 
 use crate::json::{Obj, Value};
 use crate::load::jsonout;
@@ -244,7 +244,7 @@ pub fn verdict(text: &str, out: &std::path::Path) -> (Value, u8) {
     }
 }
 
-/// BYTES in OUT, a new file of mode 0600 (O_CREAT|O_EXCL, so neither a
+/// BYTES in OUT, a new file of mode 0600 (`O_CREAT|O_EXCL`, so neither a
 /// file there nor a symbolic link is followed), synced; on a failure after
 /// it was made, overwritten with zeros and removed.  `stick --copy` writes
 /// its OUT so too.

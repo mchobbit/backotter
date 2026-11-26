@@ -7,7 +7,7 @@
 //!   image file at `/.bko-holt/raw/VG/LV.img` in the backup's tree) rather
 //!   than as a filesystem: Qubes's volumes, thin snapshots and their
 //!   origins, and generally an LV holding a partition table or nothing
-//!   bko-holt load can make (raw_volumes);
+//!   bko-holt load can make (`raw_volumes`);
 //! - **thin usage**: a thin pool's used data and metadata and each thin
 //!   LV's mapped bytes, from `dmsetup status`, for load's fit by
 //!   provisioned data;
@@ -22,7 +22,7 @@ use crate::sys::Sys;
 pub(crate) const XML: &str = "/var/lib/qubes/qubes.xml";
 
 /// The directory of the backup's tree that holds the raw volumes' images,
-/// one per LV at RAW_DIR/VG/LV.img.
+/// one per LV at `RAW_DIR/VG/LV.img`.
 pub(crate) const RAW_DIR: &str = "/.bko-holt/raw";
 
 /// The release os-release's ID gives Qubes.
@@ -110,8 +110,8 @@ fn attr<'a>(t: &'a Tag, k: &str) -> Option<&'a str> {
 
 /// qubes.xml as storage.qubes records it: its pools (name, driver, and for
 /// LVM the volume group and thin pool) and every qube's volumes (qube,
-/// its class, volume name, pool, vid, revisions_to_keep, size, and the
-/// snap_on_start/save_on_stop flags).  Nothing else of the file.
+/// its class, volume name, pool, vid, `revisions_to_keep`, size, and the
+/// `snap_on_start/save_on_stop` flags).  Nothing else of the file.
 pub(crate) fn parse_xml(text: &str) -> Value {
     let mut pools = Vec::new();
     let mut volumes = Vec::new();
@@ -421,8 +421,8 @@ pub(crate) fn parse_thin_status(line: &str) -> Option<u64> {
     f.get(at + 1)?.parse().ok()
 }
 
-/// Adds data_used_bytes and metadata_used_bytes to each thin pool LV of
-/// storage.lvm and mapped_bytes to each thin LV, from `dmsetup status` of
+/// Adds `data_used_bytes` and `metadata_used_bytes` to each thin pool LV of
+/// storage.lvm and `mapped_bytes` to each thin LV, from `dmsetup status` of
 /// their device-mapper devices (the pool's -tpool layer).
 pub(crate) fn thin_usage(sys: &Sys, lvm: &mut Value, dm: &[Value]) {
     // By the LV's UUID (a pool's -tpool layer is named VG-POOL-tpool).
@@ -490,8 +490,8 @@ pub(crate) fn thin_usage(sys: &Sys, lvm: &mut Value, dm: &[Value]) {
     }
 }
 
-/// The LVs `vgchange -ay` skipped (activation skip, `k` in lv_attr) that
-/// aren't active, activated read-only (activation/read_only_volume_list, so
+/// The LVs `vgchange -ay` skipped (activation skip, `k` in `lv_attr`) that
+/// aren't active, activated read-only (`activation/read_only_volume_list`, so
 /// nothing about them changes) so the dump can read them; dropping the
 /// Activated lets them go again.  Only as root, and only where lvs runs.
 pub(crate) fn activate_skipped(sys: &Sys) -> Activated<'_> {
@@ -550,8 +550,8 @@ pub(crate) fn activate_skipped(sys: &Sys) -> Activated<'_> {
     Activated { sys, lvs: done }
 }
 
-/// The LVs activate_skipped activated, deactivated when dropped, by a
-/// panic's unwind too.  Drop it before taking sys.warnings(), so the
+/// The LVs `activate_skipped` activated, deactivated when dropped, by a
+/// panic's unwind too.  Drop it before taking `sys.warnings()`, so the
 /// warnings of a deactivation that fails are kept.
 #[must_use]
 pub(crate) struct Activated<'a> {
@@ -646,8 +646,8 @@ pub(crate) fn xen_entries(cfg: &str) -> Vec<Value> {
 }
 
 /// boot.xen: present when /boot holds a Xen hypervisor (xen-VERSION.gz):
-/// the versions there (newest last), GRUB_CMDLINE_XEN_DEFAULT and
-/// GRUB_CMDLINE_LINUX from /etc/default/grub, whether GRUB's 20_linux_xen
+/// the versions there (newest last), `GRUB_CMDLINE_XEN_DEFAULT` and
+/// `GRUB_CMDLINE_LINUX` from /etc/default/grub, whether GRUB's `20_linux_xen`
 /// is installed, and grub.cfg's Xen entries.
 pub(crate) fn xen_json(sys: &Sys) -> Option<Value> {
     let mut gz: Vec<String> = sys

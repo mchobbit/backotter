@@ -6,7 +6,7 @@
 //! with the header's hash, its mkDigestSalt and its mkDigestIterations, 20
 //! bytes (cryptsetup's lib/luks1/keymanage.c).  cryptsetup's luksFormat
 //! takes the keyslot's iterations (`--pbkdf-force-iterations`), but sets
-//! the digest's itself: benchmarked, or 1000 (LUKS_MKD_ITERATIONS_MIN)
+//! the digest's itself: benchmarked, or 1000 (`LUKS_MKD_ITERATIONS_MIN`)
 //! whenever the keyslot's count is forced, and no option names it.  So a
 //! LUKS1 container load makes again would have 1000 where the source had
 //! its own count (Guix's 394795: docs/design/guix.md "guix15-luks", run

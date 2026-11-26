@@ -7,7 +7,7 @@
 //! static grub.cfg), the ESP and /ostree come back as they were, and a
 //! chroot couldn't run (the physical root has no /bin/sh) and mustn't (a
 //! deployment's /usr is hardlinks into the repository's objects, whose
-//! checksums cover their content, mode, owner and SELinux label).  It
+//! checksums cover their content, mode, owner and `SELinux` label).  It
 //! checks the restored loader entries against the deployments, makes the
 //! UEFI entries, writes its log, and ends as every Linux boot stage does.
 
@@ -38,7 +38,7 @@ pub fn of(layout: &Value) -> Option<&Value> {
 /// entry leads to (an orphan checkout, from a backup taken while one was
 /// staged) is only a warning: it boots nothing, and goes at the next
 /// `ostree admin cleanup`.  So is a /boot/loader other than the dump's
-/// (WANT_LOADER, when it had one): the backup was taken after a deploy the
+/// (`WANT_LOADER`, when it had one): the backup was taken after a deploy the
 /// dump didn't see, and the restored tree is still whole.  The warnings
 /// come first and the errors after them, ended by a count, so the last
 /// lines of a failure (all the terminal shows of it) name what failed;
@@ -86,7 +86,7 @@ echo "ostree: $found loader entries, each with its kernel, initramfs and deploym
 
 /// `python3 -c LABEL_PY NAME SRC TOP`: the extended attribute NAME
 /// (security.selinux) of SRC (the restored /var/log) copied onto TOP (the
-/// log directory) and everything below it.  SRC without it (SELinux
+/// log directory) and everything below it.  SRC without it (`SELinux`
 /// unused): nothing to do.  The rescue system has python3, but not attr's
 /// setfattr.
 pub const LABEL_PY: &str = "import os, sys
@@ -100,7 +100,7 @@ for d, _, files in os.walk(top):
         os.setxattr(p, name, v, follow_symlinks=False)
 ";
 
-/// Whether any device of the layout holds a CONTENT_TYPE signature.
+/// Whether any device of the layout holds a `CONTENT_TYPE` signature.
 fn any_content(layout: &Layout, ty: &str) -> bool {
     all_devices(&layout.v).any(|x| x.at(&["content", "type"]).and_then(Value::as_str) == Some(ty))
 }

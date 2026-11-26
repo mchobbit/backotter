@@ -3,7 +3,7 @@
 //! beside it (GUEST/plan.txt; GUEST/plan+bigger.txt for the variants in
 //! corpus/variants.txt), and five invariants each plan must keep.  They
 //! match operations, not words: a command is a plan line, or one command of
-//! its `sh -c` script, with its redirections left out (commands()).
+//! its `sh -c` script, with its redirections left out (`commands()`).
 //!
 //!   / mounted              the mount stage mounts the target's root: a mount
 //!                          (mount, mount_*, or redoxfs) whose last operand is
@@ -17,7 +17,7 @@
 //!                          mounted at /mnt/bko-target plus its mount point (the
 //!                          same way) or named in a Note; swap, pseudo, network
 //!                          and bind entries are skipped (diff.json's
-//!                          invariants_skipped)
+//!                          `invariants_skipped`)
 //!   the archiver found     no Problem about the archiver, and the restore
 //!                          stage runs `rustic-bko ... restore ...
 //!                          /mnt/bko-target`
@@ -34,10 +34,10 @@
 //!                          every partition's uuid is carried; a table load
 //!                          writes itself (write-table: the BSDs, illumos,
 //!                          Haiku, Redox, Sculpt) goes onto a node of the
-//!                          disk's own target and is load::writetable::plan's
+//!                          disk's own target and is `load::writetable::plan`'s
 //!                          bytes, read back by parttable with the dump's IDs
 //!
-//! Beside the invariants, golden_backup_sources_are_loads_mounts holds each
+//! Beside the invariants, `golden_backup_sources_are_loads_mounts` holds each
 //! dump's `storage.backup_sources` (where it has one) to the mount points
 //! its plan's mount stage builds at /mnt/bko-target: `dump` and load are
 //! two implementations of one tree (docs/design/bazzite.md, decision 4).
@@ -46,32 +46,32 @@
 //! src.json (a plan kept without its dump fails), and variants.txt lists
 //! every plan+VARIANT.txt.  Where testvm/test2/classes.json is beside holt/
 //! (a checkout or a private copy; T6.4's archived holt has none), the corpus
-//! is held to HoltTest2's cells: a source (holt.families, holt.no_family)
+//! is held to `HoltTest2`'s cells: a source (holt.families, `holt.no_family`)
 //! without a dump, or a +bigger cell (holt.variants.bigger) without a golden
-//! plan, is a difference, `"unplanned"` in diff.json, so that HoltTest2 runs
+//! plan, is a difference, `"unplanned"` in diff.json, so that `HoltTest2` runs
 //! it on a plan-visible change instead of carrying it.  A plan whose raw dump
-//! failed check_plan when the corpus was built (index.tsv's check_plan_raw
+//! failed `check_plan` when the corpus was built (index.tsv's `check_plan_raw`
 //! isn't `ok:...`) is `"unverified"` in diff.json's differ, even when it's
 //! the same: nothing shows it is its guest's own plan.  Check mode only logs
 //! it.
 //!
-//! BKO_HOLT_GOLDEN picks what a difference does:
+//! `BKO_HOLT_GOLDEN` picks what a difference does:
 //!   check (default)  any difference fails, and so does a violation
-//!   report           differences are written to BKO_HOLT_PLANS_OUT as
+//!   report           differences are written to `BKO_HOLT_PLANS_OUT` as
 //!                    NAME.plan, with diff.json; only violations fail
 //!   bless            plan.txt (plan+VARIANT.txt) is rewritten from the plan,
 //!                    except where an invariant fails (that fails the test)
 //! Every entry is planned before anything is written, and each file is
-//! written whole (common::write_atomic).  The plans are Linux's (load's run
+//! written whole (`common::write_atomic`).  The plans are Linux's (load's run
 //! directory is /run/bko-holt there, /var/run/bko-holt elsewhere): report
 //! and bless refuse to run on another system.
 //!
 //! Every test here is named golden_*, and no other holt test's name holds
-//! "golden_": GateTest2 runs `cargo test -- --skip golden_` and this file
+//! "golden_": `GateTest2` runs `cargo test -- --skip golden_` and this file
 //! on its own.  It uses only holt API that is as it was before 3671e96, so it
 //! runs on older trees too (the replay of #16): common/'s, plus
-//! load::writetable::plan, parttable::read_table and bytes::ByteSource for
-//! the tables load writes itself, and testutil::TempDir.
+//! `load::writetable::plan`, `parttable::read_table` and `bytes::ByteSource` for
+//! the tables load writes itself, and `testutil::TempDir`.
 
 mod common;
 
@@ -112,7 +112,7 @@ fn classes_path() -> PathBuf {
         .join("classes.json")
 }
 
-/// What HoltTest2 holds the corpus to (classes.json's holt section): its
+/// What `HoltTest2` holds the corpus to (classes.json's holt section): its
 /// sources, and the guests whose +bigger cell has a golden plan of its own.
 #[derive(Debug, Clone, Default, PartialEq)]
 struct Expected {
@@ -172,7 +172,7 @@ struct Entry {
     grow: u64,
     /// The variant's own arguments to load (+reformat-TYPE's --reformat /=TYPE).
     extra: Vec<String>,
-    /// +espfmt: the dump with its ESPs unimaged (espfmt()).
+    /// +espfmt: the dump with its ESPs unimaged (`espfmt()`).
     unimaged: bool,
 }
 
@@ -340,9 +340,9 @@ fn plan_entry(e: &Entry) -> Result<(String, Check), String> {
     Ok((common::golden_text(&p), invariants(&dump, &p)))
 }
 
-/// +espfmt's dump: GUEST's, with each ESP the dump imaged (esp_image)
-/// as `bko-holt dump` records one it doesn't (other/mod.rs esp_image: over
-/// 64 MiB of data, esp_image_too_big; also over 4 GiB, or mounted), so
+/// +espfmt's dump: GUEST's, with each ESP the dump imaged (`esp_image`)
+/// as `bko-holt dump` records one it doesn't (other/mod.rs `esp_image`: over
+/// 64 MiB of data, `esp_image_too_big`; also over 4 GiB, or mounted), so
 /// load formats it instead of writing it with the partition table.  A dump
 /// with no imaged ESP is an error: the variant would plan nothing new.
 fn espfmt(text: &str) -> Result<String, String> {
@@ -384,7 +384,7 @@ struct Differ {
     lines: usize,
     /// No plan kept yet.
     new: bool,
-    /// HoltTest2 has the cell and the corpus has no golden plan of it: why.
+    /// `HoltTest2` has the cell and the corpus has no golden plan of it: why.
     unplanned: Option<String>,
 }
 
@@ -395,12 +395,12 @@ struct Summary {
     plans: usize,
     /// The names planned, in order.
     planned: Vec<String>,
-    /// How many HoltTest2 sources the corpus was held to (None: classes.json
+    /// How many `HoltTest2` sources the corpus was held to (None: classes.json
     /// isn't beside holt/).
     sources: Option<usize>,
     differ: BTreeMap<String, Differ>,
-    /// The plans whose raw dump failed check_plan when the corpus was built
-    /// (index.tsv's check_plan_raw): name -> that value.
+    /// The plans whose raw dump failed `check_plan` when the corpus was built
+    /// (index.tsv's `check_plan_raw)`: name -> that value.
     unverified: BTreeMap<String, String>,
     invariants: BTreeMap<String, Vec<String>>,
     skipped: BTreeMap<String, Vec<String>>,
@@ -414,11 +414,11 @@ fn json_list(v: &[String]) -> Value {
 
 impl Summary {
     /// diff.json: {"v":1, "corpus":N, "plans":M, "planned":[NAME...],
-    /// "sources":S or null, "differ":{NAME:{"stages":[...], "lines_changed":n
-    /// [, "new":true][, "unplanned":WHY][, "unverified":CHECK_PLAN_RAW]}},
-    /// "invariants":{NAME:[msg...]}, "invariants_skipped":{NAME:[msg...]}}.
+    /// "sources":S or null, "differ":{NAME:{"stages":[...], "`lines_changed":n`
+    /// [, "new":true][, "unplanned":WHY][, "`unverified":CHECK_PLAN_RAW`]}},
+    /// "invariants":{NAME:[msg...]}, "`invariants_skipped":{NAME`:[msg...]}}.
     /// An unverified plan is listed in differ even when it's the same (stages
-    /// [], 0 lines): nothing shows it is its guest's own plan, so HoltTest2
+    /// [], 0 lines): nothing shows it is its guest's own plan, so `HoltTest2`
     /// runs it on any plan-visible change instead of carrying it.
     fn diff_json(&self) -> String {
         let mut names: Vec<&String> = self.differ.keys().chain(self.unverified.keys()).collect();
@@ -466,7 +466,7 @@ impl Summary {
     }
 }
 
-/// index.tsv's guests whose raw dump failed check_plan (check_plan_raw
+/// index.tsv's guests whose raw dump failed `check_plan` (`check_plan_raw`
 /// isn't `ok:...`), with that value; none without an index.tsv.
 fn unverified_in(corpus: &Path) -> Result<BTreeMap<String, String>, String> {
     let p = corpus.join("index.tsv");
@@ -507,7 +507,7 @@ fn unverified_in(corpus: &Path) -> Result<BTreeMap<String, String>, String> {
     Ok(out)
 }
 
-/// What EXPECT has and the corpus doesn't plan, as differences: HoltTest2's
+/// What EXPECT has and the corpus doesn't plan, as differences: `HoltTest2`'s
 /// sources without a dump, its +bigger cells without a golden plan.  The
 /// corpus's own extras are only logged.
 fn unplanned(s: &mut Summary, list: &[Entry], x: &Expected) {
@@ -732,7 +732,7 @@ const SHELL_WORDS: [&str; 6] = ["[", "test", "true", "false", "exit", "echo"];
 /// which its bko-holt check runs), and a `mkfs` of a file system type that
 /// image has: illumos' mkfs -F TYPE runs /usr/lib/fs/TYPE/mkfs (its paths
 /// list), Haiku's mkfs -t TYPE the TYPE add-on (its file systems list).
-/// Neither image has newfs_msdos, the BSDs' FAT formatter.
+/// Neither image has `newfs_msdos`, the BSDs' FAT formatter.
 #[test]
 fn golden_format_runs_the_rescues_own_tools() {
     let stick = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1636,11 +1636,11 @@ fn planned_mount_points(dump: &Value, p: &Planned) -> Vec<String> {
 }
 
 /// The `backup_sources` check (docs/design/bazzite.md, decision 4): `dump`
-/// writes `storage.backup_sources` for BackShot1 (the tree it backs up),
+/// writes `storage.backup_sources` for `BackShot1` (the tree it backs up),
 /// and load and vm-mount build theirs from fstab; one rule, two
 /// implementations.  So a dump's backup paths must be exactly the mount
 /// points load's plan of it mounts at the target.  None when the dump has
-/// no backup_sources (bko-holt's dumps have it since B2; the corpus's
+/// no `backup_sources` (bko-holt's dumps have it since B2; the corpus's
 /// older dumps don't); else the differences, empty when they agree.
 fn backup_sources_differences(dump: &Value, p: &Planned) -> Option<Vec<String>> {
     let src = dump.at(&["storage", "backup_sources"])?.as_array()?;
@@ -2177,7 +2177,7 @@ fn golden_corpus_holds_together() {
     );
 }
 
-/// common::sha256_hex (the kept LUKS2 headers' test files): FIPS 180-4's
+/// `common::sha256_hex` (the kept LUKS2 headers' test files): FIPS 180-4's
 /// vectors, and one of two blocks.
 #[test]
 fn golden_sha256_vectors() {

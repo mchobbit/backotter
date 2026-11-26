@@ -72,7 +72,7 @@ fn missing_tools(sys: &Sys, built: &Built) -> Vec<Problem> {
 
 /// load's LVM commands take --devices and --devicesfile, which lvm2 has had
 /// since 2.03.12: an older one is a problem for a layout with volume groups.
-/// (An lvm that won't say its version is left to missing_tools.)
+/// (An lvm that won't say its version is left to `missing_tools`.)
 fn lvm_problem(sys: &Sys, layout: &Layout) -> Option<Problem> {
     if layout
         .v
@@ -97,10 +97,10 @@ fn lvm_problem(sys: &Sys, layout: &Layout) -> Option<Problem> {
 }
 
 /// A layout with a thin pool (commands.rs makes it with lvcreate) needs an
-/// lvm2 with thin support (`lvm segtypes` lists thin-pool), thin_check
+/// lvm2 with thin support (`lvm segtypes` lists thin-pool), `thin_check`
 /// (thin-provisioning-tools: lvm2 runs it on a pool's metadata when it
 /// activates the pool) and the kernel's dm-thin-pool.  What can't be asked
-/// (no lvm, no kernel release) is left to missing_tools.
+/// (no lvm, no kernel release) is left to `missing_tools`.
 fn thin_problems(sys: &Sys, layout: &Layout) -> Vec<Problem> {
     use crate::json::Value;
     let thin = layout
@@ -163,7 +163,7 @@ fn lvm_version(out: &str) -> Option<(u32, u32, u32)> {
     Some((n.next()??, n.next()??, n.next()??))
 }
 
-/// Where a pool's `compatibility=` names its feature-set files: OpenZFS's own
+/// Where a pool's `compatibility=` names its feature-set files: `OpenZFS`'s own
 /// two, and the FreeBSD port's third.
 const COMPAT_DIRS: [&str; 3] = [
     "/etc/zfs/compatibility.d",
@@ -247,7 +247,7 @@ fn zfs_problems(sys: &Sys, layout: &Layout) -> Vec<Problem> {
 
 /// The feature short names `zpool upgrade -v` lists: its table, up to the
 /// legacy versions printed after it (the parse stick/illumos/build.sh's
-/// `info` uses; OpenZFS and illumos print the same kind of table, a dashed
+/// `info` uses; `OpenZFS` and illumos print the same kind of table, a dashed
 /// rule then a line per feature whose first word is the name, its
 /// description indented under it).
 fn zpool_features(out: &str) -> Vec<String> {
@@ -268,7 +268,7 @@ fn zpool_features(out: &str) -> Vec<String> {
     names
 }
 
-/// The archiver must be BackOtter's, as the rescue stick's build checks.
+/// The archiver must be `BackOtter`'s, as the rescue stick's build checks.
 fn archiver_problem(sys: &Sys, opts: &Options) -> Option<Problem> {
     opts.repo.as_ref()?;
     let Some(exe) = find(sys, &opts.archiver) else {
@@ -316,10 +316,10 @@ pub struct Planned {
     pub notes: Notes,
     /// What --fit-largest changed, if anything (fit.rs).
     pub fit: super::fit::Fit,
-    /// The disks here, as target::prepare read them.
+    /// The disks here, as `target::prepare` read them.
     pub system: target::System,
     /// Under --json, what the plan document says of the run that only the
-    /// layout the stages build from can say (JsonFacts).
+    /// layout the stages build from can say (`JsonFacts`).
     pub json: Option<JsonFacts>,
 }
 
@@ -327,13 +327,13 @@ pub struct Planned {
 /// (--fit-largest's, --pools'), for the plan document.
 #[derive(Debug, Default)]
 pub struct JsonFacts {
-    /// The run bound to what was reviewed (J20): jsonout::plan_sha256.
+    /// The run bound to what was reviewed (J20): `jsonout::plan_sha256`.
     pub plan_sha256: String,
     /// The targets this session's partition stage recorded
-    /// (target::load_wrote).
+    /// (`target::load_wrote`).
     pub recorded: Vec<String>,
     /// Whether this run's partition stage runs, wiping every target
-    /// (target::partition_runs).
+    /// (`target::partition_runs`).
     pub partition_runs: bool,
     /// Per target, the stages that would make something anew on it, as
     /// exec would run them (with --through close when the run names no
@@ -407,7 +407,7 @@ pub fn repo_has_password(repo: &str) -> bool {
         .is_some_and(|(userinfo, _)| userinfo.contains(':'))
 }
 
-/// REPO with the password in its URL (repo_has_password) as `REDACTED`,
+/// REPO with the password in its URL (`repo_has_password`) as `REDACTED`,
 /// so it is still refused: what a --json run's document, its commands and
 /// its record carry in its place (holt-json.md, Principle 4).  Any other
 /// REPO as it is.
@@ -428,7 +428,7 @@ pub fn repo_redacted(repo: &str) -> String {
 }
 
 /// ARGS with each that holds a repository URL's password redacted
-/// (repo_redacted): a --json run's `args` and its last-load.json.
+/// (`repo_redacted)`: a --json run's `args` and its last-load.json.
 pub fn args_redacted(args: &[String]) -> Vec<String> {
     args.iter().map(|a| repo_redacted(a)).collect()
 }
@@ -592,7 +592,7 @@ pub fn check(layout: &Layout, opts: &Options, sys: &Sys) -> Planned {
 #[derive(Debug, Default)]
 pub struct WouldRun {
     /// Whether its partition stage runs, wiping every target
-    /// (target::partition_runs).
+    /// (`target::partition_runs`).
     pub partition: bool,
     /// Of assemble and format, the ones that run, with a command that
     /// makes something.
@@ -669,8 +669,8 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys) -> (u8, String, String) {
 /// made of the --json run's checks, with in its `text` what text mode
 /// prints for the same arguments (J18), a private write's text left out.
 /// Standard error is what text mode prints there for the same arguments.
-/// A password in --repo's URL is refused (repo_has_password) and never
-/// shown: the whole document is planned with it redacted (repo_redacted).
+/// A password in --repo's URL is refused (`repo_has_password`) and never
+/// shown: the whole document is planned with it redacted (`repo_redacted`).
 pub fn json_run(
     layout: &Layout,
     opts: &Options,
@@ -703,7 +703,7 @@ pub fn json_run(
 }
 
 /// The text plan of P: what `bko-holt load LAYOUT` prints, with ELIDE a
-/// private write's text left out (Cmd::shell_elided).
+/// private write's text left out (`Cmd::shell_elided`).
 fn render(layout: &Layout, opts: &Options, p: &Planned, elide: bool) -> (u8, String, String) {
     let mut out = String::new();
     out += &format!("# bko-holt load plan for {}\n", opts.layout);
@@ -825,7 +825,7 @@ mod tests {
         assert_eq!(lvm_version("nothing"), None);
     }
 
-    /// A thin pool needs lvm2's thin-pool, thin_check and dm-thin-pool; a
+    /// A thin pool needs lvm2's thin-pool, `thin_check` and dm-thin-pool; a
     /// layout without one asks for none of them.
     #[test]
     fn thin_tools() {
@@ -1012,7 +1012,7 @@ mod tests {
     }
 
     /// What `zpool upgrade -v` prints: the feature table, a rule, then the
-    /// legacy versions.  Only async_destroy, empty_bpobj and encryption are
+    /// legacy versions.  Only `async_destroy`, `empty_bpobj` and encryption are
     /// known here.
     const UPGRADE_V: &str = "This system supports ZFS pool feature flags.\n\nThe following features are supported:\n\nFEAT DESCRIPTION\n\
          -------------------------------------------------------------\n\
@@ -1035,7 +1035,7 @@ mod tests {
     }
 
     /// A dump with one pool, rpool, carrying FEATURES and LOCAL: all
-    /// zfs_problems looks at.
+    /// `zfs_problems` looks at.
     fn zfs_dump(features: &str, local: &str) -> Layout {
         let pool = format!(
             "{{\"name\": \"rpool\", \"features\": {features}, \"local_properties\": {local}, \"vdevs\": {{}}}}"
@@ -1133,7 +1133,7 @@ mod tests {
         assert!(zfs_problems(&s, &dump("{\"compatibility\": \"/etc/zfs/mine\"}")).is_empty());
     }
 
-    /// The whole plan says so, as check() makes it.
+    /// The whole plan says so, as `check()` makes it.
     #[test]
     fn zfs_problems_reach_the_plan() {
         let t = tree();
@@ -1312,7 +1312,7 @@ mod tests {
         assert_eq!(code, EXIT_OK, "{out}{err}");
     }
 
-    /// The codes check() gives its own problems, with their fields, and the
+    /// The codes `check()` gives its own problems, with their fields, and the
     /// mapping's and the builders' carried through in order.
     #[test]
     fn problems_carry_their_codes() {
@@ -1556,8 +1556,8 @@ mod tests {
         assert!(out.contains("no --repo"), "{out}");
     }
 
-    /// RustAudit1 HD2-01: every step of assemble and format that makes
-    /// something says which source disks it is on (Cmd::on), each one a
+    /// `RustAudit1` HD2-01: every step of assemble and format that makes
+    /// something says which source disks it is on (`Cmd::on`), each one a
     /// mapped disk of the layout, for every dump in the corpus with each of its
     /// disks mapped: what the plan's per-target `writes` is worked out from.
     #[test]

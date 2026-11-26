@@ -12,11 +12,11 @@
 //! .snap, the writable paths, the homes).  With FDE, save and data are
 //! LUKS2 volumes (`ubuntu-save-enc`, `ubuntu-data-enc`) whose keys are
 //! sealed to the TPM; their headers are kept byte for byte
-//! (crate::luksheader), since a new volume key would open nothing.
+//! (`crate::luksheader`), since a new volume key would open nothing.
 //!
 //! The backup's tree is those four roots at snap-bootstrap's mount points,
 //! and nothing under `/`, `/snap` or the bind mounts, so storage.
-//! backup_sources is replaced by them.  Nothing on them is regenerated at
+//! `backup_sources` is replaced by them.  Nothing on them is regenerated at
 //! load (load/snapcore.rs): every snap revision and recovery system comes
 //! back as a file.  The dump runs in run mode, where snap-bootstrap has
 //! unlocked and mounted everything.
@@ -87,7 +87,7 @@ pub const MODEENV: &str = "system-data/var/lib/snapd/modeenv";
 pub const STATE: &str = "system-data/var/lib/snapd/state.json";
 pub const SNAPS: &str = "system-data/var/lib/snapd/snaps";
 /// On ubuntu-seed and ubuntu-boot: GRUB's environment (the seed's picks the
-/// mode and recovery system; the run one has kernel_status).
+/// mode and recovery system; the run one has `kernel_status`).
 pub const GRUBENV: &str = "EFI/ubuntu/grubenv";
 /// On ubuntu-boot: the run-mode kernel (a symlink to
 /// `pc-kernel_N.snap/kernel.efi`) and, during a kernel refresh, the one
@@ -341,11 +341,11 @@ impl Found {
 /// boot.snapcore and what goes with it in the rest of the dump.
 pub struct Dump {
     pub json: Value,
-    /// storage.backup_sources: the four roots, in place of the mounts'.
+    /// `storage.backup_sources`: the four roots, in place of the mounts'.
     pub sources: Vec<BackupSource>,
-    /// The LUKS2 devices whose headers the dump keeps (crate::luksheader).
+    /// The LUKS2 devices whose headers the dump keeps (`crate::luksheader`).
     pub luks: Vec<String>,
-    /// Why the dump can't be used: dump refuses it (report::refusal).
+    /// Why the dump can't be used: dump refuses it (`report::refusal`).
     pub refusals: Vec<String>,
 }
 
@@ -549,7 +549,7 @@ fn boot_areas(sys: &Sys, disk: &Value) -> Value {
 }
 
 /// boot.snapcore of a running Ubuntu Core.  DISKS and DM are the dump's
-/// storage.disks and storage.dm_devices.
+/// storage.disks and `storage.dm_devices`.
 pub fn read(sys: &Sys, disks: &[Value], dm: &[Value]) -> Dump {
     let (found, mut refusals) = find(disks, dm);
     let get = |name: &str| found.iter().find(|(r, _)| r.name == name).map(|(_, f)| f);
@@ -956,7 +956,7 @@ pub fn read(sys: &Sys, disks: &[Value], dm: &[Value]) -> Dump {
 
 impl Dump {
     /// Every encrypted role's LUKS2 header must be among HEADERS (the
-    /// dump's storage.luks_headers): one that isn't is refused, since load
+    /// dump's `storage.luks_headers)`: one that isn't is refused, since load
     /// can't restore the volume without it.  The header files are in DIR,
     /// which by default is in RAM: said, so they're kept with the dump.
     pub fn require_headers(&mut self, sys: &Sys, headers: &[Value], dir: &str) {

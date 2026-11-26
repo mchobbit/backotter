@@ -91,7 +91,7 @@ SOURCE_DATE_EPOCH, when set, fixes the report's timestamp.
 ";
 
 /// The hidden helpers load's stages run that write to a disk or a tree:
-/// under BKO_HOLT_NO_COMMIT they refuse to run at all (load never runs them
+/// under `BKO_HOLT_NO_COMMIT` they refuse to run at all (load never runs them
 /// without --commit, which the variable refuses, so only a bug or a hand
 /// would).
 const WRITING_HELPERS: [&str; 11] = [

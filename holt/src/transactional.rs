@@ -1,4 +1,4 @@
-//! transactional-update systems (openSUSE MicroOS and Aeon; SL Micro, Leap
+//! transactional-update systems (openSUSE `MicroOS` and Aeon; SL Micro, Leap
 //! Micro and Leap 16.1's immutable mode would match too): how to tell one,
 //! and what the dump records of it (boot.transactional).
 //! docs/design/aeon.md has the layout: a read-only btrfs root that changes
@@ -10,7 +10,7 @@
 //! transactional-update 5.0; before, an overlay on /etc).
 //!
 //! It is one when fstab mounts `/` read-only (`ro`, or util-linux's
-//! `ro=vfs`, MicroOS's), the running root is a snapper slot whose subvolume
+//! `ro=vfs`, `MicroOS`'s), the running root is a snapper slot whose subvolume
 //! is read-only, and tukit or transactional-update is installed.  It
 //! doesn't depend on os-release's ID.  load (load/transactional.rs) takes
 //! from here the booted slot and the default (they differ while an update
@@ -23,16 +23,16 @@ use crate::sys::Sys;
 /// transactional-update's own state: snapshot numbers, kept across runs.
 pub(crate) const TU_STATE: &str = "/var/lib/misc/transactional-update.state";
 /// health-checker's state on GRUB: the last good slot, by btrfs subvolume
-/// ID (LAST_WORKING_BTRFS_ID, what its rollback sets as the default) and
-/// by path (LAST_WORKING_SNAPSHOT).
+/// ID (`LAST_WORKING_BTRFS_ID`, what its rollback sets as the default) and
+/// by path (`LAST_WORKING_SNAPSHOT`).
 pub(crate) const HC_STATE: &str = "/var/lib/misc/health-check.state";
 /// health-checker's own test for the BLS path (systemd-boot with
 /// sdbootutil's per-snapshot entries) over GRUB's.
 pub(crate) const BLS_ENTRIES: &str = "/boot/efi/loader/entries";
 pub(crate) const TOOLS: [&str; 2] = ["/usr/sbin/tukit", "/usr/sbin/transactional-update"];
 /// fde-tools' and sdbootutil's settings on an encrypted system (Aeon): the
-/// PCRs the TPM2 key is sealed to (FDE_SEAL_PCR_LIST), recorded as
-/// boot.transactional.fde_seal_pcr_list when the file is there.
+/// PCRs the TPM2 key is sealed to (`FDE_SEAL_PCR_LIST`), recorded as
+/// `boot.transactional.fde_seal_pcr_list` when the file is there.
 pub(crate) const FDE_TOOLS: &str = "/etc/sysconfig/fde-tools";
 
 /// fstab's options make the mount read-only: `ro`, or `ro=vfs` / `ro=fs`.
@@ -439,7 +439,7 @@ pub(crate) mod tests {
     }
 
     /// Aeon's layout (the synthetic fixture: load/transactional.rs's
-    /// aeon(), from the guest's disk read by vm-mount, until a real dump
+    /// `aeon()`, from the guest's disk read by vm-mount, until a real dump
     /// replaces it): its fstab (/ compress=zstd:1,ro=vfs on the LUKS2
     /// container's btrfs) and btrfs (slot 1 booted and the default) read as
     /// transactional, BLS (sdbootutil's entries on the ESP), no

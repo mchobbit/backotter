@@ -5,7 +5,7 @@
 //! normal.mod, in the image it writes; when the ESP is on /boot's own disk
 //! and nothing between (no LUKS, LVM or RAID) needs a search, it names
 //! /boot's partition by its number: Guix 1.5.0's grubx64.efi has
-//! "(,gpt3)/boot/grub" (BackShot2, docs/design/guix.md).  grub.cfg's
+//! "(,gpt3)/boot/grub" (`BackShot2`, docs/design/guix.md).  grub.cfg's
 //! `search --fs-uuid` runs only after that prefix has loaded normal.mod.
 //! load doesn't reinstall a store system's GRUB (its store has none), so
 //! the restored image is the source's: on a layout where /boot's
@@ -26,7 +26,7 @@
 //! The image: a PE file whose "mods" section begins with GRUB's module
 //! info (magic "mimg"; 64-bit: magic, padding, offset and size as u64s;
 //! 32-bit: magic, offset, size), then module headers (type, size: u32s,
-//! size counting the header), the prefix being type 3 (OBJ_TYPE_PREFIX).
+//! size counting the header), the prefix being type 3 (`OBJ_TYPE_PREFIX`).
 
 use std::fs::{File, FileTimes, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -131,8 +131,8 @@ pub fn efi_prefix(b: &[u8]) -> Result<Option<(usize, usize, String)>, String> {
 /// The prefix module among the modules of B from P to END (module headers:
 /// type, size, both u32s, the size counting the header): (the offset of
 /// its string, its room with the NUL padding, the string), or None.  A P
-/// at END has no modules: None.  efi_prefix never gives a P past END (that
-/// is its error), but this checks its sums anyway, so a P near usize::MAX
+/// at END has no modules: None.  `efi_prefix` never gives a P past END (that
+/// is its error), but this checks its sums anyway, so a P near `usize::MAX`
 /// is None too and never an add overflow.
 fn module_prefix(
     b: &[u8],
@@ -231,7 +231,7 @@ pub fn core_prefix(b: &[u8]) -> Result<Option<String>, String> {
 }
 
 /// The partition PREFIX names by number ("gpt3" of "(,gpt3)/@/boot/grub"),
-/// as with_partition reads it; None for "($root)/...", nested partitions
+/// as `with_partition` reads it; None for "($root)/...", nested partitions
 /// and the like.
 pub fn numbered_partition(prefix: &str) -> Option<String> {
     let inner = prefix.strip_prefix('(')?;
@@ -467,8 +467,8 @@ mod tests {
         );
     }
 
-    /// RustAudit1 HD1-04: a module-info offset past the modules' end (up to
-    /// the top of the address space, or a 32-bit image's u32::MAX) is an
+    /// `RustAudit1` HD1-04: a module-info offset past the modules' end (up to
+    /// the top of the address space, or a 32-bit image's `u32::MAX`) is an
     /// error, not "no prefix", and never an add overflow; one past usize is
     /// the overflow error it was; one at the end is no modules, no prefix.
     #[test]

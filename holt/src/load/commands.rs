@@ -81,16 +81,16 @@ pub struct Cmd {
     /// Whether the terminal sees its stderr's `warning:` lines when it
     /// succeeds (the log has all its output either way).
     pub warns: bool,
-    /// For a file to write outside RUN_DIR: whether it's made 0600, as
-    /// RUN_DIR's own are (a copy of a file that can hold a password).
+    /// For a file to write outside `RUN_DIR`: whether it's made 0600, as
+    /// `RUN_DIR`'s own are (a copy of a file that can hold a password).
     pub private: bool,
     /// Whether it runs the archiver, itself or inside a script: the
     /// restore, the msdosfs roots' wrapper, each shared snapshot's script
     /// (holt-json.md: the plan's `archiver`, the stop's SIGINT).
     pub archiver: bool,
     /// For an assemble or format step: the source disks what it makes sits
-    /// on, from the builder's own device graph (Builder::disks_under), for
-    /// the plan's per-target `writes` (plan::would_run).  Empty for a step
+    /// on, from the builder's own device graph (`Builder::disks_under`), for
+    /// the plan's per-target `writes` (`plan::would_run`).  Empty for a step
     /// no loop marked.
     pub on: Vec<String>,
 }
@@ -138,7 +138,7 @@ impl Cmd {
         self
     }
 
-    /// It makes something on the source disks DISKS (Cmd::on).
+    /// It makes something on the source disks DISKS (`Cmd::on`).
     pub fn made_on(mut self, disks: Vec<String>) -> Cmd {
         self.on = disks;
         self
@@ -162,10 +162,10 @@ impl Cmd {
         self
     }
 
-    /// shell(), with a private write's text (`private`) left out: in its
+    /// `shell()`, with a private write's text (`private`) left out: in its
     /// heredoc's place, `# (N bytes, private: not shown)` (holt-json.md,
     /// "Common rules": the plan document's `text`).  Any other step is
-    /// shell()'s.
+    /// `shell()`'s.
     pub fn shell_elided(&self) -> String {
         match (&self.write, &self.stdin) {
             (Some(_), Some(text)) if self.private => Cmd {
@@ -267,7 +267,7 @@ fn needs_key_file(open_as: &str, k: &str) -> Problem {
         .with("key_file", k)
 }
 
-/// The file name of a container's temporary key under RUN_DIR/keys, the
+/// The file name of a container's temporary key under `RUN_DIR/keys`, the
 /// same in the format and the boot stage; None for a name that can't be one.
 pub(crate) fn temp_key_name(open_as: &str) -> Option<String> {
     let n = open_as.replace('/', "_");
@@ -298,11 +298,11 @@ fn dq_escape(s: &str) -> String {
 /// encryption roots are the layout's datasets (jsonout.rs reads them).
 #[derive(Debug, Clone, PartialEq)]
 pub struct KeyAsk {
-    /// luks, luks_kept_header, geli, softraid.
+    /// luks, `luks_kept_header`, geli, softraid.
     pub kind: &'static str,
     /// The group it is asked in: the first name of the containers the
     /// source unlocked with one passphrase (crypttab's
-    /// keyscript=decrypt_keyctl with one key name), else its own first.
+    /// `keyscript=decrypt_keyctl` with one key name), else its own first.
     pub group: String,
     /// Each NAME `--key-file NAME=FILE` takes for it, the one the plan's
     /// messages name first.
@@ -312,7 +312,7 @@ pub struct KeyAsk {
     /// The source devices it gives (the LUKS mapping, the GELI provider,
     /// the softraid volume): a mount on them, or above them, is under it.
     pub provides: Vec<String>,
-    /// passphrase, old_passphrase, temporary, key_file_elsewhere.
+    /// passphrase, `old_passphrase`, temporary, `key_file_elsewhere`.
     pub unlock: &'static str,
     /// A --key-file covers it.
     pub given: bool,
@@ -326,7 +326,7 @@ pub struct Built {
     pub problems: Vec<String>,
     pub notes: Vec<String>,
     /// The coded ones among them (codes.rs), each with its text as it is
-    /// in `problems` or `notes`: coded_problems and coded_notes put them
+    /// in `problems` or `notes`: `coded_problems` and `coded_notes` put them
     /// in their places.
     pub codes: Vec<Problem>,
     pub note_codes: Vec<Note>,
@@ -338,7 +338,7 @@ pub struct Built {
     pub filesystems: Vec<(String, String, Option<String>)>,
     pub datasets: Vec<String>,
     pub mount_points: Vec<String>,
-    /// The keys it asks for (KeyAsk), in the order it meets them.
+    /// The keys it asks for (`KeyAsk`), in the order it meets them.
     pub keys: Vec<KeyAsk>,
 }
 
@@ -366,7 +366,7 @@ impl Built {
             .collect()
     }
 
-    /// The notes, as coded_problems.
+    /// The notes, as `coded_problems`.
     pub fn coded_notes(&self) -> Notes {
         self.notes
             .iter()
@@ -385,9 +385,9 @@ fn s(v: &Value, k: &str) -> Option<String> {
     v.get(k).and_then(Value::as_str).map(str::to_string)
 }
 
-/// K's number in V as load reads a dump's numbers: Value::get_u64_lenient
+/// K's number in V as load reads a dump's numbers: `Value::get_u64_lenient`
 /// (a number, decimal text as LUKS2 keeps its offsets and sizes, or "0x"
-/// and hex digits; RustAudit1 H7-09).
+/// and hex digits; `RustAudit1` H7-09).
 fn num(v: &Value, k: &str) -> Option<u64> {
     v.get_u64_lenient(k)
 }
@@ -402,7 +402,7 @@ pub fn part_path(disk: &str, n: u32) -> String {
 }
 
 /// The node of partition `n` of target disk `t`, for source disk `d`: the
-/// Linux kernel's name, or on another system its own (crate::other).
+/// Linux kernel's name, or on another system its own (`crate::other`).
 pub fn part_node(layout: &Layout, d: &Disk, t: &str, n: u32) -> String {
     match crate::other::Family::of_layout(&layout.v) {
         Some(fam) => crate::other::load::part_node(fam, d, t, n),
@@ -488,7 +488,7 @@ impl Names<'_> {
     }
 }
 
-/// A Timeshift snapshot's subvolume (BigLinux's; Mint's or Manjaro's with
+/// A Timeshift snapshot's subvolume (`BigLinux`'s; Mint's or Manjaro's with
 /// Timeshift in btrfs mode): `timeshift-btrfs/snapshots/NAME/@...` in the
 /// top level, mounted nowhere and in no backup path (shared.rs), so the
 /// backup has none of it.  Its NAME (Timeshift's date), or None.  Made, it
@@ -615,7 +615,7 @@ pub(crate) struct Builder<'a> {
     pub(crate) names: Names<'a>,
     pub(crate) problems: Vec<String>,
     pub(crate) notes: Vec<String>,
-    /// Built's codes and note_codes.
+    /// Built's codes and `note_codes`.
     pub(crate) codes: Vec<Problem>,
     pub(crate) note_codes: Vec<Note>,
     /// What close undoes, in the order assemble made it.
@@ -624,36 +624,36 @@ pub(crate) struct Builder<'a> {
     pub(crate) filesystems: Vec<(String, String, Option<String>)>,
     pub(crate) datasets: Vec<String>,
     pub(crate) mount_points: Vec<String>,
-    /// The source's system, when it isn't Linux (crate::other).
+    /// The source's system, when it isn't Linux (`crate::other`).
     pub(crate) fam: Option<crate::other::Family>,
     /// Each btrfs's shared snapshots and aliases, by UUID (shared.rs).
     pub(crate) btrfs: BTreeMap<String, crate::load::shared::Plan>,
     /// Each btrfs's Timeshift snapshots (their subvolumes' paths), by UUID:
-    /// not in the backup, so not made (timeshift_snapshot).
+    /// not in the backup, so not made (`timeshift_snapshot`).
     pub(crate) timeshift: BTreeMap<String, BTreeSet<String>>,
-    /// The datasets (names here) whose readonly=on ds_props held back: set
-    /// at the end of the boot stage (load/zfs_be.rs).
+    /// The datasets (names here) whose readonly=on `ds_props` held back: set
+    /// at the end of the boot stage (`load/zfs_be.rs`).
     pub(crate) readonly_later: Vec<String>,
     /// The inactive ZFS boot environments' datasets the dump has backup
-    /// sources for, and those BEs (load/zfs_be.rs), worked out once.
+    /// sources for, and those BEs (`load/zfs_be.rs`), worked out once.
     pub(crate) be_mounts: Vec<super::zfs_be::BeMount>,
     pub(crate) be_restored: Vec<crate::zfs_be::BootEnv>,
     /// Built's keys.
     pub(crate) key_asks: Vec<KeyAsk>,
     /// Each device assemble makes (a source name), and the source disks it
-    /// sits on: its item's inputs', walked down (disks_under).
+    /// sits on: its item's inputs', walked down (`disks_under`).
     pub(crate) under: BTreeMap<String, Vec<String>>,
 }
 
 /// Marks the steps OUT[FROM..] that nothing marked yet as made on DISKS
-/// (Cmd::on).
+/// (`Cmd::on`).
 pub(crate) fn mark_on(out: &mut [Cmd], from: usize, disks: &[String]) {
     for c in out.iter_mut().skip(from).filter(|c| c.on.is_empty()) {
         c.on = disks.to_vec();
     }
 }
 
-/// Cmd::on for the steps a loop pushes, a pass at a time, whatever pass
+/// `Cmd::on` for the steps a loop pushes, a pass at a time, whatever pass
 /// ends early: `next` marks the pass before's and begins one on DISKS,
 /// `add` widens it, and `done` marks the last's.
 pub(crate) struct OnMark {
@@ -875,12 +875,12 @@ pub fn sfdisk_script(d: &Disk, target: &str, same_size: bool) -> Result<String, 
 pub const ZERO_HEAD: u64 = 4 << 20;
 pub const ZERO_TAIL: u64 = 1 << 20;
 
-/// What DRACUT_EACH_KERNEL and DRACUT_ONE_IMAGE read from the restored
-/// image, as sh, one copy for both (RustAudit1 XH3-01): `l` lsinitrd's
+/// What `DRACUT_EACH_KERNEL` and `DRACUT_ONE_IMAGE` read from the restored
+/// image, as sh, one copy for both (`RustAudit1` XH3-01): `l` lsinitrd's
 /// listing of the image `lsinitrd LS` names, `m` its kernel modules still
 /// in the tree, and with dracut's resume module `a=resume` and `f` a
 /// temporary copy of its 95resume.conf (`lsinitrd LSF`), for
-/// dracut_keep_args! and dracut_keep_done!.
+/// `dracut_keep_args`! and `dracut_keep_done`!.
 macro_rules! dracut_keep_read {
     ($ls:literal, $lsf:literal) => {
         concat!(
@@ -896,14 +896,14 @@ macro_rules! dracut_keep_read {
     };
 }
 
-/// dracut's arguments for what dracut_keep_read! found.
+/// dracut's arguments for what `dracut_keep_read`! found.
 macro_rules! dracut_keep_args {
     () => {
         "${m:+--add-drivers \"$m\"} ${a:+--add \"$a\"} ${f:+--include \"$f\" /etc/cmdline.d/95resume.conf}"
     };
 }
 
-/// Right after dracut: `s` its status, and dracut_keep_read!'s temporary
+/// Right after dracut: `s` its status, and `dracut_keep_read`!'s temporary
 /// file removed.
 macro_rules! dracut_keep_done {
     () => {
@@ -955,12 +955,12 @@ pub(crate) const DRACUT_EACH_KERNEL: &str = concat!(
     "[ \"$s\" -eq 0 ] || exit \"$s\"; n=$((n + 1)); done; [ \"$n\" -gt 0 ]"
 );
 
-/// DRACUT_EACH_KERNEL's dracut for one kernel and one image, both named:
-/// `sh -c DRACUT_ONE_IMAGE sh KVER IMAGE`.  Gentoo's (gentoo_initramfs):
+/// `DRACUT_EACH_KERNEL`'s dracut for one kernel and one image, both named:
+/// `sh -c DRACUT_ONE_IMAGE sh KVER IMAGE`.  Gentoo's (`gentoo_initramfs)`:
 /// its 01-gentoo.conf is host-only too, so the image IMAGE was (read by
 /// lsinitrd before dracut replaces it) gives the remade one its kernel
 /// modules still in the tree, its resume module and its 95resume.conf, as
-/// DRACUT_EACH_KERNEL's restored images do.  With no image lsinitrd can
+/// `DRACUT_EACH_KERNEL`'s restored images do.  With no image lsinitrd can
 /// read, it is plain `dracut --force IMAGE KVER`.
 pub(crate) const DRACUT_ONE_IMAGE: &str = concat!(
     "k=$1; i=$2; ",
@@ -972,9 +972,9 @@ pub(crate) const DRACUT_ONE_IMAGE: &str = concat!(
     "exit \"$s\""
 );
 
-/// EndeavourOS's and Garuda's dracut-rebuild (host-only images, then
+/// `EndeavourOS`'s and Garuda's dracut-rebuild (host-only images, then
 /// non-host-only fallbacks), with dracut's resume module kept as
-/// DRACUT_EACH_KERNEL keeps it: when a restored host-only image had it, a
+/// `DRACUT_EACH_KERNEL` keeps it: when a restored host-only image had it, a
 /// dracut.conf.d drop-in adds it while dracut-rebuild runs, and is removed
 /// after, and dracut.conf.d gets back the mtime it had (a file made and
 /// removed in it changes it, and the restored tree is the source's).
@@ -1098,7 +1098,7 @@ fn zero_parts(d: &Disk, dev: &str) -> Vec<Cmd> {
 /// What holds the targets named with --erase, let go of from the top of
 /// each stack down (target.rs and release.rs worked out that none of it is
 /// mounted, swap, open, or on a disk that isn't named with --erase), with
-/// udev let finish before and after, so wipefs's O_EXCL open finds the
+/// udev let finish before and after, so wipefs's `O_EXCL` open finds the
 /// disks free.  Each command refuses a device still in use, and the stage
 /// stops there: nothing is written.  Plain commands, not `settled`'s retry
 /// loop, so the plan reads as what a person would type.
@@ -1410,25 +1410,25 @@ fn lvm_scalar(v: &Value) -> String {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ThinPool {
     pub name: String,
-    /// The pool's data and metadata LVs (POOL_tdata, POOL_tmeta), in bytes.
+    /// The pool's data and metadata LVs (`POOL_tdata`, `POOL_tmeta`), in bytes.
     pub data_bytes: u64,
     pub meta_bytes: u64,
     /// The data LV's stripes (count, stripe size in bytes) when it is
     /// striped across more than one PV.
     pub data_stripes: Option<(u64, u64)>,
-    /// The segment's chunk_size and discards, where the dump has them;
-    /// zero_new_blocks, which lvm2 writes only when it is on; the pool LV's
-    /// ERROR_WHEN_FULL flag.
+    /// The segment's `chunk_size` and discards, where the dump has them;
+    /// `zero_new_blocks`, which lvm2 writes only when it is on; the pool LV's
+    /// `ERROR_WHEN_FULL` flag.
     pub chunk_bytes: Option<u64>,
     pub discards: Option<String>,
     pub zero: bool,
     pub error_when_full: bool,
     pub attrs: LvAttrs,
-    /// Its thin LVs: those without an origin in the source's device_id
+    /// Its thin LVs: those without an origin in the source's `device_id`
     /// order, then the snapshots, each after its origin.
     pub thins: Vec<ThinLv>,
     /// How much of its data and metadata the source had in use (the dump's
-    /// data_used_bytes and metadata_used_bytes, from the pool's
+    /// `data_used_bytes` and `metadata_used_bytes`, from the pool's
     /// `dmsetup status`), where the dump has them.
     pub data_used: Option<u64>,
     pub meta_used: Option<u64>,
@@ -1448,7 +1448,7 @@ pub struct ThinLv {
 }
 
 /// What of an LV's own lvcreate doesn't set from its sizes: its tags, its
-/// ACTIVATION_SKIP flag and read-only permission (no WRITE in its status).
+/// `ACTIVATION_SKIP` flag and read-only permission (no WRITE in its status).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct LvAttrs {
     pub tags: Vec<String>,
@@ -1482,8 +1482,8 @@ impl LvAttrs {
 }
 
 /// A volume group's thin provisioning: its pools, whether lvcreate makes a
-/// pool metadata spare (as the source had an lvolN_pmspare), why not when
-/// the source's was too small to make again, and every LV vg_metadata
+/// pool metadata spare (as the source had an `lvolN_pmspare`), why not when
+/// the source's was too small to make again, and every LV `vg_metadata`
 /// leaves out (the pools, their data and metadata LVs, their thin LVs and
 /// the spare).
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -1721,9 +1721,9 @@ pub fn thin_of(vg: &Value) -> Result<Thin, String> {
 }
 
 /// A pool's thin LVs in the order load makes them: a forest from their
-/// origin links, the roots (no origin) in device_id order, then each
+/// origin links, the roots (no origin) in `device_id` order, then each
 /// snapshot after its origin, breadth first (a chain of revisions oldest
-/// first), siblings in device_id order.  A snapshot whose origin isn't a
+/// first), siblings in `device_id` order.  A snapshot whose origin isn't a
 /// thin LV of this pool, or a loop of origins, is refused.
 pub fn thin_forest(vg: &str, pool: &str, mut thins: Vec<ThinLv>) -> Result<Vec<ThinLv>, String> {
     thins.sort_by_key(|l| l.device_id);
@@ -1782,7 +1782,7 @@ pub(crate) fn lvm_size(bytes: u64) -> String {
 }
 
 /// The volume group as `vgcfgrestore` reads it, from the dump's view of it:
-/// without its thin pools and thin LVs (thin_of's `dropped`), which
+/// without its thin pools and thin LVs (`thin_of`'s `dropped`), which
 /// lvcreate makes after it.
 pub fn vg_metadata(vg: &Value) -> Result<String, String> {
     use crate::json::Obj;
@@ -1934,16 +1934,16 @@ impl Builder<'_> {
         self.codes.push(p);
     }
 
-    /// problem_once, coded.
+    /// `problem_once`, coded.
     pub(crate) fn problem_once_coded(&mut self, p: Problem) {
         if !self.problems.contains(&p.text) {
             self.coded(p);
         }
     }
 
-    /// The key group of the LUKS container OPEN_AS (holt-json.md, the
+    /// The key group of the LUKS container `OPEN_AS` (holt-json.md, the
     /// plan's keys): the source asked once at boot for every container
-    /// whose crypttab line has keyscript=decrypt_keyctl and the same key
+    /// whose crypttab line has `keyscript=decrypt_keyctl` and the same key
     /// name, so they're one group, named by the first of them met; any
     /// other container is a group of its own.
     pub(crate) fn key_group(&self, open_as: &str, uuid: Option<&str>) -> String {
@@ -1971,7 +1971,7 @@ impl Builder<'_> {
         open_as.to_string()
     }
 
-    /// crypttab line E's key field when it has keyscript=decrypt_keyctl
+    /// crypttab line E's key field when it has `keyscript=decrypt_keyctl`
     /// (the name the key is kept under at boot), else None.
     fn keyctl_key(e: &Value) -> Option<String> {
         let opts: Vec<&str> = match e.get("options") {
@@ -2517,7 +2517,7 @@ impl Builder<'_> {
             .push(settled(&["cryptsetup", "close", &open_as]));
     }
 
-    /// keep_header (docs/design/ubuntu-core.md, Decision 2): the LUKS2
+    /// `keep_header` (docs/design/ubuntu-core.md, Decision 2): the LUKS2
     /// header the dump kept, written back with luksHeaderRestore and opened
     /// with --key-file (by the container's name, its LUKS label or the
     /// device): the source's volume key, keyslots and tokens, so whatever
@@ -3138,7 +3138,7 @@ impl Builder<'_> {
 
     /// An encryption root whose key is a file (keyformat raw or hex) that
     /// --key-file doesn't give: a new random key, which the restored
-    /// system finds where the source kept it (see keystores()).
+    /// system finds where the source kept it (see `keystores()`).
     fn new_key(&mut self, ds: &Value, out: &mut Vec<Cmd>) {
         let name = s(ds, "name").unwrap_or_default();
         let fmt = s(ds, "keyformat").unwrap_or_default();
@@ -3295,7 +3295,7 @@ impl Builder<'_> {
 // ---- format -------------------------------------------------------------
 
 /// e2fsprogs feature names mke2fs can set; anything else in a superblock
-/// (needs_recovery, orphan_present, ...) is state, not a choice.
+/// (`needs_recovery`, `orphan_present`, ...) is state, not a choice.
 pub(crate) const EXT_SETTABLE: [&str; 30] = [
     "has_journal",
     "ext_attr",
@@ -3331,11 +3331,11 @@ pub(crate) const EXT_SETTABLE: [&str; 30] = [
 
 /// The -E resize=BLOCKS that has mke2fs reserve exactly the content's
 /// reserved GDT blocks, worked out as mke2fs works them out from it
-/// (e2fsprogs misc/mke2fs.c parse_extended_opts): ceil(ceil(BLOCKS / bpg) /
+/// (e2fsprogs misc/mke2fs.c `parse_extended_opts)`: ceil(ceil(BLOCKS / bpg) /
 /// per block) descriptor blocks, less the ceil(ceil(blocks / bpg) / per
 /// block) the filesystem itself has, both counting groups from block 0, not
 /// from the first data block (1 with 1 KiB blocks).  None without
-/// resize_inode, and for 0 reserved: mke2fs takes a resize= that reserves
+/// `resize_inode`, and for 0 reserved: mke2fs takes a resize= that reserves
 /// none as no request, and refuses one that isn't past the size.
 pub(crate) fn resize_for(c: &Value) -> Option<u64> {
     let has = |f: &str| {
@@ -3687,7 +3687,7 @@ pub fn mkfs_fat(dev: &str, c: &Value) -> Vec<String> {
 }
 
 /// F2FS features mkfs.f2fs -O can set; the rest of the superblock's bits
-/// (atomic_write, blkzoned) aren't chosen there.
+/// (`atomic_write`, blkzoned) aren't chosen there.
 pub(crate) const F2FS_SETTABLE: [&str; 13] = [
     "encrypt",
     "extra_attr",
@@ -3737,7 +3737,7 @@ pub fn mkfs_f2fs(dev: &str, c: &Value) -> Vec<String> {
     a
 }
 
-/// BCH_VERSION(major, minor) = major << 10 | minor, from "1.13".
+/// `BCH_VERSION(major`, minor) = major << 10 | minor, from "1.13".
 pub(crate) fn bcachefs_version(v: &str) -> Option<u32> {
     let (major, minor) = v.split_once('.')?;
     let (major, minor): (u32, u32) = (major.parse().ok()?, minor.parse().ok()?);
@@ -3745,15 +3745,15 @@ pub(crate) fn bcachefs_version(v: &str) -> Option<u32> {
 }
 
 /// bcachefs format with the source's UUID, label, options and on-disk
-/// version: its version_min (the oldest version anything on it is
+/// version: its `version_min` (the oldest version anything on it is
 /// written in), or its version when it has none.
 ///
-/// --no_initialize leaves the journal and the root directory to the
+/// --`no_initialize` leaves the journal and the root directory to the
 /// kernel's first mount, which is what format does by itself whenever the
 /// version asked for isn't the tools' own (the image's 1.39 tools
 /// recreating a 1.13 source).  When it is the tools' own, format would
 /// open the filesystem in userspace to initialize it, and 1.13's tools
-/// (the HoltTest rescuer's) corrupt their heap there in about one run of
+/// (the `HoltTest` rescuer's) corrupt their heap there in about one run of
 /// three, dying of SIGSEGV or SIGABRT (`tcache_thread_shutdown(): unaligned
 /// tcache chunk detected`) after the superblock is written.  The kernel
 /// initializes it at its first mount instead, load's or the restored
@@ -3814,7 +3814,7 @@ pub fn mkfs_bcachefs(dev: &str, c: &Value) -> Vec<String> {
     a
 }
 
-/// mkfs.nilfs2 can't set a UUID: `nilfs-tune -U` sets it after (nilfs_tune).
+/// mkfs.nilfs2 can't set a UUID: `nilfs-tune -U` sets it after (`nilfs_tune`).
 pub fn mkfs_nilfs2(dev: &str, c: &Value) -> Vec<String> {
     let have: Vec<&str> = c
         .get("features")
@@ -3855,7 +3855,7 @@ pub fn nilfs_tune(dev: &str, c: &Value) -> Option<Vec<String>> {
     s(c, "uuid").map(|u| vec!["nilfs-tune".to_string(), "-U".into(), u, dev.to_string()])
 }
 
-/// mkfs.jfs: 4 KiB blocks only, and no UUID option (jfs_tune sets it).
+/// mkfs.jfs: 4 KiB blocks only, and no UUID option (`jfs_tune` sets it).
 pub fn mkfs_jfs(dev: &str, c: &Value) -> Vec<String> {
     let mut a = vec!["mkfs.jfs".to_string(), "-q".into()];
     if let Some(l) = s(c, "label") {
@@ -3869,7 +3869,7 @@ pub fn jfs_tune(dev: &str, c: &Value) -> Option<Vec<String>> {
     s(c, "uuid").map(|u| vec!["jfs_tune".to_string(), "-U".into(), u, dev.to_string()])
 }
 
-/// s_version back to 1 in both superblocks (at 32 KiB and 60 KiB; the
+/// `s_version` back to 1 in both superblocks (at 32 KiB and 60 KiB; the
 /// field is their fifth byte).  A version-1 superblock still has its UUID
 /// field: mkfs.jfs writes one there.
 pub fn jfs_version1(dev: &str) -> Vec<String> {
@@ -4287,7 +4287,7 @@ impl Builder<'_> {
     /// system finds it where the source's was.  Only a mount that the dump
     /// leaves out of the backup is written: the deepest device-backed mount
     /// above the key file, not in fstab, at /run or under it (report.rs
-    /// not_backed_up()'s rule).  Any other mount is backed up, so the
+    /// `not_backed_up()`'s rule).  Any other mount is backed up, so the
     /// restore would write the old key over the new one: a random raw/hex
     /// key then needs --key-file (refuse), and a given key or passphrase
     /// comes back with the restore, as backed up.
@@ -4928,7 +4928,7 @@ impl Builder<'_> {
     }
 
     /// `v`, a subvolume of the btrfs `fs`, is one of its Timeshift
-    /// snapshots (btrfs_plans), which aren't made.
+    /// snapshots (`btrfs_plans`), which aren't made.
     fn is_timeshift(&self, fs: &Value, v: &Value) -> bool {
         let Some(ts) = s(fs, "uuid").and_then(|u| self.timeshift.get(&u)) else {
             return false;
@@ -5068,7 +5068,7 @@ impl Builder<'_> {
 
 impl Builder<'_> {
     /// A dataset's name here: its pool's in-core name when that differs
-    /// (Mapping::pool_names).
+    /// (`Mapping::pool_names`).
     pub(crate) fn zname(&self, ds: &str) -> String {
         let (pool, rest) = match ds.split_once('/') {
             Some((p, r)) => (p, Some(r)),
@@ -5088,8 +5088,8 @@ impl Builder<'_> {
 }
 
 /// The start of a script run in the restored system's chroot that labels
-/// with its SELinux policy: it exits 0 unless SELinux is enabled there, and
-/// has setfiles and the policy's file_contexts, which it leaves in $f.
+/// with its `SELinux` policy: it exits 0 unless `SELinux` is enabled there, and
+/// has setfiles and the policy's `file_contexts`, which it leaves in $f.
 const SELINUX_SETFILES_GATE: &str = "[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ \"${SELINUX:-disabled}\" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ -f \"$f\" ] && command -v setfiles >/dev/null || exit 0; ";
 
 // ---- mount, restore -----------------------------------------------------
@@ -5131,17 +5131,17 @@ fn mount_options(o: &str) -> String {
 /// files load writes onto it (the restore's, and the boot stage's, which
 /// writes through the same mount) get the stamps the source's had on disk.
 /// FAT keeps local time, and Linux's vfat converts with the mount's
-/// tz=UTC or time_offset= (minutes east of UTC), else with the kernel's
-/// sys_tz: on the source `hwclock --systz` may have set that (Artix's
-/// dinit does at every boot: Europe/Paris in winter is tz_minuteswest
-/// -60, so time_offset=60), where the rescue's is 0.  `opts` is the
+/// tz=UTC or `time_offset`= (minutes east of UTC), else with the kernel's
+/// `sys_tz`: on the source `hwclock --systz` may have set that (Artix's
+/// dinit does at every boot: Europe/Paris in winter is `tz_minuteswest`
+/// -60, so `time_offset=60`), where the rescue's is 0.  `opts` is the
 /// mount's own option list (it already says, if it names either);
-/// `source` the source's running mount's options, whose tz=/time_offset=
-/// is reproduced (fstab may not have had it); else the dump's sys_tz
-/// (storage.sys_tz_minuteswest): time_offset= when it isn't 0, tz=UTC
-/// when it is (so a rescue whose own sys_tz isn't 0, live media that ran
+/// `source` the source's running mount's options, whose `tz=/time_offset`=
+/// is reproduced (fstab may not have had it); else the dump's `sys_tz`
+/// (`storage.sys_tz_minuteswest)`: `time_offset`= when it isn't 0, tz=UTC
+/// when it is (so a rescue whose own `sys_tz` isn't 0, live media that ran
 /// hwclock --systz, doesn't shift the stamps).  None: nothing to add (an
-/// older dump without sys_tz: the rescue's own, 0 on our images).
+/// older dump without `sys_tz`: the rescue's own, 0 on our images).
 pub(crate) fn fat_time_option(
     opts: &str,
     source: Option<&str>,
@@ -5172,7 +5172,7 @@ impl Builder<'_> {
     /// A Linux vfat/msdos mount of the mount stage (`mount -t TYPE -o OPTS
     /// DEV DIR`, at `at` in the restored system; an fstab `auto` one too
     /// when the source had a vfat/msdos filesystem mounted there) with
-    /// fat_time_option's option added, and the plan saying why.
+    /// `fat_time_option`'s option added, and the plan saying why.
     fn fat_time(&self, at: &str, c: &mut Cmd) {
         if self.fam.is_some()
             || c.argv.len() != 7
@@ -6010,7 +6010,7 @@ fn snapshot_path(snapshot: &str, path: &str) -> (String, String) {
 }
 
 /// Every path's atime under the target (not the bind-mounted /dev, /proc,
-/// /sys, /run): "before" lists them to RUN_DIR/atimes.before (the restore
+/// /sys, /run): "before" lists them to `RUN_DIR/atimes.before` (the restore
 /// stage, right after the archiver: nothing has read the tree yet);
 /// "if-missing" does so unless it's done (boot, after a restore made some
 /// other way); "restore" lists them again and puts back each that changed
@@ -6020,7 +6020,7 @@ pub(crate) fn atimes_cmd(t: &str, what: &str, prune: &[String]) -> String {
     atimes_cmd_in(t, what, prune, false)
 }
 
-/// atimes_cmd; with RUN_MNT, T/run/mnt is listed, not pruned with the rest
+/// `atimes_cmd`; with `RUN_MNT`, T/run/mnt is listed, not pruned with the rest
 /// of T/run: Ubuntu Core's whole tree is there (load/snapcore.rs).
 pub(crate) fn atimes_cmd_in(t: &str, what: &str, prune: &[String], run_mnt: bool) -> String {
     let more: String = prune
@@ -6060,7 +6060,7 @@ pub(crate) fn atimes_cmd_in(t: &str, what: &str, prune: &[String], run_mnt: bool
 
 impl Builder<'_> {
     /// The boot stage: the inactive boot environments the restore filled
-    /// unmounted first (load/zfs_be.rs), and the held-back readonly=on set
+    /// unmounted first (`load/zfs_be.rs`), and the held-back readonly=on set
     /// last, whatever the system.
     fn boot(&mut self) -> Vec<Cmd> {
         let mut out = self.boot_stage();
@@ -6654,7 +6654,7 @@ impl Builder<'_> {
         out
     }
 
-    /// SELinux labels for the mount points the mount stage made (BackShot1,
+    /// `SELinux` labels for the mount points the mount stage made (`BackShot1`,
     /// Leap 16): the backup reads through the mounts, so the directory
     /// under each one was mkdir'd bare and the restore never reached it,
     /// and early boot (systemd-modules-load, systemd-sysctl) hit AVC
@@ -6902,7 +6902,7 @@ impl Builder<'_> {
         })
     }
 
-    /// atimes_cmd for this layout (Ubuntu Core's tree is under T/run/mnt).
+    /// `atimes_cmd` for this layout (Ubuntu Core's tree is under T/run/mnt).
     pub(crate) fn atimes(&self, t: &str, what: &str) -> String {
         atimes_cmd_in(
             t,
@@ -7022,11 +7022,11 @@ impl Builder<'_> {
             .map(|(_, ty)| ty)
     }
 
-    /// AnduinOS with its own GRUB on the ESP, signed with the machine's MOK:
+    /// `AnduinOS` with its own GRUB on the ESP, signed with the machine's MOK:
     /// the dump found the MOK beside anduinos-grub (boot.loader.mok), or the
     /// firmware booted shim and anduinos-grub is installed.
     /// Solus's ESP mounted at /boot in the target, as it was when the dump
-    /// was made (boot.esps' mounted_at /boot, in_fstab false), with its
+    /// was made (boot.esps' `mounted_at` /boot, `in_fstab` false), with its
     /// mount's options; fstab has no line for it.
     fn solus_esp_mount(&mut self) -> Vec<(String, Cmd)> {
         let target = self.opts.target.clone();
@@ -7075,9 +7075,9 @@ impl Builder<'_> {
 
     /// Solus's boot entry, as clr-boot-manager makes it ("Solus Linux
     /// Bootloader", its shim \EFI\com.solus-project\bootloaderx64.efi on
-    /// the ESP that holds it), when efi_entries made none for that shim: a
+    /// the ESP that holds it), when `efi_entries` made none for that shim: a
     /// source booted from the fallback path (blank NVRAM) has none.  Last,
-    /// so that it comes first in BootOrder.
+    /// so that it comes first in `BootOrder`.
     fn solus_entry(&mut self) -> Vec<Cmd> {
         let shim = crate::boot::CBM_SHIM;
         let loader = format!("\\{}", shim.replace('/', "\\"));
@@ -7170,7 +7170,7 @@ impl Builder<'_> {
                         .is_some()))
     }
 
-    /// What the restored machine's firmware needs to boot AnduinOS's
+    /// What the restored machine's firmware needs to boot `AnduinOS`'s
     /// MOK-signed GRUB: the same MOK, which only the source's machine has.
     fn anduinos_mok_note(&self) -> String {
         let cert = self
@@ -7195,7 +7195,7 @@ impl Builder<'_> {
     }
 
     /// BIOS GRUB's grub-install onto DISK, in the target T; when the layout
-    /// has NILFS2, through GRUB_BIOS_NILFS2, which makes it hide a NILFS2
+    /// has NILFS2, through `GRUB_BIOS_NILFS2`, which makes it hide a NILFS2
     /// superblock at the disk's end from GRUB's look at the whole disk.
     fn grub_bios_install(&self, t: &str, disk: &str) -> Cmd {
         let install = [
@@ -7234,7 +7234,7 @@ impl Builder<'_> {
     /// etc/cmdline.d/20-root-dev.conf as rootflags=, and the restored
     /// machine's initramfs then mounts / with them: whatever changed the
     /// rescue system's mount since the mount stage would last on the
-    /// restored machine.  BackShot1's diff remounts the target noatime and
+    /// restored machine.  `BackShot1`'s diff remounts the target noatime and
     /// puts it back with remount,relatime, which a ZFS dataset ignores (it
     /// stays noatime, atime=off temporary): the Thinkpad's Ubuntu 26.10 on
     /// ZFS came back with rootflags=...,noatime,... and / noatime (run
@@ -7273,7 +7273,7 @@ impl Builder<'_> {
     }
 
     /// Every initramfs remade by the source's own generator; None for one
-    /// that came prebuilt with its kernel (AerynOS).
+    /// that came prebuilt with its kernel (`AerynOS`).
     fn initramfs(&self, t: &str) -> Option<Cmd> {
         Some(
             match self.layout.str_at(&["boot", "initramfs", "generator"]) {
@@ -7348,7 +7348,7 @@ impl Builder<'_> {
     /// dracut 112 could pick /efi/MACHINE-ID/K/initrd or
     /// /lib/modules/K/initrd.  Its host-only image keeps what the restored
     /// one had and the rescue system's chroot can't show it (the modules,
-    /// the resume module and resume=: DRACUT_ONE_IMAGE).  `none` makes nothing.  Everything else is
+    /// the resume module and resume=: `DRACUT_ONE_IMAGE`).  `none` makes nothing.  Everything else is
     /// refused by name: genkernel, ugrd, a unified kernel image, an
     /// installkernel layout other than grub or compat, an image at
     /// /lib/modules/K/initrd.  installkernel's .old copies come back with
@@ -7424,7 +7424,7 @@ impl Builder<'_> {
         out
     }
 
-    /// boot.proxmox_boot, when the source's ESPs are proxmox-boot-tool's.
+    /// `boot.proxmox_boot`, when the source's ESPs are proxmox-boot-tool's.
     fn proxmox_boot(&self) -> Option<&Value> {
         self.layout
             .v
@@ -7591,7 +7591,7 @@ impl Builder<'_> {
         )
     }
 
-    /// The source machine's boot names (crate::arch): grubx64.efi or
+    /// The source machine's boot names (`crate::arch)`: grubx64.efi or
     /// grubaa64.efi, x86_64-efi or arm64-efi, BOOTX64.EFI or BOOTAA64.EFI.
     pub(crate) fn boot_names(&self) -> &'static crate::arch::Names {
         crate::arch::names_of_dump(&self.layout.v)
@@ -7627,7 +7627,7 @@ impl Builder<'_> {
 
     /// Whether the source's ESP had its fallback loader (EFI/BOOT/BOOTX64.EFI,
     /// BOOTAA64.EFI) as a byte copy of GRUB's image in EFI/ID, as the
-    /// dump's ESP inventory says (its same_as, which names the first copy
+    /// dump's ESP inventory says (its `same_as`, which names the first copy
     /// found: either way round, or both naming a third).
     fn fallback_is_grub_copy(&self, id: &str) -> bool {
         let n = self.boot_names();
@@ -7636,7 +7636,7 @@ impl Builder<'_> {
 
     /// Whether the source's ESP held A and B (paths on it, any case) as
     /// byte copies of each other, as the dump's ESP inventory says (its
-    /// same_as: either way round, or both naming a third).
+    /// `same_as`: either way round, or both naming a third).
     fn esp_files_same(&self, a: &str, b: &str) -> bool {
         let files = self.layout.arr(&["boot", "esps", "0", "contents", "files"]);
         let find = |p: &str| {
@@ -7668,7 +7668,7 @@ impl Builder<'_> {
         Cmd::new(&["sh", "-c", &self.grub_removable_copy_script(t, esp, id, via_shim)]).why(format!("--removable: {what} at the fallback path too ({}'s grub-install has no --force-extra-removable, Debian's option)", self.layout.str_at(&["os", "id"]).unwrap_or("this system")))
     }
 
-    /// grub_removable_copy()'s shell command.
+    /// `grub_removable_copy()`'s shell command.
     fn grub_removable_copy_script(&self, t: &str, esp: &str, id: &str, via_shim: bool) -> String {
         let n = self.boot_names();
         let (from, dir) = (
@@ -7695,7 +7695,7 @@ impl Builder<'_> {
     /// (shim, fbx64.efi and mmx64.efi there, or GRUB without shim: chopin,
     /// 2026-11-25, elementary8-luks's grub-install with EFI/BOOT removed);
     /// neither: upstream's way, GRUB's image (or shim with it) copied there
-    /// after it (grub_removable_copy).  Then, whichever it was, the fallback
+    /// after it (`grub_removable_copy`).  Then, whichever it was, the fallback
     /// loader must be a byte copy of EFI/ID's shim or GRUB, or load fails
     /// there: the request is never dropped unseen.
     fn debian_grub_removable(
@@ -7743,8 +7743,8 @@ impl Builder<'_> {
     /// grub-install, with the ESP on /boot's disk, named that partition by
     /// number in the image ("(,gpt3)/boot/grub", Guix's), and a layout
     /// that numbers it otherwise would leave GRUB in rescue mode
-    /// (BackShot2's guix15 cases).  IMG, and the fallback loader only when
-    /// the dump's ESP inventory says it is a copy of IMG (same_as): on a
+    /// (`BackShot2`'s guix15 cases).  IMG, and the fallback loader only when
+    /// the dump's ESP inventory says it is a copy of IMG (`same_as)`: on a
     /// shared ESP the fallback can be another system's GRUB, whose prefix
     /// names that system's partition, and is left as restored.  (Without
     /// one, --removable copies IMG there after this.)  Each is left as it is
@@ -7813,7 +7813,7 @@ impl Builder<'_> {
     /// Why the source's BIOS core.img, which a store system without GRUB
     /// in its store (Guix) gets back as it is (grub-bios-setup writes it
     /// unchanged but for its sector addresses), wouldn't find /boot/grub on
-    /// this layout: the dump's boot.store.core_img_part is the partition its
+    /// this layout: the dump's `boot.store.core_img_part` is the partition its
     /// prefix names by number ("gpt3" of "(,gpt3)/@/boot/grub"), and the
     /// layout numbers /boot's file system (/'s, without a /boot) otherwise.
     /// Its prefix is in the LZMA-compressed part, which load can't rebuild
@@ -7881,7 +7881,7 @@ impl Builder<'_> {
     }
 
     /// The target disks whose source has GRUB's BIOS core in its BIOS boot
-    /// partition, as the dump's boot_code found it (a UEFI install that is
+    /// partition, as the dump's `boot_code` found it (a UEFI install that is
     /// a BIOS install too).  A disk with a BIOS boot partition and no core
     /// recorded gets a note: it boots by UEFI only.
     pub(crate) fn grub_core_partition_devices(&mut self) -> Vec<String> {
@@ -7951,7 +7951,7 @@ impl Builder<'_> {
     /// The directory under EFI/ the source's loader lives in ("debian").  Only
     /// an entry on the layout's own disks can say: NVRAM outlives reinstalls,
     /// and can list other disks' loaders and long-gone systems'.  The entry
-    /// that booted comes first, then BootOrder, then the rest; with none of
+    /// that booted comes first, then `BootOrder`, then the rest; with none of
     /// those, what's on the ESP.
     fn bootloader_id(&self) -> String {
         let dir_of = |f: &str| {
@@ -8027,7 +8027,7 @@ impl Builder<'_> {
     }
 
     /// The source's boot entries on the restored disks, created in reverse
-    /// BootOrder so that the first ends up first (efibootmgr puts each new
+    /// `BootOrder` so that the first ends up first (efibootmgr puts each new
     /// one at the front), each with its optional data.
     pub(crate) fn efi_entries(&mut self) -> Vec<Cmd> {
         let entries = self.layout.arr(&["boot", "efi", "entries"]).to_vec();
@@ -8139,7 +8139,7 @@ impl Builder<'_> {
         out
     }
 
-    /// refind_linux.conf (boot.refind.linux_conf) is kept as restored, so
+    /// `refind_linux.conf` (`boot.refind.linux_conf`) is kept as restored, so
     /// every root=UUID= and rd.luks.name=UUID=NAME (or rd.luks.uuid=) in it
     /// must name a filesystem or LUKS container the layout makes with that
     /// UUID; one that doesn't is a problem now, not a boot that can't find
@@ -8510,7 +8510,7 @@ pub(crate) fn luks_passphrase_keyslot(c: &Value) -> Value {
 }
 
 /// The dumped entry E's optional data, from the tail of its load option
-/// (optional_data_bytes of load_option_hex): None when it has none.
+/// (`optional_data_bytes` of `load_option_hex)`: None when it has none.
 pub(crate) fn efi_optional_data(e: &Value) -> Option<OptionalData> {
     let n = num(e, "optional_data_bytes").filter(|&n| n > 0)? as usize;
     let hex = s(e, "load_option_hex")?;
@@ -8592,7 +8592,7 @@ fn disk_class(name: &str) -> Option<(&'static str, u32, String)> {
     None
 }
 
-/// disk_class's inverse: the kernel's name for the disk of CLASS at PLACE.
+/// `disk_class`'s inverse: the kernel's name for the disk of CLASS at PLACE.
 fn class_disk(class: &str, place: u32, rest: &str) -> String {
     match class {
         "nvme" | "mmcblk" => format!("{class}{place}{rest}"),
@@ -8619,7 +8619,7 @@ fn place_word(place: u32) -> String {
 
 /// Whether the kernel names a class's disks by where they are attached
 /// rather than by the order it finds them: mmcblk by its host
-/// controller's index (mmc_block takes host->index, set by the device
+/// controller's index (`mmc_block` takes host->index, set by the device
 /// tree's or ACPI's aliases), xvd by the vdev the Xen domain's config
 /// gives it, hd by its IDE channel and position.  Taking another disk out
 /// renames none of them.  vd, sd and nvme are numbered as found, the
@@ -8632,8 +8632,8 @@ fn fixed_class(class: &str) -> bool {
 /// of TARGETS (every target disk of the plan, the machine's disks then):
 /// its own driver class, at its place among the targets of that class, in
 /// the kernel's order.  The rescue's own disk and any other disk that
-/// isn't a target are left out, as gone by then.  A fixed_class disk keeps
-/// the name it has here.  None when the name isn't one disk_class knows.
+/// isn't a target are left out, as gone by then.  A `fixed_class` disk keeps
+/// the name it has here.  None when the name isn't one `disk_class` knows.
 fn boot_name_of(target: &str, targets: &[&str]) -> Option<String> {
     let (class, place, rest) = disk_class(target)?;
     if fixed_class(class) {
@@ -8650,22 +8650,22 @@ fn boot_name_of(target: &str, targets: &[&str]) -> Option<String> {
     Some(class_disk(class, before.len() as u32, &rest))
 }
 
-/// The name of the lilo.conf copy lilo_cmds runs lilo on: the config's
+/// The name of the lilo.conf copy `lilo_cmds` runs lilo on: the config's
 /// own name with this added, beside it.
 const LILO_COPY_SUFFIX: &str = ".bko-holt";
 
-/// lilo 24.2's longest kernel command line (lilo.h's COMMAND_LINE_SIZE
+/// lilo 24.2's longest kernel command line (lilo.h's `COMMAND_LINE_SIZE`
 /// 512, less its NUL): a longer append= it refuses, a longer line it cuts.
 const LILO_CMDLINE_MAX: usize = 511;
 
 /// Whether lilo writes this root= as a device number (bsect.c's
-/// bsect_common): any but `current`, /dev/mapper/..., LABEL= and UUID=,
+/// `bsect_common)`: any but `current`, /dev/mapper/..., LABEL= and UUID=,
 /// which go through as text.  Only /dev/ paths are rewritten here.
 fn lilo_numbers_root(root: &str) -> bool {
     root.starts_with("/dev/") && !root.starts_with("/dev/mapper/")
 }
 
-/// boot.lilo's items as written (lilo_list's `key` or `key=value`) back
+/// boot.lilo's items as written (`lilo_list`'s `key` or `key=value`) back
 /// into lilo.conf items.
 fn lilo_dump_items(v: &Value) -> Option<Vec<crate::boot::LiloItem>> {
     let a = v.get("options").and_then(Value::as_array)?;
@@ -8685,7 +8685,7 @@ fn lilo_dump_items(v: &Value) -> Option<Vec<crate::boot::LiloItem>> {
 /// with `root=DEV` at the end of the append= of each image whose root=
 /// (its own, else the global one) lilo would turn into a device number.
 /// lilo writes such a root= as the device's major:minor under the rescue
-/// kernel, and virtio_blk's major is dynamic (254 under the rescue kernel,
+/// kernel, and `virtio_blk`'s major is dynamic (254 under the rescue kernel,
 /// 253 under Slackware 15's huge kernel), so a kernel with no initrd would
 /// look for another device; the kernel takes the last root= it sees and
 /// finds /dev/NAME by itself.  The image gets its own append= with it: the
@@ -8704,11 +8704,11 @@ fn lilo_dump_items(v: &Value) -> Option<Vec<crate::boot::LiloItem>> {
 /// (Decision 5).
 ///
 /// lilo writes a root= it numbers into the map, as the kernel's
-/// `root=HEX` (bsect.c's bsect_common: `root=%x` of the device's st_rdev),
+/// `root=HEX` (bsect.c's `bsect_common`: `root=%x` of the device's `st_rdev`),
 /// so under the rescue kernel it would store the rescue's number for the
 /// target's partition (fe12 for /dev/vdb2), not the source's.  NUMBER
 /// gives the number the source's map has for a source device, as lilo.conf
-/// takes it (`0xfe02`: dev_number's stat fails on it, and to_number's
+/// takes it (`0xfe02`: `dev_number`'s stat fails on it, and `to_number`'s
 /// strtol(..., 0) reads it); the copy's root= is that, wherever it has one,
 /// so the map stores the source's.  Without one it is renamed as above,
 /// and an image with literal= and no root= in it, whose kernel would take
@@ -8951,7 +8951,7 @@ fn lilo_root_copy(
     Ok(Some(LiloCopy { text, ..copy }))
 }
 
-/// lilo_root_copy's copy of lilo.conf: its text, each `LABEL: root=DEV`
+/// `lilo_root_copy`'s copy of lilo.conf: its text, each `LABEL: root=DEV`
 /// added to an append=, each device named as the rescue names it
 /// (`boot=/dev/vda as /dev/vdb`), and each root= given as the source's
 /// device number (`Linux's root=/dev/vda2 as 0xfe02`).
@@ -8989,14 +8989,14 @@ impl LiloCopy {
     }
 }
 
-/// geninitrd_steps' result: (image, the commands remaking it) for each
+/// `geninitrd_steps`' result: (image, the commands remaking it) for each
 /// image remade, and notes on those that stay as restored.
 type GeninitrdSteps = (Vec<(String, Vec<Cmd>)>, Vec<String>);
 
 impl Builder<'_> {
     /// The name the rescue has for the target of source device P (a kernel
     /// name, /dev/md/N as /dev/mdN) when it isn't P: what a tool run here in
-    /// the rescue (lilo, mkinitrd_command_generator.sh) must open for the
+    /// the rescue (lilo, `mkinitrd_command_generator.sh`) must open for the
     /// device the restored system calls P at boot.
     fn rescue_name(&self, p: &str) -> Option<String> {
         let src = self
@@ -9008,9 +9008,9 @@ impl Builder<'_> {
 
     /// The device number the source's /boot/map has for lilo.conf's root=
     /// source device P, as lilo.conf takes a number (`0xfe02`), for
-    /// lilo_root_copy.  The source's lilo wrote it where it ran, which may
+    /// `lilo_root_copy`.  The source's lilo wrote it where it ran, which may
     /// not be the source's own kernel (Slackware's installer runs lilo
-    /// under its own, where virtio_blk is 254, and the huge kernel's is
+    /// under its own, where `virtio_blk` is 254, and the huge kernel's is
     /// 253), so the booted image's is read back from the source's command
     /// line, where LILO put it (`BOOT_IMAGE=Linux ro root=fe02 ...`), for
     /// every root= naming that image's device.  Another device's is the one
@@ -9082,7 +9082,7 @@ impl Builder<'_> {
     }
 
     /// Whether source device P (a kernel name) is the name its target has
-    /// when the restored machine boots (slackware_device_names' rule: the
+    /// when the restored machine boots (`slackware_device_names`' rule: the
     /// same class, in the same place among the target's disks of that
     /// class; a device on no such disk by its name here).
     fn boot_name_holds(&self, p: &str) -> bool {
@@ -9120,7 +9120,7 @@ impl Builder<'_> {
 
     /// The source's / when --reformat makes it again: (its old type, its
     /// new type), from the edited layout (fstab's / and the device it
-    /// resolves to, whose content reformat::apply marked).
+    /// resolves to, whose content `reformat::apply` marked).
     fn root_reformat(&self) -> Option<(String, String)> {
         if !self.opts.reformats.iter().any(|(m, _)| m == "/") {
             return None;
@@ -9216,14 +9216,14 @@ impl Builder<'_> {
     /// (/boot/initrd-VERSION.img, for a kernel /boot and /lib/modules still
     /// have) made again by what its setup.01.mkinitrd runs for that kernel,
     /// in the chroot: `mkinitrd -F /etc/mkinitrd.conf -k V -o IMAGE` with a
-    /// mkinitrd.conf, else mkinitrd_command_generator.sh's command for this
+    /// mkinitrd.conf, else `mkinitrd_command_generator.sh`'s command for this
     /// machine's root and storage drivers, with setup.01.mkinitrd's `-L -R
     /// -o IMAGE`, run.  Only that: not geninitrd itself, whose pre- and
     /// post-install scripts (DKMS builds, lilo), orphan removal and
     /// update-grub aren't the restore's.  The links to the images
     /// (initrd-generic.img, initrd.gz) came back with /boot and still point
     /// at them.  After each, /boot/initrd-tree (which mkinitrd builds) is
-    /// removed as setup.01.mkinitrd removes it, when AUTO_REMOVE_INITRD_TREE
+    /// removed as setup.01.mkinitrd removes it, when `AUTO_REMOVE_INITRD_TREE`
     /// is true (its default) and the source had none.  Ok((image, commands)
     /// for each remade, notes on the images that stay), or Err(why) when
     /// every restored image stays.
@@ -9347,8 +9347,8 @@ impl Builder<'_> {
     /// Why the source's / is on dm-crypt, or None: a crypt target anywhere
     /// in the stack under it (fstab's / by the device it resolves to, else
     /// the mount's), through LVM, md and other dm layers, which
-    /// mkinitrd_command_generator.sh would find and give mkinitrd -C for
-    /// (Slackware's README_CRYPT LVM on LUKS, /dev/cryptvg/root, among
+    /// `mkinitrd_command_generator.sh` would find and give mkinitrd -C for
+    /// (Slackware's `README_CRYPT` LVM on LUKS, /dev/cryptvg/root, among
     /// them); or, when neither names a device, fstab's / on /dev/mapper.
     fn slackware_root_crypt(&self) -> Option<String> {
         let fstab = self
@@ -9411,7 +9411,7 @@ impl Builder<'_> {
     /// mounts and the resume device (-r, -h) by the names given, the root's
     /// type (-f), the modules of -m for the kernels of -k, and the LVM and
     /// RAID tools and mdadm.conf (-L, -R).  The names must be the ones the
-    /// target's devices have at boot (boot_name_holds; a UUID=, LABEL= or
+    /// target's devices have at boot (`boot_name_holds`; a UUID=, LABEL= or
     /// LVM name load keeps); the type changes only with --reformat; the
     /// replay gives -m as it was, so the modules hold when -k is the
     /// kernels the dump found with modules (and the image was there); load
@@ -9510,7 +9510,7 @@ impl Builder<'_> {
     /// image mkinitrd packs from /boot/initrd-tree), the tree's /dev, which
     /// mkinitrd fills from the rescue's /proc/partitions (its own disks, by
     /// the rescue's numbers), is put back as the source's tree had it, and
-    /// the image packed again as mkinitrd packs it (build_initrd_image);
+    /// the image packed again as mkinitrd packs it (`build_initrd_image`);
     /// not when the source had no tree, or with -P (a microcode image in
     /// front).
     fn mkinitrd_wrap(&self, t: &str, inner: Vec<Cmd>, tree: Option<&str>) -> Vec<Cmd> {
@@ -9581,8 +9581,8 @@ impl Builder<'_> {
     }
 
     /// Slackware's initrd step (docs/design/slackware.md): mkinitrd's image
-    /// remade (mkinitrd_cmd), -current's geninitrd images remade
-    /// (geninitrd_steps), or nothing when there is none (the huge kernel);
+    /// remade (`mkinitrd_cmd`), -current's geninitrd images remade
+    /// (`geninitrd_steps`), or nothing when there is none (the huge kernel);
     /// any other generator is refused.
     fn slackware_initramfs(&mut self, t: &str) -> Vec<Cmd> {
         let generator = self
@@ -9665,7 +9665,7 @@ impl Builder<'_> {
     /// so it must be the name its target has when the restored machine
     /// boots, not in the rescue: the same driver class (vd, sd, nvme,
     /// mmcblk; a partition by its disk) and the same place among that
-    /// class's disks, of the plan's target disks only (boot_name_of: the
+    /// class's disks, of the plan's target disks only (`boot_name_of`: the
     /// rescue's own disk, never a target, is gone by then; an mmcblk, xvd
     /// or hd disk keeps its name here).  A note when
     /// every name holds; a problem saying why when the class or the order
@@ -9914,7 +9914,7 @@ impl Builder<'_> {
     /// a whole disk: LILO in a partition's boot sector is refused by name.
     /// When an image's root= is a /dev/ name lilo would write as a device
     /// number, or a device lilo opens (boot=, disk=, root=, other=, ...) is
-    /// one the rescue names otherwise (lilo_root_copy), both run with -C on
+    /// one the rescue names otherwise (`lilo_root_copy`), both run with -C on
     /// a copy of lilo.conf
     /// that gives the kernel root= by name too and lilo the rescue's names,
     /// removed after; the user's lilo.conf stays as restored.
@@ -10105,9 +10105,9 @@ impl Builder<'_> {
     }
 
     /// ELILO's boot entry, as eliloconfig makes it (label Slackware, the
-    /// loader EFI/Slackware/elilo.efi), when efi_entries made none for an
+    /// loader EFI/Slackware/elilo.efi), when `efi_entries` made none for an
     /// elilo.efi: the test guests' NVRAM is blank, and they boot the
-    /// fallback path.  Last, so that it comes first in BootOrder.
+    /// fallback path.  Last, so that it comes first in `BootOrder`.
     fn elilo_entry(&mut self) -> Vec<Cmd> {
         let order: Vec<String> = self
             .layout
@@ -10269,7 +10269,7 @@ mod tests {
         std::fs::metadata(p).unwrap().modified().unwrap()
     }
 
-    /// DRACUT_EACH_KERNEL run by sh over a fake tree ($R for the chroot's
+    /// `DRACUT_EACH_KERNEL` run by sh over a fake tree ($R for the chroot's
     /// /), with a fake lsinitrd (the restored images' listings, as
     /// openSUSE's prints them) and a dracut that prints its arguments and
     /// the files it was given to --include.
@@ -10391,7 +10391,7 @@ mod tests {
         assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
     }
 
-    /// DRACUT_ONE_IMAGE run by sh over a fake tree, as Gentoo's boot stage
+    /// `DRACUT_ONE_IMAGE` run by sh over a fake tree, as Gentoo's boot stage
     /// runs it (KVER and IMAGE its arguments), with a fake lsinitrd (dracut
     /// 112's listing of a host-only image with the resume module, read by
     /// the image's path) and a dracut that prints its arguments and the
@@ -10496,7 +10496,7 @@ mod tests {
         assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
     }
 
-    /// DRACUT_REBUILD_RESUME: a drop-in adds the resume module while
+    /// `DRACUT_REBUILD_RESUME`: a drop-in adds the resume module while
     /// dracut-rebuild runs when a host-only image had it (a fallback's
     /// doesn't count), and is removed after; one already there stays.
     #[test]
@@ -10577,7 +10577,7 @@ mod tests {
         assert_eq!(mtime(&confd), was);
     }
 
-    /// UPDATE_INITRAMFS_RESUME: the resume device a restored image's
+    /// `UPDATE_INITRAMFS_RESUME`: the resume device a restored image's
     /// resume hook had picked (conf/conf.d/zz-resume-auto, in an early +
     /// main image or a plain one) goes in conf.d while update-initramfs
     /// runs, and is removed after.
@@ -10723,7 +10723,7 @@ mod tests {
     /// (block size, blocks, blocks a group, 64bit, reserved) here was made
     /// by mke2fs 1.47.2 with this resize= and read back (cinqcent,
     /// 2026-11-17).  With 1 KiB blocks the old + first data block asked for
-    /// one more (BackShot2's fail-004: 127 made 128).
+    /// one more (`BackShot2`'s fail-004: 127 made 128).
     #[test]
     fn mke2fs_resize_reserves_the_sources_gdt_blocks() {
         let cases: [(u64, u64, u64, bool, u64, u64); 7] = [
@@ -11060,7 +11060,7 @@ mod tests {
     }
 
     /// The mount points the mount stage made, hidden from the restore under
-    /// their mounts (BackShot1, Leap 16: unlabeled_t /usr/local and /var at
+    /// their mounts (`BackShot1`, Leap 16: `unlabeled_t` /usr/local and /var at
     /// early boot): each filesystem holding some is bound alone under
     /// RUN_DIR/mount-points, and setfiles -r labels them at their logical
     /// paths, nested ones (/var/lib/x on /var) from /var's bind; none on a
@@ -11131,10 +11131,10 @@ mod tests {
         );
     }
 
-    /// FAT's local-time stamps (BackShot1 artix-20261123-102328: Artix's
-    /// hwclock --systz left sys_tz at -60, and boot/intel-ucode.img came
-    /// back an hour early): the dump's sys_tz as time_offset=, or the
-    /// source mount's own tz=/time_offset=, never over fstab's own.
+    /// FAT's local-time stamps (`BackShot1` artix-20261123-102328: Artix's
+    /// hwclock --systz left `sys_tz` at -60, and boot/intel-ucode.img came
+    /// back an hour early): the dump's `sys_tz` as `time_offset`=, or the
+    /// source mount's own `tz=/time_offset`=, never over fstab's own.
     #[test]
     fn fat_time_options() {
         assert_eq!(fat_time_option("defaults", None, None), None);
@@ -11242,9 +11242,9 @@ mod tests {
         );
     }
 
-    /// PikaOS (docs/design/pikaos.md): booster's image remade for each
+    /// `PikaOS` (docs/design/pikaos.md): booster's image remade for each
     /// kernel; rEFInd kept as restored, with only its boot entry made, and
-    /// refind_linux.conf's UUIDs checked against the layout.
+    /// `refind_linux.conf`'s UUIDs checked against the layout.
     #[test]
     fn pikaos_booster_and_refind() {
         let plan = |via_shim: bool, options: &str| {
@@ -11308,7 +11308,7 @@ mod tests {
         assert!(!n.contains("rEFInd: its EFI files"), "{n}");
     }
 
-    /// NixOS on UEFI (BackShot1's Thinkpad, NixOS 26.05): bootctl and
+    /// NixOS on UEFI (`BackShot1`'s Thinkpad, NixOS 26.05): bootctl and
     /// grub-install are only on PATH through /run/current-system, which the
     /// chroot hasn't; the ESP came back with the loader, its entries and
     /// every generation's files.  Only the NVRAM entry is made.
@@ -11406,7 +11406,7 @@ mod tests {
     }
 
     /// GRUB's environment block in btrfs's reserved area (openSUSE's
-    /// env_block=512+1): written again after mkfs.btrfs, the source's
+    /// `env_block=512+1)`: written again after mkfs.btrfs, the source's
     /// variables in it, to the device that had it; none when the dump has
     /// none.
     #[test]
@@ -11458,7 +11458,7 @@ mod tests {
     /// The resume device kept where the boot stage remakes the initramfs
     /// with a generator that picks it from this machine's swap: an
     /// initramfs-tools source with RESUME unset or auto and a swap device,
-    /// and EndeavourOS's dracut-rebuild with one.
+    /// and `EndeavourOS`'s dracut-rebuild with one.
     #[test]
     fn initramfs_resume_kept() {
         let it = |extra: &str| {
@@ -11545,7 +11545,7 @@ mod tests {
     }
 
     /// The disk's first 4 MiB and last 1 MiB, then each new partition's,
-    /// all after wipefs (whose O_EXCL open refuses a busy disk) and before
+    /// all after wipefs (whose `O_EXCL` open refuses a busy disk) and before
     /// sfdisk writes the table, so nothing old is on a partition when the
     /// kernel first shows it, let alone when assemble or format writes to it.
     #[test]
@@ -11757,7 +11757,7 @@ mod tests {
     /// size, hash, offset and UUID, and the passphrase's keyslot with the
     /// source's first active slot's PBKDF2 iterations, not a benchmark in the
     /// rescue system, so GRUB's cryptomount costs what it did.  A dump from
-    /// before keyslot_iterations (or with none: 0) gets the benchmark, as
+    /// before `keyslot_iterations` (or with none: 0) gets the benchmark, as
     /// before.
     #[test]
     fn luks1_keeps_cipher_uuid_and_the_keyslot_iterations() {
@@ -11862,7 +11862,7 @@ mod tests {
         }
     }
 
-    /// NixOS's graphical installer (BackShot1's Thinkpad, NixOS 26.05): /
+    /// NixOS's graphical installer (`BackShot1`'s Thinkpad, NixOS 26.05): /
     /// is the btrfs's top level (subvolid=5), /home and /nix subvolumes
     /// under it, and srv, var/lib/portables, var/lib/machines, tmp and
     /// var/tmp subvolumes nested in its tree, mounted nowhere.
@@ -12049,7 +12049,7 @@ mod tests {
         );
     }
 
-    /// BigLinux's btrfs with two Timeshift snapshots of / (one read-only,
+    /// `BigLinux`'s btrfs with two Timeshift snapshots of / (one read-only,
     /// with a qgroup), Arch's @snapshots unmounted, another Timeshift-looking
     /// subvolume mounted at /mnt/old, and @var made after them all.
     fn timeshift_layout(default_id: u64) -> String {
@@ -12173,7 +12173,7 @@ mod tests {
         assert_eq!(b.problems, vec!["btrfs b7b7b7b7-0000-4000-8000-000000000003: the default subvolume (ID 258) is a Timeshift snapshot, which isn't in the backup".to_string()]);
     }
 
-    /// BigLinux's btrfs-fix: on a btrfs /boot, /boot and /usr/share/grub
+    /// `BigLinux`'s btrfs-fix: on a btrfs /boot, /boot and /usr/share/grub
     /// defragmented uncompressed once grub.cfg is written; not with an
     /// ext4 /boot, nor on another system.
     #[test]
@@ -12201,8 +12201,8 @@ mod tests {
         assert!(!text(built_from(&deb, &[]).stage(Stage::Boot)).contains("defragment"));
     }
 
-    /// A btrfs whose superblock has default_subvol with the top level as
-    /// its default (BigLinux's set-default to ID 5, run at every boot): one
+    /// A btrfs whose superblock has `default_subvol` with the top level as
+    /// its default (`BigLinux`'s set-default to ID 5, run at every boot): one
     /// `set-default` of the top level sets the flag again.  Without the
     /// flag, nothing; with another default, only that subvolume's.
     #[test]
@@ -12324,7 +12324,7 @@ mod tests {
     }
 
     /// zorin18's / is NILFS2, the MBR disk's last partition, to the disk's
-    /// end: BIOS grub-install runs through GRUB_BIOS_NILFS2
+    /// end: BIOS grub-install runs through `GRUB_BIOS_NILFS2`
     /// (t2h-20261119T1959-f82c).  A layout without NILFS2 runs it plain.
     #[test]
     fn bios_grub_install_with_nilfs2_at_the_disk_end() {
@@ -12363,7 +12363,7 @@ mod tests {
         assert!(!text(built(&[]).stage(Stage::Boot)).contains("GRUB would take a NILFS2"));
     }
 
-    /// GRUB_BIOS_NILFS2 run on a file for the disk, with a blockdev that
+    /// `GRUB_BIOS_NILFS2` run on a file for the disk, with a blockdev that
     /// knows files: the command sees the last 4 KiB's magic cleared, the
     /// disk is as it was after, and the command's exit status is the
     /// script's.  Without the magic, the disk isn't written.
@@ -12651,7 +12651,7 @@ mod tests {
 
     /// --removable on elementary 8 (elementary8-luks's dump, the corpus's):
     /// its grub-install is Ubuntu's 2.12, which has no
-    /// --force-extra-removable (BackShot2, the slim builder's seed 2: load
+    /// --force-extra-removable (`BackShot2`, the slim builder's seed 2: load
     /// boot failed on "unrecognized option") but --no-extra-removable, and
     /// writes the fallback path by default.  The option is chosen by the
     /// restored grub-install's --help: Debian's when it lists it, nothing
@@ -12704,7 +12704,7 @@ mod tests {
         );
     }
 
-    /// debian_grub_removable()'s script, run by sh on fake grub-installs: each
+    /// `debian_grub_removable()`'s script, run by sh on fake grub-installs: each
     /// --help picks its arm, and a fallback that isn't the loader fails.
     #[test]
     fn debian_grub_removable_script_runs() {
@@ -12933,7 +12933,7 @@ mod tests {
 
     /// Upstream GRUB on UEFI, as Alpine's setup-disk installs it: EFI/alpine
     /// and a copy of its image at the fallback path (EFI/boot/bootx64.efi).
-    /// BackShot2's fail-002 (testvm/backshot2/cases): grub-install renews
+    /// `BackShot2`'s fail-002 (testvm/backshot2/cases): grub-install renews
     /// EFI/alpine only, and the fallback the firmware boots kept the old
     /// /boot partition's number, so the copy is renewed too.  fail-003:
     /// --removable gave grub-install Debian's --force-extra-removable,
@@ -13034,7 +13034,7 @@ mod tests {
         );
     }
 
-    /// AnduinOS (docs/design/anduinos.md): Ubuntu's update-grub and the
+    /// `AnduinOS` (docs/design/anduinos.md): Ubuntu's update-grub and the
     /// generic dracut loop; through shim (or with the MOK in the dump) no
     /// grub-install, only grub.cfg and the boot entry, and a note naming the
     /// MOK; without shim, Ubuntu's arms, with the ESP directory's case kept.
@@ -13208,7 +13208,7 @@ mod tests {
         );
     }
 
-    /// AnduinOS's erase-disk UEFI install is a BIOS install too (its
+    /// `AnduinOS`'s erase-disk UEFI install is a BIOS install too (its
     /// golden dump): the i386-pc grub-install comes back, before
     /// update-grub, and still no x86_64-efi one.  A BIOS boot partition
     /// without GRUB's core recorded: neither, and a note.
@@ -13624,8 +13624,8 @@ mod tests {
         );
     }
 
-    /// keystores() writes a random raw key only into a mount the dump left
-    /// out of the backup (report.rs not_backed_up(): not in fstab, at /run
+    /// `keystores()` writes a random raw key only into a mount the dump left
+    /// out of the backup (report.rs `not_backed_up()`: not in fstab, at /run
     /// or under it): Ubuntu's /run/keystore/rpool gets rpool's new key.  The
     /// same keystore mounted at /keys (a .mount unit) is backed up, so the
     /// restore would write the old key over the new one: load asks for
@@ -13920,8 +13920,8 @@ mod tests {
     }
 
     /// Vanilla OS's vos-root: vgcfgrestore's file has the PV, the group and
-    /// `init` only; thin_of has the pool at the dump's sizes, its thin LVs
-    /// in device_id order, and the spare.
+    /// `init` only; `thin_of` has the pool at the dump's sizes, its thin LVs
+    /// in `device_id` order, and the spare.
     #[test]
     fn thin_pool_left_to_lvcreate() {
         let vg = crate::probe::lvm::sample::thin_vg();
@@ -14225,7 +14225,7 @@ mod tests {
         );
     }
 
-    /// boot.lilo as the dump keeps a lilo.conf's items (lilo_conf_json's
+    /// boot.lilo as the dump keeps a lilo.conf's items (`lilo_conf_json`'s
     /// options, and each section's kind, path and options).
     fn lilo_dump(text: &str) -> Value {
         use crate::json::Obj;
@@ -14253,7 +14253,7 @@ mod tests {
             .build()
     }
 
-    /// lilo_root_copy where the rescue names every device as the source did.
+    /// `lilo_root_copy` where the rescue names every device as the source did.
     fn copy_of(lilo: &Value) -> Result<Option<LiloCopy>, String> {
         lilo_root_copy(lilo, &|_| None, &|_| None)
     }
@@ -14265,7 +14265,7 @@ mod tests {
         (copy, c)
     }
 
-    /// lilo_root_copy: root=/dev/NAME by name at the end of the image's
+    /// `lilo_root_copy`: root=/dev/NAME by name at the end of the image's
     /// effective append= (the global one it inherits made its own; its own;
     /// a new one), nothing for root=UUID= or a root= already in append=,
     /// /dev/md/N as the kernel's /dev/mdN, and every other item kept.
@@ -14361,7 +14361,7 @@ mod tests {
         }
     }
 
-    /// lilo_root_copy refuses what lilo would refuse (a command line over
+    /// `lilo_root_copy` refuses what lilo would refuse (a command line over
     /// 511 characters) and what the copy couldn't say as lilo reads it.
     #[test]
     fn lilo_root_copy_refusals() {
@@ -14444,8 +14444,8 @@ mod tests {
     }
 
     /// bs1-slackware-current (nvme0n1) as if it were on sda, the target an
-    /// NVMe disk: a class change, refused for every name with why; onto
-    /// another NVMe controller's disk, the target's only one, no problem.
+    /// `NVMe` disk: a class change, refused for every name with why; onto
+    /// another `NVMe` controller's disk, the target's only one, no problem.
     #[test]
     fn slackware_class_change_refused() {
         let j = std::fs::read_to_string(concat!(
@@ -14484,7 +14484,7 @@ mod tests {
         assert!(!p.is_empty() && p.iter().all(|p| p.ends_with(": restore onto sd disks in the source's order (a future opt-in to rewrite them, --rename-devices, isn't built)")), "{p:?}");
     }
 
-    /// lilo_root_copy with the rescue naming the target otherwise: boot=
+    /// `lilo_root_copy` with the rescue naming the target otherwise: boot=
     /// and disk= (global and a section's) and the root= of an image given
     /// root= by name are the rescue's names; the root= by name stays the
     /// source's.  A copy is made for the names alone, too.

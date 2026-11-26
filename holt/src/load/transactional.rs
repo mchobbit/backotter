@@ -1,4 +1,4 @@
-//! `load` for a transactional-update system (openSUSE MicroOS and Aeon:
+//! `load` for a transactional-update system (openSUSE `MicroOS` and Aeon:
 //! docs/design/aeon.md, "The transactional arm").  The tree is fstab's, as
 //! on any btrfs system: the booted slot at `/` (named explicitly, since
 //! fstab's `/` names no subvolume and a pending update's default isn't the
@@ -7,16 +7,16 @@
 //! children, or format's).  Its boot stage regenerates nothing in a
 //! snapshot: no grub2-mkconfig, grub2-install, shim-install, dracut,
 //! sdbootutil or relabel of the root, and no chroot; the snapshots stay what
-//! transactional-update made, and their SELinux labels whole.  It checks
+//! transactional-update made, and their `SELinux` labels whole.  It checks
 //! that the restored GRUB configs (or BLS entries) lead to kernels and
 //! subvolumes that exist and name only filesystems load made with their
 //! UUIDs (on BLS, Aeon's: an entry boots the default slot, each kernel on
 //! the ESP has its modules in its slot; the plan says what systemd-boot's
-//! boot counting, LoaderEntryDefault and a LUKS2 TPM2 token come back as);
-//! rewrites health-checker's LAST_WORKING_BTRFS_ID from
-//! LAST_WORKING_SNAPSHOT's path, since a restore can give that subvolume
+//! boot counting, `LoaderEntryDefault` and a LUKS2 TPM2 token come back as);
+//! rewrites health-checker's `LAST_WORKING_BTRFS_ID` from
+//! `LAST_WORKING_SNAPSHOT`'s path, since a restore can give that subvolume
 //! another ID; makes the UEFI entries; writes its log with /var/log's
-//! SELinux label; and ends as every Linux boot stage does, the read-only
+//! `SELinux` label; and ends as every Linux boot stage does, the read-only
 //! flags last.
 
 use super::commands::{Builder, Cmd, atimes_cmd};
@@ -25,7 +25,7 @@ use super::{RUN_DIR, shell_quote};
 use crate::json::Value;
 
 /// The layout's boot.transactional, when the source is a transactional-update
-/// system (crate::transactional).
+/// system (`crate::transactional`).
 pub fn of(layout: &Value) -> Option<&Value> {
     layout
         .at(&["boot", "transactional"])
@@ -49,7 +49,7 @@ issub() { [ -n "$(subid "$1")" ]; }
 "#;
 
 /// The consistency check of a restored tree at T, its btrfs's top level
-/// mounted at TOP, as a shell script.  MODE is the dump's loader_mode.
+/// mounted at TOP, as a shell script.  MODE is the dump's `loader_mode`.
 /// KEPT are the UUIDs load makes its filesystems and LUKS containers with:
 /// every `search --fs-uuid`, `root=UUID=` and `rd.luks.uuid=` in what is
 /// checked must be one of them.
@@ -119,7 +119,7 @@ echo "transactional: {mode}: $n snapshot entries lead to restored kernels and su
     )
 }
 
-/// BLS, after check_script: in the restored tree at T (its btrfs's top
+/// BLS, after `check_script`: in the restored tree at T (its btrfs's top
 /// level at TOP), some loader entry boots DEFAULT (the source's default
 /// slot, a path from the top level), told by its rootflags=subvol= so
 /// whatever boot counter systemd-boot left in its name (`ID+LEFT-DONE.conf`
@@ -129,7 +129,7 @@ echo "transactional: {mode}: $n snapshot entries lead to restored kernels and su
 /// for BOOTED (when it isn't DEFAULT) is said, not a mismatch: the restored
 /// machine boots DEFAULT.  `root=/dev/mapper/NAME` beside `root=UUID=` (as
 /// sdbootutil writes on Aeon) is fine.  Mismatches fail the stage, the
-/// errors last with a count, as check_script's.
+/// errors last with a count, as `check_script`'s.
 pub fn bls_slots_script(t: &str, top: &str, default: &str, booted: &str) -> String {
     format!(
         r#"t=$(readlink -f {t}) || exit 1; top={top}; def={default}; boot={booted}; errs=; nbad=0; has_def=; has_boot=
@@ -164,10 +164,10 @@ echo "transactional: bls: each entry's kernel has its modules in the slot it boo
 }
 
 /// health-checker's state in the restored tree at T (its btrfs's top level
-/// at TOP), as a shell script: LAST_WORKING_BTRFS_ID set to the ID that
-/// LAST_WORKING_SNAPSHOT's path has here, read back with `btrfs subvolume
+/// at TOP), as a shell script: `LAST_WORKING_BTRFS_ID` set to the ID that
+/// `LAST_WORKING_SNAPSHOT`'s path has here, read back with `btrfs subvolume
 /// show`; every other byte of the file kept, and its inode, label and
-/// times.  A path that isn't a subvolume here fails the stage: rollback()
+/// times.  A path that isn't a subvolume here fails the stage: `rollback()`
 /// would set a wrong default.
 pub fn hc_script(t: &str, top: &str) -> String {
     let f = shell_quote(&format!("{t}{}", crate::transactional::HC_STATE));
@@ -188,7 +188,7 @@ echo "transactional: {hc}: LAST_WORKING_BTRFS_ID $old -> $new ($p's ID here)"
     )
 }
 
-/// `python3 -c MP_LABEL_PY SLOT TARGET MOUNT_POINT...`: the SELinux label
+/// `python3 -c MP_LABEL_PY SLOT TARGET MOUNT_POINT...`: the `SELinux` label
 /// of each fstab mount point in the booted slot SLOT (its directory under
 /// the btrfs top level, where nothing is mounted on it), when it has none.
 /// The backup holds that slot through `/`, where the mounts hide those
@@ -197,7 +197,7 @@ echo "transactional: {hc}: LAST_WORKING_BTRFS_ID $old -> $new ($p's ID here)"
 /// getattr of /var, run aeon1c).  The label is the same directory's in
 /// another slot (restored through /.snapshots, with its own), else the
 /// mounted file system's root's at TARGET.  Nothing when the slot's root
-/// itself has none (no SELinux).
+/// itself has none (no `SELinux`).
 pub const MP_LABEL_PY: &str = r#"import glob, os, re, sys
 slot, t, mps = sys.argv[1], sys.argv[2], sys.argv[3:]
 K = "security.selinux"
@@ -263,7 +263,7 @@ pub fn entry_slot(options: &str) -> Option<String> {
 }
 
 /// Version strings compared as systemd-boot does, nearly
-/// (strverscmp_improved): runs of digits as numbers, everything else byte
+/// (`strverscmp_improved)`: runs of digits as numbers, everything else byte
 /// by byte, `~` before anything.
 pub fn vercmp(a: &str, b: &str) -> std::cmp::Ordering {
     use std::cmp::Ordering::*;
@@ -314,11 +314,11 @@ pub fn vercmp(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
-/// BLS entries (boot.systemd_boot.entries) in systemd-boot's menu order
-/// (boot_entry_compare): no tries left last; those with a sort-key before
+/// BLS entries (`boot.systemd_boot.entries`) in systemd-boot's menu order
+/// (`boot_entry_compare)`: no tries left last; those with a sort-key before
 /// those without, by sort-key, machine-id and version, newest first; then
 /// by ID, highest first; then by tries left and done.  Without
-/// LoaderEntryDefault or loader.conf's `default`, it boots the first.
+/// `LoaderEntryDefault` or loader.conf's `default`, it boots the first.
 pub fn bls_sorted(entries: &[Value]) -> Vec<&Value> {
     let key = |e: &Value| {
         let (id, c) = bls_counter(&s(e, "file").unwrap_or_default());
@@ -662,7 +662,7 @@ impl Builder<'_> {
 
     /// Aeon's LUKS2 (docs/design/aeon.md, Decision 4): a container with
     /// systemd-cryptenroll's TPM2 or recovery-key token.  What comes back
-    /// depends on whether the dump kept its header (crate::luksheader,
+    /// depends on whether the dump kept its header (`crate::luksheader`,
     /// `dump --keep-luks-header DEV`): notes only, nothing written.
     fn fde_notes(&mut self, x: &Value) {
         let pcrs = match x.get("fde_seal_pcr_list").and_then(Value::as_str) {
@@ -1398,7 +1398,7 @@ mod tests {
         assert!(three < ro3 && ro3 < default, "{r}");
     }
 
-    /// LAST_WORKING_SNAPSHOT names a slot that gets a new ID (1, shared):
+    /// `LAST_WORKING_SNAPSHOT` names a slot that gets a new ID (1, shared):
     /// the note gives both IDs; one that isn't in the layout is a problem.
     #[test]
     fn health_check_ids() {
@@ -1815,11 +1815,11 @@ mod tests {
     /// read off the guest's disk by `vm-mount --ro` on chopin, 2026-11-15,
     /// and its build logs (docs/design/aeon.md, "Guests / aeon"); no bko-holt
     /// dump of it exists yet.  Replace it with a real dump of the guest (and
-    /// the corpus's golden plan) after its HoltTest1 PASS.  It models: GPT,
+    /// the corpus's golden plan) after its `HoltTest1` PASS.  It models: GPT,
     /// ESP vda1 (sdbootutil's systemd-boot behind shim, the kernel and initrd
     /// in /aeon/KVER/), vda2 LUKS2 (systemd-recovery and systemd-tpm2 tokens
-    /// on keyslots 1 and 2, no passphrase slot), opened as aeon_root, its
-    /// btrfs with MicroOS's subvolumes, slot 1 booted and the default; one
+    /// on keyslots 1 and 2, no passphrase slot), opened as `aeon_root`, its
+    /// btrfs with `MicroOS`'s subvolumes, slot 1 booted and the default; one
     /// blessed entry; no health-check.state; fde-tools' PCRs 4,5,7,9.  Its
     /// UUIDs are pseudonyms; it has no key, salt or digest.
     pub(crate) fn aeon() -> Value {

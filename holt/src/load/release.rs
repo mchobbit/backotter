@@ -494,7 +494,7 @@ mod tests {
         (t, s)
     }
 
-    /// vdb2 a PV of vg0, with root and swap LVs active (BackShot2's L3).
+    /// vdb2 a PV of vg0, with root and swap LVs active (`BackShot2`'s L3).
     fn lvm_system() -> System {
         System {
             disks: vec![],

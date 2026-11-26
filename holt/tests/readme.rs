@@ -1,4 +1,4 @@
-//! holt/README.md against the code it describes (RustAudit1 H3-06,
+//! holt/README.md against the code it describes (`RustAudit1` H3-06,
 //! H10-04): every system `osrel::SUPPORTED` accepts is in the README's list
 //! of supported systems, which says it is that list, and every command
 //! main.rs's USAGE lists is named, so a new row or command can't leave the

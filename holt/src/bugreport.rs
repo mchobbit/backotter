@@ -1,8 +1,8 @@
-//! `bko-holt report-bug`: everything a BackOtter bug report needs, in one
+//! `bko-holt report-bug`: everything a `BackOtter` bug report needs, in one
 //! text file to attach to a GitHub issue, redacted by default (`redact.rs`).
 //!
 //! It lives in bko-holt rather than in a script on the stick because
-//! bko-holt is the one BackOtter program on every platform the stick runs
+//! bko-holt is the one `BackOtter` program on every platform the stick runs
 //! (Linux, the BSDs, illumos, Haiku), it already reads the dump the
 //! redaction has to understand, and the redaction's proof (that `load`'s
 //! plan of a redacted dump is the plan of the original) needs load's own
@@ -96,8 +96,8 @@ pub struct Args {
     pub sysroot: Option<String>,
 }
 
-/// The flags parse_args takes a value after, for `--json`'s first pass
-/// (crate::load::jsonout::find_json_flag); parse_args asserts it.
+/// The flags `parse_args` takes a value after, for `--json`'s first pass
+/// (`crate::load::jsonout::find_json_flag`); `parse_args` asserts it.
 pub const VALUE_FLAGS: &[&str] = &[
     "--output",
     "-o",
@@ -256,7 +256,7 @@ fn read_any(sys: &Sys, path: &str) -> std::io::Result<String> {
 }
 
 /// How much of the end of a --stderr file is read: far more than its last
-/// LOG_LINES lines, which are what the report keeps.
+/// `LOG_LINES` lines, which are what the report keeps.
 const STDERR_TAIL_MAX: u64 = 16 << 20;
 
 fn tail(text: &str, n: usize) -> String {
@@ -364,13 +364,13 @@ fn write_private_file(path: &str, text: &str) -> std::io::Result<()> {
 }
 
 /// The report's TEXT in the file at PATH.  A file this makes is 0600 and,
-/// when root runs it under sudo, the invoking user's (SUDO_UID and
-/// SUDO_GID), so they can attach it and no one else can read it.  A
+/// when root runs it under sudo, the invoking user's (`SUDO_UID` and
+/// `SUDO_GID`), so they can attach it and no one else can read it.  A
 /// regular file already there is made 0600 but keeps its owner: handing
 /// root's existing files to the sudo user (--output /etc/passwd) would be
 /// a way past sudo's rules.  A PATH that isn't a regular file (a device,
 /// a FIFO) is written to as it is.
-/// NEW_ONLY (a dry run): only a file this run makes is written, never one
+/// `NEW_ONLY` (a dry run): only a file this run makes is written, never one
 /// that was there.
 fn write_report(path: &str, text: &str, new_only: bool) -> std::io::Result<()> {
     use std::io::Write;
@@ -413,8 +413,8 @@ fn write_report(path: &str, text: &str, new_only: bool) -> std::io::Result<()> {
     f.write_all(text.as_bytes())
 }
 
-/// Who a report file is handed to: under sudo (root, SUDO_UID a user's
-/// uid), that user and SUDO_GID's group, for a file this run made only.
+/// Who a report file is handed to: under sudo (root, `SUDO_UID` a user's
+/// uid), that user and `SUDO_GID`'s group, for a file this run made only.
 /// None: it stays whose it is.
 fn report_owner(
     created: bool,
@@ -435,8 +435,8 @@ fn report_owner(
 /// ran on the whole layout.
 const BLOB_MAX: usize = 4096;
 
-/// V with every base64 image longer than BLOB_MAX replaced: KEY becomes
-/// KEY_omitted, {"bytes", "crc32"}.  `load` refuses a layout that has one.
+/// V with every base64 image longer than `BLOB_MAX` replaced: KEY becomes
+/// `KEY_omitted`, {"bytes", "crc32"}.  `load` refuses a layout that has one.
 fn slim(v: &Value) -> Value {
     match v {
         Value::Obj(kv) => Value::Obj(
@@ -462,7 +462,7 @@ fn slim(v: &Value) -> Value {
     }
 }
 
-/// Where a BackOtter rescue image keeps its marker (stick/marker.py).
+/// Where a `BackOtter` rescue image keeps its marker (stick/marker.py).
 const MARKERS: [&str; 3] = [
     "/.disk/backotter.json",
     "/boot/.disk/backotter.json",
@@ -604,7 +604,7 @@ fn attached_values(text: &str) -> Vec<Value> {
 const SECRET_FLAGS: [&str; 3] = ["--repo", "--repository", "--password-file"];
 
 /// What FLAG's VALUE teaches the Collector: a repository or a password
-/// file (Kind::Secret), or --key-file NAME=FILE's FILE.  A value that is
+/// file (`Kind::Secret`), or --key-file NAME=FILE's FILE.  A value that is
 /// itself a flag is a flag with its value missing.
 fn learn_flag(c: &mut Collector, flag: &str, value: &str) {
     if value.starts_with("--") {
@@ -676,7 +676,7 @@ pub fn learn_attachment(c: &mut Collector, text: &str) {
 }
 
 /// The `--no-redact` report's first line: every Kind the redaction would
-/// have replaced, from Kind::plural (its first words, without what a
+/// have replaced, from `Kind::plural` (its first words, without what a
 /// parenthesis adds), so it can't drift.
 fn not_redacted_line() -> String {
     let kinds: Vec<&str> = crate::redact::Kind::ALL
@@ -1026,7 +1026,7 @@ pub enum CheckPlanFailure {
     MapBack,
     /// An identifier is left in the redacted dump.
     LeftInDump,
-    /// load refused the arguments check_plan made for the layout.
+    /// load refused the arguments `check_plan` made for the layout.
     LoadArgs,
     /// load's plan of the redacted dump, mapped back, isn't the original's.
     PlanDiffers,
@@ -1519,7 +1519,7 @@ mod tests {
 
     /// Free text is scanned as the dump is: a user name, a UUID and a MAC
     /// that are only in load's error output, its log, a --stderr file or
-    /// the run's cwd get pseudonyms too (RustAudit1 H5-01).
+    /// the run's cwd get pseudonyms too (`RustAudit1` H5-01).
     #[test]
     fn identifiers_only_in_free_text() {
         let t = Tree::new("report-bug-text");
@@ -1590,7 +1590,7 @@ mod tests {
         assert!(b.terminal.contains("bob -> user1"), "{}", b.terminal);
     }
 
-    /// RT10i: `--attach`, `--strip-file`, the plan document's disks learned,
+    /// `RT10i`: `--attach`, `--strip-file`, the plan document's disks learned,
     /// a recorded --json run re-run in text mode, `ISSUES` and the
     /// `--no-redact` line.
     #[test]
@@ -1751,7 +1751,7 @@ mod tests {
         );
     }
 
-    /// RT10i review: the repository, the password file and the key files
+    /// `RT10i` review: the repository, the password file and the key files
     /// an attached document names are learned from it, with no
     /// last-load.json (a --json plan run records none): a plan's `args`
     /// and its archiver argv, a `cmd` and a `failed` event's argv, a log's
@@ -2035,7 +2035,7 @@ mod tests {
 
     /// Home directories under /var/home (ostree) and /usr/home (FreeBSD
     /// 13): the names in them are learned from the error output and the
-    /// run's cwd, though the dump has them nowhere (RustAudit1 HD4-01).
+    /// run's cwd, though the dump has them nowhere (`RustAudit1` HD4-01).
     #[test]
     fn homes_under_var_and_usr_in_free_text() {
         let t = Tree::new("report-bug-var-home");
@@ -2115,7 +2115,7 @@ mod tests {
     /// A LILO password reaches no report: not by the layout's boot.lilo
     /// options, the plan's copy of lilo.conf, nor a log that holds the
     /// copy (one an older bko-holt wrote), --no-redact or not
-    /// (RustAudit1 HD1-01).
+    /// (`RustAudit1` HD1-01).
     #[test]
     fn lilo_passwords_reach_no_report() {
         let t = Tree::new("report-bug-lilo-password");

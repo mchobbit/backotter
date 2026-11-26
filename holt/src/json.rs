@@ -160,11 +160,11 @@ impl Value {
     }
 
     /// KEY's number as load reads a dump's numbers (layout, fit, sizes,
-    /// write-table: RustAudit1 H7-09), in every spelling dump writes one:
+    /// write-table: `RustAudit1` H7-09), in every spelling dump writes one:
     /// a JSON number (not negative, not a fraction), decimal text as u64's
-    /// FromStr reads it (an optional '+'; LUKS2's JSON keeps its offsets
+    /// `FromStr` reads it (an optional '+'; LUKS2's JSON keeps its offsets
     /// and sizes as strings), or "0x" and hex digits only.  Nothing else
-    /// (no "0X", no sign after "0x", no spaces).  get_u64 is the strict
+    /// (no "0X", no sign after "0x", no spaces).  `get_u64` is the strict
     /// one: numbers only.
     pub fn get_u64_lenient(&self, key: &str) -> Option<u64> {
         match self.get(key)? {

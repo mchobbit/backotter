@@ -16,7 +16,7 @@ fn s(v: &Value, k: &str) -> Option<String> {
 }
 
 /// A dump's number in any spelling dump writes (a number, decimal text,
-/// 0x-hex text): Value::get_u64_lenient, load's one rule.
+/// 0x-hex text): `Value::get_u64_lenient`, load's one rule.
 fn u(v: &Value, k: &str) -> Option<u64> {
     v.get_u64_lenient(k)
 }
@@ -25,7 +25,7 @@ fn u(v: &Value, k: &str) -> Option<u64> {
 /// three fields little-endian).  None for anything but 32 hex digits and
 /// dashes: the digits are checked before the string is cut in pairs, so a
 /// multibyte character (32 bytes, fewer chars) or a '+' (which
-/// from_str_radix takes as a sign) is no GUID rather than a panic or a
+/// `from_str_radix` takes as a sign) is no GUID rather than a panic or a
 /// wrong byte.
 pub fn guid_bytes(g: &str) -> Option<[u8; 16]> {
     let h: String = g.chars().filter(|c| *c != '-').collect();
@@ -466,9 +466,9 @@ pub fn plan(disk: &Value, size: u64) -> Result<Vec<(u64, Vec<u8>)>, String> {
 /// Whether E, from fsync on the device, says only that the device takes no
 /// fsync: POSIX's EINVAL ("not a file on which this operation is
 /// possible") or ENOSYS, which a raw disk device on some systems may give
-/// (std's InvalidInput and Unsupported).  ENOTSUP/EOPNOTSUPP is Unsupported
+/// (std's `InvalidInput` and Unsupported).  ENOTSUP/EOPNOTSUPP is Unsupported
 /// too from std 1.94.1, but Uncategorized from 1.85.1 (the floor), so a
-/// floor build fails on it.  Its writes are done (write_all_at returned),
+/// floor build fails on it.  Its writes are done (`write_all_at` returned),
 /// so that one is let go; any other error (EIO) is the table not reaching
 /// the disk.
 fn sync_unsupported(e: &std::io::Error) -> bool {
@@ -657,7 +657,7 @@ mod tests {
         }
     }
 
-    /// RustAudit1 H7-11: an fsync error is write-table's, except one that
+    /// `RustAudit1` H7-11: an fsync error is write-table's, except one that
     /// says the device takes no fsync.
     #[test]
     fn only_an_unsupported_sync_is_let_go() {
@@ -674,8 +674,8 @@ mod tests {
         }
     }
 
-    /// RustAudit1 H7-10: a GUID of 32 bytes that aren't 32 hex digits (a
-    /// multibyte character cut mid-way, a sign) is None, and plan() says
+    /// `RustAudit1` H7-10: a GUID of 32 bytes that aren't 32 hex digits (a
+    /// multibyte character cut mid-way, a sign) is None, and `plan()` says
     /// which partition's GUID is bad instead of panicking.
     #[test]
     fn a_guid_with_multibyte_or_sign_characters_is_rejected() {

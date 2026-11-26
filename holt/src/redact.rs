@@ -365,7 +365,7 @@ const GENERIC_QUBES: [&str; 14] = [
     "debian-13-xfce",
 ];
 
-/// A stock qube's name (GENERIC_QUBES, a template's fedora-N-* or
+/// A stock qube's name (`GENERIC_QUBES`, a template's fedora-N-* or
 /// debian-N-*, or Whonix's whonix-*).
 fn generic_qube(q: &str) -> bool {
     let l = q.to_ascii_lowercase();
@@ -386,8 +386,8 @@ fn generic_qube(q: &str) -> bool {
         || template("debian-")
         || l.ends_with("-dm") && GENERIC_QUBES.contains(&l.trim_end_matches("-dm"))
 }
-/// Ubuntu names the datasets for /home and /root USERDATA/home_ID and
-/// USERDATA/root_ID.
+/// Ubuntu names the datasets for /home and /root `USERDATA/home_ID` and
+/// `USERDATA/root_ID`.
 const GENERIC_USERS: [&str; 3] = ["root", "home", "lost+found"];
 
 /// The shortest string `Collector::learn_strip` takes.
@@ -404,7 +404,7 @@ pub struct Collector {
     /// Every object key and its '_'/'-' parts: a name that is also one of
     /// these can't be replaced as a word.
     vocab: BTreeSet<String>,
-    /// zfs_member labels: pool names, part of the topology.
+    /// `zfs_member` labels: pool names, part of the topology.
     pool_labels: BTreeSet<String>,
     /// md's array names, "host:name": the labels whose colon is md's.
     md_labels: BTreeSet<String>,
@@ -508,9 +508,9 @@ fn mac_spans(s: &str) -> Vec<(usize, usize)> {
     out
 }
 
-/// The MAC addresses in an EFI load option (load_option_hex: attributes,
+/// The MAC addresses in an EFI load option (`load_option_hex`: attributes,
 /// the device path's length, the description in UTF-16 to its NUL, then
-/// the device path): each MAC() node's (type 3, subtype 11) first six
+/// the device path): each `MAC()` node's (type 3, subtype 11) first six
 /// bytes, as 12 lower-case hex digits, none all zero or all ff.  A load
 /// option that doesn't parse gives what was read before it stopped.
 fn load_option_macs(h: &str) -> Vec<String> {
@@ -648,7 +648,7 @@ impl Collector {
     /// A string to strip (report-bug's `--strip-file`: a password hint,
     /// a place's name the user typed): replaced wherever it appears, as an
     /// other identifier, its original never printed.  False for one under
-    /// STRIP_MIN characters (after trimming), which is left as it is:
+    /// `STRIP_MIN` characters (after trimming), which is left as it is:
     /// replacing it everywhere would take it out of words.
     pub fn learn_strip(&mut self, s: &str) -> bool {
         let t = s.trim();
@@ -670,7 +670,7 @@ impl Collector {
     /// `see_text`, and the identifiers a dump's strings are scanned for
     /// (user names in /home paths and USERDATA datasets, UUIDs, LVM and md
     /// UUIDs, MACs, by-id serials).  A bare name with nothing around it to
-    /// say what it is stays as it is (RustAudit1 H5-01).
+    /// say what it is stays as it is (`RustAudit1` H5-01).
     pub fn learn_text(&mut self, s: &str) {
         self.see_text(s);
         self.scan(s);
@@ -1063,7 +1063,7 @@ pub fn is_b64_key(key: &str) -> bool {
 struct Sealer {
     c: Collector,
     corpus_lc: String,
-    /// corpus_lc without '-' and ':': the digits of hex identifiers
+    /// `corpus_lc` without '-' and ':': the digits of hex identifiers
     /// whatever their separators.
     corpus_hex: String,
     r: Redactor,
@@ -1087,7 +1087,7 @@ impl Sealer {
     /// nowhere in the input, so `unredact` can't mistake input for a
     /// pseudonym.  A hex pseudonym's digits mustn't appear with separators
     /// either: they would be another hex identifier's digits (a redacted
-    /// dump redacted again, check_plan on a corpus dump: microos's FAT
+    /// dump redacted again, `check_plan` on a corpus dump: microos's FAT
     /// volume ID BC00-0002 and its protective MBR's bc000001-01, which took
     /// bc000002 and so came out as the volume ID's original; M3,
     /// docs/design/aeon.md).
@@ -1735,8 +1735,8 @@ impl Sealer {
 pub const RECOVERY_KEY_MARK: &str = "<recovery-key>";
 
 /// S with every recovery-key-shaped string (Ubuntu Core's: eight groups of
-/// five digits joined by '-', crate::snapcore) replaced by
-/// RECOVERY_KEY_MARK: it never reaches a plan, a dump or a bug report.
+/// five digits joined by '-', `crate::snapcore`) replaced by
+/// `RECOVERY_KEY_MARK`: it never reaches a plan, a dump or a bug report.
 #[must_use = "the scrubbed copy is the one to show; the original still holds the secret"]
 pub fn scrub_recovery_keys(s: &str) -> std::borrow::Cow<'_, str> {
     const LEN: usize = 8 * 5 + 7;
@@ -1773,11 +1773,11 @@ pub fn scrub_recovery_keys(s: &str) -> std::borrow::Cow<'_, str> {
 pub const PASSWORD_MARK: &str = "<password>";
 
 /// S with the value of every `password=VALUE` item replaced by
-/// PASSWORD_MARK: lilo.conf's (global, or an image's), which the dump keeps
+/// `PASSWORD_MARK`: lilo.conf's (global, or an image's), which the dump keeps
 /// in boot.lilo's options for load to write the copy of lilo.conf lilo runs
 /// on, and any other text's (`--password=`, `RESTIC_PASSWORD=`, a CIFS
 /// mount's options).  It never reaches load's output, its log, a plan
-/// document or a bug report (RustAudit1 HD1-01); the dump keeps it, and
+/// document or a bug report (`RustAudit1` HD1-01); the dump keeps it, and
 /// load writes it, as they are.  `password` in any case, as a word of its
 /// own (or after `_` or `--`), spaces or tabs around the `=`; the value is
 /// `"VALUE"`, `\"VALUE\"` (inside a JSON string), the rest of a JSON
@@ -1788,7 +1788,7 @@ pub fn scrub_passwords(s: &str) -> std::borrow::Cow<'_, str> {
     scrub_passwords_as(s, false)
 }
 
-/// scrub_passwords, with WHOLE: S is one item (a JSON string of boot.lilo's
+/// `scrub_passwords`, with WHOLE: S is one item (a JSON string of boot.lilo's
 /// options, `password=my pass phrase`), whose value at its start runs to
 /// its end.
 #[must_use = "the scrubbed copy is the one to show; the original still holds the secret"]
@@ -1912,7 +1912,7 @@ pub struct Redactor {
     whole: HashMap<String, Vec<(Kind, String)>>,
     back: Vec<(String, String)>,
     back_first: HashMap<u8, Vec<usize>>,
-    /// The pseudonyms of report-bug's stripped strings (Kind::Id entries
+    /// The pseudonyms of report-bug's stripped strings (`Kind::Id` entries
     /// the summary counts on their own line).
     stripped: Vec<String>,
 }
@@ -1966,8 +1966,8 @@ impl Redactor {
 
     /// An object key (the topology's are text; EFI variables' hold GUIDs).
     /// Names that are words the dump uses as keys ("data") have no word
-    /// substitution, so "data_offset" stays.
-    /// A string to strip is left out of keys (Sub::in_keys).
+    /// substitution, so "`data_offset`" stays.
+    /// A string to strip is left out of keys (`Sub::in_keys`).
     fn key(&self, s: &str) -> String {
         self.text_with(s, true, true)
     }
@@ -2200,7 +2200,7 @@ impl Redactor {
     /// (FAT32) of a sector that is one, which an image of an ESP's sectors
     /// holds twice (the boot sector and its backup).  Elsewhere a 4-byte
     /// run matches by chance, as `bytes` says.  `redacting`: original to
-    /// pseudonym, else back (`unbytes`, for the proof in check_plan).
+    /// pseudonym, else back (`unbytes`, for the proof in `check_plan`).
     fn fat_serials(&self, out: &mut [u8], redacting: bool) {
         for i in (0..out.len().saturating_sub(511)).step_by(512) {
             let s = &out[i..i + 512];
@@ -3077,8 +3077,8 @@ mod tests {
         assert!(!r.pretty().contains("alice"), "{}", r.pretty());
     }
 
-    /// PikaOS's installers: the GTK one's GPT names, pikainstall's file
-    /// system labels (the 2.0.5 GTK installer's "PikaOS" on /boot too), and
+    /// `PikaOS`'s installers: the GTK one's GPT names, pikainstall's file
+    /// system labels (the 2.0.5 GTK installer's "`PikaOS`" on /boot too), and
     /// its ISO's volume label, all kept.
     #[test]
     fn pikaos_labels_are_kept() {
@@ -3148,7 +3148,7 @@ mod tests {
     }
 
     /// elementary OS: distinst's VG and LUKS mapping names kept on another
-    /// system's dump too, its own os words (ID, NAME, VERSION_CODENAME)
+    /// system's dump too, its own os words (ID, NAME, `VERSION_CODENAME`)
     /// on its own, and its ISO's names as release labels.
     #[test]
     fn elementary_names_are_kept() {
@@ -3163,7 +3163,7 @@ mod tests {
         assert!(!release_label("elementary-tweaks"));
     }
 
-    /// Vanilla OS: ABRoot's fixed labels, partition names and VG names,
+    /// Vanilla OS: `ABRoot`'s fixed labels, partition names and VG names,
     /// and the installer's hostname, kept on another system's dump too.
     #[test]
     fn vanilla_labels_and_host_are_kept() {
@@ -3174,7 +3174,7 @@ mod tests {
 
     /// An LVM pseudonym is never one the dump already has in its dashed
     /// form only (a PV's UUID in a redacted dump, redacted again by
-    /// check_plan: vanilla3's corpus dump, V8), and a redacted dump
+    /// `check_plan`: vanilla3's corpus dump, V8), and a redacted dump
     /// redacted again leaves nothing.
     #[test]
     fn lvm_pseudonym_not_taken_dashed() {
@@ -3193,7 +3193,7 @@ mod tests {
         assert!(red2.leaks(&t2).is_empty(), "{:?}\n{t2}", red2.leaks(&t2));
     }
 
-    /// An LVM UUID of letters only (vanilla3's lvol0_pmspare, V8) is
+    /// An LVM UUID of letters only (vanilla3's `lvol0_pmspare`, V8) is
     /// redacted as its key's value, and wherever else it appears.
     #[test]
     fn lvm_uuid_without_digits() {
@@ -3222,7 +3222,7 @@ mod tests {
     /// microos's shape (M3, docs/design/aeon.md): a GPT disk whose
     /// protective MBR has a disk signature, then an ESP with a FAT volume
     /// ID.  Redacted once, the signature is gone, maps back and is what
-    /// load reads; redacted again (check_plan on a corpus dump), nothing is
+    /// load reads; redacted again (`check_plan` on a corpus dump), nothing is
     /// left: the signature's second pseudonym isn't the volume ID's
     /// first one, BC00-0002, without its dash.
     #[test]
@@ -3344,9 +3344,9 @@ mod tests {
     }
 
     /// A user name too short to be wordy is still redacted in a home
-    /// directory inside another path: OpenZFS's rpool/home/USER dataset,
-    /// FreeBSD's zroot/home/USER and /usr/home/USER (RustAudit1 H5-02).
-    /// Checked directly: leaks() only tests the forms the subs know.
+    /// directory inside another path: `OpenZFS`'s rpool/home/USER dataset,
+    /// FreeBSD's zroot/home/USER and /usr/home/USER (`RustAudit1` H5-02).
+    /// Checked directly: `leaks()` only tests the forms the subs know.
     #[test]
     fn short_user_in_a_home_dataset() {
         let d = parse(
@@ -3387,7 +3387,7 @@ mod tests {
 
     /// password= items' values, in the forms they take: lilo.conf's (and
     /// load's copy of it), a JSON string of boot.lilo's options, one inside
-    /// a JSON string, a command line's; what isn't one stays (RustAudit1
+    /// a JSON string, a command line's; what isn't one stays (`RustAudit1`
     /// HD1-01).
     #[test]
     fn passwords_are_scrubbed() {
@@ -3472,8 +3472,8 @@ mod tests {
     /// A user's home on a system whose /home is a link: ostree's
     /// /var/home/USER (Silverblue, Kinoite, Bazzite) and FreeBSD 13's
     /// /usr/home/USER, learned from free text where the name is nowhere
-    /// else; DragonFly's build path /usr/obj/home/USER is still no home
-    /// (RustAudit1 HD4-01).
+    /// else; `DragonFly`'s build path /usr/obj/home/USER is still no home
+    /// (`RustAudit1` HD4-01).
     #[test]
     fn homes_under_var_and_usr_are_learned() {
         let users = |text: &str| {

@@ -1,6 +1,6 @@
-//! golden_plans.rs's five invariants (its header says what each holds), and
-//! how they read a plan: moved here from golden_plans.rs, so that
-//! BackShot2's tier 0 (bs2_plan.rs) holds a drifted layout's plan to the same
+//! `golden_plans.rs`'s five invariants (its header says what each holds), and
+//! how they read a plan: moved here from `golden_plans.rs`, so that
+//! `BackShot2`'s tier 0 (`bs2_plan.rs`) holds a drifted layout's plan to the same
 //! ones.  Like the rest of common/, it uses only holt API as it was before
 //! 3671e96.
 
@@ -10,7 +10,7 @@ use super::Planned;
 use bko_holt::bytes::ByteSource;
 use bko_holt::json::Value;
 
-/// Where load's mount stage builds the restored tree (load::DEFAULT_TARGET).
+/// Where load's mount stage builds the restored tree (`load::DEFAULT_TARGET`).
 pub(crate) const TARGET: &str = "/mnt/bko-target";
 
 /// What the invariants found: violations, and what they left out on purpose.
@@ -40,7 +40,7 @@ impl Step {
     }
 }
 
-/// The plan's sections by name (super::sections).
+/// The plan's sections by name (`super::sections`).
 pub(crate) struct Sections<'a>(pub Vec<(String, Vec<&'a str>)>);
 
 impl<'a> Sections<'a> {
@@ -497,10 +497,10 @@ pub(crate) const NETWORK: [&str; 9] = [
 ];
 pub(crate) const BIND: [&str; 2] = ["nullfs", "lofs"];
 
-/// fstab's octal escapes (\040 for a space), undone as mounts::unescape
+/// fstab's octal escapes (\040 for a space), undone as `mounts::unescape`
 /// undoes them: one past \377 isn't a byte, and stays as it is written.
 /// The fstab invariant doesn't use it: the dump's `file` is decoded already
-/// (mounts::parse_fstab).
+/// (`mounts::parse_fstab`).
 pub(crate) fn unescape(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::new();
@@ -686,7 +686,7 @@ pub(crate) fn pool_disks(dump: &Value, sec: &Sections<'_>, p: &Planned) -> Vec<S
     pool_disks_n(dump, sec, p).0
 }
 
-/// pool_disks, and how many containers it checked.
+/// `pool_disks`, and how many containers it checked.
 pub(crate) fn pool_disks_n(dump: &Value, sec: &Sections<'_>, p: &Planned) -> (Vec<String>, usize) {
     let mut bad = Vec::new();
     let mut n = 0;
@@ -842,7 +842,7 @@ pub(crate) fn pool_disks_n(dump: &Value, sec: &Sections<'_>, p: &Planned) -> (Ve
     (bad, n)
 }
 
-/// Writes laid over zeros: what a device holds after load::writetable's.
+/// Writes laid over zeros: what a device holds after `load::writetable`'s.
 pub(crate) struct Sparse<'a> {
     size: u64,
     writes: &'a [(u64, Vec<u8>)],
@@ -938,7 +938,7 @@ pub(crate) fn disk_ids(dump: &Value, sec: &Sections<'_>, p: &Planned) -> Vec<Str
     disk_ids_n(dump, sec, p).0
 }
 
-/// disk_ids, and how many tables it checked: (sfdisk, write-table).
+/// `disk_ids`, and how many tables it checked: (sfdisk, write-table).
 pub(crate) fn disk_ids_n(
     dump: &Value,
     sec: &Sections<'_>,

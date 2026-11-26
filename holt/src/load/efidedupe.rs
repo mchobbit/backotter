@@ -100,8 +100,8 @@ fn path_after(rest: &str) -> Option<String> {
     (!tok.is_empty()).then(|| tok.to_string())
 }
 
-/// The Boot#### entries in `efibootmgr -v`'s output.  BootCurrent,
-/// BootOrder, Timeout and the like, and 18's indented `dp:`/`data:` lines,
+/// The Boot#### entries in `efibootmgr -v`'s output.  `BootCurrent`,
+/// `BootOrder`, Timeout and the like, and 18's indented `dp:`/`data:` lines,
 /// aren't entries.
 pub fn parse_verbose(out: &str) -> Vec<Entry> {
     let mut v = Vec::new();

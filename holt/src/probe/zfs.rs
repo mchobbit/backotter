@@ -430,7 +430,7 @@ fn nvlist(x: &mut Xdr<'_>, depth: usize) -> Result<Value, String> {
 }
 
 /// Encodes JSON-ish values as an XDR nvlist, for tests: strings, u64s,
-/// nested objects, arrays of objects, and `true` as DATA_TYPE_BOOLEAN.
+/// nested objects, arrays of objects, and `true` as `DATA_TYPE_BOOLEAN`.
 #[cfg(test)]
 pub mod pack {
     use crate::json::Value;
@@ -656,7 +656,7 @@ mod tests {
         assert_eq!(v.get("flag"), Some(&Value::Bool(true)));
     }
 
-    /// The debian13-zfs test guest's real files (OpenZFS 2.3.9).
+    /// The debian13-zfs test guest's real files (`OpenZFS` 2.3.9).
     const REAL_CACHE: &[u8] = include_bytes!("../../tests/fixtures/debian13-zfs.zpool.cache");
     const REAL_LABEL: &[u8] = include_bytes!("../../tests/fixtures/debian13-zfs.label0.nvlist");
 

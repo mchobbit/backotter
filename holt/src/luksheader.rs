@@ -3,7 +3,7 @@
 //! luksFormat, which makes a new volume key: keys sealed to a TPM (Ubuntu
 //! Core's FDE) and a recovery key would then open nothing.  So dump saves
 //! the header with `cryptsetup luksHeaderBackup` (no key needed) into a
-//! file beside the layout, its SHA-256 in storage.luks_headers, and load
+//! file beside the layout, its SHA-256 in `storage.luks_headers`, and load
 //! writes it back with luksHeaderRestore and opens it with a key it already
 //! has: the volume key, every keyslot and token come back.
 //!
@@ -116,7 +116,7 @@ fn luks_devices(sections: &[&[Value]]) -> Vec<(String, String, Vec<String>, Valu
 
 /// The minimum size of a LUKS2 header backup: both binary headers with
 /// their JSON areas, and the keyslots area (cryptsetup's
-/// LUKS2_hdr_and_areas_size).
+/// `LUKS2_hdr_and_areas_size`).
 fn hdr_and_areas(c: &Value) -> Option<u64> {
     // Bug: capture() matched --keep-luks-header arguments only against bare
     // kernel names, rejecting /dev/disk/by-*, /dev/mapper/*, /dev/vg/lv, and
@@ -161,7 +161,7 @@ fn resolve_luks_arg<'a>(
 }
 
 /// Saves the headers of WANT (device names; and those --keep-luks-header
-/// names) as files, and returns storage.luks_headers.  SECTIONS are the
+/// names) as files, and returns `storage.luks_headers`.  SECTIONS are the
 /// dump's disks, md and dm devices.
 pub fn capture(sys: &Sys, sections: &[&[Value]], want: &[String], opts: &Options) -> Vec<Value> {
     let all = luks_devices(sections);
@@ -254,7 +254,7 @@ pub fn capture(sys: &Sys, sections: &[&[Value]], want: &[String], opts: &Options
     out
 }
 
-/// storage.luks_headers' entry for the device DEV, when its header is kept.
+/// `storage.luks_headers`' entry for the device DEV, when its header is kept.
 pub fn kept<'a>(layout: &'a Value, dev: &str) -> Option<&'a Value> {
     layout
         .at(&["storage", "luks_headers"])

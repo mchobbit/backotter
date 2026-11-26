@@ -70,7 +70,7 @@ impl Dev {
     }
 }
 
-/// udev's \xNN escapes (ID_FS_LABEL_ENC, ID_PART_ENTRY_NAME).
+/// udev's \xNN escapes (`ID_FS_LABEL_ENC`, `ID_PART_ENTRY_NAME`).
 pub fn udev_decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::new();
@@ -741,8 +741,8 @@ fn xfs_external_logs(sys: &Sys, ctx: &Ctx<'_>) -> Value {
     Value::Arr(out)
 }
 
-/// The ESPs of the disks that hold a vdev of TrueNAS's boot-pool (a
-/// partition of GPT type EF00 on such a disk: TrueNAS's installer makes it
+/// The ESPs of the disks that hold a vdev of `TrueNAS`'s boot-pool (a
+/// partition of GPT type EF00 on such a disk: `TrueNAS`'s installer makes it
 /// partition 2), as (partition, disk, volume ID, label), disk by disk.
 fn truenas_esps(ctx: &Ctx<'_>) -> Vec<(String, String, Option<String>, Option<String>)> {
     let mut disks: Vec<String> = Vec::new();
@@ -881,7 +881,7 @@ fn is_whole_disk(b: &BlockDev) -> bool {
 }
 
 /// The pool of a ZFS volume, by udev's /dev/zvol/POOL/... link (load finds
-/// zvols the same way: commands.rs zvols_of); None for any other device.
+/// zvols the same way: commands.rs `zvols_of`); None for any other device.
 fn zvol_pool(b: &BlockDev) -> Option<String> {
     b.udev.links.iter().find_map(|l| {
         l.strip_prefix("/dev/zvol/")?
@@ -921,10 +921,10 @@ pub fn unknown_disk(sys: &Sys, only: &[String]) -> Option<String> {
 /// Solus's ESP (docs/design/solus.md, decision 3): clr-boot-manager mounts
 /// it at /boot only for as long as an update takes, and the installer
 /// leaves it out of fstab.  With clr-boot-manager installed, each of
-/// boot.esps says whether fstab mounts it (in_fstab), and with nothing
-/// mounted at /boot, boot.cbm_esp_unmounted names the partition
+/// boot.esps says whether fstab mounts it (`in_fstab`), and with nothing
+/// mounted at /boot, `boot.cbm_esp_unmounted` names the partition
 /// clr-boot-manager would mount, found as it finds it: by
-/// LoaderDevicePartUUID, then by the partition name ESP, then by the ESP
+/// `LoaderDevicePartUUID`, then by the partition name ESP, then by the ESP
 /// type on the root file system's disk (device null if none is).  dump
 /// refuses such a report (refusal): the backup would have none of the
 /// kernels, the loader or its entries.
@@ -1002,7 +1002,7 @@ fn cbm_esps(
 }
 
 /// Why `bko-holt dump` refuses this report, if it does: Solus's ESP, which
-/// nothing has mounted at /boot (cbm_esps).
+/// nothing has mounted at /boot (`cbm_esps`).
 pub fn refusal(v: &Value) -> Option<String> {
     let u = v.at(&["boot", "cbm_esp_unmounted"])?;
     let mount = match u.get("device").and_then(Value::as_str) {
@@ -1110,7 +1110,7 @@ fn mounted_esps(ctx: &Ctx<'_>) -> Vec<(String, String)> {
 }
 
 /// The dump's os: os-release's, with the product Proxmox VE's packages,
-/// TrueNAS (TRUENAS: it was detected) or Qubes name, the later winning.
+/// `TrueNAS` (TRUENAS: it was detected) or Qubes name, the later winning.
 fn os_json(
     sys: &Sys,
     os: Option<&OsRelease>,
@@ -1159,7 +1159,7 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
 }
 
 /// `build_only`, keeping the LUKS2 headers LUKS asks for (dump's
-/// --keep-luks-header and --luks-header-dir: crate::luksheader).
+/// --keep-luks-header and --luks-header-dir: `crate::luksheader`).
 pub fn build_with(
     sys: &Sys,
     os: Option<&OsRelease>,
@@ -1811,7 +1811,7 @@ mod tests {
     /// A device path with '=' in it (udev keeps it in by-label links) is a
     /// path, not a TAG=value spec: fstab's /dev/disk/by-label/data=1
     /// resolves through the link on /dev, or through udev's own links
-    /// when /dev hasn't it (RustAudit1 H3-01).
+    /// when /dev hasn't it (`RustAudit1` H3-01).
     #[test]
     fn resolve_device_path_with_equals() {
         let t = crate::testutil::Tree::new("resolve-eq");
@@ -1949,7 +1949,7 @@ mod tests {
         assert_eq!(names(&["nvme0n1"], "disks"), ["nvme0n1"]);
     }
 
-    /// backup_sources less what isn't backed up: with --only-disk, the
+    /// `backup_sources` less what isn't backed up: with --only-disk, the
     /// mounts of left-out disks (the backup drive); a key store for a ZFS
     /// encryption root that fstab doesn't mount (Ubuntu's keystore); not
     /// a file system fstab mounts that holds a key file, nor a ZFS one.
@@ -2127,7 +2127,7 @@ mod tests {
         );
     }
 
-    /// RustAudit1 H3-09: a dm uuid with a multi-byte char across one of the
+    /// `RustAudit1` H3-09: a dm uuid with a multi-byte char across one of the
     /// fixed cuts must not panic the dump; the fields that don't split are
     /// left out, the rest of the device is still described.
     #[test]

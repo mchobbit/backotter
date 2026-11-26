@@ -1,5 +1,5 @@
-//! bko-holt on systems other than Linux: FreeBSD (and HardenedBSD and
-//! GhostBSD, which are FreeBSD underneath), NetBSD, OpenBSD, DragonFly,
+//! bko-holt on systems other than Linux: FreeBSD (and `HardenedBSD` and
+//! `GhostBSD`, which are FreeBSD underneath), NetBSD, OpenBSD, `DragonFly`,
 //! illumos and Haiku.  None has /sys, /proc or udev: the disks come from the
 //! system's own tools (kern.disks, hw.disknames, diskinfo, ...), and the
 //! partition tables and superblocks are read off the raw disk devices with
@@ -8,7 +8,7 @@
 //! print it, for `load` to give back to the same tools.
 //!
 //! The report has the Linux report's shape where the two overlap (os,
-//! storage.disks with partition_table and partitions, mounts, fstab, swaps,
+//! storage.disks with `partition_table` and partitions, mounts, fstab, swaps,
 //! zfs; boot.loader), and `os.family` says which system it's from.
 
 pub mod bsdlabel;
@@ -48,7 +48,7 @@ impl Family {
         Family::from_name(std::env::consts::OS).filter(|f| !f.on_linux())
     }
 
-    /// From Rust's name for the system (std::env::consts::OS), which is
+    /// From Rust's name for the system (`std::env::consts::OS`), which is
     /// also what a report's os.family says.
     pub fn from_name(os: &str) -> Option<Family> {
         Some(match os {
@@ -127,8 +127,8 @@ impl Found {
 }
 
 /// A disk's report object up to its size: name, path, `kind`, the keys of
-/// `after_kind` (OpenBSD's softraid), then size_bytes, size and
-/// logical_sector_size, for each family's report to go on from.
+/// `after_kind` (OpenBSD's softraid), then `size_bytes`, size and
+/// `logical_sector_size`, for each family's report to go on from.
 pub fn disk_obj(d: &RawDisk, kind: &str, after_kind: Obj) -> Obj {
     let mut o = Obj::new()
         .set("name", d.name.as_str())
@@ -140,13 +140,13 @@ pub fn disk_obj(d: &RawDisk, kind: &str, after_kind: Obj) -> Obj {
         .set("logical_sector_size", d.sector)
 }
 
-/// A disk report's partition_table: the table's header JSON, or null.
+/// A disk report's `partition_table`: the table's header JSON, or null.
 pub fn table_json(t: Option<&Table>, d: &RawDisk) -> Value {
     t.map(|t| t.header_json(d.sector, d.size / d.sector.max(1)))
         .unwrap_or(Value::Null)
 }
 
-/// A disk report's boot_code: the MBR's boot code, named by `kind`.
+/// A disk report's `boot_code`: the MBR's boot code, named by `kind`.
 pub fn boot_code_obj(code: &[u8], kind: &str) -> Obj {
     Obj::new()
         .set("kind", kind)
@@ -161,7 +161,7 @@ pub fn boot_code_obj(code: &[u8], kind: &str) -> Obj {
         )
 }
 
-/// boot_code_obj, named as bootcode::identify names it.
+/// `boot_code_obj`, named as `bootcode::identify` names it.
 pub fn boot_code_json(t: &Table) -> Obj {
     let code = t.boot_code();
     boot_code_obj(code, crate::bootcode::identify(code).kind.as_str())
@@ -190,7 +190,7 @@ pub fn swapctl_list(text: &str) -> Vec<(&str, u64)> {
 }
 
 /// A name from the layout made one file-name word for load's files under
-/// RUN_DIR: anything but ASCII letters, digits, '-', '_' and '.' becomes
+/// `RUN_DIR`: anything but ASCII letters, digits, '-', '_' and '.' becomes
 /// '_', and a word of dots only (or none) is `fallback` ("disk", "prov",
 /// "vol"), so it can't name a directory.
 pub(crate) fn safe_run_token(s: &str, fallback: &str) -> String {
@@ -229,8 +229,8 @@ pub fn colon_pairs(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The os section: os-release where the system has one (FreeBSD, GhostBSD,
-/// HardenedBSD, illumos), else uname's name and release.
+/// The os section: os-release where the system has one (FreeBSD, `GhostBSD`,
+/// `HardenedBSD`, illumos), else uname's name and release.
 pub fn os_json(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>) -> Value {
     let g = |k: &str| os.and_then(|o| o.get(k)).map(str::to_string);
     let uname = |a: &str| sys.run("uname", &[a]).map(|s| s.trim().to_string());
@@ -247,7 +247,7 @@ pub fn os_json(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>) -> 
 }
 
 /// os-release, or one made from uname for a system without the file:
-/// ID is the lower-case system name, VERSION_ID its release's leading
+/// ID is the lower-case system name, `VERSION_ID` its release's leading
 /// number ("11.0" of NetBSD's "11.0", "7.8" of OpenBSD's).
 pub fn os_release(sys: &Sys) -> Option<crate::osrel::OsRelease> {
     if let Some(o) = crate::osrel::read(sys) {
@@ -322,7 +322,7 @@ pub fn node_path(sys: &Sys, node: &str) -> String {
 /// What a restored tree has once the restore is done: /etc/fstab, or
 /// Haiku's system directory (Haiku has no fstab), illumos' vfstab, or on
 /// ostree the repository's config (the physical root has no etc), or on
-/// ABRoot the present root's abimage.abr (load/abroot.rs), or on Ubuntu
+/// `ABRoot` the present root's abimage.abr (load/abroot.rs), or on Ubuntu
 /// Core ubuntu-data's modeenv (load/snapcore.rs).
 pub fn restored_marker(layout: &Value) -> &'static str {
     if crate::load::ostree::of(layout).is_some() {
@@ -424,7 +424,7 @@ pub fn image_b64(src: &dyn ByteSource) -> String {
     crate::bytes::base64(&b[..end.min(b.len())])
 }
 
-/// The most raw bytes of one unmounted ESP a dump keeps (esp_image).
+/// The most raw bytes of one unmounted ESP a dump keeps (`esp_image`).
 pub const ESP_IMAGE_MAX: usize = 64 << 20;
 
 // A layout with ten ESP images at the cap, as base64 with each chunk's
@@ -433,7 +433,7 @@ const _: () = assert!(10 * (ESP_IMAGE_MAX as u64) * 3 / 2 < crate::LAYOUT_MAX);
 
 /// An EFI system partition that isn't mounted (so isn't in the backup):
 /// its non-zero 512-byte runs, as (offset, base64) chunks, for load to
-/// write back as they were.  At most ESP_IMAGE_MAX of them.
+/// write back as they were.  At most `ESP_IMAGE_MAX` of them.
 pub fn esp_image(disk: &dyn ByteSource, f: &Found, mounted_at: &[String], extra: &mut Obj) {
     let ty = f.field("type").unwrap_or("").to_ascii_lowercase();
     if !mounted_at.is_empty() || !(ty == parttable::ESP || ty == "0xef") || f.size > (4 << 30) {
@@ -519,8 +519,8 @@ pub fn dump(sys: &Sys, fam: Family, generated: &str) -> Result<Value, String> {
 /// The firmware mode when the dump can't tell UEFI from BIOS: "unknown",
 /// with a warning saying why (WHAT, PROG's command, said ANSWER; None: PROG
 /// isn't installed or failed).  Never "bios" for want of an answer: load
-/// takes anything but "uefi" for BIOS (Layout::uefi), so it refuses
-/// "unknown" (commands::build) rather than install the wrong boot code.
+/// takes anything but "uefi" for BIOS (`Layout::uefi`), so it refuses
+/// "unknown" (`commands::build`) rather than install the wrong boot code.
 pub fn firmware_unknown(sys: &Sys, prog: &str, what: &str, answer: Option<&str>) -> &'static str {
     let why = match answer {
         Some(a) => format!("{what} says {a:?}"),
@@ -566,8 +566,8 @@ pub fn frame(
 mod tests {
     use super::*;
 
-    /// A CRC-valid GPT whose entry starts past u64::MAX / 512 sectors
-    /// (RustAudit1 H9-06): read without overflow, its extent saturated and
+    /// A CRC-valid GPT whose entry starts past `u64::MAX` / 512 sectors
+    /// (`RustAudit1` H9-06): read without overflow, its extent saturated and
     /// not probed; the entry before it read as ever.
     #[test]
     fn read_disk_gpt_lba_past_u64_bytes() {
@@ -633,7 +633,7 @@ mod tests {
         assert_eq!(get(&found[2], "size_bytes"), Some(Value::from(u64::MAX)));
     }
 
-    /// The shared report pieces (RustAudit1 H9-14) keep each family's key
+    /// The shared report pieces (`RustAudit1` H9-14) keep each family's key
     /// order and units.
     #[test]
     fn shared_disk_pieces() {
@@ -685,7 +685,7 @@ mod tests {
         );
     }
 
-    /// One safe_run_token for load, geli and softraid (RustAudit1 HD3-06).
+    /// One `safe_run_token` for load, geli and softraid (`RustAudit1` HD3-06).
     #[test]
     fn run_tokens() {
         assert_eq!(safe_run_token("vtbd0p3", "prov"), "vtbd0p3");

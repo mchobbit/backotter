@@ -21,12 +21,12 @@
 //!      filler of the same length, its redacted bytes' length and CRC-32 kept
 //!      in index.tsv;
 //!   5. the result is planned against the redacted, unfilled dump (the same
-//!      plan, or index.tsv says how it differs), and check_plan runs on it
+//!      plan, or index.tsv says how it differs), and `check_plan` runs on it
 //!      too.
 //!
-//! The guests are provenance.tsv's: a dump in BKO_HOLT_CORPUS_RAW that it
+//! The guests are provenance.tsv's: a dump in `BKO_HOLT_CORPUS_RAW` that it
 //! doesn't list (an earlier collection's), a listed guest without its dump,
-//! or a dump in BKO_HOLT_CORPUS_OUT that this build doesn't make stops the
+//! or a dump in `BKO_HOLT_CORPUS_OUT` that this build doesn't make stops the
 //! build before it starts.  Every dump is built before anything is written;
 //! the old index.tsv goes first and the new one is written last, so a killed
 //! build leaves no index.tsv beside a half-made corpus.  Two builds of the
@@ -190,8 +190,8 @@ fn filler(n: usize) -> Vec<u8> {
 
 /// Whether KEY, in an object under PARENT's key, is boot code the corpus
 /// leaves out: a disk's or partition's `boot_code` images, an unmounted
-/// ESP's chunks (other/mod.rs's esp_image), Ubuntu Core's MBR code and BIOS
-/// Boot image (boot.snapcore.boot_areas, snapcore.rs's).
+/// ESP's chunks (other/mod.rs's `esp_image`), Ubuntu Core's MBR code and BIOS
+/// Boot image (`boot.snapcore.boot_areas`, snapcore.rs's).
 fn is_boot_code(parent: &str, key: &str) -> bool {
     (parent == "boot_code" && matches!(key, "image_b64" | "code_b64" | "gap_b64"))
         || (parent == "esp_image" && key == "b64")
@@ -338,7 +338,7 @@ fn raw_guests(raw: &Path, prov: &Provenance) -> Result<Vec<String>, String> {
     }
 }
 
-/// The provenance columns index.tsv carries (raw_sha256 stays on the host).
+/// The provenance columns index.tsv carries (`raw_sha256` stays on the host).
 const PROV: [&str; 8] = [
     "host",
     "run",
@@ -354,22 +354,22 @@ struct Built {
     text: String,
     row: Vec<String>,
     log: String,
-    /// The raw dump's check_plan failure, when it failed but the corpus dump
+    /// The raw dump's `check_plan` failure, when it failed but the corpus dump
     /// was still made (the plan differs, or it doesn't map back): the class
     /// for the log, the whole message for the host-only error file.
     raw_fail: Option<(String, String)>,
 }
 
-/// check_plan's message up to its first detail: what kind of failure,
+/// `check_plan`'s message up to its first detail: what kind of failure,
 /// without the identifiers the rest may quote from the raw dump.
 fn failure_class(e: &CheckPlanError) -> &'static str {
     e.kind.class()
 }
 
-/// Whether check_plan's failure on a raw dump stops that dump (a leak, or
+/// Whether `check_plan`'s failure on a raw dump stops that dump (a leak, or
 /// no JSON to build from), or is reported while the dump is still made (a
 /// plan that differs, a redaction that doesn't map back), its own leak
-/// checks standing in for the ones check_plan didn't reach.  By kind, every
+/// checks standing in for the ones `check_plan` didn't reach.  By kind, every
 /// kind named: a new one has to be placed here.
 fn stops_the_dump(kind: CheckPlanFailure) -> bool {
     match kind {
@@ -523,8 +523,8 @@ fn build_one(guest: &str, raw_text: &str, prov: Option<&BTreeMap<String, String>
 }
 
 /// index.tsv's columns: the guest, its provenance (collect-dumps.sh's), what
-/// the build did, and each filled blob as PATH=BYTES/CRC32.  check_plan_raw
-/// is `ok:IDENTIFIERS:PLAN_LINES` or `FAIL:CLASS`; check_plan the corpus
+/// the build did, and each filled blob as PATH=BYTES/CRC32.  `check_plan_raw`
+/// is `ok:IDENTIFIERS:PLAN_LINES` or `FAIL:CLASS`; `check_plan` the corpus
 /// dump's (`ok:IDENTIFIERS`).
 const COLUMNS: [&str; 17] = [
     "guest",

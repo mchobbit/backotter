@@ -1,4 +1,4 @@
-//! RedoxFS (Redox): its header block, "RedoxFS\0", the version and the UUID.
+//! `RedoxFS` (Redox): its header block, "RedoxFS\0", the version and the UUID.
 
 // A parser of on-disk bytes: here a panic is a damaged disk crashing a restore (RA3).
 #![warn(

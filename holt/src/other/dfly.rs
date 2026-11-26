@@ -1,5 +1,5 @@
-//! DragonFly's report: disks from kern.disks and diskinfo, the MBR, each
-//! DragonFly slice's disklabel64 (disklabel64 -r's text, kept for load's
+//! `DragonFly`'s report: disks from kern.disks and diskinfo, the MBR, each
+//! `DragonFly` slice's disklabel64 (disklabel64 -r's text, kept for load's
 //! disklabel64 -R), UFS (/boot) with dumpfs -m's newfs, HAMMER2 with its
 //! PFS names, and the boot code.
 
@@ -10,7 +10,7 @@ use crate::mounts;
 use crate::probe::{self, Content};
 use crate::sys::Sys;
 
-/// DragonFly's diskinfo: "/dev/vbd0  blksize=512  offset=0x0  size=0x400000000 ...":
+/// `DragonFly`'s diskinfo: "/dev/vbd0  blksize=512  offset=0x0  size=0x400000000 ...":
 /// (sector size, bytes).
 pub fn parse_diskinfo(text: &str) -> Option<(u64, u64)> {
     let mut bs = None;
@@ -354,7 +354,7 @@ mod tests {
         );
     }
 
-    /// RustAudit1 H1-01: a disklabel64 line whose size or offset in bytes
+    /// `RustAudit1` H1-01: a disklabel64 line whose size or offset in bytes
     /// doesn't fit in 64 bits is no partition, not an overflow.
     #[test]
     fn label64_past_64_bits() {

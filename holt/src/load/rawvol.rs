@@ -3,7 +3,7 @@
 //!
 //! A thin LV with an origin is made by `lvcreate -s` in the restore stage,
 //! once its origin's content is there; a raw volume (an LV whose content the
-//! dump took as a sparse image, crate::qubes::raw_volumes) is written from
+//! dump took as a sparse image, `crate::qubes::raw_volumes`) is written from
 //! the backup's image by `bko-holt raw-write`, which writes only the chunks
 //! that differ from what the LV already holds: a fresh thin LV reads zeros,
 //! so a base image's zero runs stay unprovisioned, and a snapshot gets only
@@ -26,8 +26,8 @@ pub fn mapper_name(vg: &str, lv: &str) -> String {
 }
 
 /// The plan's word on a pool's provisioned data (Gate 2, point 4): what the
-/// source used of its data and metadata (the dump's data_used_bytes and
-/// metadata_used_bytes) beside what it's made with here, and its thin LVs'
+/// source used of its data and metadata (the dump's `data_used_bytes` and
+/// `metadata_used_bytes`) beside what it's made with here, and its thin LVs'
 /// virtual sizes added up (which can be several times the pool).  Used data
 /// above the pool made here is a problem: the restore couldn't fit.
 pub(crate) fn pool_use_note(vg: &str, p: &ThinPool, problems: &mut Vec<String>) -> Vec<Cmd> {
@@ -88,7 +88,7 @@ pub(crate) fn dump_argv(
 /// The raw-write stage's `sh -c` script: the archiver's DUMP (its argv)
 /// piped to `EXE raw-write` on DEV, failing when the dump did.  Every value
 /// is shell-quoted: IMAGE comes from the layout, in the failure message
-/// too (RustAudit1 H7-02).
+/// too (`RustAudit1` H7-02).
 fn raw_write_script(
     dump: &[String],
     exe: &str,
@@ -120,7 +120,7 @@ fn raw_write_script(
 }
 
 impl Builder<'_> {
-    /// The dm devices the dump took as raw volumes (raw_volume set).
+    /// The dm devices the dump took as raw volumes (`raw_volume` set).
     fn raw_dms(&self) -> Vec<Value> {
         self.layout
             .arr(&["storage", "dm_devices"])
@@ -709,7 +709,7 @@ mod tests {
         );
     }
 
-    /// RustAudit1 H7-02: the raw-write script quotes the layout's image in
+    /// `RustAudit1` H7-02: the raw-write script quotes the layout's image in
     /// its failure message too.  A plain image's script is as before; a
     /// hostile one's parses (`sh -n`), and its message runs nothing and
     /// prints the image as it is.

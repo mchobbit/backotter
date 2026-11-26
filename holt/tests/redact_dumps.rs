@@ -1,8 +1,8 @@
 //! The redaction's proof on real dumps (`bugreport::check_plan`): for every
-//! `*.json` under BKO_HOLT_DUMPS (a directory, searched recursively, for
-//! example /bkoscratch/holttest1d/r3all with HoltTest1's dumps/src.json), the
+//! `*.json` under `BKO_HOLT_DUMPS` (a directory, searched recursively, for
+//! example /bkoscratch/holttest1d/r3all with `HoltTest1`'s dumps/src.json), the
 //! load plan of the redacted dump is the original's, pseudonyms aside, and
-//! no identifier is left in it.  Without BKO_HOLT_DUMPS it checks nothing.
+//! no identifier is left in it.  Without `BKO_HOLT_DUMPS` it checks nothing.
 
 use std::path::{Path, PathBuf};
 
@@ -93,12 +93,12 @@ fn named(v: &bko_holt::json::Value, out: &mut Vec<String>) {
     }
 }
 
-/// RT10i: report-bug learns a plan document's disks too (`--attach`): for
-/// every plan.json beside a src.json under BKO_HOLT_DUMPS (the corpus's
+/// `RT10i`: report-bug learns a plan document's disks too (`--attach`): for
+/// every plan.json beside a src.json under `BKO_HOLT_DUMPS` (the corpus's
 /// golden plan documents), the document redacted as report-bug redacts an
 /// attachment keeps none of the identifiers learned from the dump or from
 /// it, nor any the document names (`named`, taken apart from the
-/// Collector: its repository among them).  Without BKO_HOLT_DUMPS it
+/// Collector: its repository among them).  Without `BKO_HOLT_DUMPS` it
 /// checks nothing.
 #[test]
 fn redacted_plan_documents_leave_nothing() {

@@ -5,25 +5,25 @@
 //! Two rules find them, from the dump's `storage.zfs.tools` (what
 //! `zfs list` said, so the same list is worked out again at load):
 //!
-//! - ZFSBootMenu's: any filesystem whose mountpoint is `/` (not
+//! - `ZFSBootMenu`'s: any filesystem whose mountpoint is `/` (not
 //!   necessarily `POOL/ROOT/NAME`), unless its user property
 //!   `org.zfsbootmenu:active` is `off`; and one with mountpoint `legacy`
 //!   whose `org.zfsbootmenu:active` is `on`.  A container (canmount=off)
 //!   isn't one.
-//! - TrueNAS's: every direct child of `boot-pool/ROOT` (each a legacy,
+//! - `TrueNAS`'s: every direct child of `boot-pool/ROOT` (each a legacy,
 //!   read-only root with `truenas:kernel_version` and `zectl:keep`).
 //!
 //! A BE's descendant filesystems come with it.  The booted BE (mounted; on
-//! TrueNAS also the pool's bootfs) is never an inactive one: it is backed
+//! `TrueNAS` also the pool's bootfs) is never an inactive one: it is backed
 //! up where it is mounted.  Each inactive BE is listed in
-//! storage.backup_sources at `/run/bko-be/NAME` (NAME its last component;
+//! `storage.backup_sources` at `/run/bko-be/NAME` (NAME its last component;
 //! `/run/bko-be/POOL/NAME` when two pools have a BE of that name), each
 //! descendant at that path plus its own mountpoint, with no `from` and the
-//! read-only mount a backup makes there (ABRoot's mechanism,
-//! crate::abroot).  `/run` is a tmpfs on the running system, so a backup's
+//! read-only mount a backup makes there (`ABRoot`'s mechanism,
+//! `crate::abroot`).  `/run` is a tmpfs on the running system, so a backup's
 //! mount points are never written to the source's datasets; load mounts
 //! the restored datasets at the same paths under its target, restores, and
-//! unmounts them (crate::load::commands).
+//! unmounts them (`crate::load::commands`).
 //!
 //! A BE whose datasets' key isn't loaded at dump time can't be read: dump
 //! says so, and load makes it empty, as before.
@@ -34,9 +34,9 @@ use crate::report::{BackupSource, MountHint};
 /// Where a backup mounts the inactive BEs, and load the restored ones
 /// (under its target).
 pub(crate) const BE_DIR: &str = "/run/bko-be";
-/// TrueNAS's boot pool: its name is fixed (its GRUB script names it).
+/// `TrueNAS`'s boot pool: its name is fixed (its GRUB script names it).
 pub(crate) const TRUENAS_POOL: &str = "boot-pool";
-/// ZFSBootMenu's user property: `off` hides a BE from its menu, `on`
+/// `ZFSBootMenu`'s user property: `off` hides a BE from its menu, `on`
 /// shows a legacy-mountpoint one.
 pub(crate) const ZBM_ACTIVE: &str = "org.zfsbootmenu:active";
 
@@ -88,7 +88,7 @@ pub(crate) struct BootEnv {
 }
 
 impl BootEnv {
-    /// Not the booted one: not mounted, and on TrueNAS not the bootfs.
+    /// Not the booted one: not mounted, and on `TrueNAS` not the bootfs.
     pub(crate) fn inactive(&self) -> bool {
         let booted = self.mounted || (self.rule == Rule::TrueNas && self.bootfs);
         !booted
@@ -106,8 +106,8 @@ impl BootEnv {
 
 /// The options of a backup's read-only mount of a BE's dataset: mount.zfs
 /// wants `zfsutil` for a dataset whose mountpoint isn't `legacy` (the
-/// children's `/usr`, ZFSBootMenu's `/`), and refuses it for a legacy one
-/// (TrueNAS's roots).
+/// children's `/usr`, `ZFSBootMenu`'s `/`), and refuses it for a legacy one
+/// (`TrueNAS`'s roots).
 pub(crate) fn ro_options(legacy: bool) -> String {
     if legacy {
         "ro,nodev,nosuid,noexec".to_string()
@@ -268,7 +268,7 @@ pub(crate) fn inactive(tools: &Value) -> Vec<BootEnv> {
     list(tools).into_iter().filter(BootEnv::inactive).collect()
 }
 
-/// Each TrueNAS pool whose bootfs BE isn't the one mounted (booted): (the
+/// Each `TrueNAS` pool whose bootfs BE isn't the one mounted (booted): (the
 /// bootfs's dataset, the mounted one's).  Its bootfs gets no backup source
 /// (it isn't inactive), and load would mount it as `/` with the running
 /// system's files: the dump warns and load refuses it.
@@ -288,7 +288,7 @@ pub(crate) fn bootfs_not_booted(bes: &[BootEnv]) -> Vec<(String, String)> {
     out
 }
 
-/// The dump's side, on the system FAM (crate::other::Family, None for
+/// The dump's side, on the system FAM (`crate::other::Family`, None for
 /// Linux): every BE, the backup sources of the inactive ones and the
 /// warnings.  Linux only: the sources' read-only mounts are Linux's
 /// mount.zfs (`zfsutil`) under its /run; elsewhere (FreeBSD's bectl,
@@ -306,9 +306,9 @@ pub(crate) fn dump_sources(
     (bes, src, warnings)
 }
 
-/// storage.backup_sources' entries for BES's inactive BEs that can be read,
+/// `storage.backup_sources`' entries for BES's inactive BEs that can be read,
 /// parents first, and a warning for each that can't (its key wasn't
-/// loaded), and for a TrueNAS bootfs that isn't the booted BE.
+/// loaded), and for a `TrueNAS` bootfs that isn't the booted BE.
 pub(crate) fn backup_sources(bes: &[BootEnv]) -> (Vec<BackupSource>, Vec<String>) {
     let mut out = Vec::new();
     let mut warnings = Vec::new();
@@ -390,7 +390,7 @@ mod tests {
             .build()
     }
 
-    /// ZFSBootMenu's rule: mountpoint=/ and not mounted, wherever it is;
+    /// `ZFSBootMenu`'s rule: mountpoint=/ and not mounted, wherever it is;
     /// active=off left out (inherited too); a legacy one with active=on
     /// in; the booted one and containers never; a name two pools share by
     /// POOL/NAME.
@@ -548,7 +548,7 @@ mod tests {
         );
     }
 
-    /// TrueNAS's rule: boot-pool/ROOT's children, legacy roots; the bootfs
+    /// `TrueNAS`'s rule: boot-pool/ROOT's children, legacy roots; the bootfs
     /// is the booted one; descendants at the BE's path plus their own
     /// mountpoint; a locked BE warned of and left out.
     #[test]

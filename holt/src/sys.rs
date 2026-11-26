@@ -60,7 +60,7 @@ pub struct RealRunner {
 /// NixOS keeps its system's tools (btrfs, lvm, zfs, efibootmgr...) only in
 /// /run/current-system/sw: without it, a NixOS dump lists no btrfs
 /// subvolumes, and load makes none of those its fstab mounts.  Guix System
-/// keeps them in /run/current-system/profile (crate::store::SYSTEMS names
+/// keeps them in /run/current-system/profile (`crate::store::SYSTEMS` names
 /// both, and its test holds this list to them).
 pub(crate) const SYSTEM_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin:/run/current-system/sw/sbin:/run/current-system/sw/bin:/run/current-system/profile/sbin:/run/current-system/profile/bin";
 
@@ -182,10 +182,10 @@ const MAX_STDOUT: u64 = 64 << 20;
 /// The largest file `Sys::read_bytes` (and `read`) reads whole.
 pub const READ_MAX: u64 = 128 << 20;
 
-/// Dump's run directory: Sys::with_ro_mount's mounts are made under it.
+/// Dump's run directory: `Sys::with_ro_mount`'s mounts are made under it.
 pub const RUN_DIR: &str = "/run/bko-holt";
 
-/// The warnings of a Sys::with_ro_mount, verbatim as each caller words
+/// The warnings of a `Sys::with_ro_mount`, verbatim as each caller words
 /// them.
 pub struct RoMountWords {
     /// When AT can't be made: ": " and the error follow it.
@@ -196,7 +196,7 @@ pub struct RoMountWords {
     pub still_mounted: String,
 }
 
-/// A Sys::with_ro_mount's mount, unmounted (and AT removed) when dropped:
+/// A `Sys::with_ro_mount`'s mount, unmounted (and AT removed) when dropped:
 /// when F returns, or when it panics.
 struct RoMounted<'a> {
     sys: &'a Sys,
@@ -214,7 +214,7 @@ impl Drop for RoMounted<'_> {
     }
 }
 
-/// Whether NAME is safe as one path component under RUN_DIR: not empty,
+/// Whether NAME is safe as one path component under `RUN_DIR`: not empty,
 /// and only ASCII letters, digits and the bytes in EXTRA.
 pub fn safe_name(name: &str, extra: &[u8]) -> bool {
     !name.is_empty()
@@ -288,9 +288,9 @@ pub struct Sys {
     /// Whether we may read block devices and root-only files (euid 0).
     pub privileged: bool,
     warnings: RefCell<Vec<String>>,
-    /// The kernel's time zone (sys_tz's tz_minuteswest, minutes west of
+    /// The kernel's time zone (`sys_tz`'s `tz_minuteswest`, minutes west of
     /// UTC) when this is the running system: Linux's vfat reads and writes
-    /// FAT's local-time stamps through it (crate::report records it, load
+    /// FAT's local-time stamps through it (`crate::report` records it, load
     /// mounts the FAT targets with it).  None for a --sysroot or a test.
     sys_tz: Option<i32>,
 }
@@ -319,13 +319,13 @@ impl Sys {
         s
     }
 
-    /// As though the kernel's sys_tz were `minuteswest` (tests).
+    /// As though the kernel's `sys_tz` were `minuteswest` (tests).
     pub fn with_sys_tz(mut self, minuteswest: Option<i32>) -> Sys {
         self.sys_tz = minuteswest;
         self
     }
 
-    /// The running kernel's sys_tz minutes west of UTC (`hwclock --systz`
+    /// The running kernel's `sys_tz` minutes west of UTC (`hwclock --systz`
     /// sets it, Artix's dinit at every boot): None off Linux, for a
     /// --sysroot, or where it couldn't be read.
     pub fn sys_tz_minuteswest(&self) -> Option<i32> {
@@ -341,7 +341,7 @@ impl Sys {
     }
 
     /// The file's bytes; None if it can't be read.  One larger than
-    /// READ_MAX isn't read either, and that's said in the dump's warnings
+    /// `READ_MAX` isn't read either, and that's said in the dump's warnings
     /// rather than passed off as a missing file.
     pub fn read_bytes(&self, abs: &str) -> Option<Vec<u8>> {
         match crate::bytes::read_bounded(&self.p(abs), READ_MAX) {
@@ -491,10 +491,10 @@ impl Sys {
     }
 
     /// F(AT) with DEV (as `mount` takes it) mounted read-only at AT, a
-    /// directory dump makes under its run directory (RUN_DIR) and removes
+    /// directory dump makes under its run directory (`RUN_DIR`) and removes
     /// after: the one way dump reads a filesystem the running system
     /// doesn't mount (an unmounted ESP, an inactive boot environment, an
-    /// ABRoot root), unmounted when F returns, or panics.  TY and OPTS
+    /// `ABRoot` root), unmounted when F returns, or panics.  TY and OPTS
     /// are `mount`'s -t and -o.  None when AT can't be made or the mount
     /// fails, each said in the caller's WORDS; an umount that fails is
     /// said too, and AT is then left in place.
@@ -647,7 +647,7 @@ pub fn euid() -> u32 {
 }
 
 /// The gettimeofday(2) syscall's number, where holt is built for that
-/// architecture (none on the others: sys_tz is then not read).
+/// architecture (none on the others: `sys_tz` is then not read).
 #[cfg(target_os = "linux")]
 const SYS_GETTIMEOFDAY: Option<std::os::raw::c_long> = if cfg!(target_arch = "x86_64") {
     Some(96)
@@ -659,7 +659,7 @@ const SYS_GETTIMEOFDAY: Option<std::os::raw::c_long> = if cfg!(target_arch = "x8
     None
 };
 
-/// The kernel's sys_tz.tz_minuteswest, by the raw gettimeofday syscall:
+/// The kernel's `sys_tz.tz_minuteswest`, by the raw gettimeofday syscall:
 /// glibc (2.31 on) zeroes the timezone it's given and musl ignores it, so
 /// libc's gettimeofday can't say.  None when the call fails or answers
 /// what settimeofday(2) would refuse (beyond 15 hours).
@@ -801,10 +801,10 @@ pub const SIGINT: i32 = 2;
 pub const SIGKILL: i32 = 9;
 pub const SIGTERM: i32 = 15;
 
-/// RLIMIT_CORE's number: 4 on Linux, the BSDs and illumos, 0 on Haiku.
+/// `RLIMIT_CORE`'s number: 4 on Linux, the BSDs and illumos, 0 on Haiku.
 const RLIMIT_CORE: std::os::raw::c_int = if cfg!(target_os = "haiku") { 0 } else { 4 };
 
-/// Set by the SIGTERM handler catch_sigterm installs.
+/// Set by the SIGTERM handler `catch_sigterm` installs.
 static SIGTERM_TAKEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 // SAFETY: signal(2), kill(2) and setrlimit(2) have these signatures on
@@ -832,7 +832,7 @@ extern "C" fn on_sigterm(_sig: std::os::raw::c_int) {
     }
 }
 
-/// Under --json: SIGTERM sets a flag (sigterm_taken) instead of ending the
+/// Under --json: SIGTERM sets a flag (`sigterm_taken`) instead of ending the
 /// process, so a writing run stops between commands.  Whether the handler
 /// went in.
 pub fn catch_sigterm() -> bool {
@@ -847,13 +847,13 @@ pub fn catch_sigterm() -> bool {
     old != usize::MAX
 }
 
-/// Whether SIGTERM has come since catch_sigterm.
+/// Whether SIGTERM has come since `catch_sigterm`.
 pub fn sigterm_taken() -> bool {
     SIGTERM_TAKEN.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// SIGINT back to its default action, for a child about to exec (load's
-/// pre_exec under --json): a load started where SIGINT is ignored (a
+/// `pre_exec` under --json): a load started where SIGINT is ignored (a
 /// background job of a script) would otherwise pass that on, and the
 /// stop's SIGINT would never reach the archiver.  Async-signal-safe.
 pub fn sigint_to_default() {
@@ -889,7 +889,7 @@ pub fn process_alive(pid: u32) -> bool {
 /// When process PID started, as a string that is the same for as long as
 /// that process lives and differs for a later one given the same PID: on
 /// Linux /proc/PID/stat's starttime (clock ticks since boot), on illumos
-/// /proc/PID/psinfo's pr_start (seconds and nanoseconds since the epoch:
+/// /proc/PID/psinfo's `pr_start` (seconds and nanoseconds since the epoch:
 /// ps's stime turns from a time into a date after a day), on the BSDs
 /// ps's lstart, read in the C locale and UTC whatever load's environment
 /// (FreeBSD's is strftime's %c, in the caller's locale and zone).  None
@@ -929,9 +929,9 @@ pub fn process_start(pid: u32) -> Option<String> {
     (out.status.success() && !s.is_empty()).then_some(s)
 }
 
-/// pr_start of an illumos psinfo_t BUF (LP64, the only illumos holt is
-/// built for: pr_pid at byte 8, pr_start's tv_sec and tv_nsec at 88 and
-/// 96), as "SECS.NANOS"; None unless pr_pid is PID and the time is one.
+/// `pr_start` of an illumos `psinfo_t` BUF (LP64, the only illumos holt is
+/// built for: `pr_pid` at byte 8, `pr_start`'s `tv_sec` and `tv_nsec` at 88 and
+/// 96), as "SECS.NANOS"; None unless `pr_pid` is PID and the time is one.
 fn psinfo_start(buf: &[u8], pid: u32) -> Option<String> {
     let at = |o: usize, n: usize| buf.get(o..o + n);
     let i64_at = |o: usize| {
@@ -961,15 +961,15 @@ pub fn boot_time() -> Option<std::time::SystemTime> {
         .checked_sub(Duration::from_micros(u64::try_from(system_time()).ok()?))
 }
 
-/// When this system booted, where process_start can't tell: only Haiku's.
+/// When this system booted, where `process_start` can't tell: only Haiku's.
 #[cfg(not(target_os = "haiku"))]
 pub fn boot_time() -> Option<std::time::SystemTime> {
     None
 }
 
 /// No core dumps for this process or its children (cryptsetup and the
-/// archiver hold keys): RLIMIT_CORE's soft and hard limits 0.  Whether it
-/// took.  Zeros whatever rlim_t's width: two of them fit in the 16 bytes
+/// archiver hold keys): `RLIMIT_CORE`'s soft and hard limits 0.  Whether it
+/// took.  Zeros whatever `rlim_t`'s width: two of them fit in the 16 bytes
 /// passed.
 pub fn no_core_dumps() -> bool {
     let zero = [0u64; 2];
@@ -1259,7 +1259,7 @@ mod tests {
         assert_eq!(r.run_any("head", &["-c", &over, "/dev/zero"]), None);
     }
 
-    /// A file over READ_MAX isn't read, and the dump says so; same_bytes
+    /// A file over `READ_MAX` isn't read, and the dump says so; `same_bytes`
     /// compares files of any size.
     #[test]
     fn read_cap_warns_and_same_bytes() {
@@ -1379,8 +1379,8 @@ mod tests {
         assert_eq!(s.statvfs("/no/such/dir"), None);
     }
 
-    /// sys_tz: read off the running kernel for the host only, never for a
-    /// --sysroot (Sys::new) unless a test says so.
+    /// `sys_tz`: read off the running kernel for the host only, never for a
+    /// --sysroot (`Sys::new`) unless a test says so.
     #[test]
     fn sys_tz_is_the_hosts_only() {
         assert_eq!(
@@ -1486,12 +1486,12 @@ mod tests {
         );
     }
 
-    /// The environment variable sigterm_child runs under: only then does it
+    /// The environment variable `sigterm_child` runs under: only then does it
     /// install the handler and signal itself (in a process of its own, so
     /// the flag never reaches the other tests).
     const SIGTERM_CHILD: &str = "BKO_HOLT_TEST_SIGTERM_CHILD";
 
-    /// In a child of its own (catch_sigterm_in_a_child's): the handler is
+    /// In a child of its own (`catch_sigterm_in_a_child`'s): the handler is
     /// installed, a SIGTERM to this process only sets the flag, twice, and
     /// the core limit goes to 0.
     #[test]
@@ -1514,7 +1514,7 @@ mod tests {
         println!("SIGTERM-CHILD-OK");
     }
 
-    /// sigterm_child, run in a new process of this test binary.
+    /// `sigterm_child`, run in a new process of this test binary.
     #[test]
     fn catch_sigterm_in_a_child() {
         let exe = std::env::current_exe().unwrap();
@@ -1570,7 +1570,7 @@ mod tests {
         }
     }
 
-    /// illumos's psinfo_t, LP64: pr_pid at 8, pr_start at 88.
+    /// illumos's `psinfo_t`, LP64: `pr_pid` at 8, `pr_start` at 88.
     #[test]
     fn psinfo_starts() {
         let mut b = vec![0u8; 416];

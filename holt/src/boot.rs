@@ -416,7 +416,7 @@ pub(crate) fn esp_inventory(sys: &Sys, mount: &str) -> Value {
 /// The first of `candidates` (a path under `under`, or an absolute path when
 /// `under` is empty, and its size) that the file at `path`, of `size` bytes,
 /// is a byte copy of.  Only a candidate of the same size is compared, a MiB
-/// at a time (Sys::same_bytes) and stopping at the first MiB that differs,
+/// at a time (`Sys::same_bytes`) and stopping at the first MiB that differs,
 /// so neither file is ever held in memory whole and a different one is
 /// seldom read past its first MiB.
 fn byte_copy_of<'a>(
@@ -454,7 +454,7 @@ fn byte_copy_of<'a>(
 /// /initramfs-linux.img` dumps initrd "/initramfs-linux.img" and initrds
 /// ["/intel-ucode.img", "/initramfs-linux.img"].  An entry with one initrd
 /// line has no `initrds`.  load's ESP check reads both
-/// (load/transactional.rs, bls_problems).
+/// (load/transactional.rs, `bls_problems`).
 pub(crate) fn systemd_boot_json(sys: &Sys, mount: &str) -> Option<Value> {
     let conf = sys.read(&format!("{mount}/loader/loader.conf"));
     let entries_dir = format!("{mount}/loader/entries");
@@ -537,7 +537,7 @@ pub(crate) struct ProxmoxEsp {
     pub mounted_at: Option<String>,
 }
 
-/// boot.proxmox_boot, and its ESPs for boot.esps.
+/// `boot.proxmox_boot`, and its ESPs for boot.esps.
 pub(crate) struct ProxmoxBoot {
     pub json: Value,
     pub esps: Vec<ProxmoxEsp>,
@@ -585,7 +585,7 @@ fn proxmox_mode(sys: &Sys, mount: &str, contents: &Value) -> Option<&'static str
 /// F(AT) with the ESP DEV (a kernel name) mounted read-only at AT, a
 /// directory dump makes under its run directory and removes after: the
 /// way dump reads an ESP the running system doesn't mount (Proxmox's,
-/// TrueNAS's), as their own tools mount them only while they work.  None
+/// `TrueNAS`'s), as their own tools mount them only while they work.  None
 /// when it can't be mounted, said with WHO (how the warnings name the ESP)
 /// and WHAT (what the dump then lacks).
 pub(crate) fn read_unmounted_esp<R>(
@@ -615,7 +615,7 @@ pub(crate) fn read_unmounted_esp<R>(
     )
 }
 
-/// boot.proxmox_boot (docs/design/proxmox.md): on Proxmox VE with
+/// `boot.proxmox_boot` (docs/design/proxmox.md): on Proxmox VE with
 /// proxmox-boot-tool (ZFS root), the ESPs aren't mounted, only listed by
 /// volume ID in /etc/kernel/proxmox-boot-uuids.  Each is found by that ID
 /// (`resolve`, "UUID=ID" to a kernel name) and read as a mounted ESP is,
@@ -923,11 +923,11 @@ pub(crate) const INSTALL_CONF: &[&str] =
 
 /// Gentoo's initramfs generator is the owner's choice, not the
 /// distribution's (docs/design/gentoo.md): installkernel's install.conf
-/// names it (initrd_generator: dracut, ugrd or none; uki_generator; layout,
+/// names it (`initrd_generator`: dracut, ugrd or none; `uki_generator`; layout,
 /// where the images go).  Without one: none if /boot has no initramfs-*,
 /// genkernel if it's installed, else dracut.  The generator, then the
 /// boot.initramfs fields only Gentoo's dumps have: installkernel (the file
-/// and its three keys, or null), evidence, and lib_modules_initrd (the
+/// and its three keys, or null), evidence, and `lib_modules_initrd` (the
 /// kernels with an image at /lib/modules/K/initrd, which load refuses).
 fn gentoo_initramfs(
     sys: &Sys,
@@ -1017,7 +1017,7 @@ fn gentoo_initramfs(
     )
 }
 
-/// initramfs_json with no ESPs mounted, for the tests.
+/// `initramfs_json` with no ESPs mounted, for the tests.
 #[cfg(test)]
 fn initramfs_json(sys: &Sys, packages: &[Package], ostree: bool) -> Value {
     initramfs_json_esps(sys, packages, ostree, &[])
@@ -1115,7 +1115,7 @@ pub(crate) const BOOSTER_YAML: &str = "/etc/booster.yaml";
 
 /// The keys of /etc/booster.yaml that decide what booster puts in an image,
 /// each null when the file (or the key) is absent: universal (all modules,
-/// or only this machine's) and enable_lvm as booleans, the module lists and
+/// or only this machine's) and `enable_lvm` as booleans, the module lists and
 /// the compression as written.
 fn booster_json(sys: &Sys) -> Value {
     let text = sys.read(BOOSTER_YAML);
@@ -1177,7 +1177,7 @@ pub(crate) fn parse_flat_yaml(text: &str) -> Vec<(String, String)> {
 /// What the report already knows that decides the loader.
 pub(crate) struct Evidence<'a> {
     pub uefi: bool,
-    /// The file of the entry the firmware booted (BootCurrent).
+    /// The file of the entry the firmware booted (`BootCurrent`).
     pub current_file: Option<String>,
     pub loader_info: Option<String>,
     pub shim_variables: bool,
@@ -1187,21 +1187,21 @@ pub(crate) struct Evidence<'a> {
     pub esp_files: Vec<String>,
     /// The ESP file the fallback path (EFI/BOOT/BOOTX64.EFI, or ARM64's
     /// BOOTAA64.EFI) is a byte copy of, if any
-    /// (esp_inventory's same_as): shim's, when the fallback path is shim.
+    /// (`esp_inventory`'s `same_as)`: shim's, when the fallback path is shim.
     pub fallback_copy_of: Option<String>,
-    /// The ESP paths of the ZFSBootMenu images on mounted ESPs
-    /// (crate::zfsbootmenu::find_images), `EFI/ZBM/VMLINUZ.EFI`.
+    /// The ESP paths of the `ZFSBootMenu` images on mounted ESPs
+    /// (`crate::zfsbootmenu::find_images`), `EFI/ZBM/VMLINUZ.EFI`.
     pub zbm_images: Vec<String>,
 }
 
-/// The loader on x86_64 (crate::arch::X86_64's names), for the tests.
+/// The loader on `x86_64` (`crate::arch::X86_64`'s names), for the tests.
 #[cfg(test)]
 pub(crate) fn detect_loader(e: &Evidence<'_>) -> Value {
     detect_loader_on(e, &crate::arch::X86_64)
 }
 
 /// The loader, from E, on a machine whose boot files have N's names
-/// (crate::arch: grubx64.efi or grubaa64.efi, and so on).
+/// (`crate::arch`: grubx64.efi or grubaa64.efi, and so on).
 pub(crate) fn detect_loader_on(e: &Evidence<'_>, n: &crate::arch::Names) -> Value {
     let has = |p: &str| has_package(e.packages, p);
     let mut why: Vec<String> = Vec::new();
@@ -1493,7 +1493,7 @@ pub(crate) fn solus_kernels(
     (list, links)
 }
 
-/// boot.kernels with Solus's kernels (solus_kernels) added, when
+/// boot.kernels with Solus's kernels (`solus_kernels`) added, when
 /// clr-boot-manager is installed: /boot is the ESP there, with no
 /// vmlinuz-V of its own.
 fn with_solus_kernels(
@@ -1524,13 +1524,13 @@ fn with_solus_kernels(
 
 /// Everything in this module, for the report's "boot" section.  `esps` are
 /// the mounted ESPs (device, mount point); `ostree` is boot.ostree on an
-/// ostree system (crate::ostree::json); `proxmox` is boot.proxmox_boot
-/// (proxmox_boot_json), whose ESPs that aren't mounted join boot.esps with
+/// ostree system (`crate::ostree::json`); `proxmox` is `boot.proxmox_boot`
+/// (`proxmox_boot_json`), whose ESPs that aren't mounted join boot.esps with
 /// `mounted_at` null; `unmounted` are other ESPs nothing mounts, read
-/// elsewhere (device, contents: TrueNAS's, crate::truenas), which join it
+/// elsewhere (device, contents: `TrueNAS`'s, `crate::truenas`), which join it
 /// the same way after them; `zfs_tools` is storage.zfs.tools, whose boot
 /// environments boot.zfsbootmenu lists when a mounted ESP holds a
-/// ZFSBootMenu image (crate::zfsbootmenu).
+/// `ZFSBootMenu` image (`crate::zfsbootmenu`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn boot_json(
     sys: &Sys,
@@ -1716,12 +1716,12 @@ pub(crate) fn boot_json(
     o.build()
 }
 
-/// AnduinOS's Machine Owner Key: anduinos-secureboot-toolkit makes it at
-/// install and signs AnduinOS's GRUB with it (MOK.priv beside it stays
+/// `AnduinOS`'s Machine Owner Key: anduinos-secureboot-toolkit makes it at
+/// install and signs `AnduinOS`'s GRUB with it (MOK.priv beside it stays
 /// root's alone).
 pub(crate) const ANDUINOS_MOK: &str = "/var/lib/shim-signed/mok/MOK.der";
 
-/// boot.loader.mok: on AnduinOS's own GRUB (anduinos-grub installed and
+/// boot.loader.mok: on `AnduinOS`'s own GRUB (anduinos-grub installed and
 /// its MOK certificate there), the certificate and its SHA-256 fingerprint
 /// (of the DER file, as `openssl x509 -fingerprint -sha256` prints it), so
 /// a restore can say which key the firmware must hold.  None otherwise.
@@ -1742,7 +1742,7 @@ pub(crate) fn mok_json(sys: &Sys, packages: &[Package]) -> Option<Value> {
 /// finds (/boot here): each line a quoted title and the quoted options.
 pub(crate) const REFIND_LINUX_CONF: &str = "/boot/refind_linux.conf";
 
-/// boot.refind: refind_linux.conf's path and its lines, each {title,
+/// boot.refind: `refind_linux.conf`'s path and its lines, each {title,
 /// options}; None when there is no such file.
 pub(crate) fn refind_json(sys: &Sys) -> Option<Value> {
     let text = sys.read(REFIND_LINUX_CONF)?;
@@ -2142,7 +2142,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         );
     }
 
-    /// PikaOS's rEFInd booted at the fallback path: the ESP's files name it,
+    /// `PikaOS`'s rEFInd booted at the fallback path: the ESP's files name it,
     /// in EFI/refind or only beside EFI/BOOT/bootx64.efi.
     #[test]
     fn refind_from_the_esp() {
@@ -2190,7 +2190,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
     /// booster's images and configuration (PikaOS): booster.img-K is K's
     /// initramfs, its .dpkg-bak and .bak copies are set aside; booster wins
     /// over initramfs-tools; booster.yaml's keys, null when absent; and
-    /// refind_linux.conf's lines.
+    /// `refind_linux.conf`'s lines.
     #[test]
     fn booster_and_refind_linux_conf() {
         let t = Tree::new("boot-booster");
@@ -2815,7 +2815,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert_eq!(l.get("via_shim"), Some(&Value::Bool(false)));
     }
 
-    /// AnduinOS (docs/design/anduinos.md): shim from BootCurrent in
+    /// `AnduinOS` (docs/design/anduinos.md): shim from `BootCurrent` in
     /// EFI/AnduinOS, or from the fallback path when BOOTX64.EFI is a copy of
     /// shim; anduinos-grub and anduinos-shim-signed as the packages; and
     /// boot.loader.mok from MOK.der, only beside anduinos-grub.
@@ -3112,7 +3112,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
 
     /// clr-boot-manager's shim and systemd-boot by their fixed names
     /// (Solus): from NVRAM's entry, from the fallback copy of the shim,
-    /// from LoaderInfo, or from the ESP's files alone; not without
+    /// from `LoaderInfo`, or from the ESP's files alone; not without
     /// clr-boot-manager installed.
     #[test]
     fn loader_clr_boot_manager() {

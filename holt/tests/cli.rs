@@ -1,6 +1,6 @@
 //! The binary: arguments, exit codes, the Debian 13 gate, and a dump of the
 //! machine the tests run on checked against lsblk.  `load` has its own tests
-//! (tests/load_cli.rs).
+//! (`tests/load_cli.rs`).
 
 use bko_holt::json::{self, Value};
 use bko_holt::testutil::Tree;

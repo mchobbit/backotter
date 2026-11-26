@@ -16,7 +16,7 @@ use crate::sys::Sys;
 /// The node of partition `n` of target disk `t` (a source partition of `d`).
 /// NetBSD names a GPT's partitions as wedges, dkN in the order it finds
 /// them: they're named by their wedge name (NAME=), which mount and newfs
-/// take: wedge_names.  An MBR partition that holds a disklabel has no node
+/// take: `wedge_names`.  An MBR partition that holds a disklabel has no node
 /// of its own.
 pub fn part_node(fam: Family, d: &Disk, t: &str, n: u32) -> String {
     match fam {
@@ -51,13 +51,13 @@ struct Wedge<'a> {
 }
 
 /// The names NetBSD gives a GPT disk's wedges (sys/dev/dkwedge/
-/// dkwedge_gpt.c), in table order: an entry's GPT name, or, for an entry
-/// with none, its unique GUID as uuid_snprintf prints it (lower case).
+/// `dkwedge_gpt.c`), in table order: an entry's GPT name, or, for an entry
+/// with none, its unique GUID as `uuid_snprintf` prints it (lower case).
 /// GPT names needn't be unique, and wedge names must: when an earlier
-/// entry of the disk has the name, dk.c's dkwedge_add refuses it (EEXIST)
-/// and dkwedge_gpt.c names the wedge by its GUID instead, or makes none
+/// entry of the disk has the name, dk.c's `dkwedge_add` refuses it (EEXIST)
+/// and `dkwedge_gpt.c` names the wedge by its GUID instead, or makes none
 /// when that is taken too (or the dump has no GUID for it).  Another
-/// disk's wedges are wedge_clashes'.
+/// disk's wedges are `wedge_clashes`'.
 fn wedge_names(d: &Disk) -> Vec<Wedge<'_>> {
     let mut parts: Vec<&crate::load::layout::Part> = d.parts.iter().collect();
     parts.sort_by_key(|p| p.number);
@@ -80,12 +80,12 @@ fn wedge_names(d: &Disk) -> Vec<Wedge<'_>> {
 }
 
 /// NetBSD's wedge names are the whole system's, not a disk's: dk.c's
-/// dkwedge_add refuses (EEXIST) a name any wedge of any disk has, and
-/// dkwedge_gpt.c then names the new wedge by its GUID.  So a wedge of a
+/// `dkwedge_add` refuses (EEXIST) a name any wedge of any disk has, and
+/// `dkwedge_gpt.c` then names the new wedge by its GUID.  So a wedge of a
 /// disk that isn't a target (the source's own disk, still attached) with
 /// the name a target's partition is to have would take its place: load's
 /// newfs and mount of NAME=that would write to that other disk, and status
-/// and readback (node_path) read it.  One problem per such wedge.  So is
+/// and readback (`node_path`) read it.  One problem per such wedge.  So is
 /// a GPT name two targets' partitions both have: which gets it, and which
 /// its GUID, is the order the disks' wedges are made in (and the old
 /// wedges a target still has then), which load can't know when it names
@@ -220,7 +220,7 @@ fn s(v: &Value, k: &str) -> Option<String> {
 /// load/target.rs has it for Linux: a disk with it is the stick.
 const STICK_CONFIG_LABEL: &str = "BACKOTTER";
 
-/// A DragonFly slice's disklabel64 name (its d_packname), read off the
+/// A `DragonFly` slice's disklabel64 name (its `d_packname`), read off the
 /// slice: what devfs shows as /dev/part-by-label/NAME.LETTER.  The label
 /// is in the slice's first sectors (the second, as disklabel64 writes it).
 fn label64_name(slice: &dyn crate::bytes::ByteSource) -> Option<String> {
@@ -664,7 +664,7 @@ fn valid_newfs_words(raw: &[&str]) -> bool {
     true
 }
 
-/// `dumpfs -m`'s `-s`, which is in DEV_BSIZE (512-byte) units, made the
+/// `dumpfs -m`'s `-s`, which is in `DEV_BSIZE` (512-byte) units, made the
 /// count of `sector`-byte sectors FreeBSD's `newfs` reads it as (newfs asks
 /// the device for its sector size and counts in those).  On a device with
 /// larger sectors -- a GELI provider made with `geli init -s 4096`, a 4Kn
@@ -892,7 +892,7 @@ impl Builder<'_> {
         out
     }
 
-    /// HAMMER2 with the source's PFSs (newfs_hammer2 makes LOCAL itself).
+    /// HAMMER2 with the source's PFSs (`newfs_hammer2` makes LOCAL itself).
     pub(crate) fn other_newfs_hammer2(&mut self, src: &str, dev: &str) -> Vec<Cmd> {
         let pfs: Vec<String> = self
             .layout
@@ -932,9 +932,9 @@ impl Builder<'_> {
     }
 
     /// A FAT filesystem (an ESP the dump didn't image) as the source's, by
-    /// this system's own formatter: newfs_msdos on the BSDs, mkfs -F pcfs
+    /// this system's own formatter: `newfs_msdos` on the BSDs, mkfs -F pcfs
     /// on illumos, mkfs -t fat on Haiku (neither of whose rescue images has
-    /// newfs_msdos).  What illumos' or Haiku's can't be told and the boot
+    /// `newfs_msdos`).  What illumos' or Haiku's can't be told and the boot
     /// sector holds (volume ID, media byte, OEM name, hidden sectors) is set
     /// after it by `bko-holt fat-set` (load/fatset.rs); what neither can
     /// make as the source's is said in a note.
@@ -1317,10 +1317,10 @@ impl Builder<'_> {
     }
 }
 
-/// newfs_msdos's words for FAT content C on DEV (FreeBSD, NetBSD,
-/// OpenBSD and DragonFly read them alike): the source's FAT size, volume
+/// `newfs_msdos`'s words for FAT content C on DEV (FreeBSD, NetBSD,
+/// OpenBSD and `DragonFly` read them alike): the source's FAT size, volume
 /// ID, label, cluster size and media byte (the dump's hex text, read as
-/// Linux's mkfs.fat -M reads it: RustAudit1 H7-09; newfs_msdos -m takes
+/// Linux's mkfs.fat -M reads it: `RustAudit1` H7-09; `newfs_msdos` -m takes
 /// 0x hex).
 fn newfs_msdos(dev: &str, c: &Value) -> Vec<String> {
     let mut a = vec!["newfs_msdos".to_string()];
@@ -1423,15 +1423,15 @@ fn fat_sectors(c: &Value, part: &Value) -> Option<u64> {
     }
 }
 
-/// illumos' mkfs -F pcfs (mkfs_pcfs(8), illumos-gate's
+/// illumos' mkfs -F pcfs (`mkfs_pcfs(8)`, illumos-gate's
 /// usr/src/cmd/fs.d/pcfs/mkfs) on DEV's raw node: on the slice itself
 /// (nofdisk, so its size= the source FAT's sectors), with the source's FAT
 /// type (fat=), sectors per cluster (spc=), reserved sectors (reserve=) and
 /// label (b=).  It writes volume ID 0, media 0xF8, OEM name "MSWIN4.1", no
 /// hidden sectors, 2 FATs and, for FAT12/16, 512 root entries, and asks
 /// nothing when its standard input isn't a terminal (an empty one here).
-/// Never hidden=: mkfs_pcfs's seek_nofdisk() also seeks that many sectors
-/// into DEV and makes the FAT there (hidden=40 on the OmniOS rescue: the
+/// Never hidden=: `mkfs_pcfs`'s `seek_nofdisk()` also seeks that many sectors
+/// into DEV and makes the FAT there (hidden=40 on the `OmniOS` rescue: the
 /// boot sector at sector 40, sector 0 left as it was), so the source's
 /// hidden sectors are fat-set's, like its volume ID.
 fn mkfs_pcfs(dev: &str, c: &Value, part: &Value) -> Result<FatMake, String> {
@@ -1509,7 +1509,7 @@ fn mkfs_pcfs(dev: &str, c: &Value, part: &Value) -> Result<FatMake, String> {
 }
 
 /// Haiku's fat add-on's sectors per cluster for a FAT of BITS bits on a
-/// partition of BYTES (mkdos.cpp's _dosfs_initialize, Microsoft's size
+/// partition of BYTES (mkdos.cpp's _`dosfs_initialize`, Microsoft's size
 /// cutoffs), 512-byte sectors: 0 for a size it refuses.
 fn haiku_fat_spc(bits: u64, bytes: u64) -> u64 {
     const GIB: u64 = 1 << 30;
@@ -1849,7 +1849,7 @@ mod tests {
         }
     }
 
-    /// DragonFly's rescue image, shrunk: slice 2 a disklabel64 (in its second
+    /// `DragonFly`'s rescue image, shrunk: slice 2 a disklabel64 (in its second
     /// sector) named NAME.
     fn dragonfly_stick() -> Vec<u8> {
         let mut img = vec![0u8; 2048 * 512];
@@ -1983,7 +1983,7 @@ mod tests {
             .success()
     }
 
-    /// RustAudit1 H9-04: a --target with a space, quotes, $, a backtick and
+    /// `RustAudit1` H9-04: a --target with a space, quotes, $, a backtick and
     /// a newline, planned for each BSD's and illumos' corpus dump, is quoted
     /// in every sh -c script: no script holds it raw (quoted, its ' is
     /// '\'') and each one parses.  A UFS without .snap (ghostbsd26) has its
@@ -2058,7 +2058,7 @@ mod tests {
         );
     }
 
-    /// alpinebsd's corpus dump: NetBSD on a GPT (ld0: EFI, swap, AlpineBSD).
+    /// alpinebsd's corpus dump: NetBSD on a GPT (ld0: EFI, swap, `AlpineBSD`).
     fn alpinebsd() -> Layout {
         let text = std::fs::read_to_string(format!(
             "{}/tests/corpus/alpinebsd/src.json",
@@ -2068,8 +2068,8 @@ mod tests {
         Layout::from_json(crate::json::parse(&text).unwrap()).unwrap()
     }
 
-    /// RustAudit1 H9-03: a NetBSD GPT entry with no name is its wedge's
-    /// GUID-named node (dkwedge_gpt.c), in lower case, never /dev/wd1mbrN;
+    /// `RustAudit1` H9-03: a NetBSD GPT entry with no name is its wedge's
+    /// GUID-named node (`dkwedge_gpt.c`), in lower case, never /dev/wd1mbrN;
     /// a named one is NAME=its name, and an MBR's partition stays as it was.
     #[test]
     fn an_unnamed_gpt_entry_is_its_guid() {
@@ -2110,7 +2110,7 @@ mod tests {
         );
     }
 
-    /// RustAudit1 H9-02: a disk that isn't a target with a wedge of the name
+    /// `RustAudit1` H9-02: a disk that isn't a target with a wedge of the name
     /// a target partition is to have (the source's own wd0, attached) is a
     /// problem; the target's own wedges, another name, or a layout that
     /// isn't NetBSD's are none.
@@ -2152,9 +2152,9 @@ mod tests {
         assert!(wedge_clashes(&fb, &pairs, &sys(wedges, "")).is_empty());
     }
 
-    /// RustAudit1 HD3-02: GPT names needn't be unique.  On one disk the
+    /// `RustAudit1` HD3-02: GPT names needn't be unique.  On one disk the
     /// kernel names the first entry by its name and a later one of the same
-    /// name by its GUID (dk.c refuses, EEXIST; dkwedge_gpt.c retries), so
+    /// name by its GUID (dk.c refuses, EEXIST; `dkwedge_gpt.c` retries), so
     /// that later one's node is its GUID-named wedge, and format and mount go
     /// there, not to the first entry's.  Across two targets which wedge gets
     /// the name depends on the order the disks' wedges are made: refused, one
@@ -2273,7 +2273,7 @@ mod tests {
     }
 
     /// The source's FAT media byte (dump's hex text, "0xf0" on FreeBSD's
-    /// ESPs) is kept, as Linux's mkfs.fat -M keeps it (RustAudit1 H7-09);
+    /// ESPs) is kept, as Linux's mkfs.fat -M keeps it (`RustAudit1` H7-09);
     /// a dump without one adds nothing.
     #[test]
     fn newfs_msdos_keeps_the_sources_media_byte() {
@@ -2295,9 +2295,9 @@ mod tests {
         );
     }
 
-    /// OmniOS' and OpenIndiana's ESP (the corpus dumps' content): mkfs -F
+    /// `OmniOS`' and `OpenIndiana`'s ESP (the corpus dumps' content): mkfs -F
     /// pcfs makes it as the source's, nothing to set after and nothing lost;
-    /// FreeBSD's (newfs_msdos's: volume ID, media 0xF0, OEM name BSD4.4, no
+    /// FreeBSD's (`newfs_msdos`'s: volume ID, media 0xF0, OEM name BSD4.4, no
     /// label, 40 hidden sectors) gets those four set by fat-set, the label
     /// said.
     #[test]
@@ -2423,7 +2423,7 @@ mod tests {
     /// haiku6's dump with a 256 MiB ESP after its BFS volume, unimaged
     /// (as the dump leaves a mounted one): the format stage makes it with Haiku's
     /// mkfs -t fat, then fat-set gives it the source's volume ID, media
-    /// byte and hidden sectors; no newfs_msdos, which Haiku has none of.
+    /// byte and hidden sectors; no `newfs_msdos`, which Haiku has none of.
     #[test]
     fn haiku_formats_fat_with_its_own_mkfs() {
         use crate::load::layout::Layout;

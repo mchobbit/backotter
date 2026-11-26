@@ -1,9 +1,9 @@
 //! Qubes OS in load's boot stage (docs/design/qubes.md, "The design"):
-//! GRUB 2 on UEFI without shim, booting Xen and dom0 through 20_linux_xen.
+//! GRUB 2 on UEFI without shim, booting Xen and dom0 through `20_linux_xen`.
 //! GRUB's EFI image (\EFI\qubes\grubx64.efi, and the fallback
 //! EFI/BOOT/BOOTX64.EFI) comes back with the ESP; only grub.cfg is remade,
 //! by grub2-mkconfig in the chroot, with /etc/default/grub's
-//! GRUB_CMDLINE_XEN_DEFAULT and GRUB_CMDLINE_LINUX as restored (the LUKS
+//! `GRUB_CMDLINE_XEN_DEFAULT` and `GRUB_CMDLINE_LINUX` as restored (the LUKS
 //! UUID that rd.luks.uuid= names is kept by load, so nothing is rewritten);
 //! dracut remakes the initramfs (the generic step); the "Qubes OS" NVRAM
 //! entry is made when the source's NVRAM had none.
@@ -91,7 +91,7 @@ impl Builder<'_> {
     }
 
     /// The boot stage's Qubes arm (UEFI GRUB 2, no shim): grub.cfg remade
-    /// with 20_linux_xen and checked for its Xen entries.
+    /// with `20_linux_xen` and checked for its Xen entries.
     pub(crate) fn qubes_boot_cmds(&mut self, t: &str, via_shim: bool) -> Vec<Cmd> {
         let mut out = Vec::new();
         if via_shim {
@@ -305,7 +305,7 @@ mod tests {
         );
     }
 
-    /// RustAudit1 H8-02: a --target with a space, quotes, $, a backtick
+    /// `RustAudit1` H8-02: a --target with a space, quotes, $, a backtick
     /// and a newline reaches mount, grep and umount as one word each.
     #[test]
     fn scripts_quote_a_hostile_target() {

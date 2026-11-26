@@ -1,30 +1,30 @@
-//! BackShot2's tier 0 planner (docs/design/backshot2.md, "Tiers"): `load
+//! `BackShot2`'s tier 0 planner (docs/design/backshot2.md, "Tiers"): `load
 //! plan` of each drifted layout, onto blank targets of its case's sizes with
-//! its case's load options, held to golden_plans.rs's five invariants
-//! (common/invariants.rs).  It plans as golden_plans.rs does (common::plan:
+//! its case's load options, held to `golden_plans.rs`'s five invariants
+//! (common/invariants.rs).  It plans as `golden_plans.rs` does (`common::plan`:
 //! a fake rescue system with every tool installed), so it needs no disks,
 //! no root and no VM, and thousands of cases run in one process.
 //!
-//! It does nothing unless BS2_PLAN_JOBS names a file of jobs, one JSON
+//! It does nothing unless `BS2_PLAN_JOBS` names a file of jobs, one JSON
 //! object a line:
 //!
 //!   {"id": "CASE", "layout": "PATH.json", "targets": {"vda": BYTES}, "options": ["--fit-largest", "10"], "names": {"vda": "vdb"}}
 //!
 //! "names" gives each dumped disk's target its kernel name, as tier 1's
 //! rescuer has it (virtio: vdb, vdc, ... after its own vda); a disk it
-//! doesn't name, or a job without it, gets golden_plans.rs's sdq, sdr, ...
-//! by its place (common::sd_target).  Load's Slackware check (Decision 5
+//! doesn't name, or a job without it, gets `golden_plans.rs`'s sdq, sdr, ...
+//! by its place (`common::sd_target`).  Load's Slackware check (Decision 5
 //! (d), docs/design/slackware.md) judges a target by its name's driver
 //! class and place, so a target named otherwise than tier 1's would be
 //! refused at tier 0 and not at tier 1.
 //!
-//! and writes one line per job to BS2_PLAN_OUT (default: JOBS.out):
+//! and writes one line per job to `BS2_PLAN_OUT` (default: JOBS.out):
 //!
 //!   {"id": "CASE", "code": 0, "out": PLAN, "err": STDERR, "violations": [...], "checked": [...]}
 //!
 //! testvm/backshot2/bs2lib/tier0.py writes the jobs and reads the results.
-//! The test is named bs2_*, so GateTest2's `--skip golden_` still runs it,
-//! as a no-op without BS2_PLAN_JOBS.
+//! The test is named bs2_*, so `GateTest2`'s `--skip golden_` still runs it,
+//! as a no-op without `BS2_PLAN_JOBS`.
 
 mod common;
 

@@ -524,7 +524,7 @@ fn mbr_part_json(p: &MbrPart, ss: u64, sig: u32) -> Value {
 }
 
 /// A GPT entry's length in sectors.  Its LBAs are the disk's, unchecked
-/// (an entry outside the disk only adds a problem), so a crafted 0..=u64::MAX
+/// (an entry outside the disk only adds a problem), so a crafted `0..=u64::MAX`
 /// saturates rather than overflows.
 fn gpt_sectors(p: &GptPart) -> u64 {
     p.last_lba.saturating_sub(p.first_lba).saturating_add(1)

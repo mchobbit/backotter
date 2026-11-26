@@ -80,7 +80,7 @@ fn names(mask: u32, table: &[(u32, &str)], unknown_prefix: char, out: &mut Vec<S
     }
 }
 
-/// The features in dumpe2fs's order: compat, incompat, ro_compat.
+/// The features in dumpe2fs's order: compat, incompat, `ro_compat`.
 pub fn feature_names(compat: u32, incompat: u32, ro_compat: u32) -> Vec<String> {
     let mut v = Vec::new();
     names(compat, COMPAT, 'C', &mut v);

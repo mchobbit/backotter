@@ -14,7 +14,7 @@ pub const SCHEMA: u64 = 1;
 /// question 11).
 pub const DUMP_SCHEMAS: &[u64] = &[SCHEMA];
 
-/// DUMP_SCHEMAS in words: "schema 1", or "schemas 1, 2".
+/// `DUMP_SCHEMAS` in words: "schema 1", or "schemas 1, 2".
 fn schemas_read() -> String {
     let l: Vec<String> = DUMP_SCHEMAS.iter().map(u64::to_string).collect();
     format!(
@@ -190,12 +190,12 @@ pub fn all_devices(v: &Value) -> impl Iterator<Item = &Value> {
         })
 }
 
-/// The first of all_devices(V) named NAME.
+/// The first of `all_devices(V)` named NAME.
 pub fn find_device<'a>(v: &'a Value, name: &str) -> Option<&'a Value> {
     all_devices(v).find(|d| d.get("name").and_then(Value::as_str) == Some(name))
 }
 
-/// F on each of all_devices(V), in the same order, for writing: a device
+/// F on each of `all_devices(V)`, in the same order, for writing: a device
 /// before its partitions (which F may have changed).
 pub fn for_each_device_mut(v: &mut Value, mut f: impl FnMut(&mut Value)) {
     for sect in DEVICE_SECTIONS {
@@ -351,8 +351,8 @@ impl Layout {
         self.str_at(&["host", "hostname"]).unwrap_or("?")
     }
 
-    /// The source system as people name it: os-release's PRETTY_NAME, else
-    /// its ID and VERSION_ID; a product built on it (os.product, Proxmox
+    /// The source system as people name it: os-release's `PRETTY_NAME`, else
+    /// its ID and `VERSION_ID`; a product built on it (os.product, Proxmox
     /// VE's) first.
     pub fn os_name(&self) -> String {
         let base = match self.str_at(&["os", "pretty_name"]).map(str::trim) {
@@ -483,7 +483,7 @@ impl Layout {
     }
 }
 
-/// What `--pools` makes of a layout (Layout::only_pools).
+/// What `--pools` makes of a layout (`Layout::only_pools`).
 pub struct OnlyPools {
     /// The layout without the pools left out and the disks they're on.
     pub layout: Layout,
@@ -501,7 +501,7 @@ impl Layout {
     /// 6): the ZFS pools not in KEEP are left untouched, with the disks
     /// that hold their vdevs.  Those disks aren't partitioned, the pools
     /// and datasets aren't made, and the files of their backup sources
-    /// aren't restored (storage.zfs.left_out_pools, the restore's globs).
+    /// aren't restored (`storage.zfs.left_out_pools`, the restore's globs).
     /// A disk that holds a vdev of a kept pool too is a problem, as is a
     /// name in KEEP that isn't one of the layout's pools.
     pub fn only_pools(&self, keep: &[String]) -> OnlyPools {
@@ -943,8 +943,8 @@ mod tests {
         assert_eq!(l.hostname(), "deb13");
     }
 
-    /// RustAudit1 H7-09: a partition's and a disk's numbers read the same
-    /// in each spelling dump writes (Value::get_u64_lenient), as fit's and
+    /// `RustAudit1` H7-09: a partition's and a disk's numbers read the same
+    /// in each spelling dump writes (`Value::get_u64_lenient`), as fit's and
     /// write-table's readers read them, so they agree on the partitions.
     #[test]
     fn numbers_in_every_spelling() {

@@ -1,4 +1,4 @@
-//! FreeBSD's report (HardenedBSD and GhostBSD too): disks from kern.disks
+//! FreeBSD's report (`HardenedBSD` and `GhostBSD` too): disks from kern.disks
 //! and diskinfo, GPT or MBR read off them, GEOM labels, UFS with the newfs
 //! command dumpfs -m gives for it, ZFS, and the boot blocks.
 
@@ -156,10 +156,10 @@ pub fn bsdlabel_parts(slice: &dyn ByteSource) -> Vec<(char, u64, u64)> {
 
 /// The partition a device spec names: /dev/vtbd0p2, /dev/gpt/LABEL,
 /// /dev/gptid/UUID, /dev/label/NAME (glabel), /dev/ufsid/ID, /dev/ufs/LABEL;
-/// and DragonFly's /dev/part-by-label/NAME.LETTER, the partition LETTER of
+/// and `DragonFly`'s /dev/part-by-label/NAME.LETTER, the partition LETTER of
 /// the slice whose disklabel64 is named NAME.  Each disk's list of names
 /// holds its GEOM labels (FreeBSD) or its slices' disklabel64 names
-/// (DragonFly), as (partition, name).
+/// (`DragonFly`), as (partition, name).
 pub fn resolve(
     spec: &str,
     disks: &[(RawDisk, Vec<Found>, Vec<(String, String)>)],

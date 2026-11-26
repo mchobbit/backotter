@@ -149,7 +149,7 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
 
 /// An XFS external log device: no superblock of its own, but log records
 /// whose headers name the filesystem they belong to (blkid's
-/// "xfs_external_log").  mkfs.xfs writes one at the log's start; we look at
+/// "`xfs_external_log`").  mkfs.xfs writes one at the log's start; we look at
 /// each sector of the first 256 KiB, as blkid does.
 pub fn external_log(src: &dyn ByteSource) -> Option<Content> {
     const XLOG_MAGIC: u32 = 0xfeed_babe;

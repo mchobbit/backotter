@@ -3,17 +3,17 @@
 //! names a UEFI boot's files, GRUB's platforms and the boot packages have on
 //! each architecture.
 //!
-//! `dump` records `os.machine` (`uname -m`: x86_64, aarch64) and, on UEFI,
+//! `dump` records `os.machine` (`uname -m`: `x86_64`, aarch64) and, on UEFI,
 //! `firmware.efi_arch` (UEFI's own name for the firmware: x64, ia32, aa64).
 //! A dump without `os.machine` (one made before A3) is of `os.architecture`,
-//! the dumping binary's own (x86_64 in every such dump), or else x86_64.
+//! the dumping binary's own (`x86_64` in every such dump), or else `x86_64`.
 //!
 //! `load` refuses a dump of another architecture than the rescue system it
 //! runs on (`check_load`), before it plans, reads or writes any disk.
 //!
 //! Every boot path reads its names from `Names`, one row an architecture,
-//! instead of naming x64 files itself: x86_64's row is the names bko-holt
-//! used before A3, unchanged, so nothing an x86_64 system dumps or loads
+//! instead of naming x64 files itself: `x86_64`'s row is the names bko-holt
+//! used before A3, unchanged, so nothing an `x86_64` system dumps or loads
 //! changes.  ARM64 boots by UEFI only: its row has no BIOS platform and no
 //! BIOS packages.
 
@@ -29,7 +29,7 @@ pub(crate) enum Arch {
 /// One architecture's names.
 #[derive(Debug)]
 pub(crate) struct Names {
-    /// Which it is: the tests hold the names to Arch::parse with it.
+    /// Which it is: the tests hold the names to `Arch::parse` with it.
     #[cfg(test)]
     pub arch: Arch,
     /// `uname -m`'s name.
@@ -46,7 +46,7 @@ pub(crate) struct Names {
     pub fallback_file: &'static str,
     /// GRUB's EFI image, as grub-install names it.
     pub grub: &'static str,
-    /// shim, as shim's packages name it.  (MokManager, mmx64.efi or
+    /// shim, as shim's packages name it.  (`MokManager`, mmx64.efi or
     /// mmaa64.efi, and shim's fallback, fbx64.efi or fbaa64.efi, come back
     /// with the ESP; nothing reads them by name.)
     pub shim: &'static str,
@@ -59,7 +59,7 @@ pub(crate) struct Names {
     pub grub_efi_target: &'static str,
     /// GRUB's BIOS platform: none on ARM64.
     pub grub_bios_target: Option<&'static str>,
-    /// UEFI GRUB's packages, most specific first (the one detect_loader names).
+    /// UEFI GRUB's packages, most specific first (the one `detect_loader` names).
     pub grub_efi_packages: &'static [&'static str],
     /// BIOS GRUB's packages.
     pub grub_bios_packages: &'static [&'static str],
@@ -69,7 +69,7 @@ pub(crate) struct Names {
     pub last_resort_packages: &'static [(&'static str, &'static str)],
 }
 
-/// x86_64: the names bko-holt has always used (grub-efi-arm64 is in its
+/// `x86_64`: the names bko-holt has always used (grub-efi-arm64 is in its
 /// UEFI GRUB list as it was before A3).
 pub(crate) const X86_64: Names = Names {
     #[cfg(test)]
@@ -169,7 +169,7 @@ impl Names {
 
 /// The machine SYS runs on, as `uname -m` names it: the kernel's
 /// /proc/sys/kernel/arch, else `uname -m`.  A fake system (a tree other
-/// than /) that has neither is x86_64, as every one before A3; the running
+/// than /) that has neither is `x86_64`, as every one before A3; the running
 /// system, this binary's own architecture.
 pub(crate) fn machine(sys: &Sys) -> String {
     sys.read_trim("/proc/sys/kernel/arch")
@@ -189,13 +189,13 @@ pub(crate) fn machine(sys: &Sys) -> String {
         })
 }
 
-/// The names for the machine SYS runs on (x86_64's when it is neither).
+/// The names for the machine SYS runs on (`x86_64`'s when it is neither).
 pub(crate) fn names_of(sys: &Sys) -> &'static Names {
     Arch::parse(&machine(sys)).unwrap_or(Arch::X86_64).names()
 }
 
 /// UEFI's name for the firmware of a MACHINE whose
-/// /sys/firmware/efi/fw_platform_size is PLATFORM_SIZE: an x86_64 kernel
+/// /`sys/firmware/efi/fw_platform_size` is `PLATFORM_SIZE`: an `x86_64` kernel
 /// on 32-bit firmware (mixed mode) has ia32's.
 pub(crate) fn efi_arch(machine: &str, platform_size: Option<u64>) -> Option<&'static str> {
     match (Arch::parse(machine), platform_size) {
@@ -206,7 +206,7 @@ pub(crate) fn efi_arch(machine: &str, platform_size: Option<u64>) -> Option<&'st
 }
 
 /// The machine a dump V is of: its `os.machine`, else (a dump made before
-/// A3) `os.architecture`, else x86_64.
+/// A3) `os.architecture`, else `x86_64`.
 pub(crate) fn dump_machine(v: &Value) -> String {
     let at = |k: &str| {
         v.at(&["os", k])
@@ -220,7 +220,7 @@ pub(crate) fn dump_machine(v: &Value) -> String {
         .to_string()
 }
 
-/// The names for the machine a dump V is of (x86_64's for one load
+/// The names for the machine a dump V is of (`x86_64`'s for one load
 /// refuses, which never gets as far as the names).
 pub(crate) fn names_of_dump(v: &Value) -> &'static Names {
     Arch::parse(&dump_machine(v))
@@ -345,7 +345,7 @@ mod tests {
     }
 
     /// A dump made before A3 has no os.machine: it is os.architecture's
-    /// (x86_64 in every one), or x86_64 with neither.
+    /// (`x86_64` in every one), or `x86_64` with neither.
     #[test]
     fn a_dump_before_a3_is_x86_64() {
         assert_eq!(
@@ -452,7 +452,7 @@ mod tests {
     const ESP_UUID: &str = "0b5f04ed-e731-4ac6-933e-83ff25657722";
 
     /// A UEFI Boot#### variable (with efivarfs's 4 attribute bytes): DESC,
-    /// on the ESP (partition 1 of the disk, its GUID ESP_UUID), FILE.
+    /// on the ESP (partition 1 of the disk, its GUID `ESP_UUID`), FILE.
     fn load_option(desc: &str, file: &str) -> Vec<u8> {
         let mut hd = vec![4u8, 1, 42, 0];
         hd.extend(1u32.to_le_bytes());
@@ -487,7 +487,7 @@ mod tests {
     }
 
     /// Debian 13 arm64 on UEFI as its installer (and its cloud image) lays
-    /// it out: GPT with an ESP at ESP_AT and an ext4 root, the kernel's
+    /// it out: GPT with an ESP at `ESP_AT` and an ext4 root, the kernel's
     /// machine aarch64.  Without files on the ESP: the callers add the
     /// loader's.
     fn arm64_debian(tag: &str, esp_at: &str) -> Tree {
@@ -969,8 +969,8 @@ mod tests {
 
     /// The corpus's two ARM64 fixtures (holt/tests/corpus/arm64-grub-shim
     /// and arm64-systemd-boot, its README) are these trees' dumps, which
-    /// golden_plans.rs plans as it plans every guest's.  The tool's version
-    /// aside, they must be the same; BKO_HOLT_GOLDEN=bless writes them.
+    /// `golden_plans.rs` plans as it plans every guest's.  The tool's version
+    /// aside, they must be the same; `BKO_HOLT_GOLDEN=bless` writes them.
     #[test]
     fn arm64_corpus_fixtures_are_these_dumps() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

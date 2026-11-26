@@ -1,4 +1,4 @@
-//! illumos' report (OmniOS, OpenIndiana): disks from diskinfo, the EFI
+//! illumos' report (`OmniOS`, OpenIndiana): disks from diskinfo, the EFI
 //! label (GPT) or MBR read off each disk's p0 node, slices named cXtYdZsN,
 //! ZFS (the root pool and its boot environments), the mounts from
 //! /etc/mnttab and the boot setup.
@@ -302,7 +302,7 @@ Size: 1000.20GB <1000204886016 bytes>\n";
         );
     }
 
-    /// diskinfo failing (or timed out: RealRunner says None either way)
+    /// diskinfo failing (or timed out: `RealRunner` says None either way)
     /// twice: the disks are iostat -En's, with a warning; nothing from
     /// either: a warning that says so.  A diskinfo that answers: its disks,
     /// and no iostat.

@@ -24,11 +24,11 @@ pub fn probe_size(path: &std::path::Path) -> Option<u64> {
     })
 }
 
-/// probe_size's halving over `reads(sector)`: Ok(true) a whole sector read,
+/// `probe_size`'s halving over `reads(sector)`: Ok(true) a whole sector read,
 /// Ok(false) a short one (the end), Err an error.  An error is past the end
 /// too (a raw device may fail there rather than read short), unless a
 /// sector further on reads: then it was a bad sector below the end, and the
-/// halving goes on from the one that read (RustAudit1 H9-10).
+/// halving goes on from the one that read (`RustAudit1` H9-10).
 fn probe_size_by(reads: impl Fn(u64) -> std::io::Result<bool>) -> Option<u64> {
     if !reads(0).unwrap_or(false) {
         return None;
@@ -54,21 +54,21 @@ fn probe_size_by(reads: impl Fn(u64) -> std::io::Result<bool>) -> Option<u64> {
 }
 
 /// Where Haiku publishes disks that are no disk of this machine's: RAM
-/// disks (ram_disk.h's RAM_DISK_RAW_DEVICE_BASE_NAME, "disk/virtual/ram")
+/// disks (`ram_disk.h`'s `RAM_DISK_RAW_DEVICE_BASE_NAME`, "disk/virtual/ram")
 /// and disk images registered as devices (KFileDiskDevice.cpp's
 /// kFileDevicesDir, "/dev/disk/virtual/files").  The rest of
 /// /dev/disk/virtual is disks: virtio-blk's, at
-/// /dev/disk/virtual/virtio_block/N/raw (virtio_block.cpp), and the
-/// network disks' (nbd, remote_disk), as Linux lists its nbd devices.
+/// /`dev/disk/virtual/virtio_block/N/raw` (`virtio_block.cpp`), and the
+/// network disks' (nbd, `remote_disk`), as Linux lists its nbd devices.
 const NOT_DISKS: [&str; 2] = ["/dev/disk/virtual/ram", "/dev/disk/virtual/files"];
 
 /// The components of /dev/disk paths with an underscore in them, which
-/// name_of's underscores don't take apart again: virtio-blk's and
-/// remote_disk's directories.
+/// `name_of`'s underscores don't take apart again: virtio-blk's and
+/// `remote_disk`'s directories.
 const UNDERSCORED: [&str; 2] = ["virtio_block", "remote_disk"];
 
 /// Every whole disk: /dev/disk/BUS/.../raw, but RAM disks and disk images
-/// (NOT_DISKS).
+/// (`NOT_DISKS`).
 pub fn disks(sys: &Sys) -> Vec<RawDisk> {
     fn walk(sys: &Sys, dir: &str, depth: usize, out: &mut Vec<String>) {
         if depth > 6 {
@@ -102,13 +102,13 @@ pub fn disks(sys: &Sys) -> Vec<RawDisk> {
         .collect()
 }
 
-/// "scsi_2_0_0" for /dev/disk/scsi/2/0/0.
+/// "`scsi_2_0_0`" for /dev/disk/scsi/2/0/0.
 pub fn name_of(dir: &str) -> String {
     dir.trim_start_matches("/dev/disk/").replace('/', "_")
 }
 
-/// /dev/disk/scsi/2/0/0 for "scsi_2_0_0", and
-/// /dev/disk/virtual/virtio_block/0 for "virtual_virtio_block_0" (the
+/// /dev/disk/scsi/2/0/0 for "`scsi_2_0_0`", and
+/// /`dev/disk/virtual/virtio_block/0` for "`virtual_virtio_block_0`" (the
 /// UNDERSCORED components kept whole).
 pub fn dir_of(name: &str) -> String {
     let mut path = name.replace('_', "/");
@@ -118,7 +118,7 @@ pub fn dir_of(name: &str) -> String {
     format!("/dev/disk/{path}")
 }
 
-/// Partition `n` (from 1, the table's) of disk `disk` (name_of's name), as
+/// Partition `n` (from 1, the table's) of disk `disk` (`name_of`'s name), as
 /// the report names it: Haiku numbers a disk's partitions from 0.
 pub fn part_name(disk: &str, n: u32) -> String {
     format!("{disk}_{}", n.saturating_sub(1))
@@ -334,7 +334,7 @@ mod tests {
         );
     }
 
-    /// RustAudit1 H9-01: a virtio-blk disk (/dev/disk/virtual/virtio_block/
+    /// `RustAudit1` H9-01: a virtio-blk disk (/`dev/disk/virtual/virtio_block`/
     /// N/raw) is a disk, its name goes back to its directory, and its
     /// partitions are its own; RAM disks and registered disk images under
     /// /dev/disk/virtual still aren't disks.
@@ -377,7 +377,7 @@ mod tests {
         assert_eq!(dir_of("ata_0_master"), "/dev/disk/ata/0/master");
     }
 
-    /// An ESP that isn't mounted is kept as its bytes (esp_image), as the
+    /// An ESP that isn't mounted is kept as its bytes (`esp_image`), as the
     /// other systems' dumps keep theirs, so load writes it back with the
     /// table rather than formatting it empty; a mounted one isn't.
     #[test]

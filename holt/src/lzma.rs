@@ -1,7 +1,7 @@
 //! A raw LZMA (LZMA1) decoder, for what GRUB compresses with it: the
 //! i386-pc core.img's kernel and modules (load/grubprefix.rs reads the
 //! prefix from them).  No header: the caller gives the properties (lc, lp,
-//! pb) and the uncompressed size, as GRUB's lzma_decompress.img has them.
+//! pb) and the uncompressed size, as GRUB's `lzma_decompress.img` has them.
 //! The dictionary is the output itself (it is all kept), so no dictionary
 //! size is needed.  It follows the LZMA specification's reference decoder
 //! (the LZMA SDK's LzmaSpec.cpp): a range decoder, the literal, match and
@@ -148,8 +148,8 @@ impl Len {
 /// SIZE bytes decoded from the raw LZMA stream B with properties LC, LP and
 /// PB (GRUB's i386-pc core: 3, 0, 2).  An end marker before SIZE bytes, or
 /// past them, ends the output there (Err when short).  SIZE bytes are
-/// reserved up front, so the caller bounds it (core_prefix caps it at
-/// MAX_CORE, 16 MiB).
+/// reserved up front, so the caller bounds it (`core_prefix` caps it at
+/// `MAX_CORE`, 16 MiB).
 ///
 /// # Errors
 ///

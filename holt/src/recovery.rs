@@ -19,7 +19,7 @@
 //!   contract, see there).
 //!
 //! The list is BIP39's English one, byte for byte as bitcoin/bips has it
-//! (https://github.com/bitcoin/bips/blob/master/bip-0039/english.txt, MIT
+//! (<https://github.com/bitcoin/bips/blob/master/bip-0039/english.txt>, MIT
 //! licence, BIP 39's own): 2048 words, sorted, of 3 to 8 letters, no two
 //! with the same first 4 letters.  The tests pin its SHA-256.
 //!
@@ -241,9 +241,9 @@ pub fn generate() -> Result<Words, String> {
 /// Where `generate` reads.  Linux: /dev/random, which since Linux 5.6 waits
 /// only until the kernel's generator is seeded and is then the same as
 /// /dev/urandom (/dev/urandom itself never waits, so very early in a boot it
-/// could hand out bytes from an unseeded generator; every Linux BackOtter
+/// could hand out bytes from an unseeded generator; every Linux `BackOtter`
 /// supports runs 5.15 or later).  Everywhere else (FreeBSD, NetBSD, OpenBSD,
-/// DragonFly, illumos, Haiku, macOS): /dev/urandom, the device each of them
+/// `DragonFly`, illumos, Haiku, macOS): /dev/urandom, the device each of them
 /// documents for keys, and the one the rescue images' remote-access scripts
 /// already read on the BSDs, illumos and Haiku.  FreeBSD's, OpenBSD's and
 /// macOS's are the same device as their /dev/random.  NetBSD's never waits,
@@ -530,7 +530,7 @@ mod tests {
     /// BIP39's test vectors with 128 bits of entropy: every "english" entry
     /// of trezor/python-mnemonic's vectors.json whose entropy is 32 hex
     /// digits (its seed and xprv left out: we make no seed),
-    /// https://github.com/trezor/python-mnemonic/blob/master/vectors.json
+    /// <https://github.com/trezor/python-mnemonic/blob/master/vectors.json>
     /// (fetched 2026-11-19).
     const VECTORS: [(&str, &str); 8] = [
         (
@@ -603,8 +603,8 @@ mod tests {
     }
 
     /// The list is bitcoin/bips' bip-0039/english.txt as it is
-    /// (https://raw.githubusercontent.com/bitcoin/bips/master/bip-0039/english.txt,
-    /// fetched 2026-11-19), and has what check() counts on.
+    /// (<https://raw.githubusercontent.com/bitcoin/bips/master/bip-0039/english.txt>,
+    /// fetched 2026-11-19), and has what `check()` counts on.
     #[test]
     fn the_list_is_bip39s() {
         assert_eq!(
@@ -645,7 +645,7 @@ mod tests {
         }
     }
 
-    /// Many entropies: words and back, through check() of the password and
+    /// Many entropies: words and back, through `check()` of the password and
     /// of the same words abbreviated, shouted and spread out.
     #[test]
     fn round_trips() {
@@ -860,7 +860,7 @@ mod tests {
         );
     }
 
-    /// The suggestions, as an independent reimplementation of near()'s
+    /// The suggestions, as an independent reimplementation of `near()`'s
     /// rules (in Python, over the same list) gave them.
     #[test]
     fn suggestions() {

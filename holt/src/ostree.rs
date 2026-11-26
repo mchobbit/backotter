@@ -38,7 +38,7 @@ pub(crate) fn karg(cmdline: &str) -> Option<String> {
         .find_map(|w| w.strip_prefix("ostree=").map(str::to_string))
 }
 
-/// A GLib key file (ostree's repository config, prepare-root.conf, an
+/// A `GLib` key file (ostree's repository config, prepare-root.conf, an
 /// .origin): (section, key, value), comments and blank lines left out.
 pub(crate) fn parse_ini(text: &str) -> Vec<(String, String, String)> {
     let mut out = Vec::new();
@@ -414,7 +414,7 @@ mod tests {
     }
 
     /// /etc's prepare-root.conf replaces /usr/lib's whole, as ostree's
-    /// GKeyFile loading does: no key falls back to /usr/lib's.
+    /// `GKeyFile` loading does: no key falls back to /usr/lib's.
     #[test]
     fn prepare_root_last_file_wins() {
         let pr = |usr: Option<&str>, etc: Option<&str>| {

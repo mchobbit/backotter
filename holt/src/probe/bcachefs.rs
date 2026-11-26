@@ -1,6 +1,6 @@
 //! bcachefs: its superblock, at 4 KiB (sector 8).  NixOS can be installed on
 //! it.  The options that `bcachefs format` takes are bit fields in the
-//! superblock's flags words (bcachefs_format.h's LE64_BITMASKs).
+//! superblock's flags words (`bcachefs_format.h`'s `LE64_BITMASKs`).
 
 // A parser of on-disk bytes: here a panic is a damaged disk crashing a restore (RA3).
 #![warn(
@@ -14,8 +14,8 @@ use super::Content;
 use crate::bytes::{ByteSource, label, le16, le32, le64, sub, u8_at, uuid};
 use crate::json::Obj;
 
-/// BCACHE_MAGIC (bcache's, which bcachefs's first versions kept) and
-/// BCHFS_MAGIC.
+/// `BCACHE_MAGIC` (bcache's, which bcachefs's first versions kept) and
+/// `BCHFS_MAGIC`.
 const MAGICS: [[u8; 16]; 2] = [
     [
         0xc6, 0x85, 0x73, 0xf6, 0x4e, 0x1a, 0x45, 0xca, 0x82, 0x65, 0xf5, 0x7f, 0x48, 0xba, 0x6d,
@@ -42,7 +42,7 @@ fn name(table: &[&str], v: u64) -> String {
         .unwrap_or_else(|| v.to_string())
 }
 
-/// "1.13" from BCH_VERSION(major, minor) = major << 10 | minor.
+/// "1.13" from `BCH_VERSION(major`, minor) = major << 10 | minor.
 pub fn version_name(v: u16) -> String {
     format!("{}.{}", v >> 10, v & 0x3ff)
 }

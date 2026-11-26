@@ -1,5 +1,5 @@
 //! UEFI state from /sys/firmware/efi: boot mode, Secure Boot, the boot
-//! entries (Boot####, BootOrder, BootCurrent) with their device paths
+//! entries (Boot####, `BootOrder`, `BootCurrent`) with their device paths
 //! decoded, and the variables boot loaders leave behind (systemd's Boot
 //! Loader Interface, which Debian's GRUB and systemd-boot both set, and
 //! shim's MOK variables).
@@ -137,7 +137,7 @@ impl Node {
     }
 }
 
-/// The device paths in a load option's FilePathList (usually one; some
+/// The device paths in a load option's `FilePathList` (usually one; some
 /// firmware writes a vendor path before the real one).
 pub(crate) fn parse_device_paths(b: &[u8]) -> Vec<Vec<Node>> {
     let mut paths = Vec::new();
@@ -290,7 +290,7 @@ impl LoadOption {
     }
 }
 
-/// UTF-16 string variable (systemd's LoaderInfo and friends).
+/// UTF-16 string variable (systemd's `LoaderInfo` and friends).
 fn var_utf16(sys: &Sys, name: &str, vendor: &str) -> Option<String> {
     var(sys, name, vendor)
         .map(|b| utf16le(&b))
@@ -461,7 +461,7 @@ pub(crate) fn boot_json(sys: &Sys, partuuid_to_dev: &dyn Fn(&str) -> Option<Stri
 
 #[cfg(test)]
 pub(crate) mod real {
-    /// Chopin's actual variables (Debian 13, MoreFine S500+ firmware), with
+    /// Chopin's actual variables (Debian 13, `MoreFine` S500+ firmware), with
     /// the 4-byte attribute prefix as efivarfs shows it.
     pub(crate) fn unhex(s: &str) -> Vec<u8> {
         let h: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();

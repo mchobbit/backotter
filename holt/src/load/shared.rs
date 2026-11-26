@@ -87,7 +87,7 @@ pub struct Plan {
 
 impl Plan {
     /// PATH is made after the main restore: a shared snapshot, or a
-    /// subvolume nested in one (Shared::children).
+    /// subvolume nested in one (`Shared::children`).
     pub fn is_shared(&self, path: &str) -> bool {
         self.shared
             .iter()
@@ -129,7 +129,7 @@ impl Plan {
     /// metadata a backup of `/` holds only there) and below a shared
     /// snapshot's directory (which stays, empty: the backup has it).  A
     /// glob excludes only what it matches, not what is below it: hence
-    /// `/**`.  Each path is escaped (glob_literal), so that one holding a
+    /// `/**`.  Each path is escaped (`glob_literal`), so that one holding a
     /// glob metacharacter is matched as itself.
     pub fn globs(&self) -> Vec<String> {
         let mut g: Vec<String> = self
@@ -147,8 +147,8 @@ impl Plan {
 }
 
 /// PATH as a `--glob-file` pattern that matches only itself.  rustic-bko
-/// reads each line of the file with the ignore crate's OverrideBuilder
-/// (rustic_core's blob/tree/excludes.rs): gitignore syntax, compiled by
+/// reads each line of the file with the ignore crate's `OverrideBuilder`
+/// (`rustic_core`'s blob/tree/excludes.rs): gitignore syntax, compiled by
 /// globset with backslash escapes on, where `\` before any character makes
 /// it literal.  `*`, `?`, `[`, `]`, `{`, `}` (and `\` itself) are special
 /// there; `,` is only within `{}`, `!` and `^` only within `[]`, and a
@@ -496,7 +496,7 @@ fn interleave(accepted: Vec<(String, Shared)>, next: u64) -> Vec<(String, Shared
 }
 
 /// ACCEPTED's indices, its families merged (interleave): of the ready next
-/// members, the lowest source ID first; with KEEPING_FIRST, those that keep
+/// members, the lowest source ID first; with `KEEPING_FIRST`, those that keep
 /// their IDs first.  ACCEPTED's own order has every base before what is
 /// made from it, so its earliest member left is always ready; that is
 /// taken if no other is (it can't arise).
@@ -708,7 +708,7 @@ mod tests {
         );
     }
 
-    /// BackShot2 anduinos2: a deployment snapshot of @root (262) and a
+    /// `BackShot2` anduinos2: a deployment snapshot of @root (262) and a
     /// personal one of @home (263), two families; 262 was written after
     /// 263 was made.  The families interleave by ID: both keep theirs.
     #[test]
@@ -755,7 +755,7 @@ mod tests {
     }
 
     /// A family's own order still costs IDs where it isn't the ID order:
-    /// the rollback's chain as in after_a_rollback, with another family's
+    /// the rollback's chain as in `after_a_rollback`, with another family's
     /// snapshot (of @/home, written first of all) that keeps its ID.
     #[test]
     fn a_family_reorder_still_renumbers() {
@@ -931,7 +931,7 @@ mod tests {
         assert_eq!(p.shared[0].clone_from, Some(("/".into(), "@".into())));
     }
 
-    /// RustAudit1 H7-01: a path holding a glob metacharacter is excluded
+    /// `RustAudit1` H7-01: a path holding a glob metacharacter is excluded
     /// as itself.  A plain snapshot @/backups/pre[1] and an alias of
     /// @data[2024] under the mounted top level: their lines escape each
     /// metacharacter, where `!/backups/pre[1]/**` would have matched

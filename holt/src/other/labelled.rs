@@ -52,7 +52,7 @@ pub fn disk_names(fam: Family, text: &str) -> Vec<(String, Option<String>)> {
 
 /// NetBSD's wedges of a disk: "dk0: EFI, 2097152 blocks at 34, type: msdos"
 /// as (dk0, name, start sector).  The name is a GPT partition's, which may
-/// itself hold ", " (RustAudit1 H9-13), so the fields after it are taken
+/// itself hold ", " (`RustAudit1` H9-13), so the fields after it are taken
 /// from the right.
 pub fn parse_wedges(text: &str) -> Vec<(String, String, u64)> {
     text.lines()
@@ -147,7 +147,7 @@ pub fn newfs_from_dumpfs(fam: Family, text: &str) -> Option<String> {
 }
 
 /// newfs's options from the superblock bko-holt read itself: version
-/// (FFSv2 with extended attributes is NetBSD's -O 2ea), block and fragment
+/// (`FFSv2` with extended attributes is NetBSD's -O 2ea), block and fragment
 /// sizes, the inode count, free space and optimisation; the whole partition.
 pub fn newfs_from_probe(fam: Family, d: &Value) -> Option<String> {
     let g = |k: &str| d.get(k).and_then(Value::as_u64);
@@ -190,7 +190,7 @@ struct DiskSeen {
     duid: Option<String>,
     label: Option<(String, Label)>,
     found: Vec<Found>,
-    /// The disklabel's partitions: (name, LabelPart, contents).
+    /// The disklabel's partitions: (name, `LabelPart`, contents).
     lparts: Vec<(String, bsdlabel::LabelPart, Vec<Content>)>,
     wedges: Vec<(String, String, u64)>,
     whole: Vec<Content>,

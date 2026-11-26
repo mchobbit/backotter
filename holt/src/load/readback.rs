@@ -32,9 +32,9 @@ pub fn reads_back(ty: &str) -> bool {
     )
 }
 
-/// A name a probe gives a feature bit it doesn't know: ext's FEATURE_C13
-/// (e2fsprogs' own spelling), XFS's incompat_bit15, btrfs's compat_ro_bit9,
-/// F2FS's feature_bit20, NILFS2's compat_bit3.
+/// A name a probe gives a feature bit it doesn't know: ext's `FEATURE_C13`
+/// (e2fsprogs' own spelling), XFS's `incompat_bit15`, btrfs's `compat_ro_bit9`,
+/// F2FS's `feature_bit20`, NILFS2's `compat_bit3`.
 pub fn is_unnamed(f: &str) -> bool {
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     if let Some(r) = f.strip_prefix("FEATURE_") {
@@ -62,9 +62,9 @@ pub fn unnamed(c: &Value) -> Vec<String> {
 /// Whether feature F of a TY filesystem is one the read-back holds to the
 /// source's: one load asks mkfs for, or one mkfs could turn on by itself (a
 /// bit the probe can't name).  Not one that records state (ext's
-/// needs_recovery and orphan_present, XFS's needsrepair), nor one mkfs
-/// can't set (ext's uninit_bg, btrfs's compress_zstd, F2FS's atomic_write).
-/// XFS's meta_uuid records that the UUID was changed after mkfs; the UUID
+/// `needs_recovery` and `orphan_present`, XFS's needsrepair), nor one mkfs
+/// can't set (ext's `uninit_bg`, btrfs's `compress_zstd`, F2FS's `atomic_write`).
+/// XFS's `meta_uuid` records that the UUID was changed after mkfs; the UUID
 /// itself is compared.
 fn comparable(ty: &str, f: &str) -> bool {
     if is_unnamed(f) {

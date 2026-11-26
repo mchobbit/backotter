@@ -525,10 +525,10 @@ creation_time = 1762300001	# Wed Nov  5 00:00:01 2025
 
     /// Vanilla OS 3's VG `vos-root` (docs/design/vanillaos.md), as LVM
     /// writes it after the installer's make-thin-pool: the linear `init`
-    /// (1 GiB), the thin pool `root` (data 19 GiB in root_tdata, metadata
-    /// 1 GiB in root_tmeta, the 1 GiB lvol0_pmspare), and the thin LVs
+    /// (1 GiB), the thin pool `root` (data 19 GiB in `root_tdata`, metadata
+    /// 1 GiB in `root_tmeta`, the 1 GiB `lvol0_pmspare`), and the thin LVs
     /// `root-a` and `root-b`, 19 GiB virtual each.  The hidden LVs have no
-    /// VISIBLE in their status.  Its PV is pv()'s (Hc7n2m-...).
+    /// VISIBLE in their status.  Its PV is `pv()`'s (Hc7n2m-...).
     pub const THIN: &str = r#"vos-root {
 id = "VoSr00-tAAA-BBBB-CCCC-DDDD-EEEE-FFFFFF"
 seqno = 9
@@ -713,7 +713,7 @@ creation_host = "vanilla"	# Linux vanilla 6.17.8-amd64 x86_64
 creation_time = 1762300003	# Wed Nov  5 00:00:03 2025
 "#;
 
-    /// thin_vg: THIN as the dump has it (vg_summary's JSON).
+    /// `thin_vg`: THIN as the dump has it (`vg_summary`'s JSON).
     pub fn thin_vg() -> crate::json::Value {
         super::vg_summary(&super::parse_config(THIN).unwrap()).unwrap()
     }

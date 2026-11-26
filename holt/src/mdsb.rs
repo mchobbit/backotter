@@ -21,9 +21,9 @@ const LBS: usize = 224;
 const CSUM: usize = 216;
 const MAX_DEV: usize = 220;
 
-/// The kernel's calc_sb_1_csum: 32-bit words over 256 + 2 * max_dev bytes,
+/// The kernel's `calc_sb_1_csum`: 32-bit words over 256 + 2 * `max_dev` bytes,
 /// the checksum field as zero, the carry folded in.  None when `sb` is
-/// shorter than that (a max_dev too big for the superblock read).
+/// shorter than that (a `max_dev` too big for the superblock read).
 fn csum(sb: &[u8]) -> Option<u32> {
     let size = (le32(sb, MAX_DEV) as usize)
         .checked_mul(2)?
@@ -49,7 +49,7 @@ fn csum(sb: &[u8]) -> Option<u32> {
 /// # Errors
 ///
 /// When `dev` can't be opened, read or written, when no md v1 superblock is
-/// at `offset`, when its max_dev runs past the 4 KiB read, and when its
+/// at `offset`, when its `max_dev` runs past the 4 KiB read, and when its
 /// checksum doesn't match (the superblock is then left alone).
 pub fn set_logical_block_size(dev: &str, offset: u64, value: u32) -> Result<bool, String> {
     let mut f = OpenOptions::new()

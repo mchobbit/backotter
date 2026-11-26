@@ -4,8 +4,8 @@
 //! they're #[ignore]d: run them as root in a throwaway Debian 13 guest, a
 //! `vm-run --snapshot --memory 3072` of testvm's debian13-zfs (debian13 has
 //! no ZFS).  Build on the host (`cargo test --release --no-run --test
-//! root_stack`), copy both the test binary (target/release/deps/root_stack-*)
-//! and target/release/bko-holt into the guest (BKO_HOLT_BIN points at the
+//! root_stack`), copy both the test binary (`target/release/deps/root_stack`-*)
+//! and target/release/bko-holt into the guest (`BKO_HOLT_BIN` points at the
 //! copy; without it the tests look for the build host's path), and run:
 //!
 //!     BKO_HOLT_BIN=/root/bko-holt ./root_stack-* --ignored --test-threads 1

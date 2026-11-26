@@ -2,16 +2,16 @@
 //! commands, then a read-back of the disks to see the stage took.
 //!
 //! Without --commit a stage prints its commands and writes nothing.  Every
-//! command and its output goes to RUN_DIR/log/load.log, which `boot` copies
+//! command and its output goes to `RUN_DIR/log/load.log`, which `boot` copies
 //! into the restored system's /var/log/bko-holt/.
 //!
-//! Under --json (docs/design/holt-json.md, "bko-holt-events"; RT10f,
-//! RT10g) the same run writes its events as they happen: each command's
-//! output is read as it comes (run_cmd_json), its standard input is
+//! Under --json (docs/design/holt-json.md, "bko-holt-events"; `RT10f`,
+//! `RT10g`) the same run writes its events as they happen: each command's
+//! output is read as it comes (`run_cmd_json`), its standard input is
 //! /dev/null when the step gives none, it runs in a process group of its
 //! own, the archiver's status lines become `progress` and its `[WARN]`
 //! lines `warning`; SIGTERM stops the run between commands (the archiver's
-//! group gets SIGINT), and a --commit run holds RUN_DIR/load.lock.  The
+//! group gets SIGINT), and a --commit run holds `RUN_DIR/load.lock`.  The
 //! text the run would print is built all the same (the tests read it), but
 //! only standard error is printed.
 
@@ -30,9 +30,9 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// TEXT into the log, a password= item's value as <password>
-/// (crate::redact::scrub_passwords: LILO's copy of lilo.conf), whatever the
+/// (`crate::redact::scrub_passwords`: LILO's copy of lilo.conf), whatever the
 /// mode: the log goes to the restored /var/log/bko-holt and into
-/// report-bug's bundle (RustAudit1 HD1-01).
+/// report-bug's bundle (`RustAudit1` HD1-01).
 fn log_line(log: &mut Option<std::fs::File>, text: &str) {
     if let Some(f) = log {
         let text = crate::redact::scrub_passwords(text);
@@ -211,7 +211,7 @@ impl<'a> Events<'a> {
     }
 }
 
-/// What runs one step under run_core: run_cmd_json, run_cmd, or a test's
+/// What runs one step under `run_core`: `run_cmd_json`, `run_cmd`, or a test's
 /// stand-in.
 type Step<'a> = &'a dyn Fn(
     &Cmd,
@@ -221,7 +221,7 @@ type Step<'a> = &'a dyn Fn(
     &At,
 ) -> Result<Vec<String>, StepFail>;
 
-/// A step's log line: shell()'s, but under --json a private write's text
+/// A step's log line: `shell()`'s, but under --json a private write's text
 /// as its size and SHA-256 only (holt-json.md, "What differs under
 /// --json" 7).
 fn logged_shell(c: &Cmd) -> String {
@@ -290,7 +290,7 @@ fn fed_error(
     })
 }
 
-/// run_cmd under --json: the same command, the same log (but the
+/// `run_cmd` under --json: the same command, the same log (but the
 /// archiver's progress lines, of which the last is kept, and a private
 /// write's text), the same result; its standard input /dev/null when the
 /// step gives none, in a process group of its own with SIGINT at its
@@ -555,9 +555,9 @@ fn failure_code(c: &Cmd, s: Stage, f: &StepFail, sys: &Sys) -> FailureCode {
 /// Whether step C writes UEFI variables: efibootmgr, or a grub-install
 /// (grub2-install) for an EFI target (`--target=*-efi`) without
 /// --no-nvram.  A BIOS grub-install, and an EFI one with --no-nvram (as
-/// every one load builds), write none: their failure is cmd_failed's.  The
+/// every one load builds), write none: their failure is `cmd_failed`'s.  The
 /// program may stand anywhere in argv (after `chroot DIR`, or as the
-/// arguments of GRUB_BIOS_NILFS2's wrapper); a program named only inside
+/// arguments of `GRUB_BIOS_NILFS2`'s wrapper); a program named only inside
 /// an `sh -c` script isn't looked for (no step load builds has one).
 fn writes_efi_vars(c: &Cmd) -> bool {
     let named = |progs: &[&str]| {
@@ -595,12 +595,12 @@ fn state_of(layout: &Layout, opts: &Options, sys: &Sys, s: Stage) -> (State, Str
         .unwrap_or((State::Unknown, String::new()))
 }
 
-/// What runs one step: run_cmd, or a test's stand-in.
+/// What runs one step: `run_cmd`, or a test's stand-in.
 type Runner<'a> = &'a dyn Fn(&Cmd, &mut Option<std::fs::File>, &Sys) -> Result<Vec<String>, String>;
 
 /// The writing stages STAGES, as OPTS asks for them: the exit status, the
 /// text standard output would print, and standard error.  Under --json each
-/// command runs as run_cmd_json runs it, but no event is written (exec's
+/// command runs as `run_cmd_json` runs it, but no event is written (exec's
 /// own tests read the text).
 pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8, String, String) {
     if opts.json {
@@ -619,7 +619,7 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
 
 /// `load ... --json` with a writing stage (holt-json.md, "bko-holt-events"):
 /// run, each event written to SINK as it happens, stopped between commands
-/// once SIGTERM has come (crate::sys::catch_sigterm).  Standard output is
+/// once SIGTERM has come (`crate::sys::catch_sigterm`).  Standard output is
 /// the events alone: the text is dropped.
 pub fn json_run(
     layout: &Layout,
@@ -634,9 +634,9 @@ pub fn json_run(
     (code, String::new(), err)
 }
 
-/// run, each step run by STEP.  RUN_DIR's own files (the log, boot.done,
+/// run, each step run by STEP.  `RUN_DIR`'s own files (the log, boot.done,
 /// the copy marks, the partition records) are SYS's: with --commit SYS is
-/// the host's (--sysroot is refused), so they are RUN_DIR's; in a test,
+/// the host's (--sysroot is refused), so they are `RUN_DIR`'s; in a test,
 /// the test's tree.
 fn run_with(
     layout: &Layout,
@@ -1151,7 +1151,7 @@ fn run_core(
 // ---- one load at a time (J8) ---------------------------------------------
 
 /// The lock a --json --commit run holds for as long as it runs: a line of
-/// JSON, its pid and its start time (crate::sys::process_start), for a
+/// JSON, its pid and its start time (`crate::sys::process_start`), for a
 /// restarted bko-rescue to find it and for the stop to signal it.
 pub fn lock_path() -> String {
     format!("{RUN_DIR}/load.lock")
@@ -1172,7 +1172,7 @@ fn holder(path: &std::path::Path) -> Holder {
 }
 
 /// holder, the system booted at BOOT where that is known (Haiku's: there
-/// no start time tells a reused pid, and RUN_DIR outlives a reboot), when
+/// no start time tells a reused pid, and `RUN_DIR` outlives a reboot), when
 /// a lock written before it is stale whatever its pid.
 fn holder_since(path: &std::path::Path, boot: Option<std::time::SystemTime>) -> Holder {
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -1248,8 +1248,8 @@ struct Lock {
 }
 
 impl Lock {
-    /// Takes SYS's lock: made anew (O_EXCL), or taken over from a holder
-    /// that is gone.  A takeover holds RUN_DIR/load.lock.takeover (O_EXCL
+    /// Takes SYS's lock: made anew (`O_EXCL`), or taken over from a holder
+    /// that is gone.  A takeover holds `RUN_DIR/load.lock.takeover` (`O_EXCL`
     /// too) from its second look at the old lock until its own is written,
     /// so two runs that both found the old one stale can't both hold the
     /// lock (the second removing the first's new one).
@@ -1312,7 +1312,7 @@ impl Lock {
         Err(LockErr::Held(None))
     }
 
-    /// The lock at PATH made anew with LINE (O_EXCL), or None when there is
+    /// The lock at PATH made anew with LINE (`O_EXCL`), or None when there is
     /// one.  A lock whose line can't be written is removed, not left to
     /// read as one being written.
     fn make(path: &std::path::Path, line: &str) -> Result<Option<Lock>, LockErr> {
@@ -1526,7 +1526,7 @@ fn write_private(path: &str, text: &str) -> std::io::Result<()> {
     f.write_all(text.as_bytes())
 }
 
-/// A file a step writes.  Under RUN_DIR (bko-holt's own: keys, LVM
+/// A file a step writes.  Under `RUN_DIR` (bko-holt's own: keys, LVM
 /// metadata, lists) it's private, 0600 in 0700 directories.  Anywhere else
 /// it's the restored system's (Proxmox's /etc/kernel/proxmox-boot-uuids):
 /// written as before, an existing file keeping its mode and owner, a new
@@ -1564,14 +1564,14 @@ fn write_file(path: &str, text: &str, private: bool) -> Result<(), String> {
     written.map_err(|e| format!("{path}: {e}"))
 }
 
-/// A copy mark (status::restore_started_marker) at PATH, through SYS (the
-/// host's RUN_DIR, or a test's tree).
+/// A copy mark (`status::restore_started_marker`) at PATH, through SYS (the
+/// host's `RUN_DIR`, or a test's tree).
 fn write_mark(sys: &Sys, path: &str, text: &str) -> Result<(), String> {
     write_file(&sys.p(path).to_string_lossy(), text, false)
 }
 
-/// The partition stage's record of each table it wrote (target::table_record),
-/// through SYS as write_mark.
+/// The partition stage's record of each table it wrote (`target::table_record`),
+/// through SYS as `write_mark`.
 fn write_records(sys: &Sys, records: &[(String, String)]) -> Result<(), String> {
     for (path, text) in records {
         write_file(&sys.p(path).to_string_lossy(), text, false)?;
@@ -1595,7 +1595,7 @@ mod tests {
 
     /// A file written into the restored system (Proxmox's
     /// /etc/kernel/proxmox-boot-uuids, rewritten after proxmox-boot-tool
-    /// init) keeps the mode it has; only RUN_DIR's own files are made 0600.
+    /// init) keeps the mode it has; only `RUN_DIR`'s own files are made 0600.
     #[test]
     fn write_file_keeps_a_target_files_mode() {
         use std::os::unix::fs::PermissionsExt;
@@ -1879,7 +1879,7 @@ mod tests {
     /// A text run's log has a password= item's value as <password> (the
     /// copy of lilo.conf lilo runs on: its copy in the restored
     /// /var/log/bko-holt and report-bug's bundle come from the log), the
-    /// file itself as it is (RustAudit1 HD1-01).
+    /// file itself as it is (`RustAudit1` HD1-01).
     #[test]
     fn a_password_is_not_logged() {
         use crate::sys::FakeRunner;
@@ -2042,7 +2042,7 @@ mod tests {
     /// The sample layout's source disk as load partitioned it in this
     /// session (its table and this session's record), the tree mounted with
     /// a restored Debian in it, a private password file, and SYS's archiver
-    /// answering as BackOtter's.
+    /// answering as `BackOtter`'s.
     fn restored(name: &str, archiver: &str) -> (Tree, Sys, String) {
         use crate::load::layout::sample;
         use crate::sys::FakeRunner;
@@ -2211,7 +2211,7 @@ mod tests {
         )
     }
 
-    /// The restore stage run by a stand-in for run_cmd that records each
+    /// The restore stage run by a stand-in for `run_cmd` that records each
     /// step's command line and the marks as it ran, and fails the steps
     /// FAIL picks.  Its exit, standard error, and what it saw.
     fn restore_with(
@@ -2324,7 +2324,7 @@ mod tests {
 
     /// A partition stage that runs removes both copy marks (the disks are
     /// new again), and boot.done only under --json; it records its table
-    /// in SYS's RUN_DIR.
+    /// in SYS's `RUN_DIR`.
     #[test]
     fn the_partition_stage_clears_the_copy_marks() {
         let (t, s, l) = restored("load-exec-partition", "/usr/sbin/rustic-bko");
@@ -2375,7 +2375,7 @@ mod tests {
     use crate::testutil::Tree;
     use std::cell::{Cell, RefCell};
 
-    /// run_core with STEP and STOP, its events read back: the exit, the
+    /// `run_core` with STEP and STOP, its events read back: the exit, the
     /// events, standard error.  Each event is one line within the
     /// reader's limit.
     fn events_with(
@@ -2439,7 +2439,7 @@ mod tests {
 
     /// The start event, then the stream's own order: every stage it names
     /// either skipped or run; inside a stage cmd, (progress, warning),
-    /// cmd_done; stage_done or failed; end last, once.
+    /// `cmd_done`; `stage_done` or failed; end last, once.
     fn assert_order(evs: &[Value]) {
         let n = names(evs);
         assert_eq!(n.first(), Some(&"start"), "{n:?}");
@@ -2478,7 +2478,7 @@ mod tests {
     }
 
     /// Without --commit, under --json: every stage the run asks for, boot
-    /// and close too (J11), its commands as `would`, no cmd_done, each stage
+    /// and close too (J11), its commands as `would`, no `cmd_done`, each stage
     /// done unchecked; nothing run; end 0.  Text mode, as ever, stops at boot.
     #[test]
     fn a_dry_run_ticks_through_every_stage() {
@@ -2598,7 +2598,7 @@ mod tests {
         );
     }
 
-    /// With --commit: each step a cmd and its cmd_done, the stage done and
+    /// With --commit: each step a cmd and its `cmd_done`, the stage done and
     /// checked, end 0, the lock held while it ran and gone after.
     #[test]
     fn a_commit_run_reports_each_step() {
@@ -2678,7 +2678,7 @@ mod tests {
         );
     }
 
-    /// A `warns` command's warnings: inside it, before its cmd_done, and
+    /// A `warns` command's warnings: inside it, before its `cmd_done`, and
     /// on standard error as text mode prints them.  The lock is gone by the
     /// time `end` is written.
     #[test]
@@ -2752,8 +2752,8 @@ mod tests {
         );
     }
 
-    /// A step that fails: its cmd_done, then failed with its code, then end
-    /// 1; no stage_done, no complete mark.  Problems: nothing runs.
+    /// A step that fails: its `cmd_done`, then failed with its code, then end
+    /// 1; no `stage_done`, no complete mark.  Problems: nothing runs.
     #[test]
     fn a_failure_and_problems_end_the_stream() {
         let (t, s, l) = restored("load-exec-ev-fail", "/usr/sbin/rustic-bko");
@@ -2850,7 +2850,7 @@ mod tests {
     }
 
     /// A stop asked for while a step runs: that step ends, then stopping,
-    /// and end with stopped, exit 5; no later step, no stage_done, no
+    /// and end with stopped, exit 5; no later step, no `stage_done`, no
     /// complete mark.
     #[test]
     fn a_stop_ends_between_commands() {
@@ -2962,7 +2962,7 @@ mod tests {
         t.p("/fake-rustic").to_string_lossy().into_owned()
     }
 
-    /// run_cmd_json of C with T's log, its events, STOP: the result, the
+    /// `run_cmd_json` of C with T's log, its events, STOP: the result, the
     /// events, the log.
     fn stream(
         t: &Tree,
@@ -3105,7 +3105,7 @@ mod tests {
     /// fills both pipes, and reads its input only after, runs to its end,
     /// all of it logged (in text mode too, its input written beside the
     /// reading); with no input given, standard input is /dev/null; a
-    /// failure is worded as run_cmd words it, given input or not.
+    /// failure is worded as `run_cmd` words it, given input or not.
     #[test]
     fn streamed_children() {
         let t = Tree::new("load-exec-ev-pipes");
@@ -3485,7 +3485,7 @@ mod tests {
 
     /// The lock: one holder at a time, let go when its run ends, taken over
     /// from a process that's gone; text mode's --commit refuses while a
-    /// live one is held, and a --json run fails with lock_held.
+    /// live one is held, and a --json run fails with `lock_held`.
     #[test]
     fn one_load_at_a_time() {
         let (t, s, l) = restored("load-exec-ev-lock", "/usr/sbin/rustic-bko");
@@ -3627,10 +3627,10 @@ mod tests {
         assert!(!at.exists());
     }
 
-    /// The environment variable panic_child runs under.
+    /// The environment variable `panic_child` runs under.
     const PANIC_CHILD: &str = "BKO_HOLT_TEST_PANIC_CHILD";
 
-    /// In a child of its own (a_panic_ends_the_stream's): armed, a run
+    /// In a child of its own (`a_panic_ends_the_stream`'s): armed, a run
     /// begun, then a panic of the main thread's while a command runs in a
     /// group of its own; or ("early") a panic before the run's `start`.
     #[test]

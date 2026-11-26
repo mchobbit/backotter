@@ -102,15 +102,15 @@ pub fn parse_conf(text: &str) -> Vec<(String, String)> {
 }
 
 /// A provider's name as rc.d/geli and the loader put it in a variable's
-/// name: gpt/zfs0 is gpt_zfs0.
+/// name: gpt/zfs0 is `gpt_zfs0`.
 fn var_name(dev: &str) -> String {
     dev.trim_start_matches("/dev/")
         .replace(['/', '-', '.'], "_")
 }
 
 /// The key files that unlock a provider known by any of `names`, in order:
-/// loader.conf's geli_X_keyfileN_name (N's order, for a boot provider), then
-/// rc.conf's geli_X_flags' -k (rc.d/geli, for one in geli_devices); and
+/// loader.conf's `geli_X_keyfileN_name` (N's order, for a boot provider), then
+/// rc.conf's `geli_X_flags`' -k (rc.d/geli, for one in `geli_devices`); and
 /// whether rc.d/geli attaches it with -p (no passphrase).
 pub fn keyfiles(
     names: &[String],
@@ -240,7 +240,7 @@ fn provider_size(sys: &Sys, dev: &str, part_size: u64, m: &Meta) -> u64 {
 /// A GELI partition's `geli` record, for `dump`: its metadata, the
 /// provider it's attached as and what's in it, and what unlocks it.  The
 /// contents inside an attached one are given back, by the provider's name,
-/// for zfs_section; `part_extra` gets what belongs to the partition itself
+/// for `zfs_section`; `part_extra` gets what belongs to the partition itself
 /// (/.snap of a UFS inside, as for a plain UFS).
 pub fn dump_partition(
     sys: &Sys,
@@ -368,7 +368,7 @@ pub fn mark_swap(v: Value, file: &str, seen: &Seen) -> Value {
     }
 }
 
-/// What unlocks a GELI provider: the dump's keyed_by.
+/// What unlocks a GELI provider: the dump's `keyed_by`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KeyedBy {
     /// A passphrase only.
@@ -377,8 +377,8 @@ enum KeyedBy {
     Keyfile,
     /// Key files and a passphrase.
     Both,
-    /// A keyed_by this holt doesn't know (a newer dump's): none of the
-    /// three, so load refuses it (geli_refusals) rather than make it with
+    /// A `keyed_by` this holt doesn't know (a newer dump's): none of the
+    /// three, so load refuses it (`geli_refusals`) rather than make it with
     /// a temporary key that boot never replaces.
     Unknown,
 }
@@ -395,7 +395,7 @@ impl KeyedBy {
     }
 
     /// The dump's word; a layout without one (or not a string) is keyed by
-    /// a passphrase, as a dump before keyed_by was.
+    /// a passphrase, as a dump before `keyed_by` was.
     fn of_json(v: Option<&Value>) -> KeyedBy {
         match v.and_then(Value::as_str).unwrap_or("passphrase") {
             "passphrase" => KeyedBy::Passphrase,
@@ -540,10 +540,10 @@ fn prompt(src: &str, file: &str) -> Cmd {
 }
 
 /// The longest GELI passphrase the restored system's boot prompt takes
-/// back: the loader's geliboot and the kernel's g_eli prompt read into a
-/// 256-byte buffer with its NUL (FreeBSD's GELI_PW_MAXLEN in
-/// stand/libsa/geli/geliboot.h, g_eli_taste's passphrase[256]; geli -J
-/// itself takes 1023, checked 2026-11-24 for holt-json.md's RT10c Check).
+/// back: the loader's geliboot and the kernel's `g_eli` prompt read into a
+/// 256-byte buffer with its NUL (FreeBSD's `GELI_PW_MAXLEN` in
+/// stand/libsa/geli/geliboot.h, `g_eli_taste`'s passphrase[256]; geli -J
+/// itself takes 1023, checked 2026-11-24 for holt-json.md's `RT10c` Check).
 const GELI_PASS_MAX: u64 = 255;
 
 pub(crate) fn tmp_key(src: &str) -> String {
@@ -1024,7 +1024,7 @@ impl Builder<'_> {
 mod tests {
     use super::*;
 
-    /// keyed_by's words, typed (RustAudit1 H9-15): each the dump writes
+    /// `keyed_by`'s words, typed (`RustAudit1` H9-15): each the dump writes
     /// reads back as itself, a missing or non-string one as a passphrase,
     /// and any other word as none of the three.
     #[test]
@@ -1389,7 +1389,7 @@ mod tests {
 
     /// machdep.bootmethod says UEFI or BIOS; without its answer (no such
     /// sysctl, or no sysctl) the firmware is unknown, with a warning, never
-    /// bios (other::firmware_unknown).
+    /// bios (`other::firmware_unknown`).
     #[test]
     fn firmware_unknown_without_bootmethod() {
         let mode = |r: crate::sys::FakeRunner| {
@@ -1655,7 +1655,7 @@ mod tests {
     }
 
     /// Under --json nothing prompts (holt-json.md): no /dev/tty question
-    /// is built, and the passphrase nobody gave is key_needed; the question
+    /// is built, and the passphrase nobody gave is `key_needed`; the question
     /// is in the plan's keys either way.  Text mode asks as before.
     #[test]
     fn json_asks_no_passphrase_on_the_terminal() {
@@ -1951,10 +1951,10 @@ mod tests {
         );
     }
 
-    /// RustAudit1 HD3-01: a root pool on a provider keyed by both a
+    /// `RustAudit1` HD3-01: a root pool on a provider keyed by both a
     /// passphrase and a key file (geli init -K /boot/geli.key), loaded under
     /// --json with no --key-file.  Its passphrase is a question (unlock
-    /// "passphrase", key_needed), so the plan is refused before anything is
+    /// "passphrase", `key_needed`), so the plan is refused before anything is
     /// written, and no stage builds a /dev/tty prompt: never a full restore
     /// whose boot can't ask, with the temporary key the provider's only one.
     #[test]

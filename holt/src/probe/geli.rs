@@ -1,5 +1,5 @@
-//! FreeBSD's GELI (geom_eli) metadata, in the provider's last 512-byte
-//! sector (struct g_eli_metadata, sys/geom/eli/g_eli.h): what `geli init`
+//! FreeBSD's GELI (`geom_eli`) metadata, in the provider's last 512-byte
+//! sector (struct `g_eli_metadata`, `sys/geom/eli/g_eli.h)`: what `geli init`
 //! needs to make the same provider again.  Only the fields before the salt
 //! are read (offsets 0..47); the salt, the encrypted master keys and the
 //! MD5 hash after them never leave this function.
@@ -17,12 +17,12 @@ use crate::bytes::{ByteSource, le16, le32, le64};
 use crate::json::{Obj, Value};
 
 pub const MAGIC: &[u8] = b"GEOM::ELI";
-/// G_ELI_VERSION in FreeBSD 15: the newest metadata version there is.
+/// `G_ELI_VERSION` in FreeBSD 15: the newest metadata version there is.
 pub const VERSION_MAX: u32 = 7;
 /// The bytes of the sector that are decoded: the salt starts here.
 const KEPT: usize = 47;
 
-/// md_flags' bits that are kept on disk (g_eli.h's "on-disk" flags), by
+/// `md_flags`' bits that are kept on disk (`g_eli.h`'s "on-disk" flags), by
 /// the names `geli list` prints them under.
 pub const FLAGS: [(u32, &str); 10] = [
     (0x001, "ONETIME"),
@@ -44,7 +44,7 @@ pub const FLAG_GELIDISPLAYPASS: u32 = 0x100;
 pub const FLAG_AUTORESIZE: u32 = 0x200;
 
 /// sys/opencrypto/cryptodev.h's numbers for the algorithms GELI has used,
-/// with geli's names for them (g_eli_algo2str).  3DES, Blowfish and
+/// with geli's names for them (`g_eli_algo2str`).  3DES, Blowfish and
 /// HMAC/MD5 are older releases'; FreeBSD 15's geli makes none of them.
 pub const EALGOS: [(u16, &str); 6] = [
     (2, "3DES-CBC"),
@@ -62,7 +62,7 @@ pub const AALGOS: [(u16, &str); 6] = [
     (19, "HMAC/SHA384"),
     (20, "HMAC/SHA512"),
 ];
-/// What FreeBSD 15's kernel takes (eli_metadata_crypto_supported), so what
+/// What FreeBSD 15's kernel takes (`eli_metadata_crypto_supported`), so what
 /// the rescue system's geli can make.
 pub const EALGOS_MADE: [u16; 4] = [11, 16, 21, 22];
 pub const AALGOS_MADE: [u16; 5] = [7, 8, 18, 19, 20];
@@ -159,7 +159,7 @@ impl Meta {
         self.flags & FLAG_AUTH != 0
     }
 
-    /// The key slots in use (md_keys' bits).
+    /// The key slots in use (`md_keys`' bits).
     pub fn slots(&self) -> Vec<u64> {
         (0..2).filter(|i| self.keys & (1 << i) != 0).collect()
     }

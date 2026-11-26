@@ -168,14 +168,14 @@ pub struct Options {
     pub btrfs_copy: bool,
     /// --pools NAME[,NAME]: only these ZFS pools and their disks are
     /// planned; the layout's other pools are left untouched
-    /// (layout.rs only_pools).  Empty: every pool.
+    /// (layout.rs `only_pools`).  Empty: every pool.
     pub pools: Vec<String>,
     /// --new-machine: an encrypted Ubuntu Core restored to another TPM (or
     /// other Secure Boot variables) boots recover mode first
     /// (load/snapcore.rs).
     pub new_machine: bool,
     /// --luks-header-dir DIR: where the LUKS2 headers the dump kept are
-    /// (crate::luksheader); else beside the layout.
+    /// (`crate::luksheader`); else beside the layout.
     pub luks_header_dir: Option<String>,
     /// For tests: read the system load runs on from this tree, running no
     /// commands.
@@ -183,7 +183,7 @@ pub struct Options {
     /// --json: the run writes bko-rescue's documents on standard output
     /// instead of text (docs/design/holt-json.md; jsonout.rs).
     pub json: bool,
-    /// --expect-plan SHA256 (--json only): the plan document's plan_sha256
+    /// --expect-plan SHA256 (--json only): the plan document's `plan_sha256`
     /// this run must have, or it's a plan problem (J20).
     pub expect_plan: Option<String>,
     /// load's arguments as given, for the plan document's `args`.
@@ -334,9 +334,9 @@ Exit status: 0 done, 1 a stage failed, 2 bad arguments, 3 the layout isn't
 one bko-holt can load, 4 plan found problems.
 ";
 
-/// The flags parse_args takes a value after: the table `--json`'s first pass
-/// walks (jsonout::find_json_flag), so that `--snapshot --json` names a
-/// snapshot and isn't the flag.  parse_args asserts every flag it takes a
+/// The flags `parse_args` takes a value after: the table `--json`'s first pass
+/// walks (`jsonout::find_json_flag`), so that `--snapshot --json` names a
+/// snapshot and isn't the flag.  `parse_args` asserts every flag it takes a
 /// value for is here, and a test that every one here takes one.
 pub const VALUE_FLAGS: &[&str] = &[
     "--through",
@@ -546,7 +546,7 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
 }
 
 /// `bko-holt load ARGS`: prints the result and returns the exit status.
-/// Each run is recorded in RUN_DIR for `bko-holt report-bug`.
+/// Each run is recorded in `RUN_DIR` for `bko-holt report-bug`.
 pub fn main(args: &[String]) -> u8 {
     let (code, err) = main_inner(args);
     eprint!("{err}");
@@ -675,8 +675,8 @@ fn main_inner(args: &[String]) -> (u8, String) {
 /// Runs what `opts` asks for on `sys` (the system load runs on, whose disks
 /// are the targets): the exit status, standard output and standard error,
 /// neither of them with a password= item's value in it (a dry run's copy
-/// of lilo.conf, a Problem that quotes an item; crate::redact::
-/// scrub_passwords, RustAudit1 HD1-01).
+/// of lilo.conf, a Problem that quotes an item; `crate::redact::`
+/// `scrub_passwords`, `RustAudit1` HD1-01).
 pub fn run(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String) {
     let (code, out, err) = run_raw(opts, layout_text, sys);
     let shown = |t: &str| crate::redact::scrub_passwords(t).into_owned();
@@ -750,7 +750,7 @@ fn run_raw(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String)
     }
 }
 
-/// The source-to-target disk pairs `plan` makes of LAYOUT_TEXT here, with
+/// The source-to-target disk pairs `plan` makes of `LAYOUT_TEXT` here, with
 /// OPTS's --map or else by WWID or serial (report-bug gives them as --map to
 /// a run on the redacted layout, whose serials match no disk).
 pub fn disk_pairs(opts: &Options, layout_text: &str, sys: &Sys) -> Vec<(String, String)> {
@@ -765,7 +765,7 @@ pub fn disk_pairs(opts: &Options, layout_text: &str, sys: &Sys) -> Vec<(String, 
 }
 
 /// The suffix `report-bug` gives a boot-area or ESP image's key when it
-/// leaves the image out of a report (KEY_omitted: its size and CRC-32).
+/// leaves the image out of a report (`KEY_omitted`: its size and CRC-32).
 pub const OMITTED: &str = "_omitted";
 
 /// Whether V has an image `report-bug` left out: such a layout can be
@@ -812,7 +812,7 @@ mod tests {
     /// lilo.conf's global items and another in its image's: neither is in
     /// what load prints, its plan, a dry run of the boot stage (which
     /// writes the copy of lilo.conf lilo runs on) or the plan document
-    /// (RustAudit1 HD1-01).
+    /// (`RustAudit1` HD1-01).
     #[test]
     fn lilo_passwords_are_never_shown() {
         use crate::sys::FakeRunner;
@@ -879,7 +879,7 @@ mod tests {
         shown("the plan document", &out, &err);
     }
 
-    /// RT10i: under --json, plan and status runs leave last-load.json to
+    /// `RT10i`: under --json, plan and status runs leave last-load.json to
     /// the writing run before them; text mode records every run but
     /// --help, as ever.
     #[test]

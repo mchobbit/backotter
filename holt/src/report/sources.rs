@@ -1,4 +1,4 @@
-//! storage.backup_sources: the filesystems a whole-system backup reads,
+//! `storage.backup_sources`: the filesystems a whole-system backup reads,
 //! and where each is mounted for it.
 
 use crate::json::{Obj, Value};
@@ -7,9 +7,9 @@ use std::collections::BTreeMap;
 
 /// One filesystem a whole-system backup reads: the tree it's mounted in
 /// (`path`, fstab's mount point), where the running system has it (`from`),
-/// and what it is.  A filesystem the running system doesn't mount (ABRoot's
-/// `init` and other root, crate::abroot; an inactive ZFS boot environment's
-/// datasets, crate::zfs_be) has no `from`: its `mount` says
+/// and what it is.  A filesystem the running system doesn't mount (`ABRoot`'s
+/// `init` and other root, `crate::abroot`; an inactive ZFS boot environment's
+/// datasets, `crate::zfs_be`) has no `from`: its `mount` says
 /// how a backup mounts it at `path` (read-only) for the backup, and `note`
 /// says so in words.  `mount` and `note` are in the JSON only when set.
 #[derive(Debug, Clone, PartialEq)]
@@ -24,7 +24,7 @@ pub struct BackupSource {
     pub note: Option<String>,
 }
 
-/// The mount a backup makes for a BackupSource without a `from`:
+/// The mount a backup makes for a `BackupSource` without a `from`:
 /// `mount -t FSTYPE -o OPTIONS DEVICE PATH`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MountHint {
@@ -57,9 +57,9 @@ impl BackupSource {
     }
 }
 
-/// storage.backup_sources: the filesystems a whole-system backup reads,
+/// `storage.backup_sources`: the filesystems a whole-system backup reads,
 /// laid out as fstab mounts them, one per path, sorted by path (parents
-/// first).  Aliases (mounts::alias_of) are left out: their files are in the
+/// first).  Aliases (`mounts::alias_of`) are left out: their files are in the
 /// mount they're a directory of.  On an ostree system each mount takes the
 /// mount point of the fstab entry it is, matched by (device, subvol=) since
 /// the targets differ (fstab's `/` is the running /sysroot, `/home` is
@@ -134,7 +134,7 @@ pub fn backup_sources(
     out.into_values().collect()
 }
 
-/// The fstab entries backup_sources has no path for: each one a running
+/// The fstab entries `backup_sources` has no path for: each one a running
 /// system mounts (a filesystem, not swap, `noauto`, a bind or a pseudo
 /// filesystem) whose mount point no source took, as `FILE (SPEC -> DEVICE)`.
 /// On an ostree system each is a mount that stays at its running path (or a
@@ -174,16 +174,16 @@ pub fn unmatched_fstab(
 }
 
 /// The mounts that aren't backup sources after all:
-///   - with --only-disk (ONLY_DISK), a block device's mount that isn't on a
+///   - with --only-disk (`ONLY_DISK`), a block device's mount that isn't on a
 ///     kept disk (its device isn't in the dump: the backup drive, a USB
-///     stick), as BackShot1's own tree (bs1-common internal_mounts) leaves
+///     stick), as `BackShot1`'s own tree (bs1-common `internal_mounts`) leaves
 ///     them out;
 ///   - a runtime store of ZFS raw/hex key files under /run that fstab
 ///     doesn't mount (Ubuntu's keystore, LUKS on the zvol POOL/keystore,
 ///     which the initramfs mounts at /run/keystore/POOL): it is the deepest
 ///     mount above an encryption root's file:// keylocation, its device is in
 ///     the dump, and load writes a new key there (load/commands.rs
-///     keystores(), which writes keys only where this leaves the mount
+///     `keystores()`, which writes keys only where this leaves the mount
 ///     out, and otherwise asks for --key-file), so the old key isn't backed
 ///     up, nor restored into the root's /run.  Such a mount anywhere else
 ///     (a .mount unit at /keys) is backed up.
@@ -250,7 +250,7 @@ pub fn not_backed_up(
 }
 
 /// A ZFS dataset mounted at more than one path, its whole tree each time
-/// (TrueNAS's boot-pool/.system/cores, at /var/db/system/cores and
+/// (`TrueNAS`'s boot-pool/.system/cores, at /var/db/system/cores and
 /// /var/lib/systemd/coredump): backed up once, at its first path, whose
 /// note names the others; load mounts it there only (the restored system
 /// mounts it again where it wants it).

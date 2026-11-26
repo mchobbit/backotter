@@ -1,6 +1,6 @@
 //! OpenBSD's softraid volumes (docs/design/openbsd-crypto.md).  `dump`
 //! reports each volume `bioctl softraid0` lists as a virtual disk on its
-//! chunks (storage.softraid_volumes), with its level, its chunks, what
+//! chunks (`storage.softraid_volumes`), with its level, its chunks, what
 //! unlocks a CRYPTO one and its KDF rounds (read off the chunk's softraid
 //! metadata), and the volume's own MBR, disklabel and partitions as a
 //! plain disk's.  No key material is read or kept.
@@ -95,18 +95,18 @@ pub fn parse_bioctl(text: &str) -> Vec<Volume> {
     out
 }
 
-/// Where a chunk's softraid metadata starts: SR_META_OFFSET, 16 blocks of
-/// 512 bytes; and how much of it dump reads (SR_META_SIZE, 64 blocks).
+/// Where a chunk's softraid metadata starts: `SR_META_OFFSET`, 16 blocks of
+/// 512 bytes; and how much of it dump reads (`SR_META_SIZE`, 64 blocks).
 pub const META_OFFSET: u64 = 16 * 512;
 pub const META_LEN: usize = 64 * 512;
 
-/// The KDF hint types (SR_CRYPTOKDFT_*).
+/// The KDF hint types (`SR_CRYPTOKDFT`_*).
 pub const KDF_PBKDF2: u32 = 1;
 pub const KDF_KEYDISK: u32 = 2;
 pub const KDF_BCRYPT_PBKDF: u32 = 3;
 
 /// A CRYPTO volume's KDF hint, from its chunk's metadata: the type, and the
-/// rounds of a passphrase's (PBKDF2 or bcrypt_pbkdf).
+/// rounds of a passphrase's (PBKDF2 or `bcrypt_pbkdf`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct KdfHint {
     pub kind: u32,
@@ -124,9 +124,9 @@ impl KdfHint {
     }
 }
 
-/// The KDF hint in a chunk's softraid metadata (`meta`, from META_OFFSET):
-/// struct sr_metadata (168 bytes; magic "marcCRAM", version 6), a struct
-/// sr_meta_chunk (92 bytes) per chunk, then the optional metadata, each a
+/// The KDF hint in a chunk's softraid metadata (`meta`, from `META_OFFSET)`:
+/// struct `sr_metadata` (168 bytes; magic "marcCRAM", version 6), a struct
+/// `sr_meta_chunk` (92 bytes) per chunk, then the optional metadata, each a
 /// header (type, length) and its body.  The CRYPTO one's (type 1) holds the
 /// hint 2152 bytes in: len, type, rounds, salt.  None for anything else.
 pub fn kdf_hint(meta: &[u8]) -> Option<KdfHint> {
@@ -329,12 +329,12 @@ fn find_volume(chunk: &str) -> String {
 }
 
 /// The longest softraid passphrase both bioctl -p and the restored system's
-/// boot prompt take: the boot loader's sr_crypto_passphrase_decrypt reads
-/// up to 1023 characters (PASSPHRASE_LENGTH 1024, with its NUL), but
-/// bioctl's derive_key reads the file's first line with fgets into 1024
+/// boot prompt take: the boot loader's `sr_crypto_passphrase_decrypt` reads
+/// up to 1023 characters (`PASSPHRASE_LENGTH` 1024, with its NUL), but
+/// bioctl's `derive_key` reads the file's first line with fgets into 1024
 /// bytes and wants its newline among them, so 1022 and the newline
 /// (OpenBSD's sys/lib/libsa/softraid.c and sbin/bioctl/bioctl.c, checked
-/// 2026-11-24 for holt-json.md's RT10c Check).
+/// 2026-11-24 for holt-json.md's `RT10c` Check).
 const SOFTRAID_PASS_MAX: u64 = 1022;
 
 /// The passphrase file bioctl -p reads: a copy of --key-file's, owned by
@@ -642,7 +642,7 @@ mod tests {
     const DUID: &str = "739d98841b65e745";
 
     /// A chunk's softraid metadata as kdf-rounds.txt describes the guest's:
-    /// one chunk, the CRYPTO optional metadata, its bcrypt_pbkdf hint (len
+    /// one chunk, the CRYPTO optional metadata, its `bcrypt_pbkdf` hint (len
     /// 140, type 3, `rounds`) at byte 2412, then a salt.
     fn metadata(kind: u32, rounds: u32) -> Vec<u8> {
         let mut m = vec![0u8; META_LEN];
@@ -1179,7 +1179,7 @@ mod tests {
         );
     }
 
-    /// Under --json bioctl's question is key_needed (holt-json.md); the
+    /// Under --json bioctl's question is `key_needed` (holt-json.md); the
     /// volume is in the plan's keys, by its name and its DUID.
     #[test]
     fn json_asks_for_the_volumes_passphrase() {

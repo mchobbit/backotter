@@ -29,7 +29,7 @@ pub(crate) struct StoreSystem {
     pub store: &'static str,
     /// What the plan calls the store.
     pub store_name: &'static str,
-    /// The current system's tool directories (sys.rs's SYSTEM_PATH holds
+    /// The current system's tool directories (sys.rs's `SYSTEM_PATH` holds
     /// them, so the dump runs btrfs, cryptsetup and efibootmgr from there;
     /// the test that says so is what reads this).
     #[cfg(test)]
@@ -651,7 +651,7 @@ pub(crate) fn root_arg(a: &str) -> Option<&str> {
 
 /// The partition grub-install's BIOS core.img (/boot/grub/i386-pc/core.img)
 /// names by number in its prefix ("gpt3" of "(,gpt3)/@/boot/grub",
-/// load/grubprefix.rs core_prefix): load writes that core.img back as it
+/// load/grubprefix.rs `core_prefix)`: load writes that core.img back as it
 /// is (the store holds no GRUB), so a layout that numbers /boot/grub's
 /// partition otherwise would stop in grub rescue, and load refuses it
 /// (load/commands.rs, the store BIOS arm).  None without a core.img, or

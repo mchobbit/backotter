@@ -1,38 +1,38 @@
-//! ZFSBootMenu (docs/design/zfsbootmenu.md): how dump tells an ESP's EFI
-//! image is ZFSBootMenu's, and what it records of it and of the boot
+//! `ZFSBootMenu` (docs/design/zfsbootmenu.md): how dump tells an ESP's EFI
+//! image is `ZFSBootMenu`'s, and what it records of it and of the boot
 //! environments it chooses among (boot.zfsbootmenu).
 //!
-//! A ZFSBootMenu image is a Linux unified kernel image: a PE file built on
+//! A `ZFSBootMenu` image is a Linux unified kernel image: a PE file built on
 //! systemd's EFI stub, with the sections `.osrel`, `.cmdline`, `.initrd`
 //! and `.linux` (the v3.1.0 release EFI: also `.sbat`, `.sdmagic`
-//! "#### LoaderInfo: systemd-stub 256.6 ####", and an embedded command
-//! line "quiet loglevel=0 nomodeset").  Nothing in it says ZFSBootMenu in
+//! "#### `LoaderInfo`: systemd-stub 256.6 ####", and an embedded command
+//! line "quiet loglevel=0 nomodeset").  Nothing in it says `ZFSBootMenu` in
 //! plain bytes: its `.osrel` is the build system's os-release (the release
 //! image's says Void Linux, as generate-zbm copies the host's
 //! /etc/os-release), and its menu's scripts are in the zstd-compressed
-//! initramfs.  So a unified kernel image on an ESP is taken for ZFSBootMenu
+//! initramfs.  So a unified kernel image on an ESP is taken for `ZFSBootMenu`
 //! when one of these holds (the first that does is its `why`):
 //!
-//! - its `.osrel` names ZFSBootMenu (a build that says so);
+//! - its `.osrel` names `ZFSBootMenu` (a build that says so);
 //! - its path on the ESP is in a directory `ZBM` or `zfsbootmenu` (the
 //!   guides' `EFI/ZBM/VMLINUZ.EFI`, generate-zbm's `EFI/zbm`), or its file
 //!   name starts with `zfsbootmenu` (the release's file name);
 //! - its embedded command line has a `zbm.` argument;
-//! - the running system's / is a ZFS boot environment (crate::zfs_be's
-//!   ZFSBootMenu rule) and the embedded command line names no `root=`: a
+//! - the running system's / is a ZFS boot environment (`crate::zfs_be`'s
+//!   `ZFSBootMenu` rule) and the embedded command line names no `root=`: a
 //!   distribution's own unified image must say where its root is;
-//! - it is a byte copy (esp_inventory's `same_as`) of one of the above.
+//! - it is a byte copy (`esp_inventory`'s `same_as`) of one of the above.
 //!
-//! Its version is recorded only when its `.osrel` names ZFSBootMenu; the
+//! Its version is recorded only when its `.osrel` names `ZFSBootMenu`; the
 //! release image's identity is its SHA-256, with its kernel's version (the
 //! bzImage's own string) and stub beside it.
 //!
-//! The boot environments are crate::zfs_be::list's, ZFSBootMenu's rule;
+//! The boot environments are `crate::zfs_be::list`'s, `ZFSBootMenu`'s rule;
 //! for each, the kernels and initramfs files in its own /boot, which
-//! ZFSBootMenu boots from: the booted one's from the running tree, an
+//! `ZFSBootMenu` boots from: the booted one's from the running tree, an
 //! inactive one's through a private read-only mount under /run/bko-holt,
-//! unmounted at once (as crate::boot::read_unmounted_esp reads an ESP).  A
-//! BE whose key isn't loaded can't be read: crate::zfs_be::backup_sources
+//! unmounted at once (as `crate::boot::read_unmounted_esp` reads an ESP).  A
+//! BE whose key isn't loaded can't be read: `crate::zfs_be::backup_sources`
 //! already warns of it, and its entry says `read: false`.
 
 use crate::json::{Obj, Value};
@@ -40,7 +40,7 @@ use crate::sys::{RUN_DIR, RoMountWords, Sys, safe_name};
 use crate::zfs_be::{BootEnv, Rule};
 use std::io::{Read, Seek, SeekFrom};
 
-/// ZFSBootMenu's per-BE kernel command line (user property).
+/// `ZFSBootMenu`'s per-BE kernel command line (user property).
 pub(crate) const COMMANDLINE: &str = "org.zfsbootmenu:commandline";
 
 /// One section of a PE image: its name, where its bytes are in the file
@@ -117,7 +117,7 @@ impl Uki {
             .map(|(_, v)| v.as_str())
     }
 
-    /// Whether its .osrel says ZFSBootMenu.
+    /// Whether its .osrel says `ZFSBootMenu`.
     pub(crate) fn names_zbm(&self) -> bool {
         ["NAME", "ID", "PRETTY_NAME"].iter().any(|k| {
             self.osrel(k)
@@ -125,14 +125,14 @@ impl Uki {
         })
     }
 
-    /// Its .osrel's PRETTY_NAME, or NAME.
+    /// Its .osrel's `PRETTY_NAME`, or NAME.
     pub(crate) fn osrel_name(&self) -> Option<String> {
         self.osrel("PRETTY_NAME")
             .or_else(|| self.osrel("NAME"))
             .map(str::to_string)
     }
 
-    /// ZFSBootMenu's version, when its .osrel is ZFSBootMenu's own.
+    /// `ZFSBootMenu`'s version, when its .osrel is `ZFSBootMenu`'s own.
     pub(crate) fn version(&self) -> Option<String> {
         self.names_zbm()
             .then(|| {
@@ -216,12 +216,12 @@ pub(crate) fn read_uki(sys: &Sys, abs: &str) -> Option<Uki> {
     })
 }
 
-/// One ZFSBootMenu image on a mounted ESP.
+/// One `ZFSBootMenu` image on a mounted ESP.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Image {
     pub esp_device: String,
     pub esp_mount: String,
-    /// Its path on the ESP, as esp_inventory lists it (`EFI/ZBM/VMLINUZ.EFI`).
+    /// Its path on the ESP, as `esp_inventory` lists it (`EFI/ZBM/VMLINUZ.EFI`).
     pub path: String,
     pub size: u64,
     pub sha256: String,
@@ -247,7 +247,7 @@ impl Image {
     }
 }
 
-/// Why the unified image at PATH (on an ESP) is ZFSBootMenu's, if it is
+/// Why the unified image at PATH (on an ESP) is `ZFSBootMenu`'s, if it is
 /// (the module's rules, less the copies).
 fn zbm_why(path: &str, uki: &Uki, root_is_be: bool) -> Option<String> {
     if uki.names_zbm() {
@@ -278,9 +278,9 @@ fn zbm_why(path: &str, uki: &Uki, root_is_be: bool) -> Option<String> {
     None
 }
 
-/// The ZFSBootMenu images on the mounted ESPs (device, mount point,
-/// esp_inventory's contents), in the ESPs' order and their files'.
-/// ROOT_IS_BE: the running / is a ZFS boot environment.
+/// The `ZFSBootMenu` images on the mounted ESPs (device, mount point,
+/// `esp_inventory`'s contents), in the ESPs' order and their files'.
+/// `ROOT_IS_BE`: the running / is a ZFS boot environment.
 pub(crate) fn find_images(
     sys: &Sys,
     esps: &[(String, String, Value)],
@@ -353,7 +353,7 @@ pub(crate) fn find_images(
     out
 }
 
-/// The files in a /boot directory ZFSBootMenu takes for kernels and
+/// The files in a /boot directory `ZFSBootMenu` takes for kernels and
 /// initramfs images (its own patterns: vmlinuz*, vmlinux*, linux*,
 /// kernel*; initramfs*, initrd*).
 fn boot_files(sys: &Sys, dir: &str) -> (Vec<String>, Vec<String>) {
@@ -431,13 +431,13 @@ fn user_prop(tools: &Value, ds: &str, k: &str) -> Option<(String, String)> {
     }
 }
 
-/// Whether the running / is a ZFS boot environment (ZFSBootMenu's rule).
+/// Whether the running / is a ZFS boot environment (`ZFSBootMenu`'s rule).
 pub(crate) fn root_is_be(bes: &[BootEnv]) -> bool {
     bes.iter().any(|b| b.rule == Rule::ZfsBootMenu && b.mounted)
 }
 
 /// boot.zfsbootmenu: the images, the pools holding BEs (with their
-/// bootfs), and the BEs (crate::zfs_be::list of the dump's `tools`).
+/// bootfs), and the BEs (`crate::zfs_be::list` of the dump's `tools`).
 pub(crate) fn json(sys: &Sys, images: &[Image], tools: &Value) -> Value {
     let bes: Vec<BootEnv> = crate::zfs_be::list(tools)
         .into_iter()

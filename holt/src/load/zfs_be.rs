@@ -1,5 +1,5 @@
 //! `load`'s side of the ZFS boot environments a backup reaches through
-//! their own backup sources (crate::zfs_be; docs/design/truenas.md,
+//! their own backup sources (`crate::zfs_be`; docs/design/truenas.md,
 //! decisions 2-4).  Every BE's datasets are made in format as any dataset
 //! is.  The mount stage mounts each inactive one the dump lists a source
 //! for at the source's path under the target (`TARGET/run/bko-be/NAME`, its
@@ -8,11 +8,11 @@
 //! points it made (rmdir), so the restored root's /run is as it was.  A BE
 //! the dump has no source for (its key wasn't loaded, or an older dump)
 //! comes back empty, as before.  Encrypted datasets are made with their key
-//! loaded (keylocation=file://, Builder::ds_props), so they mount here as
+//! loaded (keylocation=file://, `Builder::ds_props`), so they mount here as
 //! any other.
 //!
 //! Also here: legacy-mountpoint datasets the source had mounted at a path
-//! that is a backup source (TrueNAS's boot-pool/grub at /boot/grub, its
+//! that is a backup source (`TrueNAS`'s boot-pool/grub at /boot/grub, its
 //! .system at /var/db/system), mounted there with the system's mount; the
 //! note for datasets that were clones (they come back as full copies, and
 //! no snapshot is remade); and `readonly=on`, held back when datasets are
@@ -56,9 +56,9 @@ impl Builder<'_> {
 
     /// The inactive BEs' datasets the dump has backup sources for: entries
     /// with no `from`, a zfs mount hint and a path under /run/bko-be, by
-    /// path.  Linux only (crate::zfs_be::dump_sources): on another system
+    /// path.  Linux only (`crate::zfs_be::dump_sources)`: on another system
     /// the inactive BEs come back empty, as before.  Worked out once, in
-    /// commands::build (Builder::be_mounts).
+    /// `commands::build` (`Builder::be_mounts`).
     pub(crate) fn find_be_mounts(&self) -> Vec<BeMount> {
         if self.fam.is_some() {
             return Vec::new();
@@ -90,7 +90,7 @@ impl Builder<'_> {
     }
 
     /// The BEs restored through their sources (their root has one), once
-    /// find_be_mounts has run (Builder::restored_bes).
+    /// `find_be_mounts` has run (`Builder::restored_bes`).
     pub(crate) fn find_restored_bes(&self) -> Vec<BootEnv> {
         if self.be_mounts.is_empty() {
             return Vec::new();
@@ -101,20 +101,20 @@ impl Builder<'_> {
             .collect()
     }
 
-    /// The BEs restored through their sources (Builder::be_restored).
+    /// The BEs restored through their sources (`Builder::be_restored`).
     pub(crate) fn restored_bes(&self) -> Vec<BootEnv> {
         self.be_restored.clone()
     }
 
     /// Whether DS is a dataset of a BE restored through its sources: the
-    /// mount stage's ZFS loop leaves it to be_mount_cmds.
+    /// mount stage's ZFS loop leaves it to `be_mount_cmds`.
     pub(crate) fn in_restored_be(&self, ds: &str) -> bool {
         self.be_restored.iter().any(|b| b.holds(ds))
     }
 
-    /// A TrueNAS pool whose bootfs isn't the BE the dump was made on: that
+    /// A `TrueNAS` pool whose bootfs isn't the BE the dump was made on: that
     /// BE has no backup source, and the mount stage would mount it as `/`
-    /// with the booted one's files (crate::zfs_be::bootfs_not_booted).
+    /// with the booted one's files (`crate::zfs_be::bootfs_not_booted`).
     pub(crate) fn be_problems(&mut self) {
         if self.fam.is_some() {
             return;
@@ -218,11 +218,11 @@ impl Builder<'_> {
     }
 
     /// Legacy-mountpoint datasets the source had mounted at a path that is
-    /// a backup source (TrueNAS's boot-pool/grub at /boot/grub), which `zfs
+    /// a backup source (`TrueNAS`'s boot-pool/grub at /boot/grub), which `zfs
     /// mount` won't mount: with the system's mount, at that path.  HAVE are
     /// the paths something mounts already.
     ///
-    /// The path is the mount's, not the dataset's name (TrueNAS's
+    /// The path is the mount's, not the dataset's name (`TrueNAS`'s
     /// .system/netdata-UUID at /var/db/system/netdata).  A dataset the
     /// source mounted at several paths (.system/cores, also at
     /// /var/lib/systemd/coredump) is mounted at the first only, with a
@@ -286,7 +286,7 @@ impl Builder<'_> {
     }
 
     /// Whether this layout's BEs come back filled (it has BE sources, or
-    /// is TrueNAS's): then the clones among their datasets are noted.
+    /// is `TrueNAS`'s): then the clones among their datasets are noted.
     fn be_restore(&self) -> bool {
         !self.be_mounts.is_empty()
             || self
@@ -350,7 +350,7 @@ impl Builder<'_> {
     }
 
     /// Restore globs leaving out the backup sources --pools left untouched
-    /// (layout.rs only_pools): the pools' datasets and everything else on
+    /// (layout.rs `only_pools)`: the pools' datasets and everything else on
     /// their disks, which aren't made, so their files would land in the
     /// restored tree's own.
     pub(crate) fn left_out_pool_globs(&self) -> Vec<String> {

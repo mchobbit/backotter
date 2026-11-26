@@ -10,10 +10,10 @@ use std::collections::BTreeMap;
 
 /// Imported pools' properties and datasets, from the zfs tools.  A zpool
 /// that can't be run is no ZFS (null) only while no ZFS file system is
-/// mounted (ZFS_MOUNTED, from the mount table); with one mounted, or with
+/// mounted (`ZFS_MOUNTED`, from the mount table); with one mounted, or with
 /// pools and a zfs that can't list their datasets, the section says why in
 /// its "error" (and the dump warns), and load refuses the dump
-/// (commands::build): no pools or no datasets would be a wrong answer.
+/// (`commands::build)`: no pools or no datasets would be a wrong answer.
 pub fn zfs_tools_json(sys: &Sys, zfs_mounted: bool) -> Value {
     let tool_error = |prog: &str, what: &str, lacks: &str| -> String {
         let why = if sys.installed(prog) {
@@ -252,7 +252,7 @@ pub fn parse_zfs_get(out: &str) -> Vec<(String, String, String, String)> {
 }
 
 /// An imported pool's whole vdev tree (data, log, special, dedup, cache and
-/// spare vdevs), from `zpool status -j` (OpenZFS 2.3 and later): the labels
+/// spare vdevs), from `zpool status -j` (`OpenZFS` 2.3 and later): the labels
 /// carry only the data and log vdevs, and each only its own top-level one.
 fn zpool_vdevs(sys: &Sys, name: &str) -> Value {
     let Some(out) = sys.run("zpool", &["status", "-j", "--json-int", "-P", name]) else {
@@ -289,7 +289,7 @@ fn zpool_vdevs(sys: &Sys, name: &str) -> Value {
 }
 
 /// `zpool status -P POOL`'s config section, shaped as `zpool status -j`'s
-/// vdev tree: {"vdevs": {POOL: {"vdev_type": "root", "vdevs": {...}}},
+/// vdev tree: {"vdevs": {POOL: {"`vdev_type"`: "root", "vdevs": {...}}},
 /// "logs": {...}, "l2cache", "spares", "special", "dedup"}.  Each level of
 /// the tree is indented two spaces more than its parent.
 pub fn parse_zpool_status_text(text: &str, pool: &str) -> Option<Value> {
@@ -427,8 +427,8 @@ pub(super) fn zfs_json(sys: &Sys, ctx: &Ctx<'_>) -> Value {
 
 /// The report's zfs section from the devices' signatures (name, content):
 /// pools from their vdev labels, the first zpool.cache of `caches` there
-/// is, and what zpool and zfs say of the imported pools (ZFS_MOUNTED: the
-/// mount table has a file system of type zfs; see zfs_tools_json).
+/// is, and what zpool and zfs say of the imported pools (`ZFS_MOUNTED`: the
+/// mount table has a file system of type zfs; see `zfs_tools_json`).
 pub fn zfs_section(
     sys: &Sys,
     members: &[(String, &Content)],

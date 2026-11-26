@@ -271,7 +271,7 @@ pub struct Marker {
 
 impl Marker {
     /// The dump schemas the image's bko-holt load reads: the marker's, or
-    /// DUMP_SCHEMAS_UNNAMED for a marker that names none.
+    /// `DUMP_SCHEMAS_UNNAMED` for a marker that names none.
     pub fn dump_schemas_read(&self) -> &[u64] {
         self.dump_schemas.as_deref().unwrap_or(DUMP_SCHEMAS_UNNAMED)
     }
@@ -1144,12 +1144,12 @@ pub fn schema_warnings(m: &Marker, system: &Value) -> Vec<StickWarning> {
 }
 
 /// Every image's config partition since 2026-11-26, in bytes: marker.py's
-/// CONFIG_MIB (holt-json.md's open question 13).  A smaller one is an
+/// `CONFIG_MIB` (holt-json.md's open question 13).  A smaller one is an
 /// older image's (the BSDs', illumos' and Haiku's were 32 MiB).
 pub const CONFIG_BYTES: u64 = 256 << 20;
 
 /// A restore log on the stick, at most, and how many a machine keeps:
-/// bko-rescue's LOG_GZ_MAX and LOGS_KEPT (rescue/src/app/restore.rs;
+/// bko-rescue's `LOG_GZ_MAX` and `LOGS_KEPT` (rescue/src/app/restore.rs;
 /// stick-config.md, "Restore logs").  bko-rescue writes the new log before
 /// it removes the oldest, so a machine's logs need room for one more.
 pub const LOG_MAX: u64 = 2 << 20;
@@ -1229,13 +1229,13 @@ fn mib_tenths(n: u128, up: bool) -> String {
 }
 
 /// The room half of the write-time check (holt-json.md's open question
-/// 13), for the backup tool before it writes a system.json of SYSTEM_LEN
+/// 13), for the backup tool before it writes a system.json of `SYSTEM_LEN`
 /// bytes to the stick whose marker is M, its config partition as R says.
-/// It refuses (`system_too_big`) a system.json over SYSTEM_MAX, which a
+/// It refuses (`system_too_big`) a system.json over `SYSTEM_MAX`, which a
 /// stick's bko-holt won't read, and (`stick_full`) one the partition can't
 /// take: the write itself would fail.  It warns (`stick_room_short`) when,
 /// once it is written, the partition can't also hold the machine's restore
-/// logs: LOGS_KEPT of LOG_MAX, plus the one being written, less what its
+/// logs: `LOGS_KEPT` of `LOG_MAX`, plus the one being written, less what its
 /// logs take now.  The write follows the steps of "How it writes": the
 /// machine's folder is made if it isn't there, the new file is written
 /// while the old two stand, then system.json becomes system.prev.json
@@ -1352,7 +1352,7 @@ pub enum StickWrite {
     /// `.sha256` of BODY's bytes): system.json without `layout`, its
     /// `layout_left_out` naming why.  REFUSED is why the whole one wasn't
     /// written; TEXT the words to say; WARNINGS BODY's own write's.  With
-    /// REMOVE_OLD, BODY fits only once the machine's older copies are gone:
+    /// `REMOVE_OLD`, BODY fits only once the machine's older copies are gone:
     /// the tool removes them first, as for `RemoveOld` but keeping the
     /// folder, then writes BODY (with no system.json there, nothing
     /// becomes system.prev.json).

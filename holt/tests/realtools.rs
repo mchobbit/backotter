@@ -1,11 +1,11 @@
 //! Cross-checks against Debian 13's own tools: filesystems, swap, LUKS and
 //! partition tables made by mkfs.*, mkswap, cryptsetup, sfdisk and sgdisk in
 //! image files, then read both by bko-holt and by blkid, dumpe2fs,
-//! xfs_db, btrfs, cryptsetup and sfdisk.  None of it needs root.
+//! `xfs_db`, btrfs, cryptsetup and sfdisk.  None of it needs root.
 //!
 //! These tests are meant for Debian 13: `runs_on_debian13` fails anywhere
 //! else, and a missing tool fails its test (install the packages listed in
-//! holt/README.md) unless BKO_HOLT_ALLOW_MISSING_TOOLS=1.
+//! holt/README.md) unless `BKO_HOLT_ALLOW_MISSING_TOOLS=1`.
 
 #![cfg(target_os = "linux")]
 
@@ -27,7 +27,7 @@ fn tool(name: &str) -> Option<PathBuf> {
 }
 
 /// The tool's path; when it's missing, fails the test, or (with
-/// BKO_HOLT_ALLOW_MISSING_TOOLS=1) returns None so the test skips.
+/// `BKO_HOLT_ALLOW_MISSING_TOOLS=1`) returns None so the test skips.
 fn need(name: &str) -> Option<PathBuf> {
     match tool(name) {
         Some(p) => Some(p),
@@ -262,7 +262,7 @@ fn ext_family_matches_blkid_and_dumpe2fs() {
     }
 }
 
-/// xfs_db's names for our feature words.
+/// `xfs_db`'s names for our feature words.
 fn xfs_db_name(ours: &str) -> &str {
     match ours {
         "sparse" => "SPARSE_INODES",
@@ -1227,7 +1227,7 @@ fn load_remakes_what_the_tools_made_and_reads_it_back() {
 
 /// An ext4 of 1 KiB blocks (first data block 1) small enough that its
 /// reserved GDT blocks aren't capped at a block's worth: load's mke2fs
-/// reserves exactly as many as the source has (BackShot2's fail-004, where
+/// reserves exactly as many as the source has (`BackShot2`'s fail-004, where
 /// load's -E resize= counted the first data block and got one more).
 #[test]
 fn load_keeps_a_1k_ext4s_reserved_gdt_blocks() {
@@ -1275,7 +1275,7 @@ fn load_keeps_a_1k_ext4s_reserved_gdt_blocks() {
 /// An ext4 with as many inodes as its groups hold (-i 4096: 8 x block size
 /// a group) shrunk by a quarter: the inodes go with the groups, as resize2fs
 /// would have them, so load's mke2fs keeps the source's blocks and inodes
-/// per group (BackShot2's fail-005, where the source's inode count didn't
+/// per group (`BackShot2`'s fail-005, where the source's inode count didn't
 /// fit the fewer groups and mke2fs cut blocks per group).
 #[test]
 fn fit_largest_keeps_ext_blocks_and_inodes_per_group() {
@@ -1360,7 +1360,7 @@ fn recorded_size(c: &Value) -> u64 {
         .unwrap_or_else(|| panic!("no size in {}", c.compact()))
 }
 
-/// The one line of dumpe2fs or xfs_db that gives a field.
+/// The one line of dumpe2fs or `xfs_db` that gives a field.
 fn field(text: &str, name: &str) -> String {
     text.lines()
         .find_map(|l| l.strip_prefix(name))

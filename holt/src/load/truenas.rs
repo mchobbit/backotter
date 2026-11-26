@@ -1,25 +1,25 @@
-//! `load`'s boot stage for TrueNAS Community Edition 25.10
+//! `load`'s boot stage for `TrueNAS` Community Edition 25.10
 //! (docs/design/truenas.md, decision 5): what `truenas_install` does on a
 //! fresh install, less what only matters when unpacking an image.  In the
 //! active boot environment's chroot, with boot-pool/grub at /boot/grub
-//! (load/zfs_be.rs's legacy mounts):
+//! (`load/zfs_be.rs`'s legacy mounts):
 //!
 //! 1. bootfs is the source's (format, as for any pool);
 //! 2. no initramfs is made: each BE's initrd came back with it, and none
 //!    names a disk (cachefile=none, the pool imported by name);
 //! 3. `grub-install --target=i386-pc` on every disk holding a boot-pool
-//!    vdev, whatever this machine booted with, as TrueNAS installs both;
+//!    vdev, whatever this machine booted with, as `TrueNAS` installs both;
 //! 4. on each of those disks' ESPs (format made each again with the
 //!    source's volume ID and label): mounted at /boot/efi,
 //!    `grub-install --target=x86_64-efi --bootloader-id=debian`, its image
 //!    copied to the removable-media path EFI/boot/bootx64.efi, unmounted;
-//! 5. `update-grub` once: TrueNAS's 10_truenas_linux lists every BE under
+//! 5. `update-grub` once: `TrueNAS`'s `10_truenas_linux` lists every BE under
 //!    boot-pool/ROOT, the active one first;
-//! 6. the source's NVRAM entries (efi_entries, unless --no-nvram);
-//! 7. then the held-back readonly=on (load/zfs_be.rs).
+//! 6. the source's NVRAM entries (`efi_entries`, unless --no-nvram);
+//! 7. then the held-back readonly=on (`load/zfs_be.rs`).
 //!
 //! The pool must keep the name boot-pool (the GRUB script names it), and
-//! only TrueNAS 25.10 is supported.
+//! only `TrueNAS` 25.10 is supported.
 
 use super::commands::{Builder, Cmd, part_node};
 use crate::json::Value;
@@ -33,7 +33,7 @@ fn s(v: &Value, k: &str) -> Option<String> {
 }
 
 impl Builder<'_> {
-    /// boot.truenas, when the source is TrueNAS.
+    /// boot.truenas, when the source is `TrueNAS`.
     pub(crate) fn truenas(&self) -> Option<&Value> {
         self.layout
             .v
@@ -41,7 +41,7 @@ impl Builder<'_> {
             .filter(|v| v.as_object().is_some())
     }
 
-    /// The pool may not go by another name here on TrueNAS.
+    /// The pool may not go by another name here on `TrueNAS`.
     pub(crate) fn truenas_pool_name(&mut self, name: &str, here: &str) {
         if self.truenas().is_some() && name == TRUENAS_POOL && here != name {
             self.problems.push(format!("TrueNAS: {TRUENAS_POOL} can't be renamed (its GRUB script names it), but a pool of that name is imported here; export it (or restore from another rescue system) first"));

@@ -1,4 +1,4 @@
-//! bko-recovery-words: BackOtter's recovery keys (bko_holt::recovery) by
+//! bko-recovery-words: `BackOtter`'s recovery keys (`bko_holt::recovery`) by
 //! hand: make one, or check one as someone would type it back.  Built with
 //! bko-holt but not shipped: build-holt.sh and the images take bko-holt
 //! alone.

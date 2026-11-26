@@ -11,11 +11,11 @@
 //! file, nor remove anything from an immutable or append-only directory.
 //! rustic-bko takes those flags off only where the backup's node for the
 //! entry says it had them, so what the snapshot hasn't got at all keeps
-//! them, and the restore fails, "Operation not permitted": BackShot2's
+//! them, and the restore fails, "Operation not permitted": `BackShot2`'s
 //! btrfs-1 content on anduinos2, planted in /srv after the deployment
 //! snapshot of @root was taken, so in the base and not in the snapshot.
 //!
-//! This takes FS_IMMUTABLE_FL and FS_APPEND_FL off each regular file and
+//! This takes `FS_IMMUTABLE_FL` and `FS_APPEND_FL` off each regular file and
 //! directory in DIR (DIR too) that has either, and changes nothing else: an
 //! entry with neither isn't written to (its change time stays, and its
 //! inode, which the base's shares).  The exact restore then puts back each
@@ -26,7 +26,7 @@
 //! exactly; the base keeps its own (this changes DIR alone).
 //!
 //! Each entry is opened by its name in its directory's descriptor, through
-//! /proc/self/fd, so a tree deeper than PATH_MAX is walked whole; symlinks
+//! /proc/self/fd, so a tree deeper than `PATH_MAX` is walked whole; symlinks
 //! aren't followed and special files aren't opened.  Each entry cleared is
 //! printed, `clear-restricting-flags: PATH: i a` (what it had; PATH from
 //! DIR, bytes outside printable ASCII as \xNN), then the count.  A file
@@ -42,9 +42,9 @@ use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 
-/// FS_IMMUTABLE_FL (linux/fs.h).
+/// `FS_IMMUTABLE_FL` (linux/fs.h).
 pub const IMMUTABLE: u32 = 0x10;
-/// FS_APPEND_FL.
+/// `FS_APPEND_FL`.
 pub const APPEND: u32 = 0x20;
 /// The inode flags that refuse a restore's removing, replacing or
 /// rewriting an entry.
@@ -191,7 +191,7 @@ fn walk(dir: &File, rel: &mut Vec<u8>, ops: &mut impl Flags, w: &mut Walked) {
     }
 }
 
-/// The kernel's FS_IOC_GETFLAGS and FS_IOC_SETFLAGS, where holt is built
+/// The kernel's `FS_IOC_GETFLAGS` and `FS_IOC_SETFLAGS`, where holt is built
 /// for an architecture with the generic ioctl numbers.
 pub struct Kernel;
 
@@ -438,7 +438,7 @@ mod tests {
         assert_eq!(w.seen, 9);
     }
 
-    /// A tree deeper than PATH_MAX (BackShot2's deep0) is walked whole:
+    /// A tree deeper than `PATH_MAX` (`BackShot2`'s deep0) is walked whole:
     /// each entry opened by name in its directory's descriptor.
     #[test]
     fn walks_past_path_max() {
@@ -513,7 +513,7 @@ mod tests {
         assert_eq!(letters(0), "");
     }
 
-    /// FS_IOC_GETFLAGS and FS_IOC_SETFLAGS as linux/fs.h gives them, for a
+    /// `FS_IOC_GETFLAGS` and `FS_IOC_SETFLAGS` as linux/fs.h gives them, for a
     /// long of 8 bytes and of 4.
     #[test]
     fn ioctl_numbers_are_linux_fs_h() {

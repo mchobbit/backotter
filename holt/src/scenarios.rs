@@ -2,7 +2,7 @@
 //! GRUB, UEFI systemd-boot), one Fedora Kinoite on ostree and the
 //! Thinkpad's Gentoo (their /sys, /proc, /dev,
 //! /etc, /run, /boot and /var as a directory tree, the disks as image files
-//! under /dev) laid out the way Debian's installer and BackOtter's test
+//! under /dev) laid out the way Debian's installer and `BackOtter`'s test
 //! guests lay real ones out, run through the full report.
 
 use crate::bootcode::samples as grub;
@@ -28,7 +28,7 @@ fn run(t: &Tree, privileged: bool, runner: FakeRunner) -> Value {
     run_tz(t, privileged, runner, None)
 }
 
-/// run, with the kernel's sys_tz as `sys_tz` (Sys::with_sys_tz).
+/// run, with the kernel's `sys_tz` as `sys_tz` (`Sys::with_sys_tz`).
 fn run_tz(t: &Tree, privileged: bool, runner: FakeRunner, sys_tz: Option<i32>) -> Value {
     let sys = Sys::new(t.root(), Box::new(runner), privileged).with_sys_tz(sys_tz);
     let os = crate::osrel::read(&sys);
@@ -142,7 +142,7 @@ fn bios_btrfs() -> Tree {
     t
 }
 
-/// What the btrfs tools answer in the bios_btrfs scenario.
+/// What the btrfs tools answer in the `bios_btrfs` scenario.
 fn bios_btrfs_runner() -> FakeRunner {
     FakeRunner::default()
         .with("btrfs subvolume list -a -p -u -q /", "ID 256 gen 99 parent 5 top level 5 parent_uuid - uuid 6c8a1b2c-0000-4000-8000-000000000001 path @rootfs\n")
@@ -309,8 +309,8 @@ fn bios_mbr_btrfs_guest() {
     assert_eq!(s(&v, &["host", "hostname"]), "deb13");
 }
 
-/// The chimera guest's system on bios_btrfs's disk: Chimera's os-release
-/// (ID quoted, no VERSION_ID), apk's database through /lib -> usr/lib, no
+/// The chimera guest's system on `bios_btrfs`'s disk: Chimera's os-release
+/// (ID quoted, no `VERSION_ID`), apk's database through /lib -> usr/lib, no
 /// dpkg or debconf, initramfs-tools' kernel files as Chimera names them.
 fn chimera_bios() -> Tree {
     let t = bios_btrfs();
@@ -413,9 +413,9 @@ fn chimera_bios_guest() {
     assert!(!bt.contains("update-grub"), "{bt}");
 }
 
-/// The chimera-uefi guest's boot, on uefi_shim's disk: GPT, the ESP as /boot
+/// The chimera-uefi guest's boot, on `uefi_shim`'s disk: GPT, the ESP as /boot
 /// (vmlinuz-V and initrd.img-V on it), Chimera's systemd-boot without systemd
-/// (LoaderInfo, apk's systemd-boot), gen-systemd-boot's entries, root ext4.
+/// (`LoaderInfo`, apk's systemd-boot), gen-systemd-boot's entries, root ext4.
 fn chimera_uefi() -> Tree {
     use crate::efi::{GLOBAL, LOADER};
     let t = Tree::new("scn-chimera-uefi");
@@ -547,10 +547,10 @@ fn chimera_uefi_guest() {
     assert!(!bt.contains("grub"), "{bt}");
 }
 
-/// CachyOS's Limine with the ESP as /boot, booted the way a machine with
+/// `CachyOS`'s Limine with the ESP as /boot, booted the way a machine with
 /// no NVRAM entry for it boots (vm-run's fresh UEFI variables): through
 /// Limine's copy at EFI/BOOT/BOOTX64.EFI, so no boot entry names Limine
-/// and, with `loader_info` false, no LoaderInfo either.
+/// and, with `loader_info` false, no `LoaderInfo` either.
 fn limine_fallback(loader_info: bool) -> Tree {
     use crate::efi::{GLOBAL, LOADER};
     let t = Tree::new(if loader_info {
@@ -713,7 +713,7 @@ fn unprivileged_falls_back_to_udev() {
     assert_eq!(s(&v, &["boot", "loader", "name"]), "grub");
 }
 
-/// Chopin itself: UEFI with Secure Boot off, NVMe, GPT with an ESP and an
+/// Chopin itself: UEFI with Secure Boot off, `NVMe`, GPT with an ESP and an
 /// ext4 root, shim + GRUB, its real EFI variables.
 fn uefi_shim() -> Tree {
     use crate::efi::real::*;
@@ -835,9 +835,9 @@ fn uefi_gpt_nvme_shim() {
     assert_eq!(s(&v, &["boot", "packages", "shim-signed"]), "1.47+15.8-1");
 }
 
-/// The kernel's sys_tz (Artix's hwclock --systz in Europe/Paris: -60) in
-/// storage.sys_tz_minuteswest, and none where it wasn't read (a
-/// --sysroot); it survives redaction (load::commands's fat_time_options
+/// The kernel's `sys_tz` (Artix's hwclock --systz in Europe/Paris: -60) in
+/// `storage.sys_tz_minuteswest`, and none where it wasn't read (a
+/// --sysroot); it survives redaction (`load::commands`'s `fat_time_options`
 /// has the ESP mount that uses it).
 #[test]
 fn sys_tz_recorded() {
@@ -859,7 +859,7 @@ fn sys_tz_recorded() {
 }
 
 /// Debian's "Guided - use entire disk and set up encrypted LVM": GPT with
-/// ESP, /boot, and LUKS2 holding a PV with root and swap_1.
+/// ESP, /boot, and LUKS2 holding a PV with root and `swap_1`.
 fn luks_lvm_tree() -> Tree {
     let t = Tree::new("scn-luks-lvm");
     t.debian13();
@@ -990,13 +990,13 @@ fn luks_lvm() {
     );
 }
 
-/// The VG UUID of lvm::sample::THIN, as device-mapper writes it.
+/// The VG UUID of `lvm::sample::THIN`, as device-mapper writes it.
 const THIN_VG: &str = "VoSr00tAAABBBBCCCCDDDDEEEEFFFFFF";
 const THIN_ESP: &str = "7a05e5e5-0000-4000-8000-000000000002";
 
-/// Vanilla OS 3's disk on Debian 13 (docs/design/vanillaos.md; its ABRoot
+/// Vanilla OS 3's disk on Debian 13 (docs/design/vanillaos.md; its `ABRoot`
 /// isn't what this is about): GPT with vos-boot (ext4, /boot), vos-efi (the
-/// ESP) and vos-root, the PV of lvm::sample::THIN's VG: `init` (ext4
+/// ESP) and vos-root, the PV of `lvm::sample::THIN`'s VG: `init` (ext4
 /// vos-init), the thin pool `root` and its thin LVs `root-a` (btrfs vos-a,
 /// /) and `root-b` (btrfs vos-b, at /part-future), each pool layer a
 /// device-mapper device of its own (`-tdata`, `-tmeta`, `-tpool`, `-pool`
@@ -1516,11 +1516,11 @@ const VANILLA_INIT: &str = "20111213-1415-1617-1819-1a1b1c1d1e1f";
 /// vos-root: the init LV, ext4 vos-init, and the thin pool `root` with
 /// root-a and root-b, btrfs vos-a and vos-b) and vos-var (PV of VG
 /// vos-var: btrfs vos-var at /var).  Running from vos-a, read-only, with
-/// ABRoot's /etc overlay; fstab as mount-sys leaves it (/ prepended, /var
+/// `ABRoot`'s /etc overlay; fstab as mount-sys leaves it (/ prepended, /var
 /// dropped); the installer's master grub.cfg and vos-a's abroot.cfg in
 /// the init LV, which isn't mounted: dump reads it, and vos-b, through
 /// read-only mounts of its own in /run/bko-holt (here, the trees already
-/// there).  B_USED: vos-b filled by an `abroot upgrade` (its kernel and
+/// there).  `B_USED`: vos-b filled by an `abroot upgrade` (its kernel and
 /// an upgrade's abroot.cfg in init/vos-b), else a fresh install's empty B.
 fn vanilla_tree(b_used: bool) -> Tree {
     use crate::efi::GLOBAL;
@@ -1808,7 +1808,7 @@ fn vanilla_plan(v: &Value, extra: &[&str]) -> crate::load::commands::Built {
 /// Vanilla OS 3 with both roots used, running from vos-a: boot.abroot
 /// (docs/design/vanillaos.md, V2) from abroot.json's merged keys, the
 /// master grub.cfg, the init LV and vos-b read through dump's read-only
-/// mounts; backup_sources in ABRoot's tree with the two unmounted
+/// mounts; `backup_sources` in `ABRoot`'s tree with the two unmounted
 /// filesystems' mounts; the init LV's kernels.  Planned (V4): both VGs (the
 /// thin pool by lvcreate), every filesystem with its label and UUID, the
 /// tree mounted with boot/init, part-future and /var, and a boot stage
@@ -2104,7 +2104,7 @@ fn vanilla_guest() {
 }
 
 /// The future root's btrfs allocation profiles (V5's open finding): sysfs
-/// has /sys/fs/btrfs/UUID only while it's mounted, so abroot::read records
+/// has /sys/fs/btrfs/UUID only while it's mounted, so `abroot::read` records
 /// them during its own read-only mount, storage.btrfs takes them, and
 /// load's mkfs.btrfs gets -d/-m for vos-b as for the mounted vos-a.  This
 /// runner makes vos-b's sysfs directory on dump's mount and removes it on
@@ -2199,7 +2199,7 @@ fn vanilla_future_root_btrfs_profiles() {
 /// A fresh install: vos-b formatted but empty, init/vos-b empty.  The dump
 /// says so (`empty`), the plan notes it, and the check passes it as a
 /// warning; the refusals of version 1 (an upgrade running, BIOS, not the
-/// thin two-root scheme, ABRoot v1's /.system, --new-uuids).
+/// thin two-root scheme, `ABRoot` v1's /.system, --new-uuids).
 #[test]
 fn vanilla_fresh_install_and_refusals() {
     let t = vanilla_tree(false);
@@ -3550,7 +3550,7 @@ const GENTOO_ESP: &str = "4e5f6a7b-1111-4222-8333-944455556666";
 
 /// The Thinkpad's Gentoo in small, as the gentoo guest copies it: UEFI,
 /// GPT with a 1 GiB ESP at /efi (here 35 MiB), a swap partition and an LVM
-/// PV holding vg0 (root ext4, home XFS); OpenRC, merged /usr, Portage's
+/// PV holding vg0 (root ext4, home XFS); `OpenRC`, merged /usr, Portage's
 /// database, gentoo-kernel-bin installed by installkernel[dracut,grub]
 /// (its install.conf, the .old copies `emerge --config` left), GRUB as
 /// `gentoo` from NVRAM.
@@ -4158,14 +4158,14 @@ fn gentoo_generator_without_installkernel() {
 
 const PIKA_KV: &str = "7.3.3-pikaos";
 const PIKA_ESP: &str = "5a6b7c8d-1111-4222-8333-944455556666";
-/// The root's XFS (xfs::sample::image's UUID).
+/// The root's XFS (`xfs::sample::image`'s UUID).
 const PIKA_ROOT: &str = "a0a1a2a3-a4a5-a6a7-a8a9-aaabacadaeaf";
 
-/// PikaOS 4 as its installer (pikainstall) lays it out, in small (the ESP
+/// `PikaOS` 4 as its installer (pikainstall) lays it out, in small (the ESP
 /// is 512 MiB there, /boot 1 GiB): GPT with a vfat ESP "EFI" at /boot/efi,
-/// an ext4 /boot "PikaBoot" on an XBOOTLDR partition with no loader
-/// entries, / XFS "PikaRoot"; rEFInd in EFI/refind and at the fallback
-/// path with its theme and ext4 driver, refind_linux.conf in /boot;
+/// an ext4 /boot "`PikaBoot`" on an XBOOTLDR partition with no loader
+/// entries, / XFS "`PikaRoot`"; rEFInd in EFI/refind and at the fallback
+/// path with its theme and ext4 driver, `refind_linux.conf` in /boot;
 /// booster's images (and a dpkg backup) beside kernel-pika's kernel,
 /// initramfs-tools installed too; rEFInd booted from its NVRAM entry.
 fn pikaos() -> Tree {
@@ -4292,7 +4292,7 @@ fn pikaos() -> Tree {
     t
 }
 
-/// PikaOS's plan from a tree, the source disk vda going to vdb.
+/// `PikaOS`'s plan from a tree, the source disk vda going to vdb.
 fn pikaos_plan(t: &Tree) -> (Value, crate::load::commands::Built) {
     use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let v = run(t, true, FakeRunner::default());
@@ -4313,10 +4313,10 @@ fn pikaos_plan(t: &Tree) -> (Value, crate::load::commands::Built) {
     )
 }
 
-/// PikaOS read back and planned (docs/design/pikaos.md): booster over
+/// `PikaOS` read back and planned (docs/design/pikaos.md): booster over
 /// initramfs-tools, with booster.yaml's keys; booster.img-K as K's image
-/// and its .dpkg-bak apart; rEFInd from BootCurrent, and the XBOOTLDR /boot
-/// not taken for systemd-boot's; refind_linux.conf recorded.  load remakes
+/// and its .dpkg-bak apart; rEFInd from `BootCurrent`, and the XBOOTLDR /boot
+/// not taken for systemd-boot's; `refind_linux.conf` recorded.  load remakes
 /// booster's image for each kernel, installs no loader and runs neither
 /// refind-install nor update-initramfs, and makes rEFInd's boot entry.
 #[test]
@@ -4421,7 +4421,7 @@ fn pikaos_guest() {
     );
 }
 
-/// PikaOS in "BOOTX64 mode" (or OVMF with blank variables): the firmware
+/// `PikaOS` in "BOOTX64 mode" (or OVMF with blank variables): the firmware
 /// booted the fallback path, which names no loader; the ESP's rEFInd files
 /// say it's rEFInd.  The firmware's own entry is the one recreated.
 #[test]
@@ -4522,7 +4522,7 @@ fn unmounted_esp_warns() {
 
 const BIGLINUX_ESP: &str = "b16b16b1-0000-4000-8000-000000000001";
 
-/// BigLinux as its Calamares installs it (docs/design/biglinux.md): UEFI,
+/// `BigLinux` as its Calamares installs it (docs/design/biglinux.md): UEFI,
 /// GPT with a 35 MiB ESP at /boot/efi and a btrfs whose @ and @home are /
 /// and /home, mounted noatime,compress-force=zstd; GRUB as `BigLinux` from
 /// NVRAM (EFI/BigLinux/grubx64.efi, the fallback EFI/boot/bootx64.efi);
@@ -4621,7 +4621,7 @@ fn biglinux() -> Tree {
     t
 }
 
-/// What btrfs answers on BigLinux: @ and @home, and two Timeshift snapshots
+/// What btrfs answers on `BigLinux`: @ and @home, and two Timeshift snapshots
 /// of @ (parent @), mounted nowhere.
 fn biglinux_runner() -> FakeRunner {
     let u = |n: u32| format!("6c8a1b2c-0000-4000-8000-000000000{n}");
@@ -4646,7 +4646,7 @@ fn biglinux_runner() -> FakeRunner {
         .with("btrfs property get -t i /home", "")
 }
 
-/// BigLinux read back and planned: supported by its ID, its pacman
+/// `BigLinux` read back and planned: supported by its ID, its pacman
 /// packages, GRUB as `BigLinux` (the source's spelling), mkinitcpio, the
 /// Timeshift snapshots listed in the dump but left out by load with a note,
 /// and /boot and /usr/share/grub defragmented uncompressed at the end.
@@ -4776,7 +4776,7 @@ fn biglinux_guest() {
 }
 
 const GARUDA_ESP: &str = "9a2d0da0-0000-4000-8000-000000000001";
-/// The btrfs (btrfs::sample::image's UUID).
+/// The btrfs (`btrfs::sample::image`'s UUID).
 const GARUDA_ROOT: &str = "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
 /// Calamares's seven subvolumes, all in the top level, where fstab mounts
 /// them, and the garuda guest's IDs and generations for them
@@ -4805,7 +4805,7 @@ const GARUDA_SNAPSHOTS: [(u32, u32, u32); 4] =
 /// /boot/initramfs-linux-garuda.img and -fallback.img; the chaotic-keyring.
 /// As on the guest, OVMF booted it by its own entry for the disk (no file
 /// in the device path), so NVRAM has no Garuda entry, and GRUB says so
-/// through LoaderInfo.
+/// through `LoaderInfo`.
 fn garuda() -> Tree {
     use crate::efi::{GLOBAL, LOADER, real::unhex};
     let t = Tree::new("scn-garuda");
@@ -4967,7 +4967,7 @@ fn garuda_runner() -> FakeRunner {
 
 /// Garuda read back and planned (docs/design/garuda.md, "What GA2 found"
 /// and "What GA4 found"; holt/tests/corpus/garuda/plan.txt): supported by
-/// its ID; GRUB from LoaderInfo, dracut as the generator through
+/// its ID; GRUB from `LoaderInfo`, dracut as the generator through
 /// garuda-dracut-support; the seven subvolumes and @/.snapshots made, and
 /// snap-pac's snapshots restored as shared ones, a chain from @.  The boot
 /// stage runs dracut-rebuild, grub-install as `Garuda` (the ESP
@@ -5172,7 +5172,7 @@ fn garuda_guest() {
 
 const ANDUINOS_KV: &str = "7.0.0-38-generic";
 const ANDUINOS_ESP: &str = "a2d00105-0000-4000-8000-000000000001";
-/// The btrfs (btrfs::sample::image's UUID).
+/// The btrfs (`btrfs::sample::image`'s UUID).
 const ANDUINOS_ROOT: &str = "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
 /// The six subvolumes the installer makes, and where fstab mounts them.
 const ANDUINOS_SUBVOLS: [(&str, &str); 6] = [
@@ -5199,7 +5199,7 @@ const ANDUINOS_BASELINES: [(&str, &str, u32); 2] = [
     ),
 ];
 
-/// AnduinOS 2.0.5 as its installer lays it out for "erase disk"
+/// `AnduinOS` 2.0.5 as its installer lays it out for "erase disk"
 /// (docs/design/anduinos.md, "What A1 found"), in small (the ESP is 1 GiB
 /// there): GPT with a 2 MiB BIOS boot partition holding GRUB's i386-pc core
 /// (boot.img in the protective MBR: the installer runs grub-install
@@ -5207,9 +5207,9 @@ const ANDUINOS_BASELINES: [(&str, &str, u32); 2] = [
 /// btrfs whose six subvolumes are mounted defaults,subvol=@X,compress=zstd:3,
 /// noatime, with the Disk Snapshots Manager's read-only baselines of @root
 /// and @home in @snapshots; dracut's /boot/initrd.img-K (Debian's dracut.conf.d
-/// names it so); AnduinOS's GRUB, signed with the machine's MOK, behind
+/// names it so); `AnduinOS`'s GRUB, signed with the machine's MOK, behind
 /// shim in EFI/AnduinOS and at the fallback path (shim, GRUB and
-/// MokManager); booted from NVRAM's shim entry with Secure Boot on.
+/// `MokManager`); booted from NVRAM's shim entry with Secure Boot on.
 fn anduinos() -> Tree {
     use crate::efi::GLOBAL;
     const SWAP: &str = "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f";
@@ -5358,7 +5358,7 @@ fn anduinos() -> Tree {
     t
 }
 
-/// What btrfs answers on AnduinOS: the six subvolumes, and the snapshot
+/// What btrfs answers on `AnduinOS`: the six subvolumes, and the snapshot
 /// manager's two read-only "New OS" baselines (of @root and @home) in its
 /// tree in @snapshots.
 fn anduinos_runner() -> FakeRunner {
@@ -5397,7 +5397,7 @@ fn anduinos_runner() -> FakeRunner {
     r
 }
 
-/// AnduinOS's plan from a tree, the source disk vda going to vdb.
+/// `AnduinOS`'s plan from a tree, the source disk vda going to vdb.
 fn anduinos_plan(t: &Tree) -> (Value, crate::load::commands::Built) {
     use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let v = run(t, true, anduinos_runner());
@@ -5418,8 +5418,8 @@ fn anduinos_plan(t: &Tree) -> (Value, crate::load::commands::Built) {
     )
 }
 
-/// AnduinOS read back and planned (docs/design/anduinos.md): supported by
-/// its ID; GRUB through shim from BootCurrent, the ESP directory's case
+/// `AnduinOS` read back and planned (docs/design/anduinos.md): supported by
+/// its ID; GRUB through shim from `BootCurrent`, the ESP directory's case
 /// kept; boot.loader.mok with the certificate's SHA-256; dracut as the
 /// generator; the six subvolumes and the read-only snapshot.  load runs
 /// dracut's loop, no grub-install (the MOK-signed GRUB is the restored
@@ -5608,7 +5608,7 @@ fn anduinos_guest() {
     assert!(b.notes.iter().any(|n| n.starts_with("AnduinOS: the Disk Snapshots Manager's records name each snapshot by its Btrfs subvolume UUID")), "{:?}", b.notes);
 }
 
-/// AnduinOS booted at the fallback path (no NVRAM entry, OVMF with blank
+/// `AnduinOS` booted at the fallback path (no NVRAM entry, OVMF with blank
 /// variables), Secure Boot off and no MOK variables: EFI/BOOT/BOOTX64.EFI
 /// is a copy of shim, so it's through shim still; and without the MOK in
 /// the dump, shim and anduinos-grub alone keep the ESP as restored.
@@ -5827,7 +5827,7 @@ fn plan_text(b: &crate::load::commands::Built) -> String {
 }
 
 /// Kali read back and planned (docs/design/kali.md, K2): supported by its
-/// ID; GRUB unsigned in EFI/kali (no shim) from BootCurrent, the fallback
+/// ID; GRUB unsigned in EFI/kali (no shim) from `BootCurrent`, the fallback
 /// copy beside it; initramfs-tools as the generator.  load runs
 /// update-initramfs, grub-install into EFI/kali with no NVRAM write,
 /// update-grub (not grub-mkconfig) with os-prober off, and makes the "kali"
@@ -5972,7 +5972,7 @@ fn kali_fallback_boot() {
 /// KDE neon's running kernel, and the one before it (linux-generic-hwe-24.04).
 const NEON_KV: &str = "7.0.0-43-generic";
 const NEON_KV_OLD: &str = "7.0.0-38-generic";
-/// The ESP's PARTUUID, its vfat volume ID, and the root's UUID (ext::sample's).
+/// The ESP's PARTUUID, its vfat volume ID, and the root's UUID (`ext::sample`'s).
 const NEON_ESP: &str = "bc000000-0000-4000-8000-000000000002";
 const NEON_ESP_ID: &str = "BC00-0001";
 const NEON_ROOT: &str = "10111213-1415-1617-1819-1a1b1c1d1e1f";
@@ -6112,7 +6112,7 @@ fn neon() -> Tree {
 }
 
 /// KDE neon read back and planned (docs/design/kde-neon.md): supported by
-/// its ID; GRUB through shim in EFI/neon from BootCurrent, the fallback
+/// its ID; GRUB through shim in EFI/neon from `BootCurrent`, the fallback
 /// shim beside it; the swap file, not a partition; initramfs-tools as the
 /// generator.  load runs update-initramfs, Ubuntu's grub-install into
 /// EFI/neon with no NVRAM write, update-grub (not grub-mkconfig) with
@@ -6239,9 +6239,9 @@ fn neon_guest() {
 }
 
 /// KDE neon under vm-run, as the neon24 dump has it: OVMF booted the disk
-/// from "UEFI Misc Device" (a PciRoot path, no file) while NVRAM still
-/// lists the installer's entry first in BootOrder.  Still EFI/neon (from
-/// BootOrder), and only the installer's entry, the one with a file, made
+/// from "UEFI Misc Device" (a `PciRoot` path, no file) while NVRAM still
+/// lists the installer's entry first in `BootOrder`.  Still EFI/neon (from
+/// `BootOrder`), and only the installer's entry, the one with a file, made
 /// again.
 #[test]
 fn neon_fallback_boot() {
@@ -6276,7 +6276,7 @@ const ELEMENTARY_ESP: &str = "e1e0e1e0-0000-4000-8000-000000000001";
 const ELEMENTARY_ESP_ID: &str = "E1E0-0008";
 /// elementary OS 8.1's /etc/os-release (the elementary8 guest, docs/design/elementary.md).
 const ELEMENTARY_OS_RELEASE: &str = "PRETTY_NAME=\"elementary OS 8\"\nNAME=\"elementary OS\"\nVERSION_ID=\"8\"\nVERSION=\"8.1\"\nVERSION_CODENAME=circe\nID=elementary\nID_LIKE=\"ubuntu debian\"\nUBUNTU_CODENAME=noble\nUBUNTU_VERSION_ID=\"24.04\"\nUBUNTU_CODENAME=noble\n";
-/// The VG UUID of the `data` group (lvm::sample::METADATA's), as
+/// The VG UUID of the `data` group (`lvm::sample::METADATA`'s), as
 /// device-mapper writes it.
 const ELEMENTARY_VG: &str = "Yb3kFa0Pz1AbCdEfGhIjKlMnOpQrStUv";
 
@@ -6536,7 +6536,7 @@ fn elementary_plan(t: &Tree) -> (Value, crate::load::commands::Built) {
 }
 
 /// elementary OS 8 read back and planned (docs/design/elementary.md, E2):
-/// supported by its ID; GRUB through shim in EFI/ubuntu from BootCurrent;
+/// supported by its ID; GRUB through shim in EFI/ubuntu from `BootCurrent`;
 /// the ESP's distinst layout (the stub, its grub/ directory, the fallback
 /// shim); the `data` VG on the PV, `root` on /.  load makes the PV and the
 /// group again with their UUIDs, runs update-initramfs, Ubuntu's
@@ -6685,9 +6685,9 @@ fn elementary_guest() {
 
 /// crypttab opening the container with a key file in the restored tree
 /// (Manjaro's Calamares "Encrypt system": the passphrase in one keyslot,
-/// /crypto_keyfile.bin in another, embedded in the initramfs).  Without
+/// /`crypto_keyfile.bin` in another, embedded in the initramfs).  Without
 /// --key-file: made with a temporary key, which the boot stage swaps for
-/// the restored key file.  With it (BackShot1's layout_keys): made with
+/// the restored key file.  With it (`BackShot1`'s `layout_keys)`: made with
 /// --key-file's key, which keeps its keyslot, and the restored key file
 /// added beside it, before the initramfs is made, unless it opens the
 /// container already.  A key in systemd's path:device form is on another
@@ -6812,7 +6812,7 @@ fn luks_restored_key_file_with_and_without_key_file() {
 }
 
 /// A LUKS name bko-holt can't keep a temporary key under (`..`) and a
-/// crypttab key file, no --key-file: refused, key_name_unusable with the
+/// crypttab key file, no --key-file: refused, `key_name_unusable` with the
 /// name, and no temporary key made; at the format stage (the container's
 /// own name) and at boot's restored key files (crypttab's name for it)
 /// alike.  With --key-file, no problem.
@@ -7581,7 +7581,7 @@ fn proxmox_refusals() {
 }
 
 const GUIX_OS_RELEASE: &str = "NAME=\"Guix System\"\nID=guix\nPRETTY_NAME=\"Guix System\"\nLOGO=guix-icon\nHOME_URL=\"https://guix.gnu.org\"\n";
-/// The ext4 root (ext::sample::image's UUID) and the btrfs root's label.
+/// The ext4 root (`ext::sample::image`'s UUID) and the btrfs root's label.
 const GUIX_ROOT: &str = "10111213-1415-1617-1819-1a1b1c1d1e1f";
 const GUIX_LABEL: &str = "guixroot";
 const GUIX_ESP: &str = "9a1c0000-0000-4000-8000-000000000001";
@@ -8502,7 +8502,7 @@ fn slackware15() -> Tree {
 
 /// The slackware15-uefi guest, in small: GPT with vda1 the ESP at
 /// /boot/efi, vda2 swap and vda3 XFS /; the generic kernel with mkinitrd's
-/// /boot/initrd.gz (made by the command mkinitrd_command_generator.sh
+/// /boot/initrd.gz (made by the command `mkinitrd_command_generator.sh`
 /// gives); eliloconfig's EFI/Slackware (elilo.efi, elilo.conf, the kernel
 /// and the initrd, copies of /boot's) and the guest's fallback copy of it
 /// in EFI/BOOT; booted at the fallback path under blank NVRAM, as vm-run
@@ -8972,7 +8972,7 @@ fn slackware15_uefi_device_names_at_boot() {
 /// An other= section (a boot sector lilo chain-loads) with its table=:
 /// lilo opens both in the rescue, so onto vdb the copy names them as the
 /// rescue does, and they are judged by their names at boot like boot=:
-/// onto an NVMe disk, refused.
+/// onto an `NVMe` disk, refused.
 #[test]
 fn slackware15_lilo_other() {
     use crate::load::{Stage, commands::Cmd};
@@ -9034,7 +9034,7 @@ fn slackware15_lilo_links() {
 }
 
 /// Slackware's stock fstab line `/dev/fd0 /mnt/floppy auto noauto,owner`
-/// on a source with a floppy drive (fd0 an other_device, the line
+/// on a source with a floppy drive (fd0 an `other_device`, the line
 /// resolved): noauto, on no disk of the source's, so no Problem, only the
 /// mount stage's note; without noauto it would be mounted at boot, and it
 /// is refused.  The vda lines are a note on disks with the same names.
@@ -9222,7 +9222,7 @@ fn slackware15_uefi_reformat() {
 /// --reformat of slackware15 (BIOS, LILO, an ext4 /): with the huge
 /// kernel and no initrd nothing is made (the huge kernel has ext4, xfs and
 /// btrfs built in); with a mkinitrd initrd, its command as
-/// mkinitrd_command_generator.sh writes one for ext4 (ext4's dependencies
+/// `mkinitrd_command_generator.sh` writes one for ext4 (ext4's dependencies
 /// first in -m), made again for xfs and btrfs: -f and ext4's place in -m
 /// change, jbd2 and mbcache stay, and lilo maps the new image after it.
 #[test]
@@ -9269,7 +9269,7 @@ fn slackware15_reformat() {
 /// initrd copies of /boot's, mkinitrd with the source's command line.  load
 /// remakes the initrd by that command for the kernel, copies it to
 /// EFI/Slackware and EFI/BOOT, installs nothing, makes the firmware's entry
-/// again and then eliloconfig's Slackware entry, first in BootOrder.
+/// again and then eliloconfig's Slackware entry, first in `BootOrder`.
 #[test]
 fn slackware15_uefi_guest() {
     use crate::load::{Stage, commands::Cmd};
@@ -9546,12 +9546,12 @@ fn slackware15_uefi_guest() {
 // ---- Slackware -current ---------------------------------------------------
 
 const SLACK_CUR_KV: &str = "7.3.5";
-/// Slackware64-current's /etc/os-release since aaa_base 16.0 (the
+/// Slackware64-current's /etc/os-release since `aaa_base` 16.0 (the
 /// Thinkpad's pinned current-20261121).
 const SLACK_CURRENT_OS_RELEASE: &str = "NAME=Slackware\nVERSION=\"16.0\"\nID=slackware\nVERSION_ID=16.0\nPRETTY_NAME=\"Slackware 15.0 x86_64 (post 15.0 -current)\"\nANSI_COLOR=\"0;34\"\nCPE_NAME=\"cpe:/o:slackware:slackware_linux:15.0\"\nHOME_URL=\"http://slackware.com/\"\nVERSION_CODENAME=current\n";
 const SLACK_CUR_ESP: &str = "51ac0000-0000-4000-8000-0000000c0001";
 /// /etc/default/geninitrd as mkinitrd 1.4.11-81 installs it (comments
-/// left out), with the Thinkpad installer's AUTO_UPDATE_GRUB=false.
+/// left out), with the Thinkpad installer's `AUTO_UPDATE_GRUB=false`.
 const GENINITRD_DEFAULT: &str = "# Default options for /usr/sbin/geninitrd:\n#GENINITRD_OVERRIDE_SCRIPT=/usr/local/sbin/geninitrd-custom\nKERNEL=/boot/vmlinuz-generic\nGENINITRD_NAMED_SYMLINK=true\nGENINITRD_INITRD_GZ_SYMLINK=true\nGENERATOR=mkinitrd\nDRACUT_OPTS=\"--force --hostonly --verbose\"\nAUTOGENERATE_INITRD=true\nAUTO_REMOVE_ORPHANED_INITRDS=true\nAUTO_REMOVE_INITRD_TREE=true\nAUTO_UPDATE_GRUB=false\nGENINITRD_DIALOG=false\nGENINITRD_COMMAND_OUTPUT=true\n#POST_INSTALL_SCRIPT=/usr/local/sbin/geninitrd-post-install\n";
 
 /// The Thinkpad on Slackware64-current (docs/design/slackware.md,
@@ -9701,7 +9701,7 @@ fn slackware_plan_from(
     (v.clone(), slackware_plan_of(v, from, to, args))
 }
 
-/// A Slackware plan of the dump `v`, as slackware_plan_from's.
+/// A Slackware plan of the dump `v`, as `slackware_plan_from`'s.
 fn slackware_plan_of(
     v: Value,
     from: &str,
@@ -10296,15 +10296,15 @@ const DUMPS: &[Dump] = &[
 
 // ---- illumos: OpenIndiana -------------------------------------------------
 
-/// OpenIndiana Hipster 2026.10 as its text installer leaves it (the oi2610
+/// `OpenIndiana` Hipster 2026.10 as its text installer leaves it (the oi2610
 /// guest, docs/design/openindiana.md), a `pkg update` later: the whole disk
 /// from `zpool create -B` (slice 0 the ESP, unmounted; slice 1 rpool; slice
 /// 8 reserved), two boot environments (openindiana, the installer's, and
 /// openindiana-1, the booted bootfs, each with a /var child at
 /// canmount=noauto), the swap and dump zvols, rpool/export/home/tester;
 /// no os-release, only /etc/release.  `uefi` says whether prtconf shows
-/// efi-systab.  illumos' own report reads it (crate::other::illumos), not
-/// Linux's: a FakeRunner answers diskinfo, prtconf, zpool, zfs, beadm and
+/// efi-systab.  illumos' own report reads it (`crate::other::illumos`), not
+/// Linux's: a `FakeRunner` answers diskinfo, prtconf, zpool, zfs, beadm and
 /// bootadm.
 fn openindiana(uefi: bool) -> (Tree, FakeRunner) {
     const SOLARIS_ZFS: &str = "6a898cc3-1dd2-11b2-99a6-080020736631";
@@ -10491,7 +10491,7 @@ fn openindiana(uefi: bool) -> (Tree, FakeRunner) {
     (t, runner)
 }
 
-/// OpenIndiana's dump (illumos' report on the fake tree), and its plan onto
+/// `OpenIndiana`'s dump (illumos' report on the fake tree), and its plan onto
 /// c4t0d0.
 fn openindiana_plan(uefi: bool) -> (Value, crate::load::commands::Built) {
     use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
@@ -10529,7 +10529,7 @@ fn openindiana_plan(uefi: bool) -> (Value, crate::load::commands::Built) {
     )
 }
 
-/// OpenIndiana read back and planned (docs/design/openindiana.md, O2):
+/// `OpenIndiana` read back and planned (docs/design/openindiana.md, O2):
 /// supported by its /etc/release; UEFI from prtconf's efi-systab; the
 /// unmounted ESP kept byte for byte.  load makes the dump zvol as a volume
 /// of its size and writes nothing into it, mounts only the booted BE and its
@@ -10686,7 +10686,7 @@ fn openindiana_bios() {
     assert_eq!(bt.matches("installboot").count(), 1, "{bt}");
 }
 
-/// OpenIndiana's report with RUNNER's answers, and its plan onto c4t0d0.
+/// `OpenIndiana`'s report with RUNNER's answers, and its plan onto c4t0d0.
 fn openindiana_with(t: &Tree, runner: FakeRunner) -> (Value, crate::load::commands::Built) {
     use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let sys = Sys::new(t.root(), Box::new(runner), true);
@@ -10756,9 +10756,9 @@ fn openindiana_without_zpool_is_refused() {
 
 // ---- TrueNAS Community Edition 25.10 --------------------------------------
 
-/// TrueNAS's kernel, as each BE's truenas:kernel_version names it.
+/// `TrueNAS`'s kernel, as each BE's `truenas:kernel_version` names it.
 const TN_KV: &str = "6.12.33-production+truenas";
-/// The children of every TrueNAS boot environment (scale-build's fhs.py),
+/// The children of every `TrueNAS` boot environment (scale-build's fhs.py),
 /// with their mountpoints.
 const TN_CHILDREN: [(&str, &str); 15] = [
     ("audit", "/audit"),
@@ -10784,7 +10784,7 @@ const TN_CLONED: [&str; 5] = ["audit", "data", "home", "root", "var/log"];
 /// The datasets of a BE that are readonly=on (its root among them, "").
 const TN_RO: [&str; 4] = ["", "conf", "opt", "usr"];
 
-/// TrueNAS CE 25.10 as its installer and two updates leave it
+/// `TrueNAS` CE 25.10 as its installer and two updates leave it
 /// (docs/design/truenas.md): Debian 12's os-release, /etc/version, the
 /// middleware's marks; on each boot disk a BIOS boot partition, an ESP
 /// (mkdosfs -F 32 -s 1 -n EFI) nothing mounts, and boot-pool's vdev.
@@ -11170,7 +11170,7 @@ fn truenas(mirror: bool) -> (Tree, FakeRunner) {
     (t, runner)
 }
 
-/// TrueNAS's dump and plan: the source disks going to sda (sdb, sdc);
+/// `TrueNAS`'s dump and plan: the source disks going to sda (sdb, sdc);
 /// `extra`, more of load's arguments; `pool_names`, the mapping's renames.
 fn truenas_plan(
     mirror: bool,
@@ -11206,8 +11206,8 @@ fn truenas_plan(
     (v, commands::build(&l, &o, &m))
 }
 
-/// TrueNAS 25.10, one UEFI disk, three BEs: the inactive BEs in
-/// backup_sources with their read-only mounts, boot.truenas, the ESP read
+/// `TrueNAS` 25.10, one UEFI disk, three BEs: the inactive BEs in
+/// `backup_sources` with their read-only mounts, boot.truenas, the ESP read
 /// though nothing mounts it, os.product; the plan makes every BE's
 /// datasets writable, mounts each inactive BE under run/bko-be and takes
 /// it away again, holds readonly=on until the boot stage's end, and
@@ -11571,7 +11571,7 @@ fn truenas_guest() {
     );
 }
 
-/// What load refuses on TrueNAS: a release other than 25.10, and
+/// What load refuses on `TrueNAS`: a release other than 25.10, and
 /// boot-pool under another name here.
 #[test]
 fn truenas_refusals() {
@@ -11652,7 +11652,7 @@ fn truenas_refusals() {
     );
 }
 
-/// TrueNAS on a BIOS boot mirror with the data pool tank on vdc: GRUB on
+/// `TrueNAS` on a BIOS boot mirror with the data pool tank on vdc: GRUB on
 /// both disks both ways, no NVRAM; tank restored as any pool by default,
 /// left alone with --pools boot-pool, and a --map of its disk refused.
 #[test]
@@ -11787,15 +11787,15 @@ fn truenas_mirror_guest() {
 const ZBM_LTS: &str = "6.12.63_1";
 const ZBM_MAINLINE: &str = "6.18.9_1";
 
-/// The void-zbm guest (docs/design/zfsbootmenu.md) as ZFSBootMenu's Void
+/// The void-zbm guest (docs/design/zfsbootmenu.md) as `ZFSBootMenu`'s Void
 /// UEFI guide leaves it, with the second BE its builder makes: GPT, the ESP
-/// (vda1) at /boot/efi holding only ZFSBootMenu's release image at
+/// (vda1) at /boot/efi holding only `ZFSBootMenu`'s release image at
 /// EFI/ZBM/VMLINUZ.EFI and its copy VMLINUZ-BACKUP.EFI, the pool zroot
 /// (vda2, compatibility=openzfs-2.3-linux) with zroot/ROOT (the shared
 /// org.zfsbootmenu:commandline), the BEs zroot/ROOT/void (bootfs, booted,
 /// both kernel series) and zroot/ROOT/void-6.12 (a clone of
 /// void@pre-mainline, not mounted, its own commandline with %{parent}),
-/// zroot/home; NVRAM "ZFSBootMenu (Backup)" and "ZFSBootMenu", the latter
+/// zroot/home; NVRAM "`ZFSBootMenu` (Backup)" and "`ZFSBootMenu`", the latter
 /// first and booted.  `enc`: void-zbm-enc, zroot an encryption root with a
 /// passphrase read from /etc/zfs/zroot.key inside the BE, and
 /// org.zfsbootmenu:keysource on zroot.  The inactive BE's /boot is where
@@ -11955,7 +11955,7 @@ fn zfsbootmenu(enc: bool) -> (Tree, FakeRunner) {
     (t, runner)
 }
 
-/// ZFSBootMenu's dump (`v`, changed by `change` first) planned onto sda
+/// `ZFSBootMenu`'s dump (`v`, changed by `change` first) planned onto sda
 /// with load's arguments `extra`.
 fn zbm_plan(
     enc: bool,
@@ -11986,7 +11986,7 @@ fn zbm_plan(
 }
 
 /// void-zbm read back and planned: the loader named zfsbootmenu from
-/// BootCurrent's image; boot.zfsbootmenu with both images (version, kernel,
+/// `BootCurrent`'s image; boot.zfsbootmenu with both images (version, kernel,
 /// SHA-256, embedded command line), the pool and both BEs with their /boot;
 /// one hinted source for the inactive BE.  The plan makes every dataset
 /// with its user properties intact, mounts void-6.12 under run/bko-be and
@@ -12283,7 +12283,7 @@ fn zfsbootmenu_guest() {
     );
 }
 
-/// What load refuses for ZFSBootMenu: the BEs' pool not in the layout, a
+/// What load refuses for `ZFSBootMenu`: the BEs' pool not in the layout, a
 /// bootfs not among the datasets, no image on an ESP fstab mounts.
 #[test]
 fn zfsbootmenu_refusals() {
@@ -12434,7 +12434,7 @@ fn corpus_dump(name: &str) -> Value {
     .unwrap()
 }
 
-/// Off Linux nothing of crate::zfs_be applies: FreeBSD's inactive bectl
+/// Off Linux nothing of `crate::zfs_be` applies: FreeBSD's inactive bectl
 /// BE (freebsd14's) gets no backup source at dump, and load, even given
 /// one, mounts nothing under run/bko-be and leaves no /run behind.
 #[test]
@@ -12612,7 +12612,7 @@ fn truenas_pools_refusals() {
     assert!(only.guids.is_empty());
 }
 
-/// A TrueNAS bootfs that isn't the booted BE: dump warns, load refuses,
+/// A `TrueNAS` bootfs that isn't the booted BE: dump warns, load refuses,
 /// naming both; a boot-pool disk with no target is refused too.
 #[test]
 fn truenas_bootfs_and_targets() {
@@ -12663,11 +12663,11 @@ fn truenas_bootfs_and_targets() {
 /// ISO's and the newest, both linux-current (VER-REL; uname -r adds
 /// .current).
 const SOLUS_KVS: [&str; 2] = ["6.18.21-333", "7.3.4-373"];
-/// The ESP's PARTUUID (LoaderDevicePartUUID names it).
+/// The ESP's PARTUUID (`LoaderDevicePartUUID` names it).
 const SOLUS_ESP: &str = "50105050-0000-4000-8000-000000000001";
 /// The root's PARTUUID, which the loader entries' root= names.
 const SOLUS_ROOT_PART: &str = "50105050-0000-4000-8000-000000000003";
-/// The ext4 root (ext::sample::image's UUID).
+/// The ext4 root (`ext::sample::image`'s UUID).
 const SOLUS_ROOT: &str = "10111213-1415-1617-1819-1a1b1c1d1e1f";
 /// Solus 4.9's /usr/lib/os-release (the ISO's root).
 const SOLUS_OS_RELEASE: &str = "NAME=\"Solus\"\nVERSION=\"4.9\"\nID=\"solus\"\nVERSION_CODENAME=serenity\nVERSION_ID=\"4.9\"\nPRETTY_NAME=\"Solus 4.9 Serenity\"\nANSI_COLOR=\"1;34\"\nHOME_URL=\"https://getsol.us\"\nSUPPORT_URL=\"https://help.getsol.us/docs/user/contributing/getting-involved\"\nBUG_REPORT_URL=\"https://issues.getsol.us/\"\nLOGO=\"distributor-logo-solus\"\n";
@@ -12682,10 +12682,10 @@ const SOLUS_OS_RELEASE: &str = "NAME=\"Solus\"\nVERSION=\"4.9\"\nID=\"solus\"\nV
 /// link to lib64), default-current naming the newest; on the ESP,
 /// clr-boot-manager's shim as EFI/com.solus-project/bootloaderx64.efi
 /// (and its copy at the fallback path, with shim's fbx64.efi and no
-/// grubx64.efi there), systemd-boot as grubx64.efi beside it, MokManager,
+/// grubx64.efi there), systemd-boot as grubx64.efi beside it, `MokManager`,
 /// both kernels and initrds, and an entry for each, root= by PARTUUID;
 /// booted from NVRAM's "Solus Linux Bootloader" entry (Boot0001) with
-/// Secure Boot on, LoaderInfo systemd-boot's.
+/// Secure Boot on, `LoaderInfo` systemd-boot's.
 fn solus(mounted: bool, esp_name: &str) -> Tree {
     use crate::efi::{GLOBAL, LOADER};
     let t = Tree::new(&format!("scn-solus-{mounted}-{esp_name}"));
@@ -12855,7 +12855,7 @@ fn solus_plan(v: &Value) -> crate::load::commands::Built {
 }
 
 /// Solus read back and planned (docs/design/solus.md): supported by its
-/// ID; its eopkg packages; the ESP at /boot, out of fstab (in_fstab false)
+/// ID; its eopkg packages; the ESP at /boot, out of fstab (`in_fstab` false)
 /// with no unmounted-ESP warning; systemd-boot through clr-boot-manager's
 /// shim from NVRAM's entry; the initrd prebuilt.  load keeps the restored
 /// ESP whole: no bootctl, no initramfs rebuilt, no clr-boot-manager, only
@@ -13029,7 +13029,7 @@ fn solus_guest() {
 }
 
 /// Solus booted at the fallback path with no NVRAM entry for its shim and
-/// no LoaderInfo (on the guest, shim's fbx64.efi makes the entry from
+/// no `LoaderInfo` (on the guest, shim's fbx64.efi makes the entry from
 /// BOOTX64.CSV on a fresh store and boots it, so this is firmware where
 /// that didn't happen): EFI/BOOT/BOOTX64.EFI is a copy of
 /// clr-boot-manager's shim, so it's systemd-boot through shim still, and
@@ -13531,7 +13531,7 @@ fn snapcore_sys(t: &Tree, changes: &str) -> Sys {
     )
 }
 
-/// `run`, through SYS (its runner a SnapcoreRunner).
+/// `run`, through SYS (its runner a `SnapcoreRunner`).
 fn snapcore_run(sys: &Sys) -> Value {
     let os = crate::osrel::read(sys);
     crate::osrel::check_supported(os.as_ref()).unwrap();
@@ -13566,7 +13566,7 @@ fn snapcore_plan(v: &Value, extra: &[&str]) -> crate::load::commands::Built {
 
 /// The plain uc24: boot.snapcore (docs/design/ubuntu-core.md, U2) from
 /// modeenv, the model, the seed and ubuntu-boot; os-release from the base
-/// snap; every snap revision; the gadget's boot areas; backup_sources the
+/// snap; every snap revision; the gadget's boot areas; `backup_sources` the
 /// four roots in place of the base snap and its binds.  Planned (U3): the
 /// gadget's partitions exactly, every filesystem with its label and UUID
 /// (the seed's volume ID ABA0-ACE2), the four at snap-bootstrap's mount
@@ -13833,7 +13833,7 @@ fn snapcore_guest() {
 }
 
 /// uc24-fde: both LUKS2 headers kept (dump writes them beside the layout,
-/// their SHA-256 in storage.luks_headers), written back by
+/// their SHA-256 in `storage.luks_headers`), written back by
 /// luksHeaderRestore and opened with the recovery key's key file: no
 /// luksFormat, no luksAddKey.  The same-machine promise in the notes;
 /// --new-machine points the restored seed at recover mode of the image's
@@ -14294,8 +14294,8 @@ fn qubes_lvs() -> Vec<QLv> {
     ]
 }
 
-/// qubes_dom0's metadata: swap (linear), root-pool with dom0's `root`,
-/// vm-pool with qubes_lvs(), their _tdata/_tmeta and the spare.
+/// `qubes_dom0`'s metadata: swap (linear), root-pool with dom0's `root`,
+/// vm-pool with `qubes_lvs()`, their _tdata/_tmeta and the spare.
 fn qubes_vg_text() -> String {
     let id = |n: usize| format!("qv{n:04}-aaaa-bbbb-cccc-dddd-eeee-ffffff");
     let striped = |n: usize, name: &str, extents: u64, at: u64, visible: bool| {
@@ -14352,7 +14352,7 @@ fn qubes_vg_text() -> String {
 }
 
 /// qubes.xml for the guest's qubes: the templates' root, private and
-/// volatile in vm-pool, the AppVMs' private and volatile (their root a
+/// volatile in vm-pool, the `AppVMs`' private and volatile (their root a
 /// snapshot of their template's, made at start).
 fn qubes_xml() -> String {
     let dom = |class: &str, name: &str, template: bool| {
@@ -14392,8 +14392,8 @@ fn qubes_xml() -> String {
 /// The qubes43 guest (docs/design/qubes.md, "What Q0 found" and "What Q1
 /// found") as dump reads it from dom0's root: GPT with the ESP (Qubes's
 /// GRUB in EFI/qubes, its copy at EFI/BOOT), /boot ext4 and LUKS2 holding
-/// VG qubes_dom0: swap, root-pool with dom0's root (ext4, /), vm-pool with
-/// qubes_lvs(); Xen 4.19.5 in /boot and 20_linux_xen's menu; NVRAM's
+/// VG `qubes_dom0`: swap, root-pool with dom0's root (ext4, /), vm-pool with
+/// `qubes_lvs()`; Xen 4.19.5 in /boot and `20_linux_xen`'s menu; NVRAM's
 /// "Qubes OS" entry; qubes.xml.
 fn qubes_tree() -> (Tree, FakeRunner) {
     use crate::efi::GLOBAL;

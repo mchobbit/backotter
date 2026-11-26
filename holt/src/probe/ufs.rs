@@ -1,4 +1,4 @@
-//! UFS (FreeBSD, DragonFly's /boot) and FFS (NetBSD, OpenBSD): the
+//! UFS (FreeBSD, `DragonFly`'s /boot) and FFS (NetBSD, OpenBSD): the
 //! superblock, at 64 KiB (UFS2), 8 KiB (UFS1), or 0 / 256 KiB, as blkid
 //! looks for it.  newfs's parameters themselves come from the system's own
 //! dumpfs (`other`); this names the filesystem and tells its version.
@@ -17,7 +17,7 @@ use crate::json::Obj;
 
 const UFS1_MAGIC: u32 = 0x0001_1954;
 const UFS2_MAGIC: u32 = 0x1954_0119;
-/// NetBSD's FFSv2 with extended attributes (FS_UFS2EA_MAGIC).
+/// NetBSD's `FFSv2` with extended attributes (`FS_UFS2EA_MAGIC`).
 const UFS2EA_MAGIC: u32 = 0x1901_2038;
 /// Where struct fs keeps its magic number.
 const MAGIC_AT: usize = 1372;

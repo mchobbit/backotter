@@ -1,10 +1,10 @@
 //! `bko-holt luks-headers LAYOUT DIR --repo REPO ...`: the LUKS2 headers a
-//! dump kept (crate::luksheader), fetched from the backup into DIR for
+//! dump kept (`crate::luksheader`), fetched from the backup into DIR for
 //! `load --luks-header-dir DIR` (holt-json.md, "bko-holt-luks-headers";
 //! its open question 12, approved 2026-11-26).
 //!
 //! dump keeps each header as a file and its SHA-256 and size in
-//! storage.luks_headers.  The backup tool keeps those files in the backup
+//! `storage.luks_headers`.  The backup tool keeps those files in the backup
 //! itself, in the same snapshot as the files of the system, at
 //! `REPO_DIR/FILE` (stick-config.md, "LUKS2 headers in the backup"): the
 //! repository is encrypted, and a header backup (16 MiB or more) would
@@ -26,11 +26,11 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// Where the backup keeps the kept headers, inside the snapshot of the
-/// system (beside Qubes's raw volumes, crate::qubes::RAW_DIR).  load's
+/// system (beside Qubes's raw volumes, `crate::qubes::RAW_DIR`).  load's
 /// restore leaves the directory out of the tree it restores.
 pub const REPO_DIR: &str = "/.bko-holt/luks-headers";
 
-/// The directory REPO_DIR is in: the backup tool's own, not the system's
+/// The directory `REPO_DIR` is in: the backup tool's own, not the system's
 /// (Qubes's raw volumes are in it too).  load leaves it out of the restore
 /// with the headers, unless raw volumes are under it.
 pub const BKO_DIR: &str = "/.bko-holt";
@@ -69,7 +69,7 @@ dump's (nothing left), 2 for bad arguments or a DIR that isn't a new
 directory in a private one.
 ";
 
-/// One header storage.luks_headers names.
+/// One header `storage.luks_headers` names.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
     pub device: String,
@@ -81,7 +81,7 @@ pub struct Entry {
 }
 
 /// Whether FILE is a header file's name as dump makes them
-/// (luksheader::file_name): one name, no directory, nothing hidden.
+/// (`luksheader::file_name)`: one name, no directory, nothing hidden.
 pub fn file_ok(file: &str) -> bool {
     !file.is_empty()
         && file.len() <= 200

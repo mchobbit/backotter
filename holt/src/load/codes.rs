@@ -1,5 +1,5 @@
 //! Stable codes for plan problems and notes (docs/design/holt-json.md,
-//! "Codes"; RT10b).
+//! "Codes"; `RT10b`).
 //!
 //! A `Problem` or a `Note` is today's text with a code and the fields a
 //! screen acts on beside it.  Its `Display` (and `Deref` to `str`) is the
@@ -10,7 +10,7 @@
 //! like any problem.
 //!
 //! `bko-holt-error`'s codes are jsonout.rs's; the candidates' refusals
-//! (RT10c) and a writing run's failures (RT10f) are here, as plain enums.
+//! (`RT10c`) and a writing run's failures (`RT10f`) are here, as plain enums.
 
 use crate::json::{Obj, Value};
 use std::fmt;
@@ -210,7 +210,7 @@ impl FailureCode {
     }
 }
 
-/// fit_refused's `reason` (holt-json.md's table): why fit can't change
+/// `fit_refused`'s `reason` (holt-json.md's table): why fit can't change
 /// this layout for that disk.  `other` and any value a reader doesn't know
 /// show the text.
 pub const FIT_REASONS: &[&str] = &[
@@ -234,7 +234,7 @@ pub const FIT_REASONS: &[&str] = &[
     "other",
 ];
 
-/// reformat_refused's `reason` (holt-json.md's table): `other` where the
+/// `reformat_refused`'s `reason` (holt-json.md's table): `other` where the
 /// mount isn't one --reformat can find (no fstab entry, not on the
 /// layout's disks, no filesystem), which bko-rescue never offers; a reader
 /// shows the text.
@@ -305,7 +305,7 @@ impl<C: Code> Coded<C> {
         o.build()
     }
 
-    /// to_json's object read back (a plain string is an `other`, as
+    /// `to_json`'s object read back (a plain string is an `other`, as
     /// before codes); a code this bko-holt doesn't know is `other` too.
     pub fn from_json(v: &Value) -> Option<Self> {
         if let Some(t) = v.as_str() {
@@ -421,7 +421,7 @@ impl<C: Code> List<C> {
         self.0.iter().any(|x| x.text == text)
     }
 
-    /// has_text, for a list's callers that had a Vec<String>
+    /// `has_text`, for a list's callers that had a Vec<String>
     /// (`problems.contains(&text)`).
     pub fn contains(&self, text: &impl AsRef<str>) -> bool {
         self.has_text(text.as_ref())

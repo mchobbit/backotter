@@ -1,34 +1,34 @@
-//! TrueNAS Community Edition 25.10 (docs/design/truenas.md): how to tell a
+//! `TrueNAS` Community Edition 25.10 (docs/design/truenas.md): how to tell a
 //! system is one, and what the dump records of its boot environments and
 //! ESPs (boot.truenas).
 //!
-//! To os-release TrueNAS is Debian 12.  Its own marks are the
-//! middleware's config database and TrueNAS's GRUB helper; the product
+//! To os-release `TrueNAS` is Debian 12.  Its own marks are the
+//! middleware's config database and `TrueNAS`'s GRUB helper; the product
 //! version is /etc/version.  Every install or update is a boot environment
-//! `boot-pool/ROOT/VERSION` (crate::zfs_be's TrueNAS rule), a legacy,
+//! `boot-pool/ROOT/VERSION` (`crate::zfs_be`'s `TrueNAS` rule), a legacy,
 //! read-only root with 15 child datasets, the bootfs one booted.  The ESP
 //! on each boot-pool disk (partition 2, type EF00) isn't mounted:
 //! `truenas_install` mounts it only to run grub-install.  dump reads each
-//! one through a private read-only mount, as Proxmox's (crate::boot).
+//! one through a private read-only mount, as Proxmox's (`crate::boot`).
 
 use crate::json::{Obj, Value};
 use crate::sys::{RUN_DIR, RoMountWords, Sys, safe_name};
 use crate::zfs_be::{BootEnv, Rule};
 
-/// The middleware's config database and TrueNAS's GRUB helper: both there
-/// on a TrueNAS system.
+/// The middleware's config database and `TrueNAS`'s GRUB helper: both there
+/// on a `TrueNAS` system.
 pub(crate) const MARKS: [&str; 2] = ["/data/freenas-v1.db", "/usr/local/bin/truenas-grub.py"];
 /// The product version (`25.10.8`).
 pub(crate) const VERSION: &str = "/etc/version";
 pub(crate) const KERNEL_PROP: &str = "truenas:kernel_version";
 pub(crate) const KEEP_PROP: &str = "zectl:keep";
 
-/// Whether the running system is TrueNAS.
+/// Whether the running system is `TrueNAS`.
 pub(crate) fn detect(sys: &Sys) -> bool {
     MARKS.iter().all(|f| sys.exists(f))
 }
 
-/// os.product: "TrueNAS 25.10.8".
+/// os.product: "`TrueNAS` 25.10.8".
 pub(crate) fn product(sys: &Sys) -> Option<String> {
     let v = sys.read_trim(VERSION)?;
     let v = v.lines().next().unwrap_or("").trim().to_string();
@@ -36,7 +36,7 @@ pub(crate) fn product(sys: &Sys) -> Option<String> {
 }
 
 /// One ESP of a boot-pool disk: its partition, and what a read of it found
-/// (Value::Null when it couldn't be read).  boot.truenas's esps list has
+/// (`Value::Null` when it couldn't be read).  boot.truenas's esps list has
 /// its disk, volume ID and label.
 pub(crate) struct Esp {
     pub device: String,
@@ -103,10 +103,10 @@ fn be_version(sys: &Sys, be: &BootEnv) -> Option<String> {
     )?
 }
 
-/// boot.truenas for a TrueNAS system: its BEs (`bes`, crate::zfs_be::list
+/// boot.truenas for a `TrueNAS` system: its BEs (`bes`, `crate::zfs_be::list`
 /// of the dump's tools, `tools`) and the ESPs of its boot-pool disks
 /// (`esps`: device, disk, volume ID, label), each read through
-/// `read_esp` (device -> contents; crate::boot's private read-only mount).
+/// `read_esp` (device -> contents; `crate::boot`'s private read-only mount).
 pub(crate) fn read(
     sys: &Sys,
     tools: &Value,

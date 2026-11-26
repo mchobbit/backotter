@@ -1,15 +1,15 @@
-//! What golden_plans.rs and corpus_build.rs share: how a corpus dump is
+//! What `golden_plans.rs` and `corpus_build.rs` share: how a corpus dump is
 //! planned, the golden text of a plan, and how two plans differ by stage.
 //!
 //! The planning is `bugreport::check_plan`'s, with the public API only: a
-//! fake rescue system (testutil::Tree) with a blank disk sd{q+i} of each
+//! fake rescue system (`testutil::Tree`) with a blank disk sd{q+i} of each
 //! dumped disk's size (GROW bytes more for the `+bigger` variant, as
 //! ht1.sh's bigger rebuilds onto disks 1 GiB bigger), `--map NAME=TARGET`,
 //! `--repo /srv/bko-repo`, `--key-file NAME=/srv/bko-keys/NAME` for each
 //! ZFS encryption root with a passphrase and each LUKS2 header the dump kept
 //! (with `--luks-header-dir` and a test's header files), a rustic-bko whose `--version` says it's
-//! BackOtter's, and every tool the plan asks for installed.  Three things
-//! differ from check_plan, for plans that read the same on every build:
+//! `BackOtter`'s, and every tool the plan asks for installed.  Three things
+//! differ from `check_plan`, for plans that read the same on every build:
 //! RAM disks and ZFS volumes get no target (load leaves them out, and a
 //! --map for one is a Problem), load's own binary (the test's) is installed
 //! where it runs from, and the plan names it `bko-holt`.  It uses only
@@ -51,7 +51,7 @@ pub(crate) struct Planned {
 }
 
 /// The dumped disks load maps: (name, size in bytes, logical sector size).
-/// Like load's Layout::from_json, and unlike check_plan, it leaves out RAM
+/// Like load's `Layout::from_json`, and unlike `check_plan`, it leaves out RAM
 /// disks and ZFS volumes: a --map for one is only a Problem ("the layout has
 /// no disk ram0"), and alpine324 has 16 of them.
 pub(crate) fn dumped_disks(v: &Value) -> Vec<(String, u64, u32)> {
@@ -88,15 +88,15 @@ pub(crate) fn dumped_disks(v: &Value) -> Vec<(String, u64, u32)> {
     out
 }
 
-/// Plans LAYOUT_TEXT onto blank targets GROW bytes bigger than its disks.
+/// Plans `LAYOUT_TEXT` onto blank targets GROW bytes bigger than its disks.
 pub(crate) fn plan(layout_text: &str, grow: u64) -> Result<Planned, String> {
     plan_onto(layout_text, &|_, size| size + grow, &[])
 }
 
-/// Plans LAYOUT_TEXT onto blank targets of SIZE_OF(disk, its size) bytes,
-/// with EXTRA arguments after load's own (BackShot2's tier 0: a drifted
+/// Plans `LAYOUT_TEXT` onto blank targets of `SIZE_OF(disk`, its size) bytes,
+/// with EXTRA arguments after load's own (`BackShot2`'s tier 0: a drifted
 /// layout, its case's targets and load options).  The targets are
-/// sdq, sdr, ... (sd_target).
+/// sdq, sdr, ... (`sd_target`).
 pub(crate) fn plan_onto(
     layout_text: &str,
     size_of: &dyn Fn(&str, u64) -> u64,
@@ -113,11 +113,11 @@ pub(crate) fn sd_target(i: usize, _disk: &str) -> Result<String, String> {
     Ok(format!("sd{}", (b'q' + i as u8) as char))
 }
 
-/// plan_onto, with the I-th dumped disk DISK's target named TARGET_NAME(I,
-/// DISK): BackShot2's tier 0 names them as its tier 1 rescuer has them
+/// `plan_onto`, with the I-th dumped disk DISK's target named `TARGET_NAME(I`,
+/// DISK): `BackShot2`'s tier 0 names them as its tier 1 rescuer has them
 /// (vdb, vdc, ...: virtio disks after the rescuer's own vda), since load's
 /// Slackware check judges a target by its name's driver class and place.
-/// A vd target's device number is virtio_blk's (major 253), any other's
+/// A vd target's device number is `virtio_blk`'s (major 253), any other's
 /// sd's (major 8); load reads neither's major.
 pub(crate) fn plan_onto_named(
     layout_text: &str,
@@ -358,7 +358,7 @@ pub(crate) fn plan_onto_named(
 }
 
 /// SHA-256 of DATA in lower-case hex (FIPS 180-4).  Here, not holt's
-/// bytes::sha256_hex, which is newer than 3671e96 (the replay of #16).
+/// `bytes::sha256_hex`, which is newer than 3671e96 (the replay of #16).
 pub(crate) fn sha256_hex(data: &[u8]) -> String {
     const K: [u32; 64] = [
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
@@ -442,7 +442,7 @@ pub(crate) fn write_atomic(path: &std::path::Path, text: &[u8]) -> Result<(), St
     std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// The marker of golden_plans.rs's own lines after load's output.
+/// The marker of `golden_plans.rs`'s own lines after load's output.
 pub(crate) const GOLDEN_MARK: &str = "# golden_plans.rs:";
 
 /// A plan as plan.txt holds it: load's standard output as it is, then the
@@ -488,7 +488,7 @@ pub(crate) fn stage_header(line: &str) -> Option<&str> {
 /// stage header), each stage (from its header line), and `trailer`: from the
 /// first line after the last stage header (anywhere, without one) that
 /// starts "# Nothing was written" (plan.rs's last line) or is
-/// golden_text's own, to the end.  testvm/test2/t2lib/plandiff.py splits the
+/// `golden_text`'s own, to the end.  testvm/test2/t2lib/plandiff.py splits the
 /// same way.
 pub(crate) fn sections(text: &str) -> Vec<(String, Vec<&str>)> {
     let lines: Vec<&str> = text.lines().collect();

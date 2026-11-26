@@ -3,7 +3,7 @@
 //! GUIDs, PARTUUIDs, sizes, attributes: only ubuntu-data may grow, under
 //! --fit-largest); format keeps every label and UUID and the seed's vfat
 //! volume ID; an encrypted save and data get their kept LUKS2 headers back
-//! (commands.rs's keep_header arm, crate::luksheader).  The mount stage
+//! (commands.rs's `keep_header` arm, `crate::luksheader`).  The mount stage
 //! mounts the four partitions at snap-bootstrap's run-mode mount points,
 //! the backup's tree: there is no `/` and no fstab.
 //!
@@ -75,11 +75,11 @@ fn size_change(now: Option<u64>, was: u64) -> String {
 /// pc-kernel_3908) doesn't.  U3 found why (docs/design/ubuntu-core.md,
 /// "What U2/U3 found"): recover mode runs the recovery system's own kernel,
 /// whose initramfs holds snap-bootstrap.  The newer one (secboot's
-/// ActivateContext) tries a recovery key only against keyslots its LUKS2
+/// `ActivateContext`) tries a recovery key only against keyslots its LUKS2
 /// tokens type as recovery keyslots, and a header made by the install's
 /// older snapd has no tokens: it boots on with ubuntu-data locked.  The
 /// install's own system's kernel made those keyslots and opens them.  So
-/// the system chosen is the first good one (modeenv's good_recovery_systems,
+/// the system chosen is the first good one (modeenv's `good_recovery_systems`,
 /// in the order snapd made them, with its model on the seed): the one the
 /// device was installed from.
 pub fn recover_system(sc: &Value) -> Result<(String, String), String> {
@@ -117,14 +117,14 @@ pub fn recover_system(sc: &Value) -> Result<(String, String), String> {
 }
 
 /// The check of a restored tree at T, as a shell script: modeenv says
-/// mode=run; each of its current_kernels has EFI/ubuntu/K/kernel.efi on
+/// mode=run; each of its `current_kernels` has EFI/ubuntu/K/kernel.efi on
 /// ubuntu-boot; EFI/ubuntu/kernel.efi (the run-mode kernel, a symlink
-/// since UC20) points at one of them, and the run grubenv's snap_kernel,
+/// since UC20) points at one of them, and the run grubenv's `snap_kernel`,
 /// when set, names one; no kernel is being tried; each of
-/// current_recovery_systems has systems/LABEL/model on ubuntu-seed;
+/// `current_recovery_systems` has systems/LABEL/model on ubuntu-seed;
 /// modeenv's base and gadget are in system-data/var/lib/snapd/snaps; the
-/// model is on ubuntu-boot.  A mismatch fails the stage.  WANT_KERNELS and
-/// WANT_SYSTEMS are the dump's: a restored tree that differs (a backup
+/// model is on ubuntu-boot.  A mismatch fails the stage.  `WANT_KERNELS` and
+/// `WANT_SYSTEMS` are the dump's: a restored tree that differs (a backup
 /// taken across a refresh) is a warning, since the tree's own files are
 /// what boots.
 pub fn check_script(t: &str, want_kernels: &str, want_systems: &str) -> String {
@@ -385,7 +385,7 @@ fn boot_areas_script(exe: &str, layout: &str, disk: &str, dev: &str) -> String {
 }
 
 /// `bko-holt snapcore-boot-areas LAYOUT DISK DEVICE` (not in the usage: run
-/// by load's boot stage): writes boot.snapcore.boot_areas back on DEVICE,
+/// by load's boot stage): writes `boot.snapcore.boot_areas` back on DEVICE,
 /// the target of DISK: the MBR's first 440 bytes (GRUB's boot.img; the
 /// partition table after them is left alone), and the BIOS Boot
 /// partition's core.img at that partition's start, each checked against
@@ -506,7 +506,7 @@ mod tests {
         )
     }
 
-    /// RustAudit1 H8-03: bko-holt run from a path with a space, quotes, $,
+    /// `RustAudit1` H8-03: bko-holt run from a path with a space, quotes, $,
     /// a backtick and a newline is still one word; a plain one stays bare.
     #[test]
     fn boot_areas_script_quotes_its_words() {

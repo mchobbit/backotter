@@ -495,20 +495,24 @@ def test_disks_older_backup():
     """An older backup of a machine that kept LUKS2 headers (open question
     15): Disks asks that snapshot for its own layout (snapshot-layout, the
     machine's install ID), fetches its headers from the same snapshot, then
-    plans from that layout; the stick's copy is never asked for."""
+    plans from that layout; the stick's copy is asked for only after it, to
+    compare (the same layout: no line), into a file of its own, wiped."""
     r = Run("disks-luks-older", holt="app-lovelace-luks-older", fake_mount=True)
     d = r.d
     to_password(r)
     password(r, PASSWORD, "Which backup?")
     d.keys("Down", "Enter")
     d.wait("Where each disk goes")
+    check(not r.says("differs from the stick's copy") and not r.says("the stick's copy is used"), "older: the same layout, no line")
     r.d.signal(signal.SIGTERM)
     r.finish(143)
     calls = r.secrets_checked(None)
     own = [c for c in calls if c["argv"][:1] == ["snapshot-layout"]]
     fetch = [c for c in calls if c["argv"][:1] == ["luks-headers"]]
     check(len(own) == 1 and own[0]["call"] == "05-snapshot-layout", "older: one snapshot-layout (%s)" % [c["argv"][:2] for c in own])
-    check(not [c for c in calls if c["argv"][:2] == ["stick", "--copy"]], "older: the stick's copy never asked for")
+    copies = [c for c in calls if c["argv"][:2] == ["stick", "--copy"]]
+    check(len(copies) <= 1 and all(calls.index(c) > calls.index(own[0]) and c["argv"][3].endswith("/stick-layout.json") and not os.path.exists(c["argv"][3]) for c in copies) if own else False,
+          "older: the stick's copy only to compare, after the backup's, wiped (%s)" % [c["argv"][3:4] for c in copies])
     if not own or not fetch:
         check(False, "older: a layout and a fetch (%d, %d)" % (len(own), len(fetch)))
         return

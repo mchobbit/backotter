@@ -2100,7 +2100,7 @@
         "file": "luks2-header-bc000000-0000-4000-8000-00000000000a.img",
         "written_to": "/run/bko-holt/luks-headers/luks2-header-bc000000-0000-4000-8000-00000000000a.img",
         "bytes": 294912,
-        "sha256": "2e921f3b0d9eedb6aea705dfc4879568d0f5355777ccd8d755e600f79247fab6"
+        "sha256": "03fd1bbc839bca71532009a30e7c99767a4cd2d6d6aa5808c3ae4c4158e1c614"
       },
       {
         "device": "vda5",
@@ -2109,7 +2109,7 @@
         "file": "luks2-header-bc000000-0000-4000-8000-00000000000c.img",
         "written_to": "/run/bko-holt/luks-headers/luks2-header-bc000000-0000-4000-8000-00000000000c.img",
         "bytes": 294912,
-        "sha256": "f7e40d788411c6f239eb22257d603f250f3362f6189ae7ba9c7a253ec78acd46"
+        "sha256": "65987a29eb79960be66bf86af60b77d12ba7337b3ed75e1ad13e7a586042aca6"
       }
     ]
   },

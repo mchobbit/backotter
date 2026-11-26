@@ -17,6 +17,15 @@
 //! screen, never that fallback.  A bko-holt whose api document doesn't list
 //! `snapshot_layout` isn't asked: the stick's copy, as before.
 //!
+//! Disks says where the layout came from (rescue-screens.md, Snapshot):
+//! the backup's own, when the stick's copy of the chosen machine (`stick
+//! --copy` into a second file, compared as JSON and wiped) is another
+//! layout: "This backup's disk layout differs from the stick's copy; the
+//! backup's is used"; and the stick's copy for a backup that holds none,
+//! with when the stick's copy was written (stick-config.md's "Which copy
+//! wins", step 3).  A layout from a bko-holt that can't ask, or for a
+//! typed address, says nothing.
+//!
 //! The stick's copy: `bko-holt stick --copy INSTALL_ID OUT --json`
 //! (holt-json.md's open question 8, approved 2026-11-26).
 //!
@@ -68,8 +77,14 @@ pub const HEADERS_SCHEMA: u64 = 1;
 pub const SNAP_SCHEMA: u64 = 1;
 
 /// How long reading a snapshot's system.json may take: one file, a dump
-/// inside, over the network.
-pub const SNAP_MS: u64 = 300_000;
+/// inside, but the archiver first loads the repository's index, which a
+/// big repository over a slow link takes minutes for (load's own restore
+/// has no cap).  The gauge's Back stops it before then.
+pub const SNAP_MS: u64 = 1_800_000;
+
+/// The stick's copy's file in the session's directory, compared with the
+/// snapshot's own and wiped.
+const STICK_NAME: &str = "stick-layout.json";
 
 /// How long a fetch may take: two Ubuntu Core headers are 13 MiB, a big
 /// keyslots area 128 MiB each, over the network.
@@ -145,6 +160,8 @@ impl App {
         self.layout_headers = 0;
         self.layout_for = None;
         self.layout_own = false;
+        self.layout_none_in_backup = false;
+        self.layout_note = None;
     }
 
     /// The layout file for the chosen snapshot: found the first time, then
@@ -159,11 +176,53 @@ impl App {
         self.forget_layout();
         // The snapshot's own first, then the stick's copy.
         let asked = match self.snapshot_layout(ui).map_err(LayoutErr::Go)? {
-            Own::Written(p) => return Ok(p),
+            Own::Written(p) => {
+                if self.differs_from_stick(&p) {
+                    self.layout_note = Some(s::LAYOUT_DIFFERS.to_string());
+                }
+                return Ok(p);
+            }
             Own::NoneThere => true,
             Own::NotAsked => false,
         };
-        self.stick_layout(asked).map_err(LayoutErr::None)
+        let p = self.stick_layout(asked).map_err(LayoutErr::None)?;
+        if asked {
+            self.layout_none_in_backup = true;
+            if let Some(m) = self.chosen().cloned() {
+                self.layout_note = Some(s::layout_from_stick(&self.machine_when(&m)));
+            }
+        }
+        Ok(p)
+    }
+
+    /// Whether the stick holds a copy of the chosen machine's layout, and
+    /// it is another layout than OWN's (compared as JSON).  No machine, no
+    /// copy, a refusal: false, nothing to say.
+    fn differs_from_stick(&mut self, own: &Path) -> bool {
+        let Some(m) = self.chosen().cloned() else { return false };
+        if !install_id_ok(&m.install_id) {
+            return false;
+        }
+        let out = self.session.path(STICK_NAME);
+        sys::wipe_file(&out);
+        let Some(cmd) = self.holt_cmd(&HoltCmd::StickCopy { install_id: &m.install_id, out: &out }) else { return false };
+        let x = wait(self.sys.start(cmd), &mut *self.sys);
+        let version = self.version.clone();
+        let doc = document(&x, "bko-holt-stick-copy").and_then(|v| same_version(v, COPY_SCHEMA, version.as_deref()));
+        let size = std::fs::symlink_metadata(&out).ok().filter(|f| f.is_file()).map(|f| f.len());
+        let theirs = match doc {
+            Ok(v) if x.code == Some(0) && v.get_str("install_id").is_some_and(|i| i.eq_ignore_ascii_case(&m.install_id)) && size.is_some() && v.get_u64("bytes") == size => std::fs::read(&out).ok(),
+            _ => None,
+        };
+        sys::wipe_file(&out);
+        let parse = |b: &[u8]| std::str::from_utf8(b).ok().and_then(|t| crate::json::parse(t).ok());
+        match (theirs, std::fs::read(own).ok()) {
+            (Some(a), Some(b)) => match (parse(&a), parse(&b)) {
+                (Some(a), Some(b)) => a != b,
+                _ => a != b,
+            },
+            _ => false,
+        }
     }
 
     /// The chosen snapshot's own layout (open question 15).  Err is where
@@ -175,7 +234,9 @@ impl App {
         }
         let id = self.chosen().map(|m| m.install_id.clone());
         if id.as_deref().is_some_and(|i| !install_id_ok(i)) {
-            return Err(self.snapshot_layout_failed(ui, s::LAYOUT_NO_ID));
+            // Not asked: the stick's copy then says the ID is bad, in
+            // its own words (LAYOUT_NO_ID), not as bko-holt's answer.
+            return Ok(Own::NotAsked);
         }
         let out = self.session.path(NAME);
         sys::wipe_file(&out);
@@ -350,7 +411,11 @@ impl App {
                 // Another snapshot's headers than the layout's: the stick's
                 // copy, used for a backup that holds no layout of its own,
                 // is another backup's (open question 15).
-                let todo = if is_refusal(&x, "header_mismatch") && !self.layout_own { s::HEADERS_MISMATCH_STICK_TODO } else { s::HEADERS_FAILED_TODO };
+                let todo = match (is_refusal(&x, "header_mismatch"), self.layout_own, self.layout_none_in_backup) {
+                    (true, false, true) => s::HEADERS_MISMATCH_STICK_TODO,
+                    (true, false, false) => s::HEADERS_MISMATCH_UNASKED_TODO,
+                    _ => s::HEADERS_FAILED_TODO,
+                };
                 Err(self.headers_failed_todo(ui, &why, todo))
             }
         }

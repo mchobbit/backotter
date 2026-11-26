@@ -73,10 +73,12 @@ mount -t ext4 -o data=ordered /dev/sdq1 /mnt/bko-target/boot
 
 # ---- restore ----
 mkdir -p -m 700 /run/bko-holt
-# left out of the restore (--reformat): btrfs subvolumes mounted elsewhere, seen again (aliases), and btrfs snapshots, which the new type can't hold as snapshots; and the backup tool's own files: the machine's system.json, a record of the backup, not of the system
+# left out of the restore (--reformat): btrfs subvolumes mounted elsewhere, seen again (aliases), and btrfs snapshots, which the new type can't hold as snapshots; and the backup tool's own files: the machine's system.json, a record of the backup, not of the system, and any copies of LUKS2 headers a dump kept, which `bko-holt luks-headers` fetches for load to write back: key material, kept out of the tree, their directory with them
 cat > /run/bko-holt/restore.globs <<'EOF'
 !/.snapshots/1/snapshot/**
 !/.snapshots/2/snapshot/**
+!/.bko-holt/luks-headers/**
+!/.bko-holt/luks-headers
 !/.bko-holt/system.json
 !/.bko-holt
 EOF

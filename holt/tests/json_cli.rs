@@ -1482,11 +1482,12 @@ fn luks_headers_fetches_what_load_reads() {
     );
     // The headers, their directory, the snapshot's system.json (open
     // question 15) and /.bko-holt (no raw volume under it): nothing of the
-    // backup tool's staging lands on the restored root.
+    // backup tool's staging lands on the restored root.  Nothing else is
+    // left out, so they are --glob arguments, with no glob file.
     assert!(
         with.get_str("text").unwrap().contains(
-            "<<'EOF'\n!/.bko-holt/luks-headers/**\n!/.bko-holt/luks-headers\n!/.bko-holt/system.json\n!/.bko-holt\nEOF\n"
-        ),
+            "restore --numeric-id --glob '!/.bko-holt/luks-headers/**' --glob '!/.bko-holt/luks-headers' --glob '!/.bko-holt/system.json' --glob '!/.bko-holt' "
+        ) && !with.get_str("text").unwrap().contains("restore.globs"),
         "{}",
         with.get_str("text").unwrap()
     );

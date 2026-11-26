@@ -336,8 +336,9 @@ impl App {
             }
             items.push((o(&rows.join("\n")), Clean::default()));
         }
-        let mut after: Vec<String> = own;
-        let mut plain_after = Vec::new();
+        // Where the layout came from, first (layout.rs's `layout_note`).
+        let mut after: Vec<String> = self.layout_note.iter().cloned().chain(own).collect();
+        let mut plain_after: Vec<String> = self.layout_note.iter().cloned().collect();
         for c in p.candidates.iter().filter(|c| c.target_of.is_none()) {
             let name = disk_name(c.model.as_deref(), &c.node);
             match &c.refused {

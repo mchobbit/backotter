@@ -12526,10 +12526,11 @@ fn freebsd_pools_glob_file() {
         .iter()
         .position(|c| c.write.as_deref() == Some(want_globs.as_str()))
         .expect("the glob file is written");
-    // The pools' paths, then the backup tool's own files (open question 15).
+    // The pools' paths, then the backup tool's own files (open question
+    // 15), the kept headers' copies too though this layout kept none.
     assert_eq!(
         rs[w].stdin.as_deref(),
-        Some("!/data/**\n!/.bko-holt/system.json\n!/.bko-holt\n")
+        Some("!/data/**\n!/.bko-holt/luks-headers/**\n!/.bko-holt/luks-headers\n!/.bko-holt/system.json\n!/.bko-holt\n")
     );
     let r = rs
         .iter()

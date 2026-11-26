@@ -233,6 +233,13 @@ pub struct App {
     /// which is some backup's, not always that one's (layout.rs).
     pub(crate) layout_for: Option<String>,
     pub(crate) layout_own: bool,
+    /// The stick's copy is used because the snapshot was asked for its own
+    /// and holds none (`no_system_json`), not because it wasn't asked.
+    pub(crate) layout_none_in_backup: bool,
+    /// What Disks says of where the layout came from: the backup's own,
+    /// unlike the stick's copy; or the stick's copy, and how old it is
+    /// (stick-config.md's "Which copy wins", step 3).
+    pub(crate) layout_note: Option<String>,
     /// Their directory in the session's, and the snapshot they are from.
     pub(crate) headers: Option<(PathBuf, Option<String>)>,
     /// The last plan bko-holt made.
@@ -321,6 +328,8 @@ impl App {
             layout_headers: 0,
             layout_for: None,
             layout_own: false,
+            layout_none_in_backup: false,
+            layout_note: None,
             headers: None,
             plan: None,
             map: Vec::new(),
@@ -604,7 +613,7 @@ impl App {
 
     /// When the machine was last backed up, in its own zone (UTC until
     /// its backup records one: RT10l).
-    fn machine_when(&self, m: &stick::Machine) -> String {
+    pub(crate) fn machine_when(&self, m: &stick::Machine) -> String {
         let Some((t, _)) = m.written.as_deref().and_then(time::parse_rfc3339) else { return "unknown".to_string() };
         match self.zone_of(m) {
             Zone::Offset => Zone::Utc.show(t, 0),

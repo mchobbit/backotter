@@ -239,6 +239,10 @@
             "restore",
             "--numeric-id",
             "--glob",
+            "!/.bko-holt/luks-headers/**",
+            "--glob",
+            "!/.bko-holt/luks-headers",
+            "--glob",
             "!/.bko-holt/system.json",
             "--glob",
             "!/.bko-holt",
@@ -344,6 +348,6 @@
       ]
     }
   ],
-  "text": "# bko-holt load plan for layout.json\n# Source: host1, Haiku R1~beta6, BIOS boot with haiku, dumped 2026-11-08T02:36:25Z\n#\n# Disks:\n#   scsi_2_0_0 (16 GiB) -> /dev/sdq\n\n# ---- partition ----\n# scsi_2_0_0 -> /dev/sdq: the source's table, GUIDs and boot code exactly\nsh -c 'bko-holt write-table layout.json scsi_2_0_0 /dev/disk/sdq/raw auto'\n# Haiku publishes a new table's partitions only at boot: restart this system before the format stage\n\n# ---- assemble ----\n# (nothing to do)\n\n# ---- format ----\n# scsi_2_0_0_0: BFS, as the source's\nmkfs -t bfs -q -o 'block_size 2048' /dev/disk/sdq/0 Haiku\n\n# ---- mount ----\nmkdir -p /mnt/bko-target\nmount -t bfs /dev/disk/sdq/0 /mnt/bko-target\n\n# ---- restore ----\n# snapshot latest of /srv/bko-repo, with BackOtter's restore flags\nRUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id --glob '!/.bko-holt/system.json' --glob '!/.bko-holt' latest /mnt/bko-target\n\n# ---- boot ----\n# the boot code (MBR, freebsd-boot) was written with the partition table\n# Haiku's boot block, on the restored volume\nmakebootable /mnt/bko-target\nmkdir -p /mnt/bko-target/system/var/log/bko-holt\n# this restore's log, on the restored system\ncp -Rp /run/bko-holt/log/. /mnt/bko-target/system/var/log/bko-holt/\n\n# ---- close ----\n# the restored volume\nunmount /mnt/bko-target\n\n# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit\n"
+  "text": "# bko-holt load plan for layout.json\n# Source: host1, Haiku R1~beta6, BIOS boot with haiku, dumped 2026-11-08T02:36:25Z\n#\n# Disks:\n#   scsi_2_0_0 (16 GiB) -> /dev/sdq\n\n# ---- partition ----\n# scsi_2_0_0 -> /dev/sdq: the source's table, GUIDs and boot code exactly\nsh -c 'bko-holt write-table layout.json scsi_2_0_0 /dev/disk/sdq/raw auto'\n# Haiku publishes a new table's partitions only at boot: restart this system before the format stage\n\n# ---- assemble ----\n# (nothing to do)\n\n# ---- format ----\n# scsi_2_0_0_0: BFS, as the source's\nmkfs -t bfs -q -o 'block_size 2048' /dev/disk/sdq/0 Haiku\n\n# ---- mount ----\nmkdir -p /mnt/bko-target\nmount -t bfs /dev/disk/sdq/0 /mnt/bko-target\n\n# ---- restore ----\n# snapshot latest of /srv/bko-repo, with BackOtter's restore flags\nRUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id --glob '!/.bko-holt/luks-headers/**' --glob '!/.bko-holt/luks-headers' --glob '!/.bko-holt/system.json' --glob '!/.bko-holt' latest /mnt/bko-target\n\n# ---- boot ----\n# the boot code (MBR, freebsd-boot) was written with the partition table\n# Haiku's boot block, on the restored volume\nmakebootable /mnt/bko-target\nmkdir -p /mnt/bko-target/system/var/log/bko-holt\n# this restore's log, on the restored system\ncp -Rp /run/bko-holt/log/. /mnt/bko-target/system/var/log/bko-holt/\n\n# ---- close ----\n# the restored volume\nunmount /mnt/bko-target\n\n# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit\n"
 }
 

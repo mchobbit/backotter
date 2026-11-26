@@ -5479,8 +5479,9 @@ impl Builder<'_> {
     fn restore(&mut self) -> Vec<Cmd> {
         let Some(repo) = &self.opts.repo else {
             let mut v = vec![Cmd::note(format!(
-                "no --repo: restore the backup into {} yourself, then run `bko-holt load ... --only boot`",
-                self.opts.target
+                "no --repo: restore the backup into {} yourself, leaving out {} (the backup tool's own files: the machine's system.json and any kept LUKS2 headers' copies, key material), then run `bko-holt load ... --only boot`",
+                self.opts.target,
+                crate::luksfetch::BKO_DIR
             ))];
             v.extend(self.thin_by_hand_note());
             return v;
@@ -5528,24 +5529,25 @@ impl Builder<'_> {
             .map(str::to_string)
             .collect();
         let raw_globs = self.raw_globs();
-        let kept_headers = !self.layout.arr(&["storage", "luks_headers"]).is_empty();
         // The backup tool's own files in the snapshot, never put in the
-        // tree: the machine's system.json, in every snapshot since open
-        // question 15 (snaplayout.rs), and the kept LUKS2 headers' copies
-        // (luksfetch.rs: key material, fetched by `bko-holt luks-headers`)
-        // with their directory; and /.bko-holt when no raw volume is under
-        // it: the backup tool's staging, not the system's (a glob leaves out
+        // tree, whatever the layout given says: the copies of the LUKS2
+        // headers a dump kept (luksfetch.rs: key material, fetched by
+        // `bko-holt luks-headers`) with their directory, left out even when
+        // this layout kept none (a stick's copy or a layout given by hand
+        // may be another backup's than the snapshot's); the machine's
+        // system.json, in every snapshot since open question 15
+        // (snaplayout.rs); and /.bko-holt when no raw volume is under it:
+        // the backup tool's staging, not the system's (a glob leaves out
         // the one path it names, `/**` only what is under it; rustic-bko
         // 0.12.0+backotter.4 checked, oq12 review and record-snaplayout.py).
         // A snapshot without them matches nothing.  When nothing else is
         // left out, they go on the command line (`--glob`), with no glob
         // file to write; else in the glob file with the rest.
-        let mut bko_globs: Vec<String> = Vec::new();
-        if kept_headers {
-            bko_globs.push(format!("!{}/**", crate::luksfetch::REPO_DIR));
-            bko_globs.push(format!("!{}", crate::luksfetch::REPO_DIR));
-        }
-        bko_globs.push(format!("!{}", crate::snaplayout::SYSTEM_PATH));
+        let mut bko_globs: Vec<String> = vec![
+            format!("!{}/**", crate::luksfetch::REPO_DIR),
+            format!("!{}", crate::luksfetch::REPO_DIR),
+            format!("!{}", crate::snaplayout::SYSTEM_PATH),
+        ];
         if raw_globs.is_empty() {
             bko_globs.push(format!("!{}", crate::luksfetch::BKO_DIR));
         }
@@ -5553,7 +5555,7 @@ impl Builder<'_> {
             && pool_globs.is_empty()
             && reformat_globs.is_empty()
             && raw_globs.is_empty();
-        let args_only = only_bko && !kept_headers;
+        let args_only = only_bko;
         let only_raw = globs.is_empty()
             && pool_globs.is_empty()
             && reformat_globs.is_empty()
@@ -5612,11 +5614,7 @@ impl Builder<'_> {
             if need.is_empty() {
                 pre.push(Cmd::new(&["mkdir", "-p", "-m", "700", RUN_DIR]));
             }
-            let bko_why = if kept_headers {
-                "the backup tool's own files: the machine's system.json, and the copies of the LUKS2 headers the dump kept, which `bko-holt luks-headers` fetches for load to write back: key material, kept out of the tree, their directory with them"
-            } else {
-                "the backup tool's own files: the machine's system.json, a record of the backup, not of the system"
-            };
+            let bko_why = "the backup tool's own files: the machine's system.json, a record of the backup, not of the system, and any copies of LUKS2 headers a dump kept, which `bko-holt luks-headers` fetches for load to write back: key material, kept out of the tree, their directory with them";
             let why = if only_bko {
                 format!("left out of the restore: {bko_why}")
             } else {
@@ -11950,7 +11948,7 @@ mod tests {
         // /nix are covered by their own mounts, not aliases.
         let r = text(b.stage(Stage::Restore));
         assert!(
-            r.contains("restore --numeric-id --glob '!/.bko-holt/system.json' --glob '!/.bko-holt' latest /mnt/bko-target\n"),
+            r.contains("restore --numeric-id --glob '!/.bko-holt/luks-headers/**' --glob '!/.bko-holt/luks-headers' --glob '!/.bko-holt/system.json' --glob '!/.bko-holt' latest /mnt/bko-target\n"),
             "{r}"
         );
         assert!(
@@ -12261,7 +12259,7 @@ mod tests {
         assert!(root < boot);
         assert!(!m.contains("swap"));
         let r = text(b.stage(Stage::Restore));
-        assert!(r.contains("RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/repo --password-file /run/pw --no-progress restore --numeric-id --glob '!/.bko-holt/system.json' --glob '!/.bko-holt' latest /mnt/bko-target\n"), "{r}");
+        assert!(r.contains("RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/repo --password-file /run/pw --no-progress restore --numeric-id --glob '!/.bko-holt/luks-headers/**' --glob '!/.bko-holt/luks-headers' --glob '!/.bko-holt/system.json' --glob '!/.bko-holt' latest /mnt/bko-target\n"), "{r}");
         let bt = text(b.stage(Stage::Boot));
         assert!(
             bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"),

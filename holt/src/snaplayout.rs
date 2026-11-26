@@ -69,7 +69,9 @@ It reads the repository only and writes no disk, so the dry-run lock
 Exit status: 0 when OUT is written, 1 when the snapshot holds no system.json
 (code no_system_json: a backup from before the backup tool kept one), it
 can't be read, or it isn't one this takes (nothing left in OUT), 2 for bad
-arguments or an OUT that isn't a new file in a private directory.
+arguments or an OUT that isn't a new file in a private directory.  Without
+--password-file the archiver's words go to the terminal unread, so a
+snapshot without the file is told only by them: the line says so.
 ";
 
 /// Whether SAID, the archiver's last line for a dump of PATH that failed,
@@ -77,8 +79,14 @@ arguments or an OUT that isn't a new file in a private directory.
 /// found in tree." for one of its last two parts (`.bko-holt` or
 /// `system.json`; a SUBPATH that isn't there names another part), or
 /// restic-bko's "path \"P\" not found in snapshot" for PATH or its
-/// directory.  Both as rustic-bko 0.12.0+backotter.4 and restic-bko
-/// 0.20.0+backotter.1 say them (recorded 2026-11-26, open question 15).
+/// directory.  rustic-bko 0.12.0+backotter.4's two are recorded by
+/// testvm/rescue/record-snaplayout.py (scenario snapshot-layout, 05-before
+/// and 08-headers-only).  restic-bko 0.20.0+backotter.1's is its
+/// cmd/restic/cmd_dump.go (`path %q not found in snapshot`, behind "Fatal:
+/// cannot dump file: "), seen 2026-11-26 on cinqcent with the dump run by
+/// hand and recorded by the same script when it is given restic-bko
+/// (recorded.txt): holt's own restic-bko argv can't run yet (its
+/// `--repository`).
 pub fn says_missing(said: &str, path: &str) -> bool {
     let p = Path::new(path);
     let names: Vec<&str> = [p.file_name(), p.parent().and_then(Path::file_name)]
@@ -121,6 +129,7 @@ pub struct Ask {
 pub fn copy(ask: &Ask, out: &Path) -> Result<Value, (E, String)> {
     let f = &ask.fetch;
     let argv = f.argv_path(SYSTEM_PATH);
+    let path = dumped_path(&argv);
     // What the archiver's dump was given: SNAPSHOT:PATH, or SNAPSHOT PATH.
     let from = argv
         .iter()
@@ -141,8 +150,6 @@ pub fn copy(ask: &Ask, out: &Path) -> Result<Value, (E, String)> {
             ));
         }
         Err(DumpFailed::Fetch { why, said }) => {
-            // The archiver's path: the SUBPATH's when the snapshot has one.
-            let path = from.rsplit([':', ' ']).next().unwrap_or(SYSTEM_PATH);
             if says_missing(&said, path) {
                 return Err((
                     E::NoSystemJson,
@@ -152,9 +159,16 @@ pub fn copy(ask: &Ask, out: &Path) -> Result<Value, (E, String)> {
                     ),
                 ));
             }
+            // The archiver's words went to the terminal, unread (it may
+            // ask for the password there): they alone tell a missing file.
+            let unread = if said.is_empty() && f.asks() {
+                "; its own words are above: if they say the path isn't in the snapshot, it is a backup from before the backup tool kept one (with --password-file the archiver's words are read, and that is told apart)"
+            } else {
+                ""
+            };
             return Err((
                 E::SystemFetchFailed,
-                format!("{in_snap} couldn't be read ({from}): {why}"),
+                format!("{in_snap} couldn't be read ({from}): {why}{unread}"),
             ));
         }
     };
@@ -283,6 +297,17 @@ pub fn copy(ask: &Ask, out: &Path) -> Result<Value, (E, String)> {
         .set("system_sha256", crate::bytes::sha256_hex(&body))
         .set("luks_headers", headers)
         .build())
+}
+
+/// The path the archiver's dump was given in ARGV (`Fetch::argv_path`'s):
+/// rustic-bko's after `SNAPSHOT:` (a snapshot ID holds no colon, so a
+/// SUBPATH's colons and spaces stay in it), restic-bko's its own argument.
+fn dumped_path(argv: &[String]) -> &str {
+    match argv.iter().rposition(|a| a == "dump").map(|i| &argv[i + 1..]) {
+        Some([one]) => one.split_once(':').map_or(one.as_str(), |(_, p)| p),
+        Some([_, p]) => p.as_str(),
+        _ => SYSTEM_PATH,
+    }
 }
 
 fn schemas() -> String {
@@ -721,6 +746,45 @@ mod tests {
             (E::SystemRefused, true),
             "{why}"
         );
+    }
+
+    #[test]
+    fn the_path_dumped_is_the_archivers() {
+        let f = |snapshot: &str, archiver: &str| Fetch {
+            repo: "/r".into(),
+            password_file: Some("/k/pw".into()),
+            snapshot: snapshot.into(),
+            archiver: archiver.into(),
+            stdin_null: true,
+        };
+        let p = |snapshot: &str, archiver: &str| {
+            dumped_path(&f(snapshot, archiver).argv_path(SYSTEM_PATH)).to_string()
+        };
+        assert_eq!(p("1a2b3c4d", "rustic-bko"), SYSTEM_PATH);
+        assert_eq!(
+            p("1a2b3c4d:/mnt/my src:2", "rustic-bko"),
+            "/mnt/my src:2/.bko-holt/system.json"
+        );
+        assert_eq!(p("1a2b3c4d:/mnt/my src:2", "restic-bko"), SYSTEM_PATH);
+        assert_eq!(p("latest", "/usr/bin/restic-bko"), SYSTEM_PATH);
+        // So a SUBPATH with a space is still told apart.
+        assert!(says_missing(
+            "Node `.bko-holt` not found in tree.",
+            &p("1a2b3c4d:/mnt/my src", "rustic-bko")
+        ));
+        // restic-bko 0.20.0+backotter.1's line for a SUBPATH not there
+        // (seen 2026-11-26): not the file missing.
+        assert!(!says_missing("Fatal: cannot dump file: path sub: not found", SYSTEM_PATH));
+    }
+
+    #[test]
+    fn unread_words_say_so() {
+        let (d, mut ask) = rig(None);
+        ask.fetch.password_file = None;
+        ask.fetch.stdin_null = false;
+        let (code, why) = copy(&ask, &d.path().join("layout.json")).unwrap_err();
+        assert_eq!(code, E::SystemFetchFailed, "{why}");
+        assert!(why.contains("its own words are above"), "{why}");
     }
 
     #[test]

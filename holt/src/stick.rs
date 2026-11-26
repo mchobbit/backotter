@@ -387,7 +387,10 @@ pub fn copy_layout(sys: &Sys, fam: Option<Family>, id: &str, out: &std::path::Pa
     let layout = match v.get(LAYOUT_KEY) {
         Some(l @ Value::Obj(_)) => l,
         Some(_) => return Err((E::NoLayout, say(format!("{path}'s \"{LAYOUT_KEY}\" isn't a bko-holt dump document: it carries no disk layout")))),
-        None => return Err((E::NoLayout, say(format!("{path} carries no disk layout: it has no \"{LAYOUT_KEY}\", where the backup tool puts the bko-holt dump")))),
+        None => return Err((E::NoLayout, say(match left_out(&v) {
+            Some(why) => format!("{path} carries no disk layout: {why}. The backup holds the layout; this stick can't restore the machine's disks until it comes from the backup"),
+            None => format!("{path} carries no disk layout: it has no \"{LAYOUT_KEY}\", where the backup tool puts the bko-holt dump"),
+        }))),
     };
     // Its own check: what load makes of a layout before it reads one.
     if let Err(e) = crate::load::layout::Layout::from_json(layout.clone()) {
@@ -417,6 +420,21 @@ pub fn copy_layout(sys: &Sys, fam: Option<Family>, id: &str, out: &std::path::Pa
         .set("system_sha256", crate::bytes::sha256_hex(&body))
         .set("luks_headers", headers)
         .build())
+}
+
+/// Why the backup tool left system.json V's layout out, in words, when
+/// its `layout_left_out` says so (holt-json.md's open question 16).  Only
+/// the two codes `stick_write` writes are named; the size only when given.
+fn left_out(v: &Value) -> Option<String> {
+    let o = v.get(LAYOUT_LEFT_OUT_KEY)?;
+    let size = o.get_u64("bytes").map(|b| mib_tenths(b.into(), true));
+    Some(match (o.get_str("code"), size) {
+        (Some("system_too_big"), Some(n)) => format!("the backup tool left it out, as with it the file was {n}, over the {} a stick's bko-holt reads", mib_tenths(SYSTEM_MAX.into(), false)),
+        (Some("system_too_big"), None) => format!("the backup tool left it out, as with it the file was over the {} a stick's bko-holt reads", mib_tenths(SYSTEM_MAX.into(), false)),
+        (Some("stick_full"), Some(n)) => format!("the backup tool left it out, as the stick had no room for it at this machine's last backup (with it, the file was {n})"),
+        (Some("stick_full"), None) => "the backup tool left it out, as the stick had no room for it at this machine's last backup".to_string(),
+        _ => "the backup tool left it out".to_string(),
+    })
 }
 
 /// The rows of MACHINES backed up from this computer, whose DMI UUID is
@@ -763,12 +781,24 @@ pub struct Room {
     pub others: bool,
 }
 
-/// Why the backup tool doesn't write system.json to the stick at all.
+/// Why the backup tool can't write a system.json to the stick (`stick_write`
+/// says what it writes instead).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StickRefusal {
     /// `system_too_big` or `stick_full`.
     pub code: &'static str,
+    /// Why, in words: no outcome, no remedy.
     pub text: String,
+    /// What the user can do about it, a phrase starting in lower case
+    /// ("remove other machines' folders from the stick"): empty for
+    /// `system_too_big`, which no stick can take.
+    pub remedy: String,
+}
+
+/// S with its first letter in upper case.
+fn cap_first(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
 }
 
 /// N bytes in MiB to a tenth, rounded down (UP false) or up: a need is
@@ -793,17 +823,19 @@ fn mib_tenths(n: u128, up: bool) -> String {
 /// while the old two stand, then system.json becomes system.prev.json
 /// (freeing the old one and its `.sha256`), then the new `.sha256` is
 /// written.  Each file and folder takes whole clusters, each `.sha256`
-/// one.  The backup tool isn't built: this is the check it calls, beside
-/// `schema_warnings`.
+/// one.  The backup tool isn't built: `stick_write` is what it calls, which
+/// calls this for the whole file and, on a refusal, for the file without
+/// its layout (holt-json.md's open question 16).
 pub fn room_check(m: &Marker, system_len: u64, r: &Room) -> Result<Vec<StickWarning>, StickRefusal> {
     let image = if u128::from(m.sectors) * 512 < u128::from(CONFIG_BYTES) {
         format!(", or write a newer image to it (this one's config partition is {}, a newer one's 256 MiB)", mib_tenths(u128::from(m.sectors) * 512, false))
     } else {
         String::new()
     };
-    let remedy = if r.others { "Remove other machines' folders from the stick" } else { "Free room on the stick's config partition (old bug reports in backotter/reports can go)" };
+    let base = if r.others { "remove other machines' folders from the stick" } else { "free room on the stick's config partition (old bug reports in backotter/reports can go)" };
+    let remedy = format!("{base}{image}");
     if system_len > SYSTEM_MAX {
-        return Err(StickRefusal { code: "system_too_big", text: format!("this machine's system.json is {}, over the {} a stick's bko-holt reads: it isn't written to the stick (the backup keeps its copy)", mib_tenths(system_len.into(), true), mib_tenths(SYSTEM_MAX.into(), false)) });
+        return Err(StickRefusal { code: "system_too_big", text: format!("this machine's system.json is {}, over the {} a stick's bko-holt reads", mib_tenths(system_len.into(), true), mib_tenths(SYSTEM_MAX.into(), false)), remedy: String::new() });
     }
     let cl = u128::from(r.cluster.max(1));
     let up = |n: u64| u128::from(n).div_ceil(cl) * cl;
@@ -816,7 +848,7 @@ pub fn room_check(m: &Marker, system_len: u64, r: &Room) -> Result<Vec<StickWarn
         (Some(_), Some(p)) => up(p) + if r.prev_sum { sum } else { 0 },
         _ => 0,
     };
-    let full = |text: String| Err(StickRefusal { code: "stick_full", text: format!("{text}: nothing is written, and the stick keeps the copy it had. {remedy}{image}") });
+    let full = |text: String| Err(StickRefusal { code: "stick_full", text, remedy: remedy.clone() });
     if free < new {
         return full(format!("this machine's system.json needs {} while the stick still holds its two older copies, and the stick's config partition has {} free", mib_tenths(new, true), mib_tenths(free, false)));
     }
@@ -831,9 +863,81 @@ pub fn room_check(m: &Marker, system_len: u64, r: &Room) -> Result<Vec<StickWarn
     let need = (u128::from(LOGS_KEPT) + 1) * up(LOG_MAX) + logs_dir;
     let mut w = Vec::new();
     if after + logs < need {
-        w.push(StickWarning { code: "stick_room_short", text: format!("once this machine's system.json is written, the stick's config partition has {} free, and its restore logs may need {}: a restore may not keep its log on the stick. {remedy}{image}", mib_tenths(after, false), mib_tenths(need - logs, true)) });
+        w.push(StickWarning { code: "stick_room_short", text: format!("once this machine's system.json is written, the stick's config partition has {} free, and its restore logs may need {}: a restore may not keep its log on the stick. {}", mib_tenths(after, false), mib_tenths(need - logs, true), cap_first(&remedy)) });
     }
     Ok(w)
+}
+
+/// Where a system.json the backup tool wrote to the stick without its
+/// layout says why (holt-json.md's open question 16, a default chosen
+/// where the spec was open): `{"code": CODE, "bytes": N}`, CODE the whole
+/// file's refusal (`system_too_big` or `stick_full`), N its size.
+pub const LAYOUT_LEFT_OUT_KEY: &str = "layout_left_out";
+
+/// What the backup tool writes to the stick for one machine (holt-json.md's
+/// open question 16): the whole system.json when it fits; else one without
+/// its layout, so the stick still finds the backup and never plans onto an
+/// older layout; else nothing, the machine's older copies removed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StickWrite {
+    /// The whole system.json, as "How it writes" does it.  WARNINGS
+    /// (`stick_room_short`) are said, as the schema warnings are.
+    Whole { warnings: Vec<StickWarning> },
+    /// BODY, written in its place as "How it writes" does it (and its
+    /// `.sha256` of BODY's bytes): system.json without `layout`, its
+    /// `layout_left_out` naming why.  REFUSED is why the whole one wasn't
+    /// written; TEXT the words to say; WARNINGS BODY's own write's.
+    WithoutLayout { body: String, refused: StickRefusal, warnings: Vec<StickWarning>, text: String },
+    /// Nothing is written.  BARE is why even BODY didn't fit.  The tool
+    /// removes the machine's `system.json`, `system.prev.json`, their
+    /// `.sha256` files and a `system.json.new`, then its folder when
+    /// nothing else is in it (its `restore-logs/` stay); TEXT the words.
+    RemoveOld { refused: StickRefusal, bare: StickRefusal, text: String },
+}
+
+/// SYSTEM without its `layout`, its `layout_left_out` saying CODE and
+/// BYTES (the whole file's size): what the stick gets when the whole one
+/// is refused.  Everything else is as it was.
+pub fn without_layout(system: &Value, code: &str, bytes: u64) -> Value {
+    let mut v = system.clone();
+    if let Value::Obj(kv) = &mut v {
+        kv.retain(|(k, _)| k != LAYOUT_KEY && k != LAYOUT_LEFT_OUT_KEY);
+    }
+    v.put(LAYOUT_LEFT_OUT_KEY, Obj::new().set("code", code).set("bytes", bytes).build());
+    v
+}
+
+/// The whole write-time decision for one machine (holt-json.md's open
+/// questions 13 and 16), for the backup tool before step 2 of "How it
+/// writes": SYSTEM is the machine's system.json (the one it wrote into the
+/// backup), LEN the size of its bytes as the tool prints them, M the
+/// stick's marker, R its config partition.  The whole file when
+/// `room_check` takes it; else SYSTEM `without_layout`, printed as
+/// `Value::pretty` prints it, when that fits; else nothing, and the
+/// machine's older copies go.  A refusal is never a failed backup.
+pub fn stick_write(m: &Marker, system: &Value, len: u64, r: &Room) -> StickWrite {
+    let refused = match room_check(m, len, r) {
+        Ok(warnings) => return StickWrite::Whole { warnings },
+        Err(e) => e,
+    };
+    let body = without_layout(system, refused.code, len).pretty();
+    let todo = |remedy: &str| if remedy.is_empty() { String::new() } else { format!(" To keep the layout on the stick: {remedy}, then back the machine up again.") };
+    match room_check(m, body.len() as u64, r) {
+        Ok(warnings) => {
+            let text = format!("{}. So the stick gets this machine's system.json without its disk layout: the stick still finds the backup, but it can't restore this machine's disks until the layout comes from the backup, which bko-rescue can't do yet. The backup keeps the whole file.{}", refused.text, todo(&refused.remedy));
+            StickWrite::WithoutLayout { body, refused, warnings, text }
+        }
+        Err(bare) => {
+            let what = if r.current.is_some() || r.prev.is_some() {
+                "this machine's older copies (system.json and system.prev.json) are removed from the stick, so no restore plans onto an older layout: this stick can no longer find this machine's backup or restore it"
+            } else {
+                "nothing is written to the stick for this machine: this stick can't find its backup or restore it"
+            };
+            let then = if bare.remedy.is_empty() { String::new() } else { format!(" {}, then back the machine up again.", cap_first(&bare.remedy)) };
+            let text = format!("{}. Even without its disk layout, {}. So {what}.{then}", refused.text, bare.text);
+            StickWrite::RemoveOld { refused, bare, text }
+        }
+    }
 }
 
 fn schemas_text(m: &Marker) -> String {
@@ -1468,29 +1572,31 @@ mod tests {
         assert_eq!(codes(room_check(&big, SYSTEM_MAX, &room(250 * MIB, None, None, None))), "");
         let e = room_check(&big, SYSTEM_MAX + 1, &room(250 * MIB, None, None, None)).unwrap_err();
         assert_eq!(e.code, "system_too_big");
-        assert_eq!(e.text, "this machine's system.json is 64.1 MiB, over the 64.0 MiB a stick's bko-holt reads: it isn't written to the stick (the backup keeps its copy)");
+        assert_eq!(e.text, "this machine's system.json is 64.1 MiB, over the 64.0 MiB a stick's bko-holt reads");
+        assert_eq!(e.remedy, "", "no stick takes it");
         // No room for the file: refused, and an older image's smaller
         // partition named.  A new machine's folder takes a cluster too.
         let e = room_check(&small, 2 * MIB, &room(MIB, None, None, None)).unwrap_err();
         assert_eq!(e.code, "stick_full");
-        assert_eq!(e.text, "this machine's system.json needs 2.1 MiB while the stick still holds its two older copies, and the stick's config partition has 1.0 MiB free: nothing is written, and the stick keeps the copy it had. Remove other machines' folders from the stick, or write a newer image to it (this one's config partition is 32.0 MiB, a newer one's 256 MiB)");
-        assert!(!room_check(&big, 2 * MIB, &room(MIB, None, None, None)).unwrap_err().text.contains("image"));
+        assert_eq!(e.text, "this machine's system.json needs 2.1 MiB while the stick still holds its two older copies, and the stick's config partition has 1.0 MiB free");
+        assert_eq!(e.remedy, "remove other machines' folders from the stick, or write a newer image to it (this one's config partition is 32.0 MiB, a newer one's 256 MiB)");
+        assert!(!room_check(&big, 2 * MIB, &room(MIB, None, None, None)).unwrap_err().remedy.contains("image"));
         // The only machine on the stick: no other folders to remove.
         let alone = Room { others: false, ..room(MIB, None, None, None) };
-        assert!(room_check(&big, 2 * MIB, &alone).unwrap_err().text.ends_with("Free room on the stick's config partition (old bug reports in backotter/reports can go)"));
+        assert_eq!(room_check(&big, 2 * MIB, &alone).unwrap_err().remedy, "free room on the stick's config partition (old bug reports in backotter/reports can go)");
         // The new file is written while the old two stand: the old prev's
         // room comes too late for it, and the words give the room it has then.
         let (cur, prev) = (Some(5 * MIB), Some(5 * MIB));
         let e = room_check(&big, 5 * MIB, &room(5 * MIB - 1, cur, prev, Some(vec![]))).unwrap_err();
         assert_eq!(e.code, "stick_full");
-        assert!(e.text.starts_with("this machine's system.json needs 5.0 MiB while the stick still holds its two older copies, and the stick's config partition has 4.9 MiB free: "), "{}", e.text);
+        assert_eq!(e.text, "this machine's system.json needs 5.0 MiB while the stick still holds its two older copies, and the stick's config partition has 4.9 MiB free");
         // Its .sha256 comes after the old prev is gone: 5 MiB free is enough, then.
         let need = 22 * MIB;
         assert_eq!(codes(room_check(&big, 5 * MIB, &room(5 * MIB, cur, prev, Some(vec![])))), "stick_room_short");
         // Without a current system.json, the old prev isn't replaced, so frees nothing.
         let e = room_check(&big, 5 * MIB, &room(5 * MIB, None, prev, Some(vec![]))).unwrap_err();
         assert_eq!(e.code, "stick_full");
-        assert!(e.text.starts_with("this machine's system.json and its checksum need 5.1 MiB, and the stick's config partition has 5.0 MiB once its oldest copy goes: "), "{}", e.text);
+        assert_eq!(e.text, "this machine's system.json and its checksum need 5.1 MiB, and the stick's config partition has 5.0 MiB once its oldest copy goes");
         // The old prev's .sha256 frees its cluster only when it is there.
         let r = room(4096, Some(4096), Some(0), Some(vec![]));
         assert_eq!(codes(room_check(&big, 4096, &r)), "stick_room_short");
@@ -1522,6 +1628,71 @@ mod tests {
         assert_eq!(codes(room_check(&big, 10, &bytes)), "stick_room_short");
         assert_eq!(codes(room_check(&big, 10, &Room { free: 10, ..bytes.clone() })), "refused stick_full");
         assert_eq!(codes(room_check(&big, 10, &Room { folder: false, ..bytes })), "refused stick_full");
+    }
+
+    #[test]
+    fn write_time_stick_write() {
+        // holt-json.md's open question 16: the whole file, else one without
+        // its layout, else nothing and the older copies removed.
+        const MIB: u64 = 1 << 20;
+        let big = parse_marker(&marker(3).replace("\"sectors\": 32768", "\"sectors\": 524288")).unwrap();
+        let small = parse_marker(&marker(3).replace("\"sectors\": 32768", "\"sectors\": 65536")).unwrap();
+        let sys = crate::json::parse(&system(LOVELACE, "lovelace", "4c4c4544-0000", &with_layout(DUMP))).unwrap();
+        let room = |free: u64, current: Option<u64>, prev: Option<u64>, others: bool| Room {
+            free,
+            cluster: 4096,
+            folder: current.is_some() || prev.is_some(),
+            current,
+            prev,
+            prev_sum: prev.is_some(),
+            logs: Some(vec![]),
+            others,
+        };
+        // It fits: the whole file, with room_check's warnings.
+        assert_eq!(stick_write(&big, &sys, 3 * MIB, &room(250 * MIB, None, None, true)), StickWrite::Whole { warnings: vec![] });
+        let StickWrite::Whole { warnings } = stick_write(&big, &sys, 3 * MIB, &room(4 * MIB, None, None, true)) else { panic!("whole") };
+        assert_eq!(warnings.iter().map(|w| w.code).collect::<Vec<_>>(), ["stick_room_short"]);
+        // Too big for any stick: the file without its layout, which says why.
+        let w = stick_write(&big, &sys, SYSTEM_MAX + 1, &room(250 * MIB, Some(5 * MIB), Some(5 * MIB), true));
+        let StickWrite::WithoutLayout { body, refused, warnings, text } = w else { panic!("{w:?}") };
+        assert_eq!(refused.code, "system_too_big");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let v = crate::json::parse(&body).unwrap();
+        assert!(v.get(LAYOUT_KEY).is_none(), "no layout");
+        assert_eq!(v.at(&[LAYOUT_LEFT_OUT_KEY, "code"]).and_then(Value::as_str), Some("system_too_big"));
+        assert_eq!(v.u64_at(&[LAYOUT_LEFT_OUT_KEY, "bytes"]), Some(SYSTEM_MAX + 1));
+        // Everything else is as it was: the stick still finds the backup.
+        assert_eq!(v.str_at(&["backup", "repository", "url"]), Some("sftp://nas.local/backotter/lovelace"));
+        assert_eq!(v.u64_at(&["sequence"]), Some(42));
+        assert_eq!(body, without_layout(&sys, "system_too_big", SYSTEM_MAX + 1).pretty());
+        assert!(body.len() < 4096, "a few KiB: {}", body.len());
+        assert_eq!(text, "this machine's system.json is 64.1 MiB, over the 64.0 MiB a stick's bko-holt reads. So the stick gets this machine's system.json without its disk layout: the stick still finds the backup, but it can't restore this machine's disks until the layout comes from the backup, which bko-rescue can't do yet. The backup keeps the whole file.");
+        // No room for the whole file, room for one without: the remedy is said.
+        let w = stick_write(&small, &sys, 20 * MIB, &room(MIB, Some(5 * MIB), Some(5 * MIB), true));
+        let StickWrite::WithoutLayout { refused, warnings, text, .. } = w else { panic!("{w:?}") };
+        assert_eq!(refused.code, "stick_full");
+        assert_eq!(warnings.iter().map(|w| w.code).collect::<Vec<_>>(), ["stick_room_short"], "its own write's warning");
+        assert!(text.starts_with("this machine's system.json needs 20.0 MiB while the stick still holds its two older copies, and the stick's config partition has 1.0 MiB free. So the stick gets this machine's system.json without its disk layout: "), "{text}");
+        assert!(text.ends_with("The backup keeps the whole file. To keep the layout on the stick: remove other machines' folders from the stick, or write a newer image to it (this one's config partition is 32.0 MiB, a newer one's 256 MiB), then back the machine up again."), "{text}");
+        // A layout_left_out that was there is replaced, not doubled.
+        let again = without_layout(&without_layout(&sys, "stick_full", 9), "system_too_big", 7);
+        assert_eq!(again.as_object().unwrap().iter().filter(|(k, _)| k == LAYOUT_LEFT_OUT_KEY).count(), 1);
+        assert_eq!(again.u64_at(&[LAYOUT_LEFT_OUT_KEY, "bytes"]), Some(7));
+        // Not even that fits: nothing written, the older copies removed.
+        let w = stick_write(&big, &sys, 20 * MIB, &room(4095, Some(5 * MIB), Some(5 * MIB), false));
+        let StickWrite::RemoveOld { refused, bare, text } = w else { panic!("{w:?}") };
+        assert_eq!((refused.code, bare.code), ("stick_full", "stick_full"));
+        assert_eq!(text, "this machine's system.json needs 20.0 MiB while the stick still holds its two older copies, and the stick's config partition has 0.0 MiB free. Even without its disk layout, this machine's system.json needs 0.1 MiB while the stick still holds its two older copies, and the stick's config partition has 0.0 MiB free. So this machine's older copies (system.json and system.prev.json) are removed from the stick, so no restore plans onto an older layout: this stick can no longer find this machine's backup or restore it. Free room on the stick's config partition (old bug reports in backotter/reports can go), then back the machine up again.");
+        // A new machine has none to remove: the words say nothing is written.
+        let w = stick_write(&big, &sys, 20 * MIB, &room(4095, None, None, true));
+        let StickWrite::RemoveOld { text, .. } = w else { panic!("{w:?}") };
+        assert!(text.contains("So nothing is written to the stick for this machine: this stick can't find its backup or restore it. Remove other machines' folders from the stick, then back the machine up again."), "{text}");
+        // The decision follows room_check at the edge: the bare file's own
+        // need (folder, file and .sha256 in clusters) is what decides.
+        let bare = without_layout(&sys, "stick_full", 20 * MIB).pretty().len() as u64;
+        let need = 4096 + bare.div_ceil(4096) * 4096 + 4096;
+        assert!(matches!(stick_write(&big, &sys, 20 * MIB, &Room { logs: None, ..room(need, None, None, true) }), StickWrite::WithoutLayout { .. }));
+        assert!(matches!(stick_write(&big, &sys, 20 * MIB, &Room { logs: None, ..room(need - 1, None, None, true) }), StickWrite::RemoveOld { .. }));
     }
 
     #[test]
@@ -1746,6 +1917,23 @@ mod tests {
         crate::testutil::golden_json("stick-copy-json", "no-layout", &v);
         let (_, line) = refused(copy_layout(&sys_of(&t), None, BABBAGE, &out), E::NoLayout);
         assert!(line.contains("isn't a bko-holt dump document"), "{line}");
+        gone(&out);
+        // One the backup tool wrote without its layout, saying why (open
+        // question 16): still no_layout, in words that say the backup holds it.
+        let sys = |id: &str, host: &str, extra: &str| crate::json::parse(&system(id, host, "", extra)).unwrap();
+        let full = without_layout(&sys(LOVELACE, "lovelace", &with_layout(DUMP)), "stick_full", 20 << 20).pretty();
+        let huge = without_layout(&sys(BABBAGE, "babbage", ""), "system_too_big", SYSTEM_MAX + 1).pretty();
+        let odd = system("2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6", "hopper", "", ", \"layout_left_out\": {\"code\": \"x\\u001b[2J\", \"bytes\": \"many\"}");
+        let t = linux_tree(&config(vec![machine_dir(LOVELACE, &full, Some(&sum(&full))), machine_dir(BABBAGE, &huge, Some(&sum(&huge))), machine_dir("2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6", &odd, Some(&sum(&odd)))]), None);
+        assert_eq!(doc(&t).1, 0, "each machine is ok: only the layout is missing");
+        let (v, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), E::NoLayout);
+        assert_eq!(line, format!("bko-holt stick --copy: backotter/machines/{LOVELACE}/system.json carries no disk layout: the backup tool left it out, as the stick had no room for it at this machine's last backup (with it, the file was 20.0 MiB). The backup holds the layout; this stick can't restore the machine's disks until it comes from the backup"));
+        crate::testutil::golden_json("stick-copy-json", "layout-left-out", &v);
+        let (_, line) = refused(copy_layout(&sys_of(&t), None, BABBAGE, &out), E::NoLayout);
+        assert!(line.contains("carries no disk layout: the backup tool left it out, as with it the file was 64.1 MiB, over the 64.0 MiB a stick's bko-holt reads. The backup holds the layout;"), "{line}");
+        // A code it doesn't know isn't repeated, nor a size that isn't one.
+        let (_, line) = refused(copy_layout(&sys_of(&t), None, "2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6", &out), E::NoLayout);
+        assert!(line.ends_with("system.json carries no disk layout: the backup tool left it out. The backup holds the layout; this stick can't restore the machine's disks until it comes from the backup"), "{line}");
         gone(&out);
         // A layout load wouldn't take: another format, an OS it doesn't support.
         let other = system(LOVELACE, "lovelace", "", &with_layout(&DUMP.replace("\"bko-holt\"", "\"other\"")));

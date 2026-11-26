@@ -70,23 +70,45 @@ pub fn install_id_ok(id: &str) -> bool {
     b.len() == 36 && b.iter().enumerate().all(|(i, &c)| if matches!(i, 8 | 13 | 18 | 23) { c == b'-' } else { c.is_ascii_hexdigit() })
 }
 
+/// Why there is no layout file: the words, and whether bko-holt said the
+/// machine's system.json carries none (`no_layout`: none written, or left
+/// out by the backup tool for the stick's room, holt-json.md's open
+/// question 16), which the Disks screen answers with its own words.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NoLayout {
+    pub what: String,
+    pub none_on_stick: bool,
+}
+
+impl NoLayout {
+    fn said(what: &str) -> NoLayout {
+        NoLayout { what: what.to_string(), none_on_stick: false }
+    }
+}
+
+/// Whether a run's standard output is bko-holt's `no_layout` refusal.
+fn is_no_layout(x: &sys::Output) -> bool {
+    let v = std::str::from_utf8(&x.stdout).ok().and_then(|t| crate::json::parse(t.trim()).ok());
+    v.is_some_and(|v| v.get_str("format") == Some("bko-holt-error") && v.get_str("code") == Some("no_layout"))
+}
+
 impl App {
     /// The layout file: copied the first time, then the same file.  Err
-    /// is why there is none, in words.
-    pub(crate) fn layout_file(&mut self) -> Result<PathBuf, String> {
+    /// is why there is none.
+    pub(crate) fn layout_file(&mut self) -> Result<PathBuf, NoLayout> {
         if let Some(p) = &self.layout {
             if p.is_file() {
                 return Ok(p.clone());
             }
         }
-        let Some(m) = self.chosen().cloned() else { return Err(super::strings::LAYOUT_NONE_TYPED.to_string()) };
+        let Some(m) = self.chosen().cloned() else { return Err(NoLayout::said(super::strings::LAYOUT_NONE_TYPED)) };
         if !install_id_ok(&m.install_id) {
-            return Err(super::strings::LAYOUT_NO_ID.to_string());
+            return Err(NoLayout::said(super::strings::LAYOUT_NO_ID));
         }
         let out = self.session.path(NAME);
         sys::wipe_file(&out);
         let Some(cmd) = self.holt_cmd(&HoltCmd::StickCopy { install_id: &m.install_id, out: &out }) else {
-            return Err(super::strings::LAYOUT_NO_HOLT.to_string());
+            return Err(NoLayout::said(super::strings::LAYOUT_NO_HOLT));
         };
         let x = wait(self.sys.start(cmd), &mut *self.sys);
         self.raw = raw_lines(&x);
@@ -104,13 +126,13 @@ impl App {
             }
             Ok(_) => {
                 sys::wipe_file(&out);
-                Err(super::strings::LAYOUT_NOT_WRITTEN.to_string())
+                Err(NoLayout::said(super::strings::LAYOUT_NOT_WRITTEN))
             }
             Err(why) => {
                 sys::wipe_file(&out);
                 // bko-holt's line names itself; the words before it do too.
                 let why = why.strip_prefix("bko-holt stick --copy: ").unwrap_or(&why);
-                Err(super::strings::layout_refused(why))
+                Err(NoLayout { what: super::strings::layout_refused(why), none_on_stick: is_no_layout(&x) })
             }
         }
     }

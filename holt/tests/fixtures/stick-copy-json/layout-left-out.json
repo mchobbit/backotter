@@ -1,0 +1,11 @@
+{
+  "format": "bko-holt-error",
+  "schema": 1,
+  "version": "VERSION",
+  "generated": "GENERATED",
+  "dry_run": false,
+  "exit": 1,
+  "code": "no_layout",
+  "text": "bko-holt stick --copy: backotter/machines/0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90/system.json carries no disk layout: the backup tool left it out, as the stick had no room for it at this machine's last backup (with it, the file was 20.0 MiB). The backup holds the layout; this stick can't restore the machine's disks until it comes from the backup"
+}
+

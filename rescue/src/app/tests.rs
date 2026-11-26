@@ -1666,9 +1666,45 @@ fn a_layout_bko_holt_wont_copy_is_said_in_its_words() {
     let p = ui.flat("Problem: the old disks' layout isn't here", 0);
     assert!(p.contains("bko-holt couldn't copy the layout off the BACKOTTER partition:") && p.contains("carries no disk layout"), "{p}");
     assert!(!p.contains("bko-holt stick --copy:"), "bko-holt named once: {p}");
+    // no_layout: the stick holds none, the backup does (open question 16).
+    assert!(p.contains("This stick holds no copy of it") && p.contains("Restore with another stick") && p.contains("back the machine up again"), "{p}");
+    assert!(!p.contains("Choose the machine on the first screen"), "{p}");
     assert!(!t.app.session.path("layout.json").exists(), "nothing left for load");
     assert!(t.app.layout.is_none());
     assert!(!ran(&t).iter().any(|l| l.contains("bko-holt load")), "no plan without a layout");
+}
+
+#[test]
+fn a_layout_the_backup_tool_left_out_is_said_plainly() {
+    // A system.json the backup tool wrote without its layout, for the
+    // stick's room (holt-json.md's open question 16): bko-holt's no_layout
+    // in its words, and the Disks screen's own why and what to do.
+    let doc = String::from_utf8(fixture("scenarios/stick-three/08-copy/stdout")).unwrap();
+    let old = "carries no disk layout: it has no \\\"layout\\\", where the backup tool puts the bko-holt dump";
+    assert!(doc.contains(old), "{doc}");
+    let left = doc.replace(old, "carries no disk layout: the backup tool left it out, as the stick had no room for it at this machine's last backup (with it, the file was 20.0 MiB). The backup holds the layout; this stick can't restore the machine's disks until it comes from the backup");
+    let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| {
+        f.disks = "app-lovelace".into();
+        f.copy = Some((1, left.clone()));
+    });
+    let mut ui = Shots::new(script(&[&to_disks(), &[Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    let p = ui.flat("Problem: the old disks' layout isn't here", 0);
+    assert!(p.contains("the stick had no room for it") && p.contains("The backup holds the layout"), "{p}");
+    assert!(p.contains("This stick holds no copy of it") && p.contains("can't take it from the backup yet"), "{p}");
+    assert!(p.contains("Restore with another stick") && p.contains("write a newer image to it"), "{p}");
+    assert!(t.app.layout.is_none() && !ran(&t).iter().any(|l| l.contains("bko-holt load")), "no plan without a layout");
+    // Another refusal (a checksum gone bad since) keeps the general words.
+    let bad = doc.replace("\"code\":\"no_layout\"", "\"code\":\"machine_not_ok\"");
+    assert!(bad != doc);
+    let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| {
+        f.disks = "app-lovelace".into();
+        f.copy = Some((1, bad.clone()));
+    });
+    let mut ui = Shots::new(script(&[&to_disks(), &[Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    let p = ui.flat("Problem: the old disks' layout isn't here", 0);
+    assert!(p.contains("Choose the machine on the first screen") && !p.contains("This stick holds no copy of it"), "{p}");
 }
 
 #[test]

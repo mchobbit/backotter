@@ -212,15 +212,19 @@ impl App {
         self.problem(ui, p)
     }
 
-    /// No layout to plan from: why, and the ways on.
-    fn no_layout(&mut self, ui: &mut dyn Ui, why: &str) -> Go {
+    /// No layout to plan from: why, and the ways on.  A system.json that
+    /// carries none (bko-holt's `no_layout`: the backup tool left it out
+    /// for the stick's room, holt-json.md's open question 16) has its own:
+    /// the backup holds it, and this bko-rescue can't fetch it yet.
+    fn no_layout(&mut self, ui: &mut dyn Ui, n: &super::layout::NoLayout) -> Go {
+        let (why, todo) = if n.none_on_stick { (s::NO_LAYOUT_ON_STICK_WHY, s::NO_LAYOUT_ON_STICK_TODO) } else { (s::NO_LAYOUT_WHY, s::NO_LAYOUT_TODO) };
         let p = super::Problem {
             code: "no_layout",
             screen: s::SCR_DISKS,
             title: s::NO_LAYOUT_TITLE.to_string(),
-            what: Clean::line(why, cap::PROBLEM).as_str().to_string(),
-            why: s::NO_LAYOUT_WHY.to_string(),
-            todo: s::NO_LAYOUT_TODO.to_string(),
+            what: Clean::line(&n.what, cap::PROBLEM).as_str().to_string(),
+            why: why.to_string(),
+            todo: todo.to_string(),
             fixes: Vec::new(),
             again: true,
             back: Some(Go::Back),
@@ -270,8 +274,8 @@ impl App {
     // ---- The overview ----
 
     pub(crate) fn disks(&mut self, ui: &mut dyn Ui) -> Go {
-        if let Err(why) = self.layout_file() {
-            return self.no_layout(ui, &why);
+        if let Err(n) = self.layout_file() {
+            return self.no_layout(ui, &n);
         }
         // The LUKS2 headers the layout kept, from the backup, before the
         // first plan (holt-json.md's open question 12).

@@ -240,8 +240,17 @@ EOF
     install -m 444 ../in/backotter.json .disk/
 }
 
+# list: out/image.img's root (slice 2, partition a), read-only, as a tar.
+list() {
+    attach out/image.img lst_vn
+    mkdir -p lst/root
+    mnt -o ro "/dev/${lst_vn}s2a" lst/root
+    tar -C lst -cf - root
+}
+
 case ${1:-} in
 info) info ;;
 assemble) assemble ;;
-*) die "usage: build.sh info|assemble" ;;
+list) list ;;
+*) die "usage: build.sh info|assemble|list" ;;
 esac

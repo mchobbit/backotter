@@ -1,0 +1,66 @@
+# stick/img-inputs.tsv: what each platform's rescue image is built from (docs/design/img-speed.md §3.2).
+# PLATFORMS	GLOB	KIND	REASON.  PLATFORMS: all, vm (the six VM platforms), - (none), or names joined by commas.
+# KIND: base (the base digest), tests (the tests digest) or none (not an input; REASON says why).  For each
+# platform the last matching row decides.  stick/img_inputs.py reads it; its lint fails on a stick/ file no row names.
+
+# --- Every platform
+all	stick/img-one.sh	base
+all	stick/marker.py	base
+all	stick/config-partition/*	base
+all	stick/boot-test.py	tests
+# --- The six VM platforms: the builder script, stick/bsd/, vm-run, and all of stick/P/ but its test files
+vm	stick/make-img-bsd.sh	base
+vm	stick/bsd/*	base
+vm	testvm/vm-run	base
+freebsd	stick/freebsd/**	base
+netbsd	stick/netbsd/**	base
+openbsd	stick/openbsd/**	base
+dragonfly	stick/dragonfly/**	base
+illumos	stick/illumos/**	base
+haiku	stick/haiku/**	base
+# --- Linux
+linux	stick/build-backotter-layer.sh	base
+linux	stick/make-img.sh	base
+linux	stick/layer/**	base
+linux	stick/keys/*	base
+# --- Each platform's checks (boot-test.py --platform P) and ImgTest2's manifest
+linux	stick/linux/checks.sh	tests
+linux	stick/linux/config-checks.sh	tests
+linux	stick/linux/manifest.sh	tests
+freebsd	stick/freebsd/checks.sh	tests
+freebsd	stick/freebsd/config-checks.sh	tests
+freebsd	stick/freebsd/manifest.sh	tests
+netbsd	stick/netbsd/checks.sh	tests
+netbsd	stick/netbsd/config-checks.sh	tests
+netbsd	stick/netbsd/manifest.sh	tests
+openbsd	stick/openbsd/checks.sh	tests
+openbsd	stick/openbsd/config-checks.sh	tests
+openbsd	stick/openbsd/manifest.sh	tests
+dragonfly	stick/dragonfly/checks.sh	tests
+dragonfly	stick/dragonfly/config-checks.sh	tests
+dragonfly	stick/dragonfly/manifest.sh	tests
+illumos	stick/illumos/checks.sh	tests
+illumos	stick/illumos/config-checks.sh	tests
+illumos	stick/illumos/manifest.sh	tests
+haiku	stick/haiku/checks.sh	tests
+haiku	stick/haiku/config-checks.sh	tests
+haiku	stick/haiku/manifest.sh	tests
+# --- Not inputs
+all	stick/*/README.md	none	documentation
+all	stick/*/build-rustic.sh	none	builds rustic-bko, which the bins digest covers
+-	stick/img-inputs.tsv	none	this list: a change to it shows in the input list it gives
+-	stick/img_inputs.py	none	computes the digests and the tree listing; reads the image, never writes it
+-	stick/img-digest.sh	none	prints the digests
+-	stick/img-swap.tsv	none	the swap list, read by the provenance; not by any build
+-	stick/slim-base-layer.sh	none	makes slim, which enters by its own files (base.slim)
+-	stick/add-ssh-key.sh	none	run by the user on a written stick, not by a build
+-	stick/build-round.sh	none	builds bko-bin, which the bins digest covers
+-	stick/build-rustic-native.sh	none	sourced by build-rustic.sh: bko-bin
+-	stick/prep-rustic-src.sh	none	prepares rustic's source: bko-bin
+-	stick/zig-tools.sh	none	arm64 bko-bin builds
+-	stick/zigbuild/cargo	none	arm64 bko-bin builds
+-	stick/deal-units.py	none	deals build-round's units
+-	stick/compress-images.sh	none	compresses a built image; the raw image is what is tested
+-	stick/img-lanes.sh	none	runs img-one.sh under reservations
+-	stick/img-xcopy.sh	none	copies a built image to another host
+-	stick/img-refresh-holt.sh	none	installs holt-bin, which the bins digest covers

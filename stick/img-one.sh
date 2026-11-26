@@ -24,7 +24,23 @@
 # written (0, or how many boot modes failed), 1 on a failed build (done.exit
 # 1), 2 when T2_HOST_ROOT is a test's and the images directory is the real
 # one, 3 when a build of this platform is already under way.
+#
+# Provenance (docs/design/img-speed.md §3, C7): the inputs' digests are taken
+# when the build starts (img_inputs.py digest; for FreeBSD once its builder is
+# up and fingerprinted), and the build is refused when its stick/ inputs, its
+# builder's identity, the ISO, slim, the host tools or the binaries moved by
+# the time it ends; BKO_PLAN_BUILDER (the builder identity a plan computed,
+# `img_inputs.py identity P`'s line) also refuses a builder that isn't the
+# plan's.  The FreeBSD builder's vms/freebsd15-builder/.vm-update.lock is held
+# while it runs (make-img-bsd.sh holds a snapshot builder's), and its
+# fingerprint (freebsd-version -ku and its build tools' SHA-256) is written to
+# vms/freebsd15-builder/fingerprint and must not change during the build.
+# Each image's OS file systems are listed in os-tree.txt beside it (test/ for
+# the test copy), and provenance.json is written last, before done.exit.
 set -u
+# The boot modes each image is tested in (img_inputs.py's tests digest reads these two lines).
+MODES_linux="bios uefi uefi-secureboot cdrom"
+MODES_other="bios uefi"
 P=$1
 W=${BKO_WORK:-/home/m/backotter-work}
 S=${S:-$W/stick}
@@ -70,6 +86,19 @@ commit_file() {
     fi
 }
 commit_file
+dig() { python3 "$S/img_inputs.py" "$@"; }
+export S SL ISO BKO_WORK=$W
+# The builder's identity now, against the plan's when one was given.
+plan_check() {
+    local id
+    [[ $P != linux ]] || return 0
+    id=$(dig identity "$P" 2>>"$D/inputs.log") || fail "no identity for $P's builder (inputs.log)"
+    if [[ -n ${BKO_PLAN_BUILDER:-} && $id != "$BKO_PLAN_BUILDER" ]]; then
+        fail "the builder is not the plan's: $id, the plan has $BKO_PLAN_BUILDER"
+    fi
+    builder_id=$id
+}
+builder_id=""
 fb=$W/vms/freebsd15-builder
 fb_ssh=(ssh -q -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$fb/id_ed25519" -p 2400 root@127.0.0.1)
 port_busy() { [[ -n $(ss -Hltn "sport = :2400" 2>/dev/null) ]]; }
@@ -89,40 +118,80 @@ stop_builder() {
     fi
     rm -f "$fb_pidf"; fb_up=""
 }
+# The running FreeBSD builder's fingerprint: its release and the tools the build runs.
+fb_fingerprint() {
+    timeout 60 "${fb_ssh[@]}" 'freebsd-version -ku && sha256 /usr/sbin/makefs /usr/bin/mkimg /sbin/mdconfig /sbin/gpart /usr/bin/tar /bin/pax /usr/sbin/freebsd-update' 2>/dev/null
+}
+# tree_linux IMG OUT: IMG's ISO 9660 tree and its BackOtter layer, listed (img_inputs.py tree-list).
+tree_linux() {
+    local t rc=0
+    t=$(mktemp -d "$D/.tree.XXXXXX") || return 1
+    ( set -o pipefail
+      xorriso -osirrox on -indev "$1" -extract / "$t/iso" >/dev/null 2>&1 &&
+      sudo -n unsquashfs -n -d "$t/layer" "$t/iso/casper/ubuntu-server-minimal.backotter.squashfs" >/dev/null 2>&1 &&
+      { tar -C "$t" -cf - iso | dig tree-list --no-owner &&
+        sudo -n tar -C "$t" --xattrs --format=pax -cf - layer | dig tree-list; } >"$2.part" ) || rc=1
+    sudo -n rm -rf "$t"
+    if [[ $rc -eq 0 ]]; then mv "$2.part" "$2"; else rm -f "$2.part"; fi
+    return $rc
+}
 # (Signals ignored first: a second one must not cut the builder's shutdown.)
 trap 'trap "" TERM INT HUP; stop_builder 15; exit 143' TERM
 trap 'trap "" TERM INT HUP; stop_builder 15; exit 130' INT
 trap 'trap "" TERM INT HUP; stop_builder 15; exit 129' HUP
+plan_check
 if [[ $P == linux ]]; then
+    dig digest "$P" >.inputs-start.json 2>>inputs.log || fail "no input digest (inputs.log)"
     sudo -n rm -rf layer
     sudo -n env BKO_HOLT_BIN="$H" BKO_BIN="$B" "$S/build-backotter-layer.sh" "$ISO" "$SL" layer >layer.log 2>&1 || fail "layer (layer.log)"
     sudo -n chown -R m:m layer; cp layer/report.txt layer-report.txt
     "$S/make-img.sh" "$ISO" "$SL" layer . >build.log 2>&1 || fail "make-img (build.log)"
     "$S/make-img.sh" --test "$ISO" "$SL" layer test >test/build.log 2>&1 || fail "make-img --test (test/build.log)"
     rm -rf layer
-    modes="bios uefi uefi-secureboot cdrom"
+    for i in ./*.img test/*.img; do
+        tree_linux "$i" "${i%/*}/os-tree.txt" || echo "tree listing: FAILED for $i" >>"$r"
+    done
+    modes=$MODES_linux
 else
     if [[ $P == freebsd ]]; then
         port_busy && fail "something is already on port 2400"
+        exec 8>>"$fb/.vm-update.lock" || fail "can't open $fb/.vm-update.lock"
+        flock -n 8 || fail "a vm-update is working on freebsd15-builder ($fb/.vm-update.lock is held)"
         fb_up=1
-        (cd "$fb" && SSH_PORT=2400 setsid -f bash -c 'echo $$ >"$1"; shift; exec "$@"' bko-fb "$fb_pidf" "$S/../testvm/vm-run" $(cat vm-run-options) --serial-log serial.log freebsd15.qcow2 </dev/null >vm-run.log 2>&1 9>&-)
+        (cd "$fb" && SSH_PORT=2400 setsid -f bash -c 'echo $$ >"$1"; shift; exec "$@"' bko-fb "$fb_pidf" "$S/../testvm/vm-run" $(cat vm-run-options) --serial-log serial.log freebsd15.qcow2 </dev/null >vm-run.log 2>&1 8>&- 9>&-)
         for _ in $(seq 60); do timeout 15 "${fb_ssh[@]}" true 2>/dev/null && break; sleep 5; done
+        fp=$(fb_fingerprint) && [[ -n $fp ]] || { stop_builder 60; fail "couldn't fingerprint freebsd15-builder"; }
+        if [[ -n ${BKO_PLAN_BUILDER:-} ]] && ! cmp -s <(printf '%s\n' "$fp") "$fb/fingerprint"; then
+            stop_builder 60; fail "freebsd15-builder's fingerprint is not the plan's ($fb/fingerprint)"
+        fi
+        cmp -s <(printf '%s\n' "$fp") "$fb/fingerprint" 2>/dev/null ||
+            { printf '%s\n' "$fp" >"$fb/fingerprint.part" && mv "$fb/fingerprint.part" "$fb/fingerprint"; } ||
+            { stop_builder 60; fail "couldn't write $fb/fingerprint"; }
+        builder_id=$(dig identity "$P" 2>>inputs.log) || { stop_builder 60; fail "no identity for freebsd15-builder (inputs.log)"; }
     fi
-    "$S/make-img-bsd.sh" "$P" . >build.log 2>&1; rc=$?
-    [[ $rc -eq 0 ]] && { "$S/make-img-bsd.sh" --test "$P" test >test/build.log 2>&1; rc=$?; }
+    dig digest "$P" >.inputs-start.json 2>>inputs.log || { stop_builder 60; fail "no input digest (inputs.log)"; }
+    BKO_BUILDER_ID=$builder_id BKO_TREE_OUT=$D/os-tree.txt "$S/make-img-bsd.sh" "$P" . >build.log 2>&1; rc=$?
+    [[ $rc -eq 0 ]] && { BKO_BUILDER_ID=$builder_id BKO_TREE_OUT=$D/test/os-tree.txt "$S/make-img-bsd.sh" --test "$P" test >test/build.log 2>&1; rc=$?; }
+    if [[ $P == freebsd && $rc -eq 0 ]]; then
+        [[ $(fb_fingerprint) == "$fp" ]] || { stop_builder 60; fail "freebsd15-builder's fingerprint changed during the build"; }
+    fi
     stop_builder 60
+    exec 8>&-
     [[ $rc -eq 0 ]] || fail "make-img-bsd (build.log, test/build.log)"
-    modes="bios uefi"
+    modes=$MODES_other
 fi
 bins | cmp -s - bko-bin.sha256 || fail "bko-bin/$P or holt-bin/$P changed during the build"
+why=$(dig moved .inputs-start.json 2>&1); case $? in
+    0) ;; 3) fail "the build's inputs moved: ${why#img_inputs: }" ;; *) fail "couldn't check the inputs: $why" ;;
+esac
 echo "release: $(tail -n 1 build.log)" >>"$r"
 echo "test:    $(tail -n 1 test/build.log)" >>"$r"
 img=$(ls test/*.img) || fail "no test image"
-fails=0
+fails=0 boots=()
 for m in $modes; do
     media=usb mm=$m; [[ $m == cdrom ]] && { media=cdrom; mm=bios; }
     python3 "$S/boot-test.py" "$img" "$mm" --platform "$P" --media "$media" --log "test/boot-$m.log" >"test/boot-$m.out" 2>&1
-    rc=$?; [[ $rc -eq 0 ]] || fails=$((fails + 1))
+    rc=$?; [[ $rc -eq 0 ]] || fails=$((fails + 1)); boots+=(--boot "$m=$rc")
     echo "boot $m rc=$rc ($(grep -c '^  ok' "test/boot-$m.out") ok, $(grep -c '^  FAIL' "test/boot-$m.out") FAIL) $(grep -E '^  FAIL|^  ok +(binaries|restic-bko|rustic-bko|bko-holt) ' "test/boot-$m.out" | tr -s ' ' | tr '\n' ' ')" >>"$r"
 done
 # A build that passed: its .xz for download, and this platform's old images
@@ -131,4 +200,15 @@ if [[ $fails -eq 0 ]]; then
     if "$S/compress-images.sh" -p "$P" "${D%/*}" >compress.log 2>&1; then c=ok; else c="FAILED (compress.log)"; fi
     echo "compress: $c" >>"$r"
 fi
+# The provenance, last before done.exit: a failure to write it leaves the
+# image as built (a plan treats an image without one as due a full build).
+rel=$(cd "$D" && ls ./*.img 2>/dev/null | head -n 1)
+if pv=$(dig provenance --platform "$P" --dir "$D" --release "${rel#./}" --test "${img#"$D"/}" \
+        --run "${BKO_IMG_RUN:-}" "${boots[@]}" 2>&1); then
+    echo "$pv" >>"$r"
+else
+    echo "provenance: FAILED: $pv" >>"$r"
+fi
+rm -f .inputs-start.json
+[[ -s inputs.log ]] || rm -f inputs.log
 echo "$fails" >"$D/done.exit"

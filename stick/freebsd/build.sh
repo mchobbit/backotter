@@ -50,6 +50,7 @@ cmd=$1 memstick=$2
 md= md2=
 cleanup() {
     umount mnt 2>/dev/null || true
+    umount lst/root 2>/dev/null || true
     [ -z "$md" ] || mdconfig -d -u "$md"
     [ -z "$md2" ] || mdconfig -d -u "$md2"
 }
@@ -57,7 +58,18 @@ cleanup() {
 # make-img-bsd.sh's ssh is gone), and the builder lives on.
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM PIPE
-case $cmd in info|assemble) ;; *) die "usage: build.sh info|assemble" ;; esac
+case $cmd in info|assemble|list) ;; *) die "usage: build.sh info|assemble|list" ;; esac
+
+# --- list: out/image.img's root (MBR slice 2, BSD partition a), read-only, as a tar
+if [ "$cmd" = list ]; then
+    mkdir -p lst/root
+    md2=$(mdconfig -a -t vnode -o readonly -f out/image.img)
+    mount -o ro "/dev/${md2}s2a" lst/root
+    tar -C lst -cf - root
+    umount lst/root
+    mdconfig -d -u "$md2"; md2=
+    exit 0
+fi
 
 # --- The root file system, with the release's security updates ------------------
 # The memstick's root, copied into root/ and brought to the release's latest

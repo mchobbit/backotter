@@ -1,0 +1,46 @@
+# stick/img-swap.tsv: what a refresh may change in each image's OS file systems (docs/design/img-speed.md
+# §1.3, C2): PLATFORMS, TREE, PATH (fnmatch), KIND (bin, marker, id, rewritten) [optional].  TREE is a name
+# of the tree listing (img_inputs.py tree-list; os-tree.txt beside each image): linux iso and layer; the
+# four BSDs root; illumos stick (s2) and archive (boot_archive.gz); haiku bfs.  The OS manifest is the
+# listing without these paths; a full build's provenance checks that every path not marked optional is
+# in its listing (swap_missing).  The layout, partition table, boot code and ESP are not listed here:
+# C2 compares them byte for byte, the config partition aside.
+linux	iso	/.disk/backotter.json	marker
+linux	iso	/md5sum.txt	rewritten
+linux	iso	/casper/ubuntu-server-minimal.backotter.squashfs	rewritten
+linux	iso	/casper/ubuntu-server-minimal.backotter.size	rewritten
+linux	layer	/usr/local/bin/restic-bko	bin
+linux	layer	/usr/local/bin/rustic-bko	bin
+linux	layer	/usr/local/bin/bko-holt	bin
+freebsd	root	/usr/local/bin/restic-bko	bin
+freebsd	root	/usr/local/bin/rustic-bko	bin	optional
+freebsd	root	/usr/local/bin/bko-holt	bin
+freebsd	root	/.disk/backotter.json	marker
+netbsd	root	/usr/local/bin/restic-bko	bin
+netbsd	root	/usr/local/bin/rustic-bko	bin	optional
+netbsd	root	/usr/local/bin/bko-holt	bin
+netbsd	root	/.disk/backotter.json	marker
+openbsd	root	/usr/local/bin/restic-bko	bin
+openbsd	root	/usr/local/bin/rustic-bko	bin	optional
+openbsd	root	/usr/local/bin/bko-holt	bin
+openbsd	root	/.disk/backotter.json	marker
+dragonfly	root	/usr/local/bin/restic-bko	bin
+dragonfly	root	/usr/local/bin/rustic-bko	bin	optional
+dragonfly	root	/usr/local/bin/bko-holt	bin
+dragonfly	root	/.disk/backotter.json	marker
+freebsd	root	/etc/fstab	id
+freebsd	root	/conf/base/etc/fstab	id
+openbsd	root	/etc/fstab	id
+dragonfly	root	/etc/fstab	id
+dragonfly	root	/boot/loader.conf	id
+illumos	stick	/platform/i86pc/amd64/boot_archive.gz	rewritten
+illumos	stick	/platform/i86pc/amd64/boot_archive.hash	rewritten
+illumos	stick	/.volsetid	id
+illumos	stick	/.disk/backotter.json	marker	optional
+illumos	archive	/usr/local/bin/restic-bko	bin
+illumos	archive	/usr/local/bin/rustic-bko	bin
+illumos	archive	/usr/local/bin/bko-holt	bin
+illumos	archive	/.disk/backotter.json	marker
+haiku	bfs	/system/non-packaged/bin/rustic-bko	bin
+haiku	bfs	/system/non-packaged/bin/bko-holt	bin
+haiku	bfs	/.disk/backotter.json	marker

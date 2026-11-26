@@ -465,7 +465,7 @@ class Guest:
         try:
             fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise Failed("another vm-update is working on it")
+            raise Failed("its .vm-update.lock is held: another vm-update, or an image build that boots it (stick/img-one.sh, stick/make-img-bsd.sh), is working on it")
         # A run folder left by a vm-update that died at once (a second
         # Ctrl-C, SIGKILL, a crash): with the lock ours, no vm-update uses it,
         # and if no QEMU has its overlays open either, it's dead.  (One whose

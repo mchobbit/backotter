@@ -230,8 +230,17 @@ EOF
     install -m 444 ../in/backotter.json .disk/
 }
 
+# list: out/image.img's BFS (partition 1), read-only, as a tar of bfs/.
+list() {
+    register out/image.img lst_dev 3
+    mkdir -p lst/bfs
+    mnt -ro -t bfs "$lst_dev/0" lst/bfs
+    tar -C lst -cf - bfs
+}
+
 case ${1:-} in
 info) info ;;
 assemble) assemble ;;
-*) die "usage: build.sh info|assemble" ;;
+list) list ;;
+*) die "usage: build.sh info|assemble|list" ;;
 esac

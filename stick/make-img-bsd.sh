@@ -36,6 +36,11 @@
 #                                        with in/zfs-features if the image has
 #                                        ZFS (OpenZFS, or illumos' own)
 #                     build.sh assemble  writes out/image.img from in/
+#                     build.sh list      out/image.img's OS file systems,
+#                                        mounted read-only, as a tar on
+#                                        stdout: one top-level directory per
+#                                        tree (img_inputs.py tree-list, and
+#                                        stick/img-swap.tsv's tree names)
 #                   in/ holds the media, console, remote-access and
 #                   sshd_config.backotter (from stick/bsd/), BUILD_FILES,
 #                   restic-bko (unless RESTIC_REQUIRED=no and there is none)
@@ -54,8 +59,18 @@
 # testvm/holttest1d/build-holt.sh makes them, each PLATFORM/ with the COMMIT
 # it was built from, and SHA256SUMS).
 #
+# The builder (docs/design/img-speed.md C7): a snapshot builder's
+# vms/BUILD_VM/.vm-update.lock is held from before its VM boots until this
+# script has shut it down, so that vm-update refuses that guest meanwhile; one
+# still held after a minute (a vm-update's) refuses the build.  With BKO_BUILDER_ID (img_inputs.py identity PLATFORM's
+# line, as img-one.sh took it), the builder's identity is read again once the
+# VM is up and once the image is out, and a different one refuses the build.
+# fetch's MEDIA go to img-media/PLATFORM/MEDIA (the base digest's media).  With
+# BKO_TREE_OUT, `build.sh list`'s tar becomes that file, the tree listing
+# (img_inputs.py tree-list); a listing that fails is said, and the image stands.
+#
 # Needs: qemu with KVM (vm-run), ssh, python3 3.11 or later, dosfstools,
-# mtools, and what PLATFORM's fetch needs.
+# mtools, flock, and what PLATFORM's fetch needs.
 
 set -euo pipefail
 
@@ -108,6 +123,16 @@ media_dir=$WORK/img-media/$PLATFORM
 mkdir -p "$media_dir"
 fetch "$media_dir"
 [[ ${#MEDIA[@]} -gt 0 ]] || die "$PLATFORM's fetch found no media"
+printf '%s\n' "${MEDIA[@]}" >"$media_dir/MEDIA.part" && mv "$media_dir/MEDIA.part" "$media_dir/MEDIA"
+
+# The builder's identity, again, against the one the build started with.
+same_builder() {
+    local id
+    [[ -n ${BKO_BUILDER_ID:-} ]] || return 0
+    id=$(S=$here BKO_WORK=$WORK python3 "$here/img_inputs.py" identity "$PLATFORM") || die "no identity for $BUILD_VM"
+    [[ $id == "$BKO_BUILDER_ID" ]] ||
+        { rm -f "$OUT_IMG.part"; die "$BUILD_VM moved $1: it is $id, the build started with $BKO_BUILDER_ID"; }
+}
 
 # --- The build VM ---------------------------------------------------------------
 work=$(mktemp -d)
@@ -130,13 +155,15 @@ trap cleanup EXIT
 
 if [[ $BUILD_VM_MODE == snapshot ]]; then
     pgrep -f "^qemu-system.*:$BUILD_VM_PORT-:22" >/dev/null && die "port $BUILD_VM_PORT is in use"
+    exec 7>>"$vm/.vm-update.lock" || die "can't open $vm/.vm-update.lock"
+    flock -w "${BKO_GUEST_LOCK_WAIT:-60}" 7 || die "a vm-update is working on $BUILD_VM ($vm/.vm-update.lock is held)"
     opts=()
     # read fails at a last line without a newline, having read it anyway.
     [[ -f $vm/vm-run-options ]] && { read -r -a opts <"$vm/vm-run-options" || [[ ${#opts[@]} -gt 0 ]]; }
     echo "Booting a throwaway copy of $BUILD_VM on port $BUILD_VM_PORT"
     SSH_PORT=$BUILD_VM_PORT setsid -f "$here/../testvm/vm-run" --snapshot "${opts[@]}" \
         "${BUILD_VM_OPTIONS[@]}" --serial-log "$work/serial.log" "$vm/$BUILD_VM_IMAGE" \
-        </dev/null >"$work/vm-run.log" 2>&1
+        </dev/null >"$work/vm-run.log" 2>&1 7>&-
     started=yes
     # vm-run is still setting up when setsid returns: wait for its QEMU.
     for _ in $(seq 30); do
@@ -155,6 +182,7 @@ until timeout 15 "${ssh_cmd[@]}" true 2>/dev/null; do
     fi
     sleep 5
 done
+same_builder "while its VM came up"
 
 # --- Build ------------------------------------------------------------------------
 mkdir "$work/in"
@@ -199,7 +227,18 @@ tar -C "$work/marker" -cf - backotter.json config.img | ssh_vm "cd $rdir/in && t
 echo "Assembling the image in $BUILD_VM"
 ssh_vm "cd $rdir && TEST=$test sh in/build.sh assemble" || die "build.sh assemble failed"
 ssh_vm "cat $rdir/out/image.img" >"$OUT_IMG.part" || die "couldn't copy the image out"
+if [[ -n ${BKO_TREE_OUT:-} ]]; then
+    if ssh_vm "cd $rdir && sh in/build.sh list" | S=$here BKO_WORK=$WORK python3 "$here/img_inputs.py" tree-list >"$BKO_TREE_OUT.part" &&
+        [[ -s $BKO_TREE_OUT.part ]]; then
+        mv "$BKO_TREE_OUT.part" "$BKO_TREE_OUT"
+        echo "Listed $(wc -l <"$BKO_TREE_OUT") entries of the image's file systems in $BKO_TREE_OUT"
+    else
+        rm -f "$BKO_TREE_OUT.part"
+        echo "make-img-bsd: the image's tree listing failed (build.sh list); the image stands" >&2
+    fi
+fi
 ssh_vm "rm -rf $rdir"
+same_builder "during the build"
 mv "$OUT_IMG.part" "$OUT_IMG"
 # Its size, not du's: a host's ZFS may not have written it all out yet.
 echo "Wrote $OUT_IMG ($(( $(stat -c %s "$OUT_IMG") >> 20 )) MiB), image $image_id"

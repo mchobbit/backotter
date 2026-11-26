@@ -3,7 +3,7 @@
 Status: **approved.** The seven speedups were approved in principle by the user
 (2026-11-26, "Yes to all 1-7"), and every recommendation of §13 (D1-D17,
 FD1-FD6) on 2026-11-26 ("Approve all"), D6 as the standing rule (each round
-deletes `images/P/prev-*` and `prev-x*` sets older than the last two). Nothing is built. Reviewed against the scripts on
+deletes `images/P/prev-*` and `prev-x*` sets older than the last two). I1 is built (2026-11-26); nothing else is. Reviewed against the scripts on
 2026-11-26 (§16 lists what the review changed). Hosts: chopin, cinqcent (big), copland,
 cage, czerny (small, build role), choubox (small, no build role), all amd64.
 Bigfoot (arm64) is out of scope except where noted. est. marks an estimate;
@@ -171,7 +171,7 @@ the last `boot-*.out`; compress = `compress.log`. Minutes:
 | netbsd | the root's `/usr/local/bin/*` | FFS2 made by `makefs -b 10% -f 10%` | `/.disk/backotter.json`, config.img; random GPT disk and partition GUIDs (`gpt create`/`add`) |
 | openbsd | the root's `/usr/local/bin/*` | FFS (`newfs -m 0 -o space` on a vnd), partition `kb + kb/8 + 32 MiB` | `/.disk/backotter.json`, config.img; **the disklabel's random DUID, which `/etc/fstab` mounts root by** |
 | dragonfly | `usr/local/bin/*` | UFS (`newfs -m 0`), sized from the binaries (`ours_kb`) +10 % + `ROOM_MB` 256 | the disklabel64 label `BKO_<32 hex>` (slice 2's label, not the file system's), `etc/fstab` and `boot/loader.conf`'s `vfs.root.mountfrom`, both by that label, `/.disk/backotter.json`, config.img |
-| illumos | `usr/local/bin/*` **inside** `boot_archive.gz` (gzipped UFS miniroot, +10 % + 48 MiB) on the V_ROOT UFS | UFS in UFS, s2 sized +25 % +16 MB | `.volsetid`, the marker in the archive and on s2, `boot_archive.hash` (SHA-1 of the uncompressed archive, always present), config.img; random GPT GUIDs (`mkgpt.py`) |
+| illumos | `usr/local/bin/*` **inside** `boot_archive.gz` (gzipped UFS miniroot, +10 % + 48 MiB) on the V_ROOT UFS | UFS in UFS, s2 sized +25 % +16 MB | `.volsetid` (on s2 only: the archive has none, I1's listing), the marker in the archive and on s2, `boot_archive.hash` (SHA-1 of the uncompressed archive, always present), config.img; random GPT GUIDs (`mkgpt.py`) |
 | haiku | `system/non-packaged/bin/{rustic-bko,bko-holt}` | BFS, sized from the binaries +10 % + `ROOM_MB` 256 | `/.disk/backotter.json`, config.img |
 
 On Linux the files a refresh rewrites, besides the binaries and the marker,
@@ -280,7 +280,18 @@ in §14.
   duration of its VM, `make-img-bsd.sh` holds the guest's
   `vms/G/.vm-update.lock`, so that vm-update refuses that guest instead of
   committing under a snapshot boot. Today vm-update's message would then say
-  "another vm-update is working on it", so I1 rewords it.
+  "another vm-update is working on it", so I1 rewords it. As built:
+  `make-img-bsd.sh` takes the lock before it boots the snapshot and keeps it
+  until it has shut the VM down (the VM itself does not inherit it, so that
+  the next copy's build is not refused by the last one's QEMU on its way
+  out), waiting up to a minute for a holder; `img-one.sh` holds the FreeBSD
+  builder's for as long as it runs. `make-img-bsd.sh` rereads the identity
+  when the VM is up and before it moves the image into place
+  (`BKO_BUILDER_ID`); `img-one.sh` checks a plan's identity at its start
+  (`BKO_PLAN_BUILDER`), and at its end `img_inputs.py moved` refuses the
+  build when its stick/ inputs, its builder, the ISO, slim, the host tools
+  or the binaries differ from the digest taken at its start (the media
+  aside: the build's own fetch sets them).
 - **C8. What is tested is the raw image.** Publishing compresses a copy and
   checks that the decompressed copy has the raw image's SHA-256, as
   `compress-images.sh` does today.
@@ -302,7 +313,11 @@ in §14.
 ### 3.1 `images/P/provenance.json`
 
 `img-one.sh` writes it last, before `done.exit`, for both full builds and
-refreshes. img-xcopy copies it with the image. Schema 1:
+refreshes (`stick/img_inputs.py provenance`; a failure to write it is said
+in `result.txt` and leaves the image as built, without one, so a plan gives
+it a full build). img-xcopy copies it with the image. Beside each image is
+its tree listing, `images/P/os-tree.txt` and `images/P/test/os-tree.txt`
+(I1, below): what C2 compares and `os_manifest` hashes. Schema 1:
 
 ```
 {
@@ -332,6 +347,31 @@ refreshes. img-xcopy copies it with the image. Schema 1:
 `os_manifest` from its parent unchanged. If the swap were to change them,
 C2 would already have failed it.
 
+As built in I1: `base.trees` adds, for the release and the test copy, the
+listing's `os_manifest`, its entry count, its tree names and `swap_missing`
+(the swap-list paths, not marked optional, that the listing lacks: empty on
+all seven in I1's set). `test.os_manifest` is the test copy's. `built.run`
+is null when img-one.sh is given no `BKO_IMG_RUN` (img-lanes.sh passes none
+yet). `holt_code` is null until holt-bin records the CODE a bko-holt was
+built from (today only `COMMIT`). `tests.tools` holds the QEMU and OVMF
+versions.
+
+**The tree listing.** One line per entry, tab-separated: tree, path, type
+(f d l c b p), mode, uid:gid, size, SHA-256 (a symlink's target, a device's
+major,minor), and the file flags and xattrs tar recorded. A hard link is
+listed as the file it links to. Linux: `img-one.sh` extracts the image's
+ISO 9660 tree with xorriso (tree `iso`, owners left out) and the BackOtter
+layer's squashfs from it as root (tree `layer`, with xattrs), about 3 s an
+image. The VM platforms: a fourth `build.sh` subcommand, `build.sh list`,
+run in the build VM after `assemble`, attaches `out/image.img` read-only
+with the platform's own tools, mounts its OS file systems read-only and
+writes them to stdout as a tar (illumos with python3's tarfile, its own tar
+being unreliable for this); the host lists the tar. Trees: `root` on the
+four BSDs, `stick` (s2) and `archive` (the boot archive) on illumos, `bfs`
+on Haiku. Haiku's GNU tar records no BFS attributes, so Haiku's listing has
+none. I4's refresh reuses the attach code. The swap list (§1.3) is
+`stick/img-swap.tsv` (platform, tree, path glob, kind, optional).
+
 ### 3.2 The three digests
 
 - **base**: the stick/ files the platform's build reads, its media, its
@@ -341,7 +381,8 @@ C2 would already have failed it.
   `stick/linux/` never rebuilds Haiku. Every platform lists `img-one.sh`,
   `marker.py` and `stick/config-partition/*` (config.img's README and
   settings). The VM platforms add `make-img-bsd.sh`, `stick/bsd/*`,
-  `testvm/vm-run`, `vm-lib.sh`, and all of `stick/P/` except the test files
+  `testvm/vm-run` (which reads no other testvm/ file, so `vm-lib.sh` is not
+  an input), and all of `stick/P/` except the test files
   below (`platform.conf` pins the release, its keys and kayak's commit;
   `build.sh`, `mkgpt.py`, `hook.sh` and the BUILD_FILES). Linux adds
   `build-backotter-layer.sh`, `make-img.sh`, `stick/layer/**` and
@@ -351,11 +392,22 @@ C2 would already have failed it.
   `stick/` is neither an input of some platform nor listed in the tsv as
   `none` (with a reason)**, so a new script cannot be missed silently. The
   digest is taken over file contents, never over the git commit: a commit
-  that touches no input changes no digest.
+  that touches no input changes no digest. As built: the tsv's columns are
+  PLATFORMS (`all`, `vm`, `-` or names), GLOB (`**` crosses directories),
+  KIND (`base`, `tests` or `none`) and REASON; for each platform the last
+  matching row decides, so `stick/P/**` is taken back by later `tests` and
+  `none` rows. The lint (`img-digest.sh --lint`, and a t2 unit test) also
+  fails on a glob that names no file and on a `BUILD_FILES` entry that is
+  not its platform's base input.
 - **The builder's identity.** For a snapshot builder (a test guest), its
-  vm-store generation, read through the `vms/G` link. A guest that is a full
-  folder falls back to its qcow2's SHA-256, cached by (size, mtime, inode),
-  because hashing a multi-GB qcow2 per plan is slow. **FreeBSD's
+  generation, which is the same in Chopin's working copy and in a vm-store
+  copy reached through the `vms/G` link: `vms/G/image-state`'s
+  `generation`, while `image-stat.json` still records the qcow2's present
+  (size, mtime, inode) at that generation. A guest whose disk changed since
+  falls back to its qcow2's SHA-256, cached by (size, mtime, inode)
+  (`BKO_DIGEST_CACHE`, default `BKO_WORK/.img-digest-cache.json`, which
+  also caches the media, the ISO and slim's files), because hashing a
+  multi-GB qcow2 per plan is slow. **FreeBSD's
   freebsd15-builder has neither**: it is a per-host folder written at every
   boot, so its qcow2 hash would change every build and differ on every
   host, and FreeBSD would never refresh or build off its first host. Its
@@ -364,13 +416,19 @@ C2 would already have failed it.
   the SHA-256 of the base tools the build runs (makefs, mkimg, mdconfig,
   gpart, tar, pax, freebsd-update). The planner reads that file; a refresh
   or build that finds the live fingerprint different stops before it writes
-  (C7). Hosts whose builders differ therefore show up in `plan`.
+  (C7). Hosts whose builders differ therefore show up in `plan`. As built,
+  a build with no plan (`BKO_PLAN_BUILDER` unset) takes the live
+  fingerprint and rewrites the file when it differs, so the file follows the
+  builder; with a plan, a live fingerprint other than the file's refuses.
+  Either way the fingerprint taken again at the end of the build must equal
+  the first.
 - **Host tools**: on every platform the dpkg versions of `dosfstools` and
   `mtools` (config.img), and on Linux also of `xorriso` and `squashfs-tools`.
   They are recorded in provenance, and whether they enter the digest is D15.
 - **bins**: the three files' SHA-256 (two for Haiku).
 - **tests**: `boot-test.py`, `stick/P/checks.sh` and `config-checks.sh`,
-  `manifest.sh`, and `img-one.sh`'s mode list. The host's QEMU and OVMF
+  `manifest.sh`, and `img-one.sh`'s mode list (its `MODES_linux` and
+  `MODES_other` lines). The host's QEMU and OVMF
   versions (`uefi-secureboot` boots OVMF's MS-keyed variables) are recorded
   in provenance's `tests` but kept out of the digest: they differ host by
   host, and ImgTest2 boots every new image on each host's own anyway. When
@@ -378,7 +436,9 @@ C2 would already have failed it.
   again on the same image (§6).
 
 `stick/img-digest.sh P` prints the three digests and the input list as JSON
-on any host. It reads only, and never touches `images/`.
+on any host. It reads only, and never touches `images/` (it runs
+`stick/img_inputs.py`, which also lints, lists trees and writes the
+provenance).
 
 ### 3.3 The planner's actions
 
@@ -447,7 +507,7 @@ binaries, the new `backotter.json` and `config.img`. The subcommand:
    -L` and both fstabs, in place; on DragonFly the disklabel64 label and the
    fstab and loader.conf lines that name it; on OpenBSD a new DUID
    (`disklabel -R` from the parent's label with a fresh `duid:`) and the
-   fstab line; on illumos `.volsetid` in the archive and on s2. Writes the
+   fstab line; on illumos `.volsetid` on s2 (the archive has none). Writes the
    listing after the change.
 3. Unmounts and runs fsck again. On illumos it runs `gzip -9` on the archive,
    puts it back on s2 and rewrites `boot_archive.hash` (the SHA-1 of the

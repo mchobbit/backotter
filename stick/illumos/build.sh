@@ -279,8 +279,26 @@ configure() {
     [ ! -e .initialboot ] && [ ! -d kayak ] || die "kayak's installer is still in the system"
 }
 
+# list: out/image.img's stick root (s2) and the boot archive in it, read-only,
+# as a tar of stick/ and archive/ (python3's: illumos tar's headers vary).
+list() {
+    lofi=$(lofiadm -la "$here/out/image.img"); lofis="$lofi $lofis"
+    disk=${lofi%p0}
+    mkdir -p lst/stick lst/archive
+    mnt -F ufs -o ro "${disk}s2" "$here/lst/stick"
+    gzip -dc lst/stick/platform/i86pc/amd64/boot_archive.gz >ba-list.ufs
+    ba=$(lofiadm -a "$here/ba-list.ufs"); lofis="$ba $lofis"
+    mnt -F ufs -o ro "$ba" "$here/lst/archive"
+    (cd lst && python3 -c 'import sys, tarfile
+t = tarfile.open(fileobj=sys.stdout.buffer, mode="w|", format=tarfile.PAX_FORMAT)
+for n in sys.argv[1:]:
+    t.add(n)
+t.close()' stick archive)
+}
+
 case ${1:-} in
 info) info ;;
 assemble) assemble ;;
-*) die "usage: build.sh info|assemble" ;;
+list) list ;;
+*) die "usage: build.sh info|assemble|list" ;;
 esac

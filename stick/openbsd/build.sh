@@ -35,6 +35,18 @@ LIB=/usr/local/lib/backotter
 # The release's sets, checked again here against SHA256.sig with this
 # system's copy of the release's key.
 cmd=${1:-}
+# list: out/image.img's root (disklabel partition a), read-only, as a tar.
+if [ "$cmd" = list ]; then
+    mkdir -p lst/root
+    vnd=$(vnconfig out/image.img)
+    trap 'umount lst/root 2>/dev/null; vnconfig -u "$vnd" 2>/dev/null' EXIT
+    mount -r "/dev/${vnd}a" lst/root
+    tar -C lst -cf - root
+    umount lst/root
+    vnconfig -u "$vnd"
+    trap - EXIT
+    exit 0
+fi
 set -- in/base[0-9][0-9].tgz
 [ $# -eq 1 ] && [ -f "$1" ] || die "need exactly one in/baseNN.tgz"
 base=${1#in/}
@@ -87,7 +99,7 @@ info)
     echo "KERNEL=$k"
     exit 0 ;;
 assemble) ;;
-*) die "usage: build.sh info|assemble" ;;
+*) die "usage: build.sh info|assemble|list" ;;
 esac
 command -v cc >/dev/null || die "no cc: the build VM needs OpenBSD's comp set"
 for f in console remote-access sshd_config.backotter restic-bko bko-holt backotter.json config.img; do

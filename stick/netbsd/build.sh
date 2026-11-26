@@ -244,8 +244,31 @@ assemble() {
     rm -rf "$r" "$top/esp" "$top/root.img" "$top/esp.img"
 }
 
+# list: out/image.img's root (the GPT partition "BackOtter root"), read-only, as a tar.
+list() {
+    vnd= wedge=
+    for u in 0 1 2 3 4 5 6 7; do
+        if vndconfig -c -r "vnd$u" "$out/image.img" 2>/dev/null; then vnd=vnd$u; break; fi
+    done
+    [ -n "$vnd" ] || die "no free vnd device"
+    trap 'umount "$top/lst/root" 2>/dev/null; vndconfig -u "$vnd" 2>/dev/null' EXIT
+    for _ in 1 2; do
+        wedge=$(dkctl "$vnd" listwedges 2>/dev/null | sed -n 's/^\(dk[0-9]*\): BackOtter root,.*/\1/p')
+        [ -n "$wedge" ] && break
+        dkctl "$vnd" makewedges >/dev/null 2>&1 || true
+    done
+    [ -n "$wedge" ] || die "no BackOtter root wedge on $vnd"
+    mkdir -p "$top/lst/root"
+    mount -r -t ffs "/dev/$wedge" "$top/lst/root"
+    tar -C "$top/lst" -cf - root
+    umount "$top/lst/root"
+    vndconfig -u "$vnd"
+    trap - EXIT
+}
+
 case ${1:-} in
 info) info ;;
 assemble) assemble ;;
-*) die "usage: build.sh info|assemble" ;;
+list) list ;;
+*) die "usage: build.sh info|assemble|list" ;;
 esac

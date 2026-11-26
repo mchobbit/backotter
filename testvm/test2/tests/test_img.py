@@ -1283,6 +1283,9 @@ class ImgOne(unittest.TestCase):
            '#!/bin/sh\nif [ "$1" = --test ]; then d=$3; else d=$2; fi\necho image >"$d/x.img"\necho "Wrote $d/x.img"\n', 0o755)
         wr(os.path.join(self.s, "boot-test.py"), "print('  ok   tools  all')\n")
         wr(os.path.join(self.s, "compress-images.sh"), "#!/bin/sh\nexit 0\n", 0o755)
+        # The digests and the provenance (I1) are the real ones'.
+        for f in ("img_inputs.py", "img-inputs.tsv", "img-swap.tsv"):
+            shutil.copy2(os.path.join(WT, "stick", f), os.path.join(self.s, f))
         wr(os.path.join(self.path, "flock"), "#!/bin/sh\nexit 0\n", 0o755)
 
     def run_one(self, env=None):

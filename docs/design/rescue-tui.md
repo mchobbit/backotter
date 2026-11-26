@@ -2053,9 +2053,12 @@ changed.
   `luks-headers`, as bko-rescue runs them (rustic-bko), read both kinds
   back, and that load's globs leave `/.bko-holt` out of the restore.
 - A restic-bko backup's snapshot `paths` is the staging path
-  (`/run/bko-holt/stage/root`), not `/`.  bko-rescue reads no `paths`
-  (`repo.rs`'s `snap`: ID, time, hostname, tags, size), so Snapshot shows
-  the same.
+  (`/run/bko-holt/stage/root`, and `/run/bko-holt/stage/root/sub` for a
+  `SNAPSHOT:/sub` backup since the review fixes), not `/`.  bko-rescue
+  reads no `paths` (`repo.rs`'s `snap`: ID, time, hostname, tags, size),
+  so Snapshot shows the same.  The review fixes ("rescue, holt-json,
+  stick-config: review fixes for oq14") changed nothing in bko-rescue
+  either.
 
 ## The app on top (later)
 

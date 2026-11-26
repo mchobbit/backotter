@@ -375,18 +375,31 @@ What the backup tool must do (not built: it comes with the backup tool):
    root (Ubuntu Core's base snap) works.  It stages them in a staging root
    in RAM, every backup's since open question 15 (holt-json.md's open
    question 14, approved 2026-11-26; built for reference as
-   `testvm/rescue/stage-backup.sh`, 289e231, and proven with both
-   archivers by `stage-test.py`, "What the staging root built"):
+   `testvm/rescue/stage-backup.sh`, 289e231 and "rescue, holt-json,
+   stick-config: review fixes for oq14", and proven with both archivers
+   by `stage-test.py`, "What the staging root built"):
    1. Enter a private mount namespace (`unshare -m`, then `mount
-      --make-rprivate /`).  No mount made in it is seen outside it, and
-      all of them go when the archiver exits, however it exits: there is
-      nothing to unmount.  Linux only: off Linux, open question 23.
-   2. Mount a tmpfs (64 MiB, mode 0700) at `/run/bko-holt/stage`, after
-      checking its parent is in RAM (tmpfs or ramfs; else refuse, and make
-      nothing).  S is `/run/bko-holt/stage/root`, mode 0755.  The path is
-      fixed, so restic-bko finds the parent (below).  The empty
-      `/run/bko-holt/stage` stays after (in RAM): removing it could detach
-      another backup's staging, in its own namespace.
+      --make-rprivate /`), and check it is one: neither init's namespace
+      nor the caller's.  No mount made in it is seen outside it.  The
+      archiver runs as the tool's child, under a parent-death signal
+      (SIGTERM), and gets the tool's SIGTERM and SIGHUP; its exit status is
+      the backup's.  When it exits, every process left in the namespace
+      (an ssh ControlMaster an sftp backend left, say) gets SIGTERM, then
+      SIGKILL, and the stage is unmounted, so nothing keeps the backed-up
+      file systems busy (a `cryptsetup close` or `zpool export` after the
+      backup works).  Only a tool killed by SIGKILL can't: the archiver
+      then gets SIGTERM, but what it started may stay.  Linux only: off
+      Linux, open question 23.
+   2. Mount a tmpfs (64 MiB, mode 0700) at `/run/bko-holt/stage`.  Before
+      that, the nearest of it and its parents that is there (`/run` on a
+      normal boot, which has no `/run/bko-holt` until a dump made it) must
+      be in RAM (tmpfs or ramfs; else refuse, and make nothing).  The
+      missing ones are made, mode 0700 (bko-holt's own `/run/bko-holt` is
+      0700).  S is `/run/bko-holt/stage/root`, mode 0755 until step 4 gives
+      it the root's.  The path is fixed, so restic-bko finds the parent
+      (below).  The empty `/run/bko-holt/stage` stays after (in RAM):
+      removing it could detach another backup's staging, in its own
+      namespace.
    3. Bind each file system backed up read-only at its own path under S,
       parents first: `mount --bind SRC S/PATH`, then `mount -o
       remount,bind,ro S/PATH`.  The bind is not recursive: that file
@@ -394,18 +407,29 @@ What the backup tool must do (not built: it comes with the backup tool):
       it mounted elsewhere.  A child's mount point is a directory of its
       parent already (it is mounted there); one that isn't, under a
       read-only parent, is refused.  No symbolic link may be on S/PATH's
-      way (a bind follows it, out of S).
+      way (a bind follows it, out of S).  Each SRC is walked into (`stat
+      SRC/.`) before the namespace is made, so an expired automount (a
+      systemd automount's `/efi` or `/boot`) is mounted again where
+      systemd can see it; a bind that still finds the autofs mount (read
+      from mountinfo, which triggers nothing) is refused, not backed up
+      empty.
    4. The root file system can't be bound at S itself: S would then have
       no room of its own for `/.bko-holt`.  So it is bound read-only once
       inside the tmpfs (`/run/bko-holt/stage/rootfs`), and each entry of
       its top directory is: a directory, or any other file but a symbolic
       link, bound read-only at S/NAME (on an empty directory or file of
-      S's tmpfs); a symbolic link, which can't be bound, copied with `cp
-      -a` (its target, owner, mode, times and extended attributes; not its
-      ctime or inode number).  S gets the root's owner, mode and times
-      (neither archiver keeps the root directory's own).  A `/.bko-holt`
-      of the root file system's own (a mount point an older backup left?)
-      is left out, with a note: the name is the backup tool's.
+      S's tmpfs); a symbolic link, which can't be bound, copied with its
+      target, owner, mode, times and extended attributes, and its SELinux
+      label where SELinux is on (`cp -P
+      --preserve=mode,ownership,timestamps,xattr[,context]`: named, so a
+      failure to keep any of them is an error, as `cp -a`'s isn't), then
+      checked (`getfattr -h -d -m -` of both the same).  Not its ctime or
+      inode number.  On Fedora, Rocky and Leap, `/bin`, `/sbin`, `/lib`
+      and `/lib64` are such links, each with its label.  S gets the root's
+      owner, mode and times (neither archiver keeps the root directory's
+      own).  A `/.bko-holt` of the root file system's own (a mount point
+      an older backup left?) is left out, with a note: the name is the
+      backup tool's.
    5. Make S/.bko-holt, mode 0700, in S's tmpfs; bind D read-only at
       `S/.bko-holt/luks-headers` and the machine's system.json ("Which
       copy wins", step 1) read-only at `S/.bko-holt/system.json`.
@@ -418,18 +442,41 @@ What the backup tool must do (not built: it comes with the backup tool):
       The snapshot's `paths` is S's own, `/run/bko-holt/stage/root`; it is
       the same every backup, so restic finds the parent.  Since restic
       runs in S, every path given to it (the repository, the password
-      file) is absolute, and an `--exclude` pattern that starts with `/`
-      matches against S's path (`/run/bko-holt/stage/root/...`).  A
-      chroot into S was rejected: the archiver, its cache, its password
-      file and what it reaches the repository with (ssh, DNS,
-      certificates) would all have to be in S, so in the snapshot.
-   7. Neither archiver gets `--one-file-system` (`-x`): S is a file system
-      of its own, so it would leave out everything.  The binds choose the
-      file systems.  A mount not bound (`/proc`, `/run`, a scratch disk)
-      shows as the root file system's own empty directory, as `-x` shows
-      it.  The archiver's cache and the repository are its own, outside S.
-   8. With a `SNAPSHOT:SUBPATH` backup P, rustic-bko gets `--as-path P`,
-      and restic-bko's tree is built at S/P.
+      file, `RESTIC_PASSWORD_FILE`) is absolute.  A chroot into S was
+      rejected: the archiver, its cache, its password file and what it
+      reaches the repository with (ssh, DNS, certificates) would all have
+      to be in S, so in the snapshot.
+   7. Excludes: both archivers match an absolute pattern against the path
+      they read, which is S's, never the system's.  rustic-bko applies
+      `--glob` while it walks S, before `--as-path` maps the paths
+      (rustic_core's ignore overrides); restic-bko matches `--exclude`
+      against the absolute path in S.  So the backup tool writes each
+      exclude as a system path and gives it with TOP before it, TOP the
+      directory whose tree is the system's (S, or S/P for restic-bko's
+      SUBPATH, sub-step 9): rustic-bko `--glob '!TOP/var/cache/**'`,
+      restic-bko `--exclude 'TOP/var/cache/**'`.  `--glob '!/var/cache/**'`
+      would leave out nothing, and say nothing.  A relative pattern (no
+      leading `/`) matches anywhere, as it is.
+   8. Neither archiver gets `--one-file-system` (`-x`, in any form: a
+      bundle like `-vx`, `--one-file-system=true`, or a rustic profile's
+      `[backup] one-file-system`): S is a file system of its own, so it
+      would leave out everything.  The binds choose the file systems.  A
+      mount not bound (`/proc`, `/run`, a scratch disk) shows as the root
+      file system's own empty directory, as `-x` shows it.  The archiver's
+      cache and the repository are its own, outside S.  (A profile's
+      one-file-system would also leave out the binds under `/.bko-holt`,
+      so the read-back after the backup, step 3 below, fails.)
+   9. With a `SNAPSHOT:SUBPATH` backup P, rustic-bko gets `--as-path P`
+      (`paths` `["P"]`).  restic-bko's tree is built at S/P, and it backs
+      up P's relative path from S (`cd S && restic-bko ... backup sub` for
+      `/sub`): the tree's top is P, and `paths` is S/P's
+      (`/run/bko-holt/stage/root/sub`).  So each SUBPATH, and the whole
+      system, has `paths` of its own, under both archivers: each finds its
+      own parent, and `forget`'s default grouping (host and paths) keeps
+      each one's history apart.  A machine's first staged restic-bko
+      backup after unstaged ones (`paths` `["/"]`) finds no parent, and
+      reads every file once; the backup tool can name one (`--parent
+      ID`).
 
    load's restore leaves `/.bko-holt/luks-headers`, its files, and
    `/.bko-holt` when no raw volume is under it out of every tree, whatever
@@ -811,8 +858,11 @@ feature means the stick can't import the pool at all.
   headers out of the tree, and bko-rescue's fetch before the first plan.
 - The staging root ("LUKS2 headers in the backup", step 2; holt-json.md's
   open question 14), for reference: `testvm/rescue/stage-backup.sh` does
-  it for both archivers, and `stage-test.py` proves it (289e231,
-  `stage-recorded.txt`).  The backup tool's own staging waits for it.
+  it for both archivers, and `stage-test.py` proves it (289e231 and
+  "rescue, holt-json, stick-config: review fixes for oq14",
+  `stage-recorded.txt`): the default stage path, excludes at S's path,
+  SUBPATH backups with paths of their own, the archiver's leftovers
+  stopped.  The backup tool's own staging waits for it.
 - "Which copy wins" step 2 on the restore side (holt-json.md's open
   question 15): `bko-holt snapshot-layout` (`src/snaplayout.rs`, also the
   backup tool's read-back), load's restore leaving `/.bko-holt/system.json`

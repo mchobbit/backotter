@@ -13,8 +13,9 @@ Python's stdlib only.
 
 A small system in RAM: a root file system (a directory on the RAM disk)
 whose top holds directories, a file hard-linked into usr/bin, two symbolic
-links (one dangling), a FIFO, a sparse file and a hidden file, with set
-modes, owners, times and a user extended attribute; three file systems
+links (one dangling, one with a trusted.* extended attribute), a FIFO, a
+sparse file and a hidden file, with set modes, owners, times and a user
+extended attribute; three file systems
 mounted on it: /home and /boot/efi (backed up) and /scratch (not); and a
 read-only view of the root (a read-only bind).  The dump's header
 directory holds two test headers (random bytes of uc24-fde's names, never
@@ -41,11 +42,27 @@ and SHA-256.  Then, for each archiver:
     holt's restic-bko argv can't run, holt-json.md's open question 15
     notes), and restic-bko's own dump of each, by hand;
   - a second rw backup, made next, finds the first as its parent (restic's paths are
-    the fixed staging path);
-  - --as-path /sub: snapshot-layout and luks-headers of ID:/sub;
-  - refusals: -x (exit 2), a stage not in RAM (exit 1, nothing made), a
-    bind under a read-only directory that doesn't hold its mount point
-    (exit 1).
+    the fixed staging path).  Its archiver is a wrapper that leaves a
+    process behind (setsid sleep), which must be gone when stage-backup.sh
+    exits, and it runs with a stray BKO_STAGE_UNSHARED, which mustn't stop
+    it unsharing;
+  - --as-path /sub, with --exclude /swapfile --exclude /srv: restored
+    whole, the tree holds only sub, and sub is the system's tree without
+    the two; snapshot-layout and luks-headers of ID:/sub; a second one
+    finds the first as its parent (restic-bko's paths are S/sub's);
+  - the default stage, /run/bko-holt/stage, on a fresh tmpfs at /run (in
+    the test's namespace) with no /run/bko-holt, a relative ARCHIVER, and
+    the two excludes: /run/bko-holt is made 0700 and the stage left empty;
+    restored whole and as load restores it, the tree without the two;
+  - refusals: -x, -vx, --one-file-system=true, an absolute --glob or
+    --exclude after --, no backup command, a relative --password-file for
+    restic-bko (exit 2 each); --help (exit 2, the usage alone); a stage not
+    in RAM, or whose missing parents' nearest is on disk (exit 1, nothing
+    made); a bind under a read-only directory that doesn't hold its mount
+    point (exit 1); the namespace marker set to the script's own PID
+    without a namespace (exit 1, no mount made);
+  - SIGTERM to stage-backup.sh while the archiver runs: the archiver gets
+    it, its exit status (143) comes back, nothing is left.
 """
 
 import hashlib
@@ -64,6 +81,8 @@ INSTALL_ID = "0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90"
 LOAD_GLOBS = ["!/.bko-holt/luks-headers/**", "!/.bko-holt/luks-headers", "!/.bko-holt/system.json", "!/.bko-holt"]
 PASSWORD = b"correct horse"
 T0 = 1700000000123456789
+EXCLUDES = ["--exclude", "/swapfile", "--exclude", "/srv"]
+LINGER = b"sleep\x00600.4242\x00"
 
 said = []
 
@@ -106,7 +125,8 @@ def entry(path, deep):
         names = sorted(os.listxattr(path, follow_symlinks=False))
     except OSError:
         names = []
-    r["xattrs"] = {n: os.getxattr(path, n, follow_symlinks=False).hex() for n in names if n.startswith("user.")}
+    r["xattrs"] = {n: os.getxattr(path, n, follow_symlinks=False).hex() for n in names
+                   if n.startswith("user.") or n.startswith("trusted.")}
     if t == stat.S_IFREG:
         r["size"] = st.st_size
         with open(path, "rb") as f:
@@ -174,11 +194,15 @@ def build(work):
         os.mkdir(os.path.join(src, d))
         os.chmod(os.path.join(src, d), m)
     os.chown(os.path.join(src, "srv"), 0, 33)
+    write(os.path.join(src, "srv/data"), b"served\n", 0o640, 0, 33)
     write(os.path.join(src, "etc/hostname"), b"lovelace\n")
     write(os.path.join(src, "etc/shadow"), b"root:*:20000::::::\n", 0o640, 0, 42)
     write(os.path.join(src, "usr/bin/tool"), b"#!/bin/sh\necho tool\n", 0o4755)
     os.link(os.path.join(src, "usr/bin/tool"), os.path.join(src, "hardtop"))
     os.symlink("usr/bin", os.path.join(src, "bin"))
+    # A symbolic link's own xattr (user.* can't be on one): the staging's
+    # copy must keep it, or fail.
+    os.setxattr(os.path.join(src, "bin"), "trusted.bko", b"link", follow_symlinks=False)
     os.symlink("/nonexistent/place", os.path.join(src, "dangle"))
     os.lchown(os.path.join(src, "dangle"), 1000, 1000)
     os.mkfifo(os.path.join(src, "fifo"), 0o600)
@@ -235,6 +259,23 @@ def expected(src, ro):
     assert "scratch" in base and not any(k.startswith("scratch/") for k in base), "scratch"
     assert "home/under-mount" not in base and "home/u/notes" in base
     return base, groups(links)
+
+
+def without(tree, names):
+    return {k: v for k, v in tree.items() if not any(k == n or k.startswith(n + "/") for n in names)}
+
+
+def lingering():
+    found = []
+    for pid in os.listdir("/proc"):
+        if pid.isdigit():
+            try:
+                with open("/proc/%s/cmdline" % pid, "rb") as f:
+                    if f.read() == LINGER:
+                        found.append(pid)
+            except OSError:
+                pass
+    return found
 
 
 def snapshots(argv):
@@ -302,69 +343,121 @@ def main(argv):
     private_file(pw, PASSWORD)
     stage = os.path.join(work, "stage")
     binds = ["--bind", os.path.join(src, "home"), "/home", "--bind", os.path.join(src, "boot/efi"), "/boot/efi",
-             "--headers", hdr, "--system-json", sysjson, "--stage", stage]
+             "--headers", hdr, "--system-json", sysjson]
     bko_want = {".bko-holt": 0o700, ".bko-holt/luks-headers": 0o700, ".bko-holt/system.json": 0o600}
     bko_want.update({".bko-holt/luks-headers/" + f: 0o600 for f in heads})
 
+    want_ex = without(want, ("swapfile", "srv"))
+    assert len(want_ex) == len(want) - 3, len(want_ex)
+    run_dir = "/run"
     for tool, arch in (("rustic", rustic), ("restic", restic)):
         repo = os.path.join(work, "repo-" + tool)
         if tool == "rustic":
             rp = [arch, "--repository", repo, "--password-file", pw, "--no-progress", "--no-cache"]
-            backup = rp + ["backup", "--host", "lovelace"]
+            tail = ["backup", "--host", "lovelace"]
         else:
             rp = [arch, "--repo", repo, "--password-file", pw, "--no-cache"]
-            backup = rp + ["backup", "--host", "lovelace", "-q"]
+            tail = ["backup", "--host", "lovelace", "-q"]
         run(*rp, "init", env=env)
+        # An archiver that leaves a process behind it.
+        wrap = os.path.join(work, "linger-" + tool)
+        mark = os.path.join(work, "linger-" + tool + ".started")
+        with open(wrap, "w") as f:
+            f.write('#!/bin/sh\ncase "${1:-}" in --version|version) exec %s "$@" ;; esac\n'
+                    'echo $$ >%s\nsetsid sleep 600.4242 </dev/null >/dev/null 2>&1 &\nexec %s "$@"\n' % (arch, mark, arch))
+        os.chmod(wrap, 0o755)
         ids = {}
-        for variant, root in (("rw", src), ("rw2", src), ("ro", ro), ("sub", src)):
+        variants = (("rw", src, {}), ("rw2", src, {"linger": True}), ("ro", ro, {}),
+                    ("sub", src, {"sub": True}), ("sub2", src, {"sub": True}), ("def", src, {"default": True}))
+        for variant, root, o in variants:
+            vstage = stage
+            if o.get("default"):
+                # /run as a normal boot has it, without /run/bko-holt (in
+                # our namespace only).
+                mount_tmpfs(run_dir)
+                vstage = "/run/bko-holt/stage"
             before, mi = manifest(src, deep=True, root=True), mountinfo()
-            extra = ["--as-path", "/sub"] if variant == "sub" else []
-            p = run(STAGE, "--bind", root, "/", *binds, *extra, "--", *backup, "--tag", variant, env=env)
+            extra = (["--as-path", "/sub"] + EXCLUDES) if o.get("sub") else []
+            stage_args = ["--stage", vstage] if not o.get("default") else []
+            if o.get("default"):
+                extra = EXCLUDES
+            a0, cwd, venv = arch, None, env
+            if o.get("linger"):
+                a0, venv = wrap, dict(env, BKO_STAGE_UNSHARED="1")
+            if o.get("default"):
+                a0, cwd = "./" + os.path.basename(arch), os.path.dirname(arch)
+            p = run(STAGE, "--bind", root, "/", *binds, *stage_args, *extra, "--", a0, *rp[1:], *tail,
+                    "--tag", variant, env=venv, cwd=cwd)
             after = manifest(src, deep=True, root=True)
             diff(before[0], after[0], "%s %s: the source before and after" % (tool, variant))
             assert not os.path.lexists(os.path.join(src, ".bko-holt")), ".bko-holt made in the source"
             assert mountinfo() == mi, "a mount was left in the caller's namespace"
-            assert os.listdir(stage) == [], os.listdir(stage)
+            assert os.listdir(vstage) == [], os.listdir(vstage)
             snap = snapshots(rp)[-1]
             ids[variant] = snap
             if variant == "rw":
                 notes = [l for l in p.stderr.decode().splitlines() if l.startswith("stage-backup:")]
                 say("%s rw: stage-backup.sh said: %s" % (tool, " | ".join(notes)))
+                assert "(extended attributes checked)" in p.stderr.decode(), p.stderr
             say("%s %s: snapshot %s, paths %s, parent %s; the source unchanged (%d paths: type, mode, owner, size, mtime, ctime, inode, contents), no /.bko-holt in it, no mount left"
                 % (tool, variant, snap["id"][:8], snap.get("paths"), (snap.get("parent") or "none")[:8], len(before[0])))
-        assert (ids["rw2"].get("parent") or "")[:8] == ids["rw"]["id"][:8], (ids["rw2"], ids["rw"])
-        say("%s rw2: its parent is rw's snapshot %s" % (tool, ids["rw"]["id"][:8]))
+            if o.get("linger"):
+                assert os.path.exists(mark), "the wrapper didn't run"
+                assert lingering() == [], "a process the archiver left is still there: %s" % lingering()
+                say("%s %s: the archiver's wrapper left a process (setsid sleep): gone when stage-backup.sh exited; a stray BKO_STAGE_UNSHARED=1 didn't stop the namespace"
+                    % (tool, variant))
+            if o.get("default"):
+                st = os.stat("/run/bko-holt")
+                assert stat.S_IMODE(st.st_mode) == 0o700, oct(st.st_mode)
+                say("%s def: the default stage: /run/bko-holt made 0700 (none before), /run/bko-holt/stage left empty; ARCHIVER given as %s" % (tool, a0))
+                run("umount", run_dir)
+        want_paths = {"rustic": {"rw": ["/"], "sub": ["/sub"], "def": ["/"]},
+                      "restic": {"rw": [stage + "/root"], "sub": [stage + "/root/sub"],
+                                 "def": ["/run/bko-holt/stage/root"]}}[tool]
+        for v, wp in want_paths.items():
+            assert ids[v].get("paths") == wp, (v, ids[v].get("paths"), wp)
+        for later, first in (("rw2", "rw"), ("sub2", "sub")):
+            assert (ids[later].get("parent") or "")[:8] == ids[first]["id"][:8], (ids[later], ids[first])
+            say("%s %s: its parent is %s's snapshot %s" % (tool, later, first, ids[first]["id"][:8]))
 
-        for variant in ("rw", "ro"):
+        for variant in ("rw", "ro", "def", "sub"):
             sid = ids[variant]["id"][:8]
+            vwant = want if variant in ("rw", "ro") else want_ex
             # Whole: the system's tree and the backup tool's files.
             whole = os.path.join(work, "t-%s-%s-whole" % (tool, variant))
             if tool == "rustic":
                 run(*rp, "restore", "--numeric-id", sid, whole, env=env)
             else:
                 run(*rp, "restore", sid, "--target", whole, env=env)
-            got, gl = manifest(whole)
+            top = whole
+            if variant == "sub":
+                assert os.listdir(whole) == ["sub"], os.listdir(whole)
+                top = os.path.join(whole, "sub")
+            got, gl = manifest(top)
             bko = {k: v for k, v in got.items() if k == ".bko-holt" or k.startswith(".bko-holt/")}
             rest = {k: v for k, v in got.items() if k not in bko}
-            diff(want, rest, "%s %s whole restore: the tree" % (tool, variant))
+            diff(vwant, rest, "%s %s whole restore: the tree" % (tool, variant))
             assert groups(gl) == want_links, (groups(gl), want_links)
             assert {k: v["mode"] for k, v in bko.items()} == bko_want, bko
             for f, b in heads.items():
-                assert open(os.path.join(whole, ".bko-holt/luks-headers", f), "rb").read() == b, f
-            assert open(os.path.join(whole, ".bko-holt/system.json"), "rb").read() == open(sysjson, "rb").read()
-            say("%s %s: restored whole by %s-bko, the system's %d paths (type, mode, owner, size, mtime, contents, link targets, user xattrs, hard links %s) and /.bko-holt's %d (two headers and system.json, byte for byte)"
-                % (tool, variant, tool, len(rest), want_links, len(bko)))
+                assert open(os.path.join(top, ".bko-holt/luks-headers", f), "rb").read() == b, f
+            assert open(os.path.join(top, ".bko-holt/system.json"), "rb").read() == open(sysjson, "rb").read()
+            say("%s %s: restored whole by %s-bko, %sthe system's %d paths (type, mode, owner, size, mtime, contents, link targets, user and trusted xattrs, hard links %s)%s and /.bko-holt's %d (two headers and system.json, byte for byte)"
+                % (tool, variant, tool, "only sub at the top, under it " if variant == "sub" else "", len(rest), want_links,
+                   ", /swapfile and /srv left out" if vwant is want_ex else "", len(bko)))
+            shutil.rmtree(whole)
+            if variant == "sub":
+                continue
             # As load restores it: rustic-bko with load's four --glob.
             loadt = os.path.join(work, "t-%s-%s-load" % (tool, variant))
             lp = [rustic, "--repository", repo, "--password-file", pw, "--no-progress", "--no-cache"]
             globs = [x for g in LOAD_GLOBS for x in ("--glob", g)]
             run(*lp, "restore", "--numeric-id", *globs, sid, loadt, env=dict(env, RUSTIC_STRICT_EXIT="true"))
             got, gl = manifest(loadt)
-            diff(want, got, "%s %s load restore" % (tool, variant))
+            diff(vwant, got, "%s %s load restore" % (tool, variant))
             assert groups(gl) == want_links
             say("%s %s: restored by rustic-bko with load's four --glob: the system's %d paths alone, no /.bko-holt"
                 % (tool, variant, len(got)))
-            shutil.rmtree(whole)
             shutil.rmtree(loadt)
 
         for variant, snap in (("rw", ids["rw"]["id"][:8]), ("ro", ids["ro"]["id"][:8]), ("sub", ids["sub"]["id"][:8] + ":/sub")):
@@ -398,15 +491,63 @@ def main(argv):
             shutil.rmtree(k)
 
     # Refusals.
-    p = run(STAGE, "--bind", src, "/", "--stage", stage, "--", rustic, "--repository", "/nonexistent", "backup", "-x", ok=(2,), env=env)
-    say("-x: exit 2: " + p.stderr.decode().strip())
+    nr = ["--repository", "/nonexistent"]
+    for what, args in (("-x", [rustic, *nr, "backup", "-x"]),
+                       ("-vx", [rustic, *nr, "backup", "-vx"]),
+                       ("--one-file-system=true", [rustic, *nr, "backup", "--one-file-system=true"]),
+                       ("an absolute --glob after --", [rustic, *nr, "backup", "--glob", "!/swapfile"]),
+                       ("an absolute --exclude= after --", [restic, "--repo", "/nonexistent", "backup", "--exclude=/swapfile"]),
+                       ("no backup command", [rustic, *nr, "snapshots"]),
+                       ("a relative --password-file for restic-bko", [restic, "--repo", "/nonexistent", "--password-file", "pw", "backup"])):
+        mi = mountinfo()
+        p = run(STAGE, "--bind", src, "/", "--stage", stage, "--", *args, ok=(2,), env=env)
+        assert mountinfo() == mi
+        say("%s: exit 2: %s" % (what, p.stderr.decode().strip()))
+    p = run(STAGE, "--help", ok=(2,), env=env)
+    hl = p.stderr.decode().splitlines()
+    assert 3 <= len(hl) <= 8 and hl[0].startswith("Usage") and "-- ARCHIVER" in hl[-1], hl
+    say("--help: exit 2, the usage's %d lines alone" % len(hl))
     disk = "/var/tmp/bko-stage-test-%d" % os.getpid()
-    p = run(STAGE, "--bind", src, "/", "--stage", disk, "--", rustic, "--repository", "/nonexistent", "backup", ok=(1,), env=env)
+    p = run(STAGE, "--bind", src, "/", "--stage", disk, "--", rustic, *nr, "backup", ok=(1,), env=env)
     assert not os.path.lexists(disk), disk
     say("a stage on disk: exit 1, nothing made: " + p.stderr.decode().strip())
+    p = run(STAGE, "--bind", src, "/", "--stage", disk + "/a/stage", "--", rustic, *nr, "backup", ok=(1,), env=env)
+    assert not os.path.lexists(disk), disk
+    say("a stage whose missing parents' nearest is on disk: exit 1, nothing made: " + p.stderr.decode().strip())
     p = run(STAGE, "--bind", ro, "/", "--bind", os.path.join(src, "home"), "/etc/nohere", "--stage", stage, "--",
-            rustic, "--repository", "/nonexistent", "backup", ok=(1,), env=env)
+            rustic, *nr, "backup", ok=(1,), env=env)
     say("a bind with no mount point under the read-only root: exit 1: " + p.stderr.decode().strip().splitlines()[-1])
+    # The marker set to its own PID (bash -c's exec keeps it), so it doesn't
+    # unshare: it must see it is in its caller's namespace and stop.
+    mi = mountinfo()
+    p = run("bash", "-c", 'BKO_STAGE_UNSHARED=$$ exec "$@"', "bash", STAGE, "--bind", src, "/", "--stage", stage, "--",
+            rustic, *nr, "backup", ok=(1,), env=env)
+    assert mountinfo() == mi and os.listdir(stage) == [], "it mounted in its caller's namespace"
+    say("the marker set to its own PID, no namespace made: exit 1, no mount: " + p.stderr.decode().strip())
+    # SIGTERM to stage-backup.sh's PID (the caller's) reaches the archiver,
+    # whose status comes back; nothing is left in the namespace.
+    slow = os.path.join(work, "slow-rustic")
+    with open(slow, "w") as f:
+        f.write('#!/bin/sh\ncase "${1:-}" in --version|version) exec %s "$@" ;; esac\nexec sleep 600.4243\n' % rustic)
+    os.chmod(slow, 0o755)
+    mi = mountinfo()
+    pr = subprocess.Popen([STAGE, "--bind", src, "/", "--stage", stage, "--", slow, *nr, "backup"], env=env,
+                          stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    slept = b"sleep\x00600.4243\x00"
+    for _ in range(100):
+        if any(open("/proc/%s/cmdline" % q, "rb").read() == slept for q in os.listdir("/proc")
+               if q.isdigit() and os.path.exists("/proc/%s/cmdline" % q)):
+            break
+        subprocess.run(["sleep", "0.1"])
+    else:
+        sys.exit("stage-test: the slow archiver never started")
+    pr.send_signal(15)
+    err = pr.communicate(timeout=30)[1]
+    assert pr.returncode == 143, (pr.returncode, err)
+    left = [q for q in os.listdir("/proc") if q.isdigit() and os.path.exists("/proc/%s/cmdline" % q)
+            and open("/proc/%s/cmdline" % q, "rb").read() == slept]
+    assert left == [] and mountinfo() == mi and os.listdir(stage) == [], (left, err)
+    say("SIGTERM to stage-backup.sh while the archiver runs: passed on, exit 143 (the archiver's), nothing left, no mount")
 
     say("PASS")
     if out_file:

@@ -132,7 +132,9 @@ at their paths, the headers and system.json under `/.bko-holt`, for
 rustic-bko and restic-bko.  `../stage-test.py` proves it (root, in RAM)
 against both archivers and bko-holt's `snapshot-layout` and
 `luks-headers`; `../stage-recorded.txt` is its passing run.  It records
-no scenario.
+no scenario.  Excludes go to the script (`--exclude /PATH`, a system
+path), never to the archiver after `--`: both archivers match an absolute
+pattern against S's path, so the script puts S's path before it.
 
 The recovery calls (`stick-three`, `stick-this-computer`): `good` (exit 0,
 OUT written), `unknown` (word 9 `ribbx`, suggest ribbon), `checksum` (two

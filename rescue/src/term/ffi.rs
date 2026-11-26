@@ -247,6 +247,29 @@ type Pid = c_int;
 /// `SIG_DFL`, a null handler in every family.
 const SIG_DFL: usize = 0;
 
+/// statvfs (holt-json.md's open question 17: the room on the stick's
+/// config partition before a bug report goes there).  Only `f_frsize` and
+/// `f_bavail` are read, at each family's offsets, from a buffer bigger than
+/// any family's struct (NetBSD's, with its three path names, is the
+/// biggest, over 3 KiB).  Both fields are 8 bytes in every family (an
+/// unsigned long and fsblkcnt_t, on 64-bit systems); the header test checks
+/// the offsets, the sizes and that the struct fits.
+#[cfg(any(target_os = "linux", target_os = "openbsd", target_os = "dragonfly", target_os = "illumos", target_os = "haiku"))]
+const STATVFS_AT: (usize, usize) = (8, 32);
+/// FreeBSD's struct starts with the counts: f_bavail first, f_frsize after
+/// the six counts, f_bsize and f_flag.
+#[cfg(target_os = "freebsd")]
+const STATVFS_AT: (usize, usize) = (64, 0);
+/// NetBSD's starts with f_flag, f_bsize, then f_frsize; f_iosize and
+/// f_blocks and f_bfree come before f_bavail.
+#[cfg(target_os = "netbsd")]
+const STATVFS_AT: (usize, usize) = (16, 48);
+const STATVFS_BUF: usize = 8192;
+
+/// What statvfs writes into: STATVFS_BUF bytes, 8-aligned.
+#[repr(C, align(8))]
+struct StatvfsBuf([u8; STATVFS_BUF]);
+
 // SAFETY: each declaration matches the family's C prototype, as the header
 // test checks in each build guest (sizes, offsets, constants, and the
 // symbol names the C program imports).
@@ -265,7 +288,15 @@ unsafe extern "C" {
     fn kill(pid: Pid, sig: c_int) -> c_int;
     fn ttyname(fd: c_int) -> *mut c_char;
     fn setsid() -> Pid;
+    // NetBSD renames statvfs for each layout of its struct (10's f_mntfromlabel).
+    #[cfg_attr(target_os = "netbsd", link_name = "__statvfs90")]
+    fn statvfs(path: *const c_char, buf: *mut StatvfsBuf) -> c_int;
 }
+
+#[cfg(not(target_os = "netbsd"))]
+const STATVFS_LINK: &str = "statvfs";
+#[cfg(target_os = "netbsd")]
+const STATVFS_LINK: &str = "__statvfs90";
 
 #[cfg(not(target_os = "haiku"))]
 const IOCTL_LINK: &str = "ioctl";
@@ -283,6 +314,7 @@ const SYMS: &[(&str, &str)] = &[
     ("kill", "kill"),
     ("ttyname", "ttyname"),
     ("setsid", "setsid"),
+    ("statvfs", STATVFS_LINK),
 ];
 
 /// Spare bytes after our termios, so a system struct bigger than ours
@@ -565,6 +597,22 @@ pub fn take_signal() -> Option<c_int> {
     }
 }
 
+/// The room on the file system `path` is on, as statvfs gives it: the
+/// bytes free to us (`f_bavail` times `f_frsize`) and the fragment size
+/// (`f_frsize`: on FAT, the cluster).
+pub fn free_room(path: &std::path::Path) -> io::Result<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt as _;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    let mut b = Box::new(StatvfsBuf([0; STATVFS_BUF]));
+    // SAFETY: c is NUL-terminated; b is STATVFS_BUF writable bytes, more
+    // than the family's struct statvfs (the header test checks it fits).
+    check(unsafe { statvfs(c.as_ptr(), &mut *b) })?;
+    let (fr, av) = STATVFS_AT;
+    let word = |at: usize| u64::from_ne_bytes(b.0[at..at + 8].try_into().unwrap_or([0; 8]));
+    let frsize = word(fr);
+    Ok((word(av).saturating_mul(frsize), frsize))
+}
+
 /// Standard input as a File, read directly (std's stdin buffers, which
 /// would hide bytes from poll).  It is never closed.
 pub fn stdin_file() -> ManuallyDrop<File> {
@@ -651,6 +699,11 @@ pub fn abi_lines() -> Vec<String> {
     v.push(format!("const SIGKILL {:#x}", SIGKILL));
     v.push(format!("size pid_t {}", size_of::<Pid>()));
     v.push(format!("const SIG_DFL {:#x}", SIG_DFL));
+    v.push(format!("offset statvfs.f_frsize {}", STATVFS_AT.0));
+    v.push(format!("offset statvfs.f_bavail {}", STATVFS_AT.1));
+    v.push("size statvfs.f_frsize 8".to_string());
+    v.push("size statvfs.f_bavail 8".to_string());
+    v.push(format!("room statvfs {STATVFS_BUF}"));
     for (f, link) in SYMS {
         v.push(format!("sym {f} {link}"));
     }
@@ -670,7 +723,7 @@ mod tests {
         keys.dedup();
         assert_eq!(keys.len(), v.len());
         assert!(v.iter().skip_while(|l| !l.starts_with("sym ")).all(|l| l.starts_with("sym ")));
-        assert_eq!(v.iter().filter(|l| l.starts_with("sym ")).count(), 9);
+        assert_eq!(v.iter().filter(|l| l.starts_with("sym ")).count(), 10);
     }
 
     #[cfg(target_os = "linux")]
@@ -688,6 +741,13 @@ mod tests {
         ] {
             assert!(v.iter().any(|l| l == want), "{want}");
         }
+    }
+
+    #[test]
+    fn statvfs_reads_the_room() {
+        let (free, frsize) = free_room(std::path::Path::new("/")).unwrap();
+        assert!(frsize > 0 && frsize.is_power_of_two() && free % frsize == 0, "{free} {frsize}");
+        assert!(free_room(std::path::Path::new("/no/such/dir/bko")).is_err());
     }
 
     #[test]

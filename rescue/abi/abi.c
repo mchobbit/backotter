@@ -6,6 +6,8 @@
  *
  * Built with -DBKO_IOCTL_REQ=<our ioctl request type>: the redeclaration
  * below is a conflicting type, and so a failed build, if ours is wrong.
+ * And with -DBKO_STATVFS_BUF=<bytes>, ffi.rs's statvfs buffer: the "room"
+ * line says whether this system's struct statvfs fits in it.
  */
 #include <stddef.h>
 #include <stdio.h>
@@ -14,6 +16,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <sys/statvfs.h>
 #if defined(__sun)
 #include <stropts.h>
 #endif
@@ -24,6 +27,10 @@
 
 #ifndef BKO_IOCTL_REQ
 #error "build with -DBKO_IOCTL_REQ=<type>, as abi/check.sh does"
+#endif
+/* ffi.rs's statvfs buffer, from --abi's "room statvfs" line. */
+#ifndef BKO_STATVFS_BUF
+#error "build with -DBKO_STATVFS_BUF=<bytes>, as abi/check.sh does"
 #endif
 /* The brackets keep a function-like ioctl macro (Haiku's) from expanding. */
 int (ioctl)(int, BKO_IOCTL_REQ, ...);
@@ -106,6 +113,14 @@ int main(int argc, char **argv)
 	CONST(SIGKILL);
 	SIZE("pid_t", pid_t);
 	CONST(SIG_DFL);
+	OFF("statvfs", struct statvfs, f_frsize);
+	OFF("statvfs", struct statvfs, f_bavail);
+	printf("size statvfs.f_frsize %lu\n", (unsigned long)sizeof(((struct statvfs *)0)->f_frsize));
+	printf("size statvfs.f_bavail %lu\n", (unsigned long)sizeof(((struct statvfs *)0)->f_bavail));
+	if (sizeof(struct statvfs) <= BKO_STATVFS_BUF)
+		printf("room statvfs %lu\n", (unsigned long)BKO_STATVFS_BUF);
+	else
+		printf("room statvfs %lu is short of the struct's %lu\n", (unsigned long)BKO_STATVFS_BUF, (unsigned long)sizeof(struct statvfs));
 
 	/* Never run: these calls make the program import each function under
 	 * the name the headers give it, for check.sh's nm. */
@@ -113,6 +128,7 @@ int main(int argc, char **argv)
 		struct termios t;
 		struct winsize ws;
 		struct pollfd p;
+		struct statvfs sv;
 		tcgetattr(0, &t);
 		tcsetattr(0, TCSADRAIN, &t);
 		ioctl(0, TIOCGWINSZ, &ws);
@@ -122,6 +138,7 @@ int main(int argc, char **argv)
 		kill(0, 0);
 		(void)ttyname(0);
 		(void)setsid();
+		(void)statvfs("/", &sv);
 	}
 	return 0;
 }

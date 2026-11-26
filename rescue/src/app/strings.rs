@@ -1049,6 +1049,23 @@ pub const REPORT_DRY_RUN: &str = "This is a dry run, so the report wasn't writte
 pub fn report_why_ram(why: &str) -> String {
     format!("It couldn't be saved on the stick: {why}.")
 }
+pub fn report_too_big(size: &str, cap: &str) -> String {
+    format!("it is {size}, over the {cap} the stick takes for one file")
+}
+pub fn report_no_room(need: &str, free: &str) -> String {
+    format!("it needs {need}, and the stick's BACKOTTER partition has {free} free.  To make room, copy the older reports in backotter/reports off the stick on another computer, then remove them there")
+}
+pub fn report_short(after: &str, min: &str) -> String {
+    format!("it would leave the stick's BACKOTTER partition {after} free, and a restore needs {min} there for its log.  To make room, copy the older reports in backotter/reports off the stick on another computer, then remove them there")
+}
+pub fn reports_removed(n: usize) -> String {
+    let kept = super::report::REPORTS_KEPT;
+    if n == 1 {
+        format!("The stick keeps its {kept} newest reports, so the oldest was removed from it.")
+    } else {
+        format!("The stick keeps its {kept} newest reports, so the {n} oldest were removed from it.")
+    }
+}
 pub const REPORT_GITHUB: &str = "Plug the stick into another computer, open an issue at\n  github.com/mchobbit/backotter/issues\nand attach the file.\n\nYou need a free GitHub account.  If you have none, send the file to whoever set up your backups.";
 pub const REPORT_REDACTED: &str = "No passwords or keys are in it.  The hostname, serials, UUIDs and user names are replaced by stand-ins.  Advanced makes one that keeps them.";
 pub const REPORT_PRIVATE: &str = "The UNREDACTED file is for sharing privately: don't attach it to an issue.";

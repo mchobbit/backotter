@@ -1,0 +1,78 @@
+ BackOtter rescue                                                         Report
+                                                                                
+  ┌────────────────────────────── Report saved ──────────────────────────────┐  
+  │                                                                          │  
+  │ The report is on this stick, in its BACKOTTER partition:                 │  
+  │   backotter/reports/bko-report-20261123-142630.txt                       │  
+  │ The stick keeps its 5 newest reports, so the 2 oldest were removed from  │  
+  │ it.                                                                      │  
+  │                                                                          │  
+  │ Plug the stick into another computer, open an issue at                   │  
+  │   github.com/mchobbit/backotter/issues                                   │  
+  │ and attach the file.                                                     │  
+  │                                                                          │  
+  │ You need a free GitHub account.  If you have none, send the file to      │  
+  │ whoever set up your backups.                                             │  
+  │                                                                          │  
+  │ No passwords or keys are in it.  The hostname, serials, UUIDs and user   │  
+  │ names are replaced by stand-ins.  Advanced makes one that keeps them.    │  
+  │                                                                          │  
+  │                 <  OK  >    < View it >    < Advanced >                  │  
+  └──────────────────────────────────────────────────────────────────────────┘  
+                                                                                
+                                                                                
+ Tab: next | Left/Right: button | Enter: OK | v: view it                        
+
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddbb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddDDDDDDDDddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddsb
+bbbssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+D 0;1;7;30;47
+b 0;37;44
+d 0;30;47
+s 0;40
+ BackOtter rescue                                                         Report
+                                                                                
+  +------------------------------ Report saved ------------------------------+  
+  |                                                                          |  
+  | The report is on this stick, in its BACKOTTER partition:                 |  
+  |   backotter/reports/bko-report-20261123-142630.txt                       |  
+  | The stick keeps its 5 newest reports, so the 2 oldest were removed from  |  
+  | it.                                                                      |  
+  |                                                                          |  
+  | Plug the stick into another computer, open an issue at                   |  
+  |   github.com/mchobbit/backotter/issues                                   |  
+  | and attach the file.                                                     |  
+  |                                                                          |  
+  | You need a free GitHub account.  If you have none, send the file to      |  
+  | whoever set up your backups.                                             |  
+  |                                                                          |  
+  | No passwords or keys are in it.  The hostname, serials, UUIDs and user   |  
+  | names are replaced by stand-ins.  Advanced makes one that keeps them.    |  
+  |                                                                          |  
+  |                 <  OK  >    < View it >    < Advanced >                  |  
+  +--------------------------------------------------------------------------+  
+                                                                                
+                                                                                
+ Tab: next | Left/Right: button | Enter: OK | v: view it                        

@@ -275,6 +275,15 @@ class ConfigSize(unittest.TestCase):
         self.assertIn("pub const LOG_GZ_MAX: u64 = 2 * 1024 * 1024;", rescue)
         self.assertIn("pub const LOGS_KEPT: u64 = 10;", holt)
         self.assertIn("pub const LOGS_KEPT: usize = 10;", rescue)
+        # The reports room_check's words count are the ones bko-rescue
+        # keeps, and its save leaves the logs' room (open question 17).
+        with open(os.path.join(REPO, "rescue", "src", "app", "report.rs")) as f:
+            report = f.read()
+        self.assertIn("pub const REPORTS_KEPT: u64 = 5;", holt)
+        self.assertIn("pub const REPORTS_KEPT: usize = 5;", report)
+        self.assertIn("pub const REPORT_MAX: u64 = 64 << 20;", holt)
+        self.assertIn("pub const REPORT_MAX: u64 = 64 * 1024 * 1024;", report)
+        self.assertIn("pub const REPORT_ROOM_MIN: u64 = LOG_GZ_MAX * (LOGS_KEPT as u64 + 1);", report)
 
 
 if __name__ == "__main__":

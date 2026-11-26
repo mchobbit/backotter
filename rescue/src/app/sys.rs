@@ -171,6 +171,9 @@ pub trait Sys {
     fn run_base(&self) -> PathBuf;
     /// Wait a little (a gauge's step).
     fn sleep_ms(&mut self, ms: u64);
+    /// The room on the file system `dir` is on (statvfs): bytes free and
+    /// the fragment size (FAT's cluster); None when it can't be read.
+    fn room(&self, dir: &Path) -> Option<(u64, u64)>;
 }
 
 /// The real system.
@@ -671,6 +674,10 @@ impl Sys for RealSys {
 
     fn sleep_ms(&mut self, ms: u64) {
         std::thread::sleep(Duration::from_millis(ms));
+    }
+
+    fn room(&self, dir: &Path) -> Option<(u64, u64)> {
+        crate::term::ffi::free_room(dir).ok()
     }
 }
 

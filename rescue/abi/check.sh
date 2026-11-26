@@ -34,9 +34,11 @@ trap 'rm -rf "$work"' EXIT INT TERM
 grep -v '^sym ' "$work/rs-all.txt" >"$work/rs.txt"
 req=$(sed -n 's/^type ioctl\.request //p' "$work/rs.txt")
 [ -n "$req" ] || { echo "abi: no ioctl request type in --abi" >&2; exit 1; }
+buf=$(sed -n 's/^room statvfs //p' "$work/rs.txt")
+[ -n "$buf" ] || { echo "abi: no statvfs buffer size in --abi" >&2; exit 1; }
 
 # -O0 and no fortify, so the C calls stay plain calls of the plain names.
-if ! "$cc" -O0 -U_FORTIFY_SOURCE "-DBKO_IOCTL_REQ=$req" \
+if ! "$cc" -O0 -U_FORTIFY_SOURCE "-DBKO_IOCTL_REQ=$req" "-DBKO_STATVFS_BUF=$buf" \
     -o "$work/abi" "$here/abi.c" 2>"$work/cc.err"; then
     cat "$work/cc.err" >&2
     echo "abi: FAIL: abi.c doesn't build with ioctl's request as '$req'" >&2

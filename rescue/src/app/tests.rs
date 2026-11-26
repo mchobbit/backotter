@@ -70,6 +70,10 @@ struct Seen {
     offs: Vec<String>,
     /// Each load's --luks-header-dir, in order (None: it had none).
     header_dirs: Vec<Option<String>>,
+    /// The stick's partition's room, statvfs's (free, cluster), when not
+    /// 1 GiB in 4 KiB clusters; with `room_unread`, none can be read.
+    room: Option<(u64, u64)>,
+    room_unread: bool,
 }
 
 struct Fake {
@@ -462,6 +466,10 @@ impl Sys for Fake {
         self.base.clone()
     }
     fn sleep_ms(&mut self, _: u64) {}
+    fn room(&self, _: &Path) -> Option<(u64, u64)> {
+        let s = self.seen.borrow();
+        (!s.room_unread).then(|| s.room.unwrap_or((1 << 30, 4096)))
+    }
 }
 
 fn scratch() -> PathBuf {
@@ -841,6 +849,9 @@ fn rustics_failures_each_have_their_help() {
             fn read_tail(&self, p: &Path, m: usize) -> Option<Vec<u8>> {
                 self.0.read_tail(p, m)
             }
+            fn room(&self, d: &Path) -> Option<(u64, u64)> {
+                self.0.room(d)
+            }
         }
         let base = t.base.0.clone();
         let fake = Fake { base: base.clone(), holt: "stick-three".into(), version: None, stick: None, rustic: "lovelace".into(), disks: "app-lovelace".into(), config: None, seen: t.seen.clone(), tools: vec!["bko-holt", "rustic-bko"], in_turn: false, copy: None, luks: None };
@@ -892,6 +903,90 @@ fn a_report_and_its_unredacted_twin() {
     ui.golden("Report saved", 0, "report-saved");
     ui.golden("Advanced: a report that isn't redacted", 0, "report-advanced");
     ui.golden("Report saved", 2, "report-saved-both");
+}
+
+/// The stick's `backotter/reports` as the save mounts it (the fake's
+/// mount is a directory of the session's), with FILES there first.
+fn reports_on_stick(t: &T, files: &[&str]) -> PathBuf {
+    let mnt = t.app.session.path("mnt");
+    fs::DirBuilder::new().mode(0o700).create(&mnt).unwrap();
+    let d = mnt.join("backotter/reports");
+    fs::create_dir_all(&d).unwrap();
+    for f in files {
+        fs::write(d.join(f), b"an older report\n").unwrap();
+    }
+    d
+}
+
+#[test]
+fn a_report_keeps_the_five_newest_pairs() {
+    let mut t = tt("stick-three", "mismatch");
+    let old = [
+        "bko-report-20261101-090000.txt",
+        "bko-report-20261101-090000-UNREDACTED.txt",
+        "bko-report-20261102-090000.txt",
+        "bko-report-20261103-090000.txt",
+        "bko-report-20261103-090000-UNREDACTED.txt",
+        "bko-report-20261104-090000.txt",
+        "bko-report-20261105-090000.txt",
+        "bko-report-20261106-090000.txt",
+        "notes.txt",
+    ];
+    let dir = reports_on_stick(&t, &old);
+    let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, B(B_REPORT), P, Reply::Ok, Back, Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    ui.done();
+    // The fake's umount copies the partition as it was left to stick/.
+    let _ = dir;
+    let on = t.base.0.join("stick/backotter/reports");
+    let mut left: Vec<String> = fs::read_dir(&on).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+    left.sort();
+    // Six pairs with the new one: the two oldest (a pair and a lone
+    // report) go; the new one and four older stay, and notes.txt.
+    assert_eq!(
+        left,
+        [
+            "bko-report-20261103-090000-UNREDACTED.txt",
+            "bko-report-20261103-090000.txt",
+            "bko-report-20261104-090000.txt",
+            "bko-report-20261105-090000.txt",
+            "bko-report-20261106-090000.txt",
+            "bko-report-20261123-142630.txt",
+            "notes.txt",
+        ]
+    );
+    let saved = ui.flat("Report saved", 0);
+    assert!(saved.contains("backotter/reports/bko-report-20261123-142630.txt") && saved.contains("keeps its 5 newest reports, so the 2 oldest were removed"), "{saved}");
+    ui.golden("Report saved", 0, "report-saved-pruned");
+}
+
+#[test]
+fn a_report_that_would_leave_under_22_mib_stays_in_ram() {
+    // The report (25 bytes) and the folder it makes take a 4 KiB cluster
+    // each: 22 MiB and two clusters free saves it, a byte less doesn't.
+    for (free, saved) in [((22 << 20) + 2 * 4096, true), ((22 << 20) + 2 * 4096 - 1, false), (4096, false)] {
+        let mut t = tt("stick-three", "mismatch");
+        t.seen.borrow_mut().room = Some((free, 4096));
+        let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, B(B_REPORT), P, Reply::Ok, Back, Reply::Quit]]));
+        assert_eq!(t.app.run(&mut ui), Exit::Quit);
+        let text = ui.flat("Report saved", 0);
+        let on = t.base.0.join("stick/backotter/reports/bko-report-20261123-142630.txt");
+        assert_eq!(on.is_file(), saved, "{free}: {text}");
+        if saved {
+            assert!(text.contains("The report is on this stick"), "{text}");
+        } else if free == 4096 {
+            assert!(text.contains("in this computer's memory only") && text.contains("it needs 0.1 MiB, and the stick's BACKOTTER partition has 0.0 MiB free.  To make room, copy the older reports in backotter/reports off the stick"), "{text}");
+        } else {
+            assert!(text.contains("in this computer's memory only") && text.contains("it would leave the stick's BACKOTTER partition 21.9 MiB free, and a restore needs 22.0 MiB there for its log"), "{text}");
+            assert!(text.contains("< Shell >"), "{text}");
+        }
+    }
+    // statvfs failing: the copy goes ahead.
+    let mut t = tt("stick-three", "mismatch");
+    t.seen.borrow_mut().room_unread = true;
+    let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, B(B_REPORT), P, Reply::Ok, Back, Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    assert!(t.base.0.join("stick/backotter/reports/bko-report-20261123-142630.txt").is_file());
 }
 
 #[test]

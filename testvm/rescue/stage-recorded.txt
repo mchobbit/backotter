@@ -1,0 +1,40 @@
+Recorded 2026-11-26 by stage-test.py on cinqcent, as root, in /mnt/bko-ram (cmp-run.sh --reserve 1 2), from a tree of 11cedac plus stage-backup.sh and stage-test.py; bko-holt built from that tree.
+stage-test.py on cinqcent, kernel 7.2.12+deb13-amd64
+  bko-holt: bko-holt 0.2.6 (/mnt/bko-ram/oq14-holt/bko-holt)
+  rustic-bko: rustic 0.12.0+backotter.4 (/home/m/backotter-work/bko-bin/linux/rustic-bko)
+  restic-bko: restic 0.20.0+backotter.1 compiled with go1.26.10 on linux/amd64 (/home/m/backotter-work/bko-bin/linux/restic-bko)
+  util-linux: unshare from util-linux 2.41.5
+The system: 27 paths in the snapshot's tree (from a root with 14 top entries, /home and /boot/efi mounted on it, /scratch mounted and not backed up)
+rustic rw: stage-backup.sh said: stage-backup: / from /mnt/bko-ram/oq14-test/bko-stage-test-jznt7u1c/src: 8 directories and 4 other files bound read-only, 2 symbolic links copied | stage-backup: /home from /mnt/bko-ram/oq14-test/bko-stage-test-jznt7u1c/src/home, read-only | stage-backup: /boot/efi from /mnt/bko-ram/oq14-test/bko-stage-test-jznt7u1c/src/boot/efi, read-only | stage-backup: /.bko-holt/luks-headers from /mnt/bko-ram/oq14-test/bko-stage-test-jznt7u1c/hdr, read-only (2 files) | stage-backup: /.bko-holt/system.json from /mnt/bko-ram/oq14-test/bko-stage-test-jznt7u1c/system.json, read-only
+rustic rw: snapshot 4f5131af, paths ['/'], parent none; the source unchanged (29 paths: type, mode, owner, size, mtime, ctime, inode, contents), no /.bko-holt in it, no mount left
+rustic rw2: snapshot e98277bb, paths ['/'], parent 4f5131af; the source unchanged (29 paths: type, mode, owner, size, mtime, ctime, inode, contents), no /.bko-holt in it, no mount left
+rustic ro: snapshot ea7678ee, paths ['/'], parent e98277bb; the source unchanged (29 paths: type, mode, owner, size, mtime, ctime, inode, contents), no /.bko-holt in it, no mount left
+rustic sub: snapshot b3d35883, paths ['/sub'], parent none; the source unchanged (29 paths: type, mode, owner, size, mtime, ctime, inode, contents), no /.bko-holt in it, no mount left
+rustic rw2: its parent is rw's snapshot 4f5131af
+rustic rw: restored whole by rustic-bko, the system's 27 paths (type, mode, owner, size, mtime, contents, link targets, user xattrs, hard links [['hardtop', 'usr/bin/tool']]) and /.bko-holt's 5 (two headers and system.json, byte for byte)
+rustic rw: restored by rustic-bko with load's four --glob: the system's 27 paths alone, no /.bko-holt
+rustic ro: restored whole by rustic-bko, the system's 27 paths (type, mode, owner, size, mtime, contents, link targets, user xattrs, hard links [['hardtop', 'usr/bin/tool']]) and /.bko-holt's 5 (two headers and system.json, byte for byte)
+rustic ro: restored by rustic-bko with load's four --glob: the system's 27 paths alone, no /.bko-holt
+rustic rw: bko-holt snapshot-layout --snapshot 4f5131af (rustic-bko, as bko-rescue runs it): exit 0, sequence 42, the layout's JSON; luks-headers: exit 0, both headers byte for byte, 0600
+rustic ro: bko-holt snapshot-layout --snapshot ea7678ee (rustic-bko, as bko-rescue runs it): exit 0, sequence 42, the layout's JSON; luks-headers: exit 0, both headers byte for byte, 0600
+rustic sub: bko-holt snapshot-layout --snapshot b3d35883:/sub (rustic-bko, as bko-rescue runs it): exit 0, sequence 42, the layout's JSON; luks-headers: exit 0, both headers byte for byte, 0600
+restic rw: stage-backup.sh said: stage-backup: / from /mnt/bko-ram/oq14-test/bko-stage-test-jznt7u1c/src: 8 directories and 4 other files bound read-only, 2 symbolic links copied | stage-backup: /home from /mnt/bko-ram/oq14-test/bko-stage-test-jznt7u1c/src/home, read-only | stage-backup: /boot/efi from /mnt/bko-ram/oq14-test/bko-stage-test-jznt7u1c/src/boot/efi, read-only | stage-backup: /.bko-holt/luks-headers from /mnt/bko-ram/oq14-test/bko-stage-test-jznt7u1c/hdr, read-only (2 files) | stage-backup: /.bko-holt/system.json from /mnt/bko-ram/oq14-test/bko-stage-test-jznt7u1c/system.json, read-only
+restic rw: snapshot bbf49993, paths ['/mnt/bko-ram/oq14-test/bko-stage-test-jznt7u1c/stage/root'], parent none; the source unchanged (29 paths: type, mode, owner, size, mtime, ctime, inode, contents), no /.bko-holt in it, no mount left
+restic rw2: snapshot f7ef952d, paths ['/mnt/bko-ram/oq14-test/bko-stage-test-jznt7u1c/stage/root'], parent bbf49993; the source unchanged (29 paths: type, mode, owner, size, mtime, ctime, inode, contents), no /.bko-holt in it, no mount left
+restic ro: snapshot 06073bea, paths ['/mnt/bko-ram/oq14-test/bko-stage-test-jznt7u1c/stage/root'], parent f7ef952d; the source unchanged (29 paths: type, mode, owner, size, mtime, ctime, inode, contents), no /.bko-holt in it, no mount left
+restic sub: snapshot 12213044, paths ['/mnt/bko-ram/oq14-test/bko-stage-test-jznt7u1c/stage/root'], parent 06073bea; the source unchanged (29 paths: type, mode, owner, size, mtime, ctime, inode, contents), no /.bko-holt in it, no mount left
+restic rw2: its parent is rw's snapshot bbf49993
+restic rw: restored whole by restic-bko, the system's 27 paths (type, mode, owner, size, mtime, contents, link targets, user xattrs, hard links [['hardtop', 'usr/bin/tool']]) and /.bko-holt's 5 (two headers and system.json, byte for byte)
+restic rw: restored by rustic-bko with load's four --glob: the system's 27 paths alone, no /.bko-holt
+restic ro: restored whole by restic-bko, the system's 27 paths (type, mode, owner, size, mtime, contents, link targets, user xattrs, hard links [['hardtop', 'usr/bin/tool']]) and /.bko-holt's 5 (two headers and system.json, byte for byte)
+restic ro: restored by rustic-bko with load's four --glob: the system's 27 paths alone, no /.bko-holt
+restic rw: bko-holt snapshot-layout --snapshot bbf49993 (rustic-bko, as bko-rescue runs it): exit 0, sequence 42, the layout's JSON; luks-headers: exit 0, both headers byte for byte, 0600
+restic rw: restic-bko dump bbf49993 of /.bko-holt/system.json and both headers, by hand: byte for byte
+restic ro: bko-holt snapshot-layout --snapshot 06073bea (rustic-bko, as bko-rescue runs it): exit 0, sequence 42, the layout's JSON; luks-headers: exit 0, both headers byte for byte, 0600
+restic ro: restic-bko dump 06073bea of /.bko-holt/system.json and both headers, by hand: byte for byte
+restic sub: bko-holt snapshot-layout --snapshot 12213044:/sub (rustic-bko, as bko-rescue runs it): exit 0, sequence 42, the layout's JSON; luks-headers: exit 0, both headers byte for byte, 0600
+restic sub: restic-bko dump 12213044:/sub of /.bko-holt/system.json and both headers, by hand: byte for byte
+-x: exit 2: stage-backup: the archiver can't be given -x: S is a file system of its own
+a stage on disk: exit 1, nothing made: stage-backup: --stage's parent /var/tmp isn't in RAM (tmpfs or ramfs)
+a bind with no mount point under the read-only root: exit 1: stage-backup: /etc/nohere isn't a directory of the file system above it (its mount point), and that one is read-only
+PASS

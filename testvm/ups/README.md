@@ -57,7 +57,7 @@ GMKOne's `upsmon.conf` (UPS-A):
 
 GMKThree's `upsmon.conf` (UPS-C, a 180 s cap):
 
-    SHUTDOWNCMD "env UPS_WAIT_MAX=180 /usr/local/sbin/ups-primary-halt chopin.local cinqcent.local cage.local copland.local czerny.local coventry.local choubox.local"
+    SHUTDOWNCMD "env UPS_WAIT_MAX=180 /usr/local/sbin/ups-primary-halt chopin.local cinqcent.local cage.local copland.local czerny.local choubox.local"
     HOSTSYNC 30
     POWERDOWNFLAG /etc/killpower
 

@@ -1,6 +1,7 @@
 # UPS-driven shutdowns (plan)
 
-Status (2026-11-22): **UPS-C is read by Bigfoot.** GMKThree and
+Status (2026-11-26): **Coventry has left the farm** (see "Coventry leaves,
+2026-11-26" below). Before that (2026-11-22): **UPS-C is read by Bigfoot.** GMKThree and
 GmkThreePool moved to their own new UPS, UPS-D (a Green Cell on GMKThree's
 USB, `[greencell]`, nutdrv_qx). UPS-C's Eaton now feeds Bigfoot, the five
 farm hosts, Coventry and Choubox, and its USB is on Bigfoot, which is its
@@ -16,7 +17,7 @@ dated `.bak-*` copy beside the file in `/etc/nut`.
 |-----|--------------------|------------------------------|
 | UPS-A | GMKOne | GMKOne (Bigfoot until 2026-11-22) |
 | UPS-B | GMKTwo | GMKTwo |
-| UPS-C | Bigfoot (since 2026-11-22; GMKThree before) | Cinqcent, Chopin, Cage, Copland, Czerny, Coventry, Choubox, then Bigfoot |
+| UPS-C | Bigfoot (since 2026-11-22; GMKThree before) | Cinqcent, Chopin, Cage, Copland, Czerny, Choubox, then Bigfoot (Coventry until 2026-11-26) |
 | UPS-D | GMKThree (since 2026-11-22) | GMKThree |
 
 ## What exists today (surveyed read-only 2026-11-15, ~20:55)
@@ -335,6 +336,16 @@ bridges), GmkTwoPool and GmkThreePool (each on a JMS578 bridge).
   - GMKOne (UPS-A, the user's OK): `SHUTDOWNCMD "/sbin/shutdown -h +0"`, no
     longer waiting for bigfoot.local; backup `upsmon.conf.bak-nobigfoot-20261122`.
     Its runtime.low 480 s still has the old 300 s wait's margin in it.
+
+### Coventry leaves, 2026-11-26
+
+The user removed Coventry from the farm. It had been unreachable since
+2026-11-22. On Bigfoot, `coventry.local` is out of UPS-C's `SHUTDOWNCMD`
+(`upsmon.conf.bak-nocoventry-20261126`) and its `/etc/hosts` line is gone
+(`hosts.bak-nocoventry-20261126`); nut-monitor was reloaded and a
+`--dry-run` waits for 6 of 6 hosts. Its `upsd.users` stays as it is: the
+`[upssecondary]` user is shared by every secondary. The sections below
+still name Coventry where it was part of the setup at the time.
 
 ### Applied so far (2026-11-16, morning)
 

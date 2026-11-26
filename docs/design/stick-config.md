@@ -464,8 +464,12 @@ backup tool calls `stick_write` (below), which checks the room with
   `system.prev.json.sha256` is there (`prev_sum`), the size of each file
   in its `restore-logs/` (None when that folder isn't there), whether
   other machines have folders on the stick (`others`), and the size of
-  each of bko-rescue's bug reports in `backotter/reports`
-  (`bko-report-*.txt`; `reports`, empty when there are none).  A
+  each of bko-rescue's bug reports in `backotter/reports` (`reports`,
+  empty when there are none): exactly the files bko-rescue counts and
+  removes, `bko-report-YYYYMMDD-HHMMSS.txt` and
+  `bko-report-YYYYMMDD-HHMMSS-UNREDACTED.txt` (`report.rs`'s
+  `report_stamp`); other files there aren't reports.  The backup tool
+  never removes reports: only bko-rescue does.  A
   `system.json.new` left by a write that failed is removed first.
 - It refuses `system_too_big`, a system.json over `SYSTEM_MAX`: a stick's
   bko-holt wouldn't read it.  It refuses `stick_full` when the file and
@@ -533,7 +537,10 @@ backup tool calls `stick_write` (below), which checks the room with
   under 22 MiB free (`REPORT_ROOM_MIN`, `LOG_MAX` x (`LOGS_KEPT` + 1)),
   the pairs it removes after counted as freed, and when the file doesn't
   fit beside them first; the report stays in RAM, and the screen says to
-  copy old reports off the stick on another computer.  A file over 64 MiB
+  copy old reports off the stick on another computer (when there are
+  none, files not needed).  A folder it can't list doesn't stop the save:
+  the copy goes ahead unchecked and nothing is removed, as when statvfs
+  fails.  A file over 64 MiB
   (`REPORT_MAX`) isn't copied.  Each file and folder counts in whole
   clusters, as statvfs gives them on the mounted partition.  So reports
   never take the room a machine's logs need, and `room_check` keeps no

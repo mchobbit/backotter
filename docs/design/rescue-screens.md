@@ -1768,7 +1768,8 @@ stick's config partition, flushes, then says where it is.
   attach it to an issue" in place of the GitHub lines.
 - The stick's BACKOTTER partition already holds these identifiers (each
   machine's `system.json` has them), so the file adds no new kind of
-  data to the stick.  It is kept with the other reports (open question 9).
+  data to the stick.  It is kept with the other reports, as one pair with
+  the first (open question 9, settled).
 - Back and Esc go to "Report saved" with nothing made.
 
 ## The ASCII fallback
@@ -2245,9 +2246,11 @@ Still open:
   failing program: bko-holt's in `holt-json.md` (D12), bko-rescue's own in
   `app/strings.rs`?
 - **9. `stick-config.md`'s layout** gains `/backotter/reports/` for bug
-  reports, beside each machine's `restore-logs/`.  Keep the newest 10
-  there too, as with restore logs, and count a report and its
-  UNREDACTED twin as one?
+  reports, beside each machine's `restore-logs/`.  Settled 2026-11-26 by
+  holt-json.md's open question 17: the stick keeps the 5 newest, a
+  report and its UNREDACTED twin counted as one pair, and refuses a
+  report that would leave under 22 MiB free (stick-config.md, "Room on
+  the partition").
 - **10. Plain mode's step line.**  `rescue-tui.md`'s example says "Step 2 of
   9"; these screens have dropped the count.  Drop it there too?
 - **11. The mapping table.**  XKB (layout, variant) is the key.  The Linux

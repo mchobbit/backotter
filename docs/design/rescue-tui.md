@@ -1938,15 +1938,22 @@ leaves the restore logs their room.
   before.
 - A refusal keeps the report in RAM, and "Report saved" says why and to
   copy the older reports in `backotter/reports` off the stick on another
-  computer.  When both reports were made and one couldn't be saved, the
-  screen now says why too.  When older reports went, it says how many
+  computer, or, when there are none, files not needed.  When both
+  reports were made and one couldn't be saved, the screen now says why
+  too; both reasons when both failed for different ones.  A folder that
+  can't be listed doesn't stop the save: it goes ahead unchecked, and
+  nothing is removed.  When older reports went, it says how many
   ("The stick keeps its 5 newest reports, so the 2 oldest were removed").
 - `ffi.rs` gained statvfs, the one new C function: only `f_frsize` and
   `f_bavail` are read, at each family's offsets, from an 8 KiB buffer.
   NetBSD's link name is `__statvfs90`.  The header test checks the two
   offsets, their sizes (8 bytes) and that the struct fits the buffer
   (`room statvfs`), and the symbol: 54 facts and 10 symbols on Linux.
-- `copy_in` refuses a file over `REPORT_MAX` instead of cutting it off.
+- `copy_in` refuses a file over `REPORT_MAX` instead of cutting it off,
+  and says its size.
+- `free_room` takes a 0 `f_frsize` as the room unread, a count over
+  i64::MAX (a negative one cast) as none free, and reads no room on a
+  32-bit build (its fields are 4 bytes there).
 - Not done: no image carries this bko-rescue yet.
 
 ## The app on top (later)

@@ -2810,6 +2810,44 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     room.
   - A stick with more than five pairs from before this build loses all but
     the newest five at its next save, without asking.
+  - The folder's own clusters aren't counted: each name in
+    `backotter/reports` takes folder room.  The review measured it on a
+    real FAT32 loop mount (256 MiB, 512 B clusters): 200 long names took
+    45 clusters, about 22 KiB.  That is a cluster or two a save, far
+    below the floor.
+- **Review fixes** (0c7180d, "rescue: review fixes for oq17"):
+  - The refusal words name the older reports to copy off only when there
+    are some (a report other than the new one's own pair).  Else they say
+    to copy files not needed off the partition.
+  - The words say "the restore logs need 22.0 MiB there", not "a restore
+    needs it for its log": 22 MiB is 11 logs' room.
+  - A folder that can't be listed doesn't stop a save: the copy goes ahead
+    unchecked and nothing is removed, as when statvfs fails.  An entry
+    that can't be read is left out of the count and not removed.
+  - When both reports fail for different reasons, both reasons show.
+  - `copy_in`'s too-big words give the file's size, not the 64 MiB read.
+  - `free_room`: a 0 `f_frsize` is the room unread (the copy goes ahead);
+    an `f_bavail` over i64::MAX (a negative count cast, OpenBSD's FFS
+    past its reserve) is 0 free; a 32-bit build reads no room.
+  - stick-config.md: `Room.reports` counts exactly the two name forms
+    bko-rescue keeps, and the backup tool never removes reports.
+    rescue-screens.md's open question 9 is marked settled.
+  - Declined: a clock-proof order of reports (none exists on FAT: file
+    times come from the same clock; open question 20 asks); room_check's
+    remedy keeping "free room on the stick's config partition" beside
+    the named ways (open question 13's approved words: "else");
+    counting the folder's clusters (above).
+  - Tested on czerny (Rust 1.85.1): cargo build without warnings, cargo
+    test 298 + 15 passed (new: `the_room_words_name_old_reports_only_when_there_are_some`,
+    `a_folder_that_cant_be_listed_doesnt_stop_the_save`,
+    `a_file_over_the_cap_is_refused_with_its_size`,
+    `both_reasons_show_when_both_saves_fail`, and `room_of`'s cases in
+    `statvfs_reads_the_room`), abi/check.sh ok (54 facts, 10 symbols),
+    pty-test.py 117 ok, demo-test.py 383 ok, app-test.py 311 ok, 0
+    failed each, holt_schema.py 411 checked, 0 problems.  test_marker.py
+    11 OK on the Mac.  No holt code changed, so no holt gate; the header
+    test in the BSD, illumos and Haiku guests wasn't rerun (no C fact
+    changed).
 
 ## Decisions
 
@@ -3121,7 +3159,7 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     plainly that the stick's copy is from `written` and older than the
     backup.
 17. **Bug reports on the stick** (from open question 13's review;
-    answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26 as far as it can be before the backup tool, dda939d, "rescue: keep the 5 newest bug reports, and the logs' room (open question 17)", its bko-holt half in ebf88e9: "Bug reports on the stick built").  bko-rescue saves `backotter/reports/bko-report-*.txt`
+    answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26 as far as it can be before the backup tool, dda939d, "rescue: keep the 5 newest bug reports, and the logs' room (open question 17)", its bko-holt half in ebf88e9, and 0c7180d, "rescue: review fixes for oq17": "Bug reports on the stick built").  bko-rescue saves `backotter/reports/bko-report-*.txt`
     (and an `-UNREDACTED` copy, read up to 64 MiB) on the config
     partition, and nothing removes them.  `room_check` keeps 22 MiB for
     each machine's restore logs, but reports saved later eat that same
@@ -3152,3 +3190,18 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     *Recommended:* try the whole file first there, then `body`, then
     `RemoveOld` (restore fidelity first).  Or keep `body` there, as the
     approved text says.
+20. **A wrong clock and the newest reports** (from open question 17's
+    review).  bko-rescue keeps the 5 newest report pairs by their stamp:
+    the clock of the computer that saved each one.  On a computer whose
+    clock is wrong, "newest" is wrong too.  A dead clock (2000-01-01)
+    saves report A, which stays; ten minutes later report B removes A,
+    not an older pair, and the screen says "the oldest was removed".  A
+    clock set ahead (2099) makes its report outlast every later one,
+    pushing out real ones.  FAT's file times come from the same clock,
+    so no other order is safe.  *Recommended:* a save whose stamp isn't
+    newer than every pair on the stick removes nothing, and "Report
+    saved" says the clock looks wrong, so the older reports stayed; the
+    22 MiB floor still keeps the logs' room, and its refusal says to copy
+    reports off.  A pair from the future then stops the removal until it
+    is copied off.  Or keep today's build: the new pair always stays, the
+    others go by stamp.

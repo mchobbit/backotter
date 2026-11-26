@@ -49,7 +49,7 @@ the patched objects, as syspatch's `reorder_kernel` does.  Then:
 | MBR slot | Partition (marker) | Contents                                    | disklabel |
 |----------|--------------------|---------------------------------------------|-----------|
 | 0        | 1                  | ESP, 16 MiB FAT: `efi/boot/BOOTX64.EFI`, `BOOTIA32.EFI` | `i` |
-| 1        | 2                  | config partition, FAT16 `BACKOTTER`, 32 MiB (`marker.py`'s `config.img` as is; type 0x0E) | `j` |
+| 1        | 2                  | config partition, FAT16 `BACKOTTER`, 256 MiB (32 before 2026-11-26) (`marker.py`'s `config.img` as is; type 0x0E) | `j` |
 | 3        | (4)                | OpenBSD's, active: `biosboot`, the disklabel, the root FFS | `a` |
 
 `fdisk -b` makes slots 0 and 3, `fdisk -e` moves slot 3 past slot 1;

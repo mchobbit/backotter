@@ -33,7 +33,7 @@ signed.
 |-----------|----------|
 | 1 | Type 0xEF: the official image's FAT32 ESP, as is (`EFI/BOOT/BOOTX64.EFI` is `boot1.efi`) |
 | 2 | Type 0x6C, active.  disklabel64 with `boot1_64`/`boot2_64`; `a` is the root, UFS, read-only |
-| 3 | Type 0x0E: the config partition, FAT16 `BACKOTTER`, 32 MiB |
+| 3 | Type 0x0E: the config partition, FAT16 `BACKOTTER`, 256 MiB (32 before 2026-11-26) |
 
 Laid out as DragonFly's own `nrelease` `mkimg` target does (MBR boot code,
 256-head/63-sector geometry), with slice 2 cut to the system plus 256 MB

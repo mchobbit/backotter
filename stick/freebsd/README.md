@@ -36,7 +36,7 @@ loader isn't signed.
 |-----------|----------|
 | 1 | The memstick's ESP, with the updated root's `loader.efi` as `EFI/BOOT/bootx64.efi` |
 | 2 | Active.  BSD label; `a` is the root, UFS2 labelled `BACKOTTER-xxxxxxxx` |
-| 3 | The config partition: FAT16 (type 0x06) `BACKOTTER`, 32 MiB |
+| 3 | The config partition: FAT16 (type 0x06) `BACKOTTER`, 256 MiB (32 before 2026-11-26) |
 
 The root UFS label ends in the first 8 hex digits of the image ID, so neither
 a stick written from another BackOtter image nor a FreeBSD installer stick

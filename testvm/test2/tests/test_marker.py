@@ -1,5 +1,7 @@
-"""stick/marker.py's dump_schemas (holt-json.md's open question 11), and every
-platform's dump-schemas boot check (stick/PLATFORM/checks.sh).
+"""stick/marker.py's dump_schemas (holt-json.md's open question 11), every
+platform's dump-schemas boot check (stick/PLATFORM/checks.sh), and the config
+partition's size: 256 MiB on every image, as each build script and bko-holt's
+room check take it (open question 13).
 
 marker.py runs with stand-ins for mkfs.vfat and mtools (it only runs them), so
 this needs python3 3.11 or later and a POSIX sh, sed and tr.  No VM, no image."""
@@ -120,6 +122,14 @@ class Marker(unittest.TestCase):
                 r, m = self.run_marker(json.dumps(doc), "--holt-api-unnamed-ok")
                 self.assertEqual(r.returncode, 0, r.stderr)
 
+    def test_config_partition_is_256_mib(self):
+        # Every image's since open question 13: the marker says so, and
+        # config.img is that big (the stand-in mkfs leaves it as truncated).
+        r, m = self.run_marker(api())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(m["config_partition"]["sectors"], 256 * 2048)
+        self.assertEqual(os.path.getsize(os.path.join(self.tmp, "out", "config.img")), 256 << 20)
+
     def test_holt_api_is_required(self):
         env = dict(os.environ, PATH=self.stubs + ":" + os.environ["PATH"])
         r = subprocess.run([sys.executable, MARKER, "--platform", "linux", "--base-os", "ubuntu", "--base-release",
@@ -214,6 +224,57 @@ class BootCheck(unittest.TestCase):
                 (line,) = [l for l in f.read().splitlines() if l.startswith("check dump-schemas ")]
             with self.subTest(platform=p):
                 self.assertLessEqual(len(line), limit.get(p, 400))
+
+
+def assigned(path, name):
+    """The number NAME is set to in the shell script PATH (one assignment)."""
+    with open(path) as f:
+        (v,) = re.findall(r"^\s*(?:\w+=\S+\s+)*" + name + r"=(\d+)\b", f.read(), re.M)
+    return int(v)
+
+
+class ConfigSize(unittest.TestCase):
+    """Open question 13: one size, marker.py's CONFIG_MIB, everywhere it is
+    written down.  FreeBSD's mkimg takes config.img's own size."""
+
+    def setUp(self):
+        with open(MARKER) as f:
+            (mib,) = re.findall(r"^CONFIG_MIB = (\d+)$", f.read(), re.M)
+        self.sectors = int(mib) * 2048
+
+    def test_marker_default(self):
+        self.assertEqual(self.sectors, 256 * 2048)
+
+    def test_every_build_script(self):
+        self.assertEqual(assigned(os.path.join(STICK, "make-img.sh"), "CONFIG_MIB") * 2048, self.sectors)
+        for p in ("dragonfly", "haiku", "illumos", "netbsd"):
+            with self.subTest(platform=p):
+                build = os.path.join(STICK, p, "build.sh")
+                self.assertEqual(assigned(build, "CONFIG_SECTORS"), self.sectors)
+                with open(build) as f:
+                    # Each checks config.img is that size before it lays it down.
+                    self.assertRegex(f.read(), r"config\.img isn't \$CONFIG_SECTORS sectors")
+        ob = os.path.join(STICK, "openbsd", "build.sh")
+        self.assertEqual(assigned(ob, "CFG_SIZE"), self.sectors)
+        with open(ob) as f:
+            text = f.read()
+        self.assertIn("ROOT_START=$((CFG_START + CFG_SIZE))", text)
+        self.assertEqual((assigned(ob, "CFG_START") + self.sectors) % 2048, 0, "OpenBSD's root starts 1 MiB aligned")
+        with open(os.path.join(STICK, "freebsd", "build.sh")) as f:
+            self.assertIn("-p fat16b:=in/config.img", f.read())
+
+    def test_bko_holt_and_bko_rescue_agree(self):
+        with open(os.path.join(REPO, "holt", "src", "stick.rs")) as f:
+            holt = f.read()
+        with open(os.path.join(REPO, "rescue", "src", "app", "restore.rs")) as f:
+            rescue = f.read()
+        self.assertIn("pub const CONFIG_BYTES: u64 = 256 << 20;", holt)
+        self.assertEqual(self.sectors * 512, 256 << 20)
+        # The logs room_check keeps room for are the ones bko-rescue writes.
+        self.assertIn("pub const LOG_MAX: u64 = 2 << 20;", holt)
+        self.assertIn("pub const LOG_GZ_MAX: u64 = 2 * 1024 * 1024;", rescue)
+        self.assertIn("pub const LOGS_KEPT: u64 = 10;", holt)
+        self.assertIn("pub const LOGS_KEPT: usize = 10;", rescue)
 
 
 if __name__ == "__main__":

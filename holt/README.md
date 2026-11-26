@@ -27,7 +27,10 @@ Haiku; Redox and Sculpt OS from Linux):
   (`dump_schemas`), which an image build copies into the stick's marker.
   `stick::schema_warnings` is the backup tool's write-time check against
   that marker: system.json's schema and its layout's (holt-json.md, open
-  question 11).
+  question 11).  `stick::room_check` is its room half: a system.json over
+  `SYSTEM_MAX` (64 MiB), or one the partition can't take, is refused, and
+  one that leaves no room for the machine's restore logs warns (open
+  question 13; stick-config.md, "Room on the partition").
 - `bko-holt recovery-words OUT --json` checks a BackOtter recovery key, its
   words on standard input, and writes the repository password it stands
   for to a new private file OUT, for bko-rescue (`src/recoverycmd.rs`;

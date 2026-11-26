@@ -46,7 +46,7 @@ It carries `rustic-bko` only: restic isn't ported to Haiku (Haiku's Go is
 |---|---|
 | 1 | Type 0xEB, active: BFS `BackOtter`, the system |
 | 2 | Type 0xEF: the official image's EFI system partition, as is (`EFI/BOOT/BOOTX64.EFI` is `haiku_loader.efi`) |
-| 3 | Type 0x0E: the config partition, FAT16 `BACKOTTER`, 32 MiB |
+| 3 | Type 0x0E: the config partition, FAT16 `BACKOTTER`, 256 MiB (32 before 2026-11-26) |
 
 The MBR's boot code is `writembr`'s, partition 1's boot block
 `makebootable`'s, as Haiku's Installer leaves a disk.  Partition 1 holds the

@@ -8,7 +8,7 @@ Usage: marker.py --platform P --base-os OS --base-release R --kernel K
 Writes into OUT_DIR (see docs/design/stick-config.md):
   backotter.json   the image marker, for /.disk/backotter.json in the image
   stick.json       the stick's identity, as shipped (stick_id null)
-  config.img       32 MiB of FAT16 labelled BACKOTTER, with a random volume
+  config.img       256 MiB of FAT16 labelled BACKOTTER, with a random volume
                    serial, holding backotter/stick.json, an empty
                    backotter/machines/, and backotter/settings.toml and
                    README.txt from config-partition/; the image builder makes
@@ -37,7 +37,10 @@ import sys
 import tomllib
 import uuid
 
-CONFIG_MIB = 32                 # the default; FAT32 would need more than that
+# Every image's, since 2026-11-26 (holt-json.md's open question 13): a
+# system.json up to stick.rs's SYSTEM_MAX (64 MiB), the one before it, and
+# each machine's 20 MiB of restore logs.  Still FAT16, which reaches 2 GiB.
+CONFIG_MIB = 256
 CONFIG_LABEL = "BACKOTTER"
 SYSTEM_SCHEMAS = [1]            # system.json schemas the stick can read
 DUMP_SCHEMAS_UNNAMED = [1]      # what a bko-holt that names no dump_schemas reads

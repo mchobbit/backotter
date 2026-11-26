@@ -35,7 +35,7 @@ die() { echo "build.sh: $*" >&2; exit 1; }
 
 BFS_START=2048                  # 1 MiB, as Haiku's DriveSetup aligns
 ALIGN=2048
-CONFIG_SECTORS=65536            # marker.py's config.img
+CONFIG_SECTORS=524288           # marker.py's config.img, 256 MiB
 ROOM_MB=256                     # free space in the BFS
 lib=system/non-packaged/lib/backotter
 

@@ -2274,6 +2274,8 @@ every disk and the stick image kept its md5.
   - A system.json is read up to 64 MiB (`stick.rs`'s `SYSTEM_MAX`), a
     dump up to 1 GiB (`LAYOUT_MAX`), and the BSD images' config partition
     is 32 MiB: a large dump (ESP images) or several machines may not fit.
+    (Open question 13, built 2026-11-26: 256 MiB on every image, and the
+    backup tool's `room_check`.)
   - "Which copy wins" (the backup's own system.json when the repository is
     reached) isn't built: the stick's copy is the only layout bko-rescue
     has.
@@ -2500,6 +2502,79 @@ recommendation):
     `etc/hostname` only), and the holt gate on cinqcent (cargo test 973
     passed, 0 failed, 4 ignored; 110 golden plans, 0 differ after
     uc24-fde's re-bless; redact-corpus passed).
+
+### What room on the partition built
+
+Built 2026-11-26 (open question 13, approved that day by the user, the
+recommendation):
+
+- **Images:** every image's config partition is 256 MiB, as the Linux
+  image's was.  marker.py's `CONFIG_MIB` is 256 (it was 32, the BSDs',
+  illumos' and Haiku's); make-img.sh passed 256 already.  Each `build.sh`
+  that sizes the partition itself has the new size: DragonFly, Haiku,
+  illumos and NetBSD `CONFIG_SECTORS=524288`, OpenBSD `CFG_SIZE=524288`
+  (its root now starts at `CFG_START + CFG_SIZE`, 559104, 1 MiB aligned).
+  FreeBSD's mkimg takes config.img's own size.  DragonFly and illumos now
+  check config.img's size too, as the others did, and illumos' read-back
+  compares all of it (`count` was 32 MiB).  Still FAT16 (it reaches
+  2 GiB).  The boot checks read the size from the marker, so they need no
+  change.
+- **bko-holt:** `stick.rs`'s `room_check(marker, len, room)`, in the
+  bko_holt library beside `schema_warnings`: the check the backup tool
+  calls before it writes a machine's system.json (stick-config.md, "Room on
+  the partition").  `Room` is what the mounted partition says (free bytes,
+  cluster, the machine's system.json and system.prev.json sizes, each
+  restore log's size).  It refuses `system_too_big` (over `SYSTEM_MAX`)
+  and `stick_full` (the file and its `.sha256` can't be written), and
+  warns `stick_room_short` (the machine's logs wouldn't fit after it).
+  Each code has words for the user.  No command: the backup tool calls the
+  function, as for `schema_warnings`; one comes with it if it isn't Rust.
+- **Defaults chosen** (each in one place, `stick.rs`):
+  - The logs' room is 11 logs of 2 MiB (`LOGS_KEPT` + 1 of `LOG_MAX`),
+    22 MiB, less what the logs take now: bko-rescue copies the new log
+    before it removes the oldest (`report.rs`), so 20 MiB isn't enough at
+    that moment.  `LOG_MAX` and `LOGS_KEPT` copy bko-rescue's
+    `LOG_GZ_MAX` and `LOGS_KEPT` (no shared crate); test_marker.py checks
+    they agree.
+  - The write as "How it writes" does it: the new file goes down while the
+    old two stand (so the old prev's room doesn't count for it), then the
+    old prev and its `.sha256` go.  Files count in whole clusters, each
+    `.sha256` as one.  A `cluster` of 0 counts bytes.
+  - A refusal leaves the stick as it was and the backup still succeeds
+    (its own system.json is written first); a warning is written through,
+    as the schema warnings are.
+  - `SYSTEM_MAX` is this bko-holt's.  The marker doesn't say what an
+    image's bko-holt reads; they are the same today.
+  - `CONFIG_BYTES` (256 MiB) only decides whether the words say to write a
+    newer image.
+- **Tested:** `stick.rs`'s unit test `write_time_room_check` (each
+  refusal and warning and its words, `SYSTEM_MAX` and a byte over, the
+  write's order, the old prev freed only with a current file, cluster
+  rounding of files and logs, ten logs present, a 0 cluster),
+  `testvm/test2/tests/test_marker.py` (marker.py's 256 MiB marker and
+  config.img; every build script's size equal to marker.py's; OpenBSD's
+  alignment; bko-holt's and bko-rescue's log constants; 11 tests, OK on
+  the Mac and on cinqcent), a real marker.py run on cinqcent (config.img
+  268435456 bytes, FAT16, 4096-byte clusters, 65467 of them; fsck.fat
+  clean), and the holt gate on cinqcent (cargo test 974 passed, 0 failed,
+  4 ignored; 110 golden plans, 0 differ; redact-corpus passed).
+- **Not done:** no image was rebuilt.  The next image round makes every
+  image's partition 256 MiB: each image grows by 224 MiB (mostly zeros;
+  the BSDs, illumos and Haiku), and its boot tests should show the marker's
+  `sectors` 524288 and pass config-partition and config-rw.  Images in
+  use keep 32 MiB, and `room_check` names that in its words.  The backup
+  tool's call of `room_check` isn't built.
+- **Spec problems:**
+  - "warns when the partition can't hold it and its machine's 20 MiB of
+    logs" is short by one log at the moment bko-rescue writes the
+    eleventh; built as 22 MiB (above).
+  - `SYSTEM_MAX` isn't in the marker, so a later bko-holt that reads less
+    (or more) than an image's can't be told from the marker alone.
+  - `stick --json` still reads every machine's system.json: up to 256 MiB
+    in all now, bounded by the partition.
+  - bko-rescue keeps a log as `.log` where there is no gzip, uncapped by
+    `LOG_GZ_MAX` (up to 32 MiB): the 22 MiB don't cover it.  Every image
+    has gzip.
 
 ## Decisions
 
@@ -2745,7 +2820,7 @@ recommendation):
     Or the stick carries them beside system.json, each with its
     `.sha256`, and `stick --copy` copies them too (they fill a 32 MiB
     partition fast).
-13. **Room on the config partition** (answered: approved 2026-11-26 by the user, the recommendation; not built yet).  A
+13. **Room on the config partition** (answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26, "stick, holt: open question 13 built": "What room on the partition built").  A
     system.json is read up to 64 MiB (`stick.rs`'s `SYSTEM_MAX`), a dump
     may be up to 1 GiB (`LAYOUT_MAX`), the BSD images' config partition
     is 32 MiB, and each machine's restore logs may take 20 MiB.  A large

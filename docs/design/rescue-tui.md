@@ -596,6 +596,9 @@ screen: the type system says so.
   - JSON is read only after capping its source: a plan 8 MiB, status
     64 KiB, one event line 64 KiB, a snapshot list 16 MiB, a `system.json`
     32 MiB (holt's corpus's largest dump is 3.3 MB, `omnios58-mirror`).
+    Since D11 bko-rescue reads no system.json: bko-holt does, up to its
+    `SYSTEM_MAX` (64 MiB), and the backup tool writes none bigger
+    (holt-json.md's open question 13).
     `json.rs` adds its depth limit of 256.
   - The key decoder: 32 bytes a sequence.  Plain mode: 4 KiB a line.  Text
     box: 256 characters.  Password: 1 KiB.
@@ -1863,6 +1866,25 @@ backup, and bko-rescue fetches them before the first plan.
   (RT9), its rescue-bin and the images' holt-bin must be refreshed
   together; marker.py already refuses a bko-holt without `luks_headers`.  No real stick has restored a
   kept-header machine end to end yet (no HoltTest path runs bko-rescue).
+
+## What room on the partition changed
+
+2026-11-26, holt-json.md's open question 13 (approved that day with its
+recommendation): every image's config partition is 256 MiB, and the
+backup tool checks the room before it writes (`stick.rs`'s `room_check`,
+stick-config.md's "Room on the partition").
+
+- Nothing in bko-rescue changed.  `room_check` keeps room for its
+  restore logs: `LOGS_KEPT` (10) of `LOG_GZ_MAX` (2 MiB), plus the one it
+  writes before it removes the oldest.  test_marker.py checks that
+  bko-holt's copies of the two equal `restore.rs`'s, so a change to either
+  must change both.
+- On a stick from an older image (32 MiB on the BSDs, illumos and Haiku),
+  a save can still fail for room: the log stays in RAM and the end screen
+  says why, as before.
+- Where there is no gzip, the log is kept as `.log`, not capped at
+  `LOG_GZ_MAX` (up to `LOG_READ_MAX`, 32 MiB), so `room_check`'s room is
+  short for it.  Every image has gzip; left as it is.
 
 ## The app on top (later)
 

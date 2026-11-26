@@ -25,7 +25,7 @@ has two GPT partitions:
 
 | # | Contents                                   | Size   |
 |---|--------------------------------------------|--------|
-| 3 | FAT16, volume label `BACKOTTER`, writable  | 32 MiB |
+| 3 | FAT16, volume label `BACKOTTER`, writable  | 256 MiB |
 
 GPT type "Microsoft basic data", so Linux, macOS and Windows all mount it and a
 user can look at the config from any machine.
@@ -79,8 +79,11 @@ the backup location by hand.
 /README.txt        what this partition is, for someone who finds it in a file manager
 ```
 
-On the Linux image the partition is 256 MiB rather than 32, to hold the two
-programs and those logs.  The GRUB entries pass `nopersistent`, or casper would
+Every image's partition is 256 MiB: the Linux image's from the start, to
+hold the two programs and those logs; the BSDs', illumos' and Haiku's since
+2026-11-26 (32 MiB before; holt-json.md's open question 13).  It holds a
+system.json of up to 64 MiB, the one before it, and each machine's restore
+logs ("Room on the partition" below).  The GRUB entries pass `nopersistent`, or casper would
 add a partition in the stick's free space on first boot, moving the backup GPT.
 
 `authorized_keys` is for driving a restore from another machine.  With it,
@@ -112,7 +115,7 @@ system.  It's read-only, so it describes the image, not the stick:
   "zfs": {"version": "2.4.1", "features": ["allocation_classes", "..."]},
   "system_schemas": [1],
   "dump_schemas": [1],
-  "config_partition": {"number": 3, "sectors": 65536, "label": "BACKOTTER",
+  "config_partition": {"number": 3, "sectors": 524288, "label": "BACKOTTER",
                        "fat_serial": "3F2A-9C71"}
 }
 ```
@@ -432,6 +435,34 @@ that's there but different means "repartitioned or reformatted since writing".
    new `.sha256`, fsync the directory.
 3. Unmount, mount again read-only, check the sha256, unmount.
 
+### Room on the partition
+
+A system.json is read up to 64 MiB (bko-holt's `SYSTEM_MAX`), and each
+machine's restore logs may take 22 MiB: the 10 newest of 2 MiB, and the
+one being written.  So before step 2, with the partition mounted, the
+backup tool calls `room_check(marker, len, room)` in bko-holt's
+`src/stick.rs` (holt-json.md's open question 13, approved 2026-11-26):
+
+- `len` is the new system.json's size in bytes.
+- `room` is what the mounted partition says: `free` (statvfs `f_bavail`
+  times `f_frsize`), `cluster` (`f_frsize`), the sizes of this machine's
+  `system.json` and `system.prev.json` (None where one is missing), and
+  the size of each file in its `restore-logs/`.  A `system.json.new` left
+  by a write that failed is removed first.
+- It refuses `system_too_big`, a system.json over `SYSTEM_MAX`: a stick's
+  bko-holt wouldn't read it.  It refuses `stick_full` when the file and
+  its `.sha256` don't fit: step 2 writes the new file while the old two
+  stand, and frees the old `system.prev.json` only after.  On a refusal the
+  tool writes nothing to the stick (the backup has its copy, written
+  first), says the refusal's words, and the backup itself still succeeds.
+- It warns `stick_room_short` when, once written, the partition can't
+  also hold the machine's 22 MiB of logs (less what its logs take now).
+  The tool writes, and says the warning's words, as for "Is this stick good
+  enough?".
+- Each file is counted in whole clusters, each `.sha256` as one.  The
+  words name an older image's smaller partition and say to write a newer
+  image.
+
 ## Finding the config at boot
 
 On the stick, the restore code looks only at the disk it booted from:
@@ -472,9 +503,10 @@ When a restore fails, the repository may be unreachable, the machine's disks
 half-written, and the stick's root filesystem is in RAM: the config partition is
 the only storage left that survives a reboot.  So every restore, successful or
 not, writes `restore-logs/<UTC timestamp>.log.gz` under its machine directory,
-capped at 2 MiB compressed, keeping the 10 newest.  With a large `layout` in
-system.json, a 32 MiB partition may not hold them all (holt-json.md's open
-question 13).  It's also copied to the
+capped at 2 MiB compressed, keeping the 10 newest.  The new log is written
+before the oldest is removed, so a machine's logs take up to 22 MiB.  The
+backup tool warns when the partition can't hold them (holt-json.md's open
+question 13, "Room on the partition" above).  It's also copied to the
 repository when that's reachable.  Logs name hosts, devices and paths, never
 passwords.
 
@@ -553,20 +585,27 @@ feature means the stick can't import the pool at all.
 - The schema half of "Is this stick good enough?" is built, as a function
   for the backup tool (`stick.rs`'s `schema_warnings`); the marker carries
   `dump_schemas` from the image's own bko-holt.
+- "Room on the partition" is built, as a function for the backup tool
+  (`stick.rs`'s `room_check`), and every image's build script makes a
+  256 MiB partition (marker.py's `CONFIG_MIB`; each BSD, illumos and Haiku
+  `build.sh` checks config.img has its `CONFIG_SECTORS`).  The images in
+  use are older: their next build gets it.
 - The restore side of "LUKS2 headers in the backup": `bko-holt
   luks-headers` (`src/luksfetch.rs`, also the backup tool's read-back),
   `stick --copy`'s `luks_headers` count, load's restore leaving the
   headers out of the tree, and bko-rescue's fetch before the first plan.
 - Not built: the backup tool's stick module (and so no system.json carries a
   `layout` yet), its keeping of the LUKS2 headers in the snapshot (steps
-  1 to 4 above), the rest of the write-time check (ZFS features, kernel,
+  1 to 4 above), its call of `room_check`, the rest of the write-time check (ZFS features, kernel,
   bcachefs), and `backotter stick repair`.  They come with the backup
   tool.
 
 ## Decisions (2026-10-29)
 
 1. The config partition is 32 MiB, FAT16 (FAT32 needs about 33 MiB or more).
-   The marker records the size, so a later image can change it.
+   The marker records the size, so a later image can change it.  Changed
+   2026-11-26: 256 MiB on every image, still FAT16 (holt-json.md's open
+   question 13).
 2. Restore logs go on the stick, capped as above, and to the repository.
 3. Several machines per stick are supported from schema 1.
 4. No key file on the stick; `credential.kind` leaves room for one.

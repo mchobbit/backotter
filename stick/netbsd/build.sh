@@ -29,7 +29,7 @@ SECTOR=512
 MIB=2048                        # sectors
 ESP_MIB=64                      # FAT32 needs 65525 clusters: 33 MiB of 512 bytes
 CONFIG_PART=3                   # as platform.conf says
-CONFIG_SECTORS=65536            # marker.py's
+CONFIG_SECTORS=524288           # marker.py's, 256 MiB
 RW=/.backotter-rw               # the tmpfs behind /etc, /var, /root and /home
 
 # kernel_release KERNEL: "11.1" from "NetBSD 11.1 (GENERIC) #0: ..." in its

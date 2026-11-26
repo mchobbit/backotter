@@ -73,8 +73,9 @@ pub const DUMP_SCHEMAS_UNNAMED: &[u64] = &[1];
 /// The most machine directories listed; a stick with more says so.
 pub const MACHINES_MAX: usize = 64;
 
-/// The biggest system.json read (the Linux image's config partition is
-/// 256 MiB; a dump with ESP images can be tens of MiB).
+/// The biggest system.json read (every image's config partition is 256 MiB
+/// since 2026-11-26; a dump with ESP images can be tens of MiB).  The
+/// backup tool writes none bigger (`room_check`).
 pub const SYSTEM_MAX: u64 = 64 << 20;
 
 /// The biggest marker, stick.json and system.json.sha256 read.
@@ -688,7 +689,7 @@ fn fields(o: Obj, state: &str, why: Option<String>, v: Option<&Value>, m: &Marke
 /// enough?": the backup tool still writes system.json, and says TEXT.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StickWarning {
-    /// `system_schema_unread` or `dump_schema_unread`.
+    /// `system_schema_unread`, `dump_schema_unread` or `stick_room_short`.
     pub code: &'static str,
     pub text: String,
 }
@@ -721,6 +722,89 @@ pub fn schema_warnings(m: &Marker, system: &Value) -> Vec<StickWarning> {
         }
     }
     w
+}
+
+/// Every image's config partition since 2026-11-26, in bytes: marker.py's
+/// CONFIG_MIB (holt-json.md's open question 13).  A smaller one is an
+/// older image's (the BSDs', illumos' and Haiku's were 32 MiB).
+pub const CONFIG_BYTES: u64 = 256 << 20;
+
+/// A restore log on the stick, at most, and how many a machine keeps:
+/// bko-rescue's LOG_GZ_MAX and LOGS_KEPT (rescue/src/app/restore.rs;
+/// stick-config.md, "Restore logs").  bko-rescue writes the new log before
+/// it removes the oldest, so a machine's logs need room for one more.
+pub const LOG_MAX: u64 = 2 << 20;
+pub const LOGS_KEPT: u64 = 10;
+
+/// The config partition as the backup tool finds it before it writes one
+/// machine's system.json (stick-config.md, "How it writes"): mounted, with
+/// no `system.json.new` left in that machine's folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Room {
+    /// Bytes free: statvfs's `f_bavail` times `f_frsize`.
+    pub free: u64,
+    /// The cluster, statvfs's `f_frsize`: each file takes whole clusters.
+    pub cluster: u64,
+    /// The machine's system.json and system.prev.json now, each its size in
+    /// bytes, or None when it isn't there.
+    pub current: Option<u64>,
+    pub prev: Option<u64>,
+    /// The size of each file in the machine's `restore-logs/` now.
+    pub logs: Vec<u64>,
+}
+
+/// Why the backup tool doesn't write system.json to the stick at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StickRefusal {
+    /// `system_too_big` or `stick_full`.
+    pub code: &'static str,
+    pub text: String,
+}
+
+/// The room half of the write-time check (holt-json.md's open question
+/// 13), for the backup tool before it writes a system.json of SYSTEM_LEN
+/// bytes to the stick whose marker is M, its config partition as R says.
+/// It refuses (`system_too_big`) a system.json over SYSTEM_MAX, which a
+/// stick's bko-holt won't read, and (`stick_full`) one the partition can't
+/// take: the write itself would fail.  It warns (`stick_room_short`) when,
+/// once it is written, the partition can't also hold the machine's restore
+/// logs: LOGS_KEPT of LOG_MAX, plus the one being written, less what its
+/// logs take now.  The write follows the steps of "How it writes": the new
+/// file is written while the old two stand, then system.json becomes
+/// system.prev.json (freeing the old one), then the new `.sha256` is
+/// written (each `.sha256` taken as one cluster).  The backup tool isn't
+/// built: this is the check it calls, beside `schema_warnings`.
+pub fn room_check(m: &Marker, system_len: u64, r: &Room) -> Result<Vec<StickWarning>, StickRefusal> {
+    let mib = |n: u128| format!("{:.1} MiB", n as f64 / (1u64 << 20) as f64);
+    let image = if u128::from(m.sectors) * 512 < u128::from(CONFIG_BYTES) {
+        format!(", or write it with an image from 2026-11-26 or later (its config partition is {}, theirs 256 MiB)", mib(u128::from(m.sectors) * 512))
+    } else {
+        String::new()
+    };
+    if system_len > SYSTEM_MAX {
+        return Err(StickRefusal { code: "system_too_big", text: format!("this machine's system.json is {}, over the {} a stick's bko-holt reads: it isn't written to the stick (the backup keeps its copy)", mib(system_len.into()), mib(SYSTEM_MAX.into())) });
+    }
+    let cl = u128::from(r.cluster.max(1));
+    let up = |n: u64| u128::from(n).div_ceil(cl) * cl;
+    let free = u128::from(r.free);
+    let new = up(system_len);
+    let sum = cl;
+    // system.json becomes system.prev.json: the old one and its .sha256 go.
+    let freed = match (r.current, r.prev) {
+        (Some(_), Some(p)) => up(p) + sum,
+        _ => 0,
+    };
+    if free < new || free + freed < new + sum {
+        return Err(StickRefusal { code: "stick_full", text: format!("this machine's system.json needs {} and the stick's config partition has {} free: nothing is written, and the stick keeps the copy it had. Remove other machines' folders from the stick{image}", mib(new + sum), mib(free + freed)) });
+    }
+    let after = free + freed - new - sum;
+    let logs: u128 = r.logs.iter().map(|&l| up(l)).sum();
+    let need = (u128::from(LOGS_KEPT) + 1) * up(LOG_MAX);
+    let mut w = Vec::new();
+    if after + logs < need {
+        w.push(StickWarning { code: "stick_room_short", text: format!("once this machine's system.json is written, the stick's config partition has {} free, and its restore logs may need {}: a restore may not keep its log on the stick. Remove other machines' folders from the stick{image}", mib(after), mib(need - logs)) });
+    }
+    Ok(w)
 }
 
 fn schemas_text(m: &Marker) -> String {
@@ -1325,6 +1409,59 @@ mod tests {
         assert_eq!(w[0].text, "this stick's image reads system.json schema 1, and this machine's system.json is schema 2: the stick can't restore it; write a newer image to the stick");
         let none = parse_marker(&marker(3).replace("\"system_schemas\": [1]", "\"system_schemas\": []")).unwrap();
         assert!(schema_warnings(&none, &sys(""))[0].text.starts_with("this stick's image reads system.json schema none,"));
+    }
+
+    #[test]
+    fn write_time_room_check() {
+        const MIB: u64 = 1 << 20;
+        let big = parse_marker(&marker(3).replace("\"sectors\": 32768", "\"sectors\": 524288")).unwrap();
+        let small = parse_marker(&marker(3)).unwrap();
+        let room = |free: u64, current: Option<u64>, prev: Option<u64>, logs: Vec<u64>| Room { free, cluster: 4096, current, prev, logs };
+        let codes = |r: Result<Vec<StickWarning>, StickRefusal>| match r {
+            Ok(w) => w.iter().map(|w| w.code).collect::<Vec<_>>().join(","),
+            Err(e) => format!("refused {}", e.code),
+        };
+        // A new stick with room: nothing to say.
+        assert_eq!(room_check(&big, 3 * MIB, &room(250 * MIB, None, None, vec![])), Ok(vec![]));
+        // SYSTEM_MAX is read; a byte more isn't, whatever the room.
+        assert_eq!(codes(room_check(&big, SYSTEM_MAX, &room(250 * MIB, None, None, vec![]))), "");
+        assert_eq!(codes(room_check(&big, SYSTEM_MAX + 1, &room(250 * MIB, None, None, vec![]))), "refused system_too_big");
+        let e = room_check(&big, SYSTEM_MAX + MIB, &room(250 * MIB, None, None, vec![])).unwrap_err();
+        assert_eq!(e.code, "system_too_big");
+        assert_eq!(e.text, "this machine's system.json is 65.0 MiB, over the 64.0 MiB a stick's bko-holt reads: it isn't written to the stick (the backup keeps its copy)");
+        // No room for the file and its .sha256: refused, and an older image's
+        // smaller partition named.
+        let e = room_check(&small, 2 * MIB, &room(MIB, None, None, vec![])).unwrap_err();
+        assert_eq!(e.code, "stick_full");
+        assert_eq!(e.text, "this machine's system.json needs 2.0 MiB and the stick's config partition has 1.0 MiB free: nothing is written, and the stick keeps the copy it had. Remove other machines' folders from the stick, or write it with an image from 2026-11-26 or later (its config partition is 16.0 MiB, theirs 256 MiB)");
+        assert!(!room_check(&big, 2 * MIB, &room(MIB, None, None, vec![])).unwrap_err().text.contains("image"));
+        // The new file is written while the old two stand: the old prev's
+        // room comes too late for it.
+        let (cur, prev) = (Some(5 * MIB), Some(5 * MIB));
+        assert_eq!(codes(room_check(&big, 5 * MIB, &room(5 * MIB - 1, cur, prev, vec![]))), "refused stick_full");
+        // Its .sha256 comes after the old prev is gone: 5 MiB free is enough, then.
+        let need = 22 * MIB;
+        assert_eq!(codes(room_check(&big, 5 * MIB, &room(5 * MIB, cur, prev, vec![]))), "stick_room_short");
+        // Without a current system.json, the old prev isn't replaced, so frees nothing.
+        assert_eq!(codes(room_check(&big, 5 * MIB, &room(5 * MIB, None, prev, vec![]))), "refused stick_full");
+        // Each file takes whole clusters: one byte takes 4 KiB, and its .sha256 another.
+        assert_eq!(codes(room_check(&big, 1, &room(8191, None, None, vec![]))), "refused stick_full");
+        assert_eq!(codes(room_check(&big, 1, &room(8192, None, None, vec![]))), "stick_room_short");
+        // The logs: 11 of 2 MiB (the 10 kept and the one being written), less what is there.
+        let free = |logs_room: u64| 4 * MIB + 4096 + logs_room;
+        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(need), None, None, vec![]))), "");
+        let w = room_check(&big, 4 * MIB, &room(free(need - 4096), None, None, vec![])).unwrap();
+        assert_eq!(w[0].code, "stick_room_short");
+        assert_eq!(w[0].text, "once this machine's system.json is written, the stick's config partition has 22.0 MiB free, and its restore logs may need 22.0 MiB: a restore may not keep its log on the stick. Remove other machines' folders from the stick");
+        let ten = vec![2 * MIB; 10];
+        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(2 * MIB), None, None, ten.clone()))), "");
+        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(2 * MIB - 4096), None, None, ten))), "stick_room_short");
+        // Logs take whole clusters too: ten of one byte take 40 KiB.
+        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(22 * MIB - 10 * 4096), None, None, vec![1; 10]))), "");
+        assert_eq!(codes(room_check(&big, 4 * MIB, &room(free(22 * MIB - 10 * 4096 - 1), None, None, vec![1; 10]))), "stick_room_short");
+        // A cluster of 0 (no statvfs) counts bytes.
+        assert_eq!(codes(room_check(&big, 10, &Room { free: 11, cluster: 0, current: None, prev: None, logs: vec![] })), "stick_room_short");
+        assert_eq!(codes(room_check(&big, 10, &Room { free: 10, cluster: 0, current: None, prev: None, logs: vec![] })), "refused stick_full");
     }
 
     #[test]

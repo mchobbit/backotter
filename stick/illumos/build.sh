@@ -36,7 +36,7 @@ PATH=/usr/xpg4/bin:/usr/bin:/usr/sbin:/sbin
 die() { echo "build.sh: $*" >&2; exit 1; }
 
 DATASET=rpool/bko-build
-CONFIG_SECTORS=65536            # marker.py's config.img
+CONFIG_SECTORS=524288           # marker.py's config.img, 256 MiB
 ESP_SECTORS=69632               # mkgpt.py's 34 MiB
 BA_ROOM_KB=49152                # free space in the RAM disk's file system
 console_dir=usr/local/lib/backotter
@@ -186,6 +186,7 @@ assemble() {
     root_sectors=$(( (root_sectors + 2047) / 2048 * 2048 ))
 
     # --- The image ----------------------------------------------------------------------
+    [ $(wc -c <in/config.img) -eq $((CONFIG_SECTORS * 512)) ] || die "config.img isn't $CONFIG_SECTORS sectors"
     rm -f out/image.img
     python3 in/mkgpt.py out/image.img $root_sectors $CONFIG_SECTORS >layout.txt || die "mkgpt.py failed"
     lofi=$(lofiadm -la "$here/out/image.img"); lofis="$lofi $lofis"
@@ -214,7 +215,7 @@ assemble() {
     for s in s0:pcfs s2:ufs s3:pcfs; do
         [ "$(fstyp "${rdisk}${s%:*}" 2>/dev/null)" = "${s#*:}" ] || die "${s%:*} isn't ${s#*:}"
     done
-    dd if="${rdisk}s3" bs=1024k count=32 2>/dev/null | cmp -s - in/config.img || die "s3 isn't config.img"
+    dd if="${rdisk}s3" bs=1024k count=$((CONFIG_SECTORS / 2048)) 2>/dev/null | cmp -s - in/config.img || die "s3 isn't config.img"
     mkdir -p esp
     mnt -F pcfs -o ro "${disk}s0" "$here/esp"
     [ -f esp/EFI/BOOT/BOOTX64.EFI ] || [ -f esp/efi/boot/bootx64.efi ] || die "installboot put no BOOTX64.EFI in the ESP"

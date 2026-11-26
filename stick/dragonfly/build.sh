@@ -27,7 +27,7 @@ die() { echo "build.sh: $*" >&2; exit 1; }
 
 ESP_START=63                    # as on the official image
 HEADS=256 SECTORS=63            # nrelease's geometry: 16128-sector cylinders
-CONFIG_SECTORS=65536            # marker.py's config.img
+CONFIG_SECTORS=524288           # marker.py's config.img, 256 MiB
 ROOM_MB=256                     # free space in the root file system
 console_dir=usr/local/lib/backotter
 
@@ -109,7 +109,7 @@ assemble() {
     attach out/image.img dst_vn
 
     # The MBR's boot code, then the slices.  Slice 3 can't end on a cylinder
-    # boundary (65536 isn't a multiple of 63), so fdisk sets it alone with a
+    # boundary (524288 isn't a multiple of 63), so fdisk sets it alone with a
     # geometry of one-sector cylinders, which it then doesn't round to; its
     # CHS fields become all ones (LBA only), as for any slice past cylinder
     # 1023.  fdisk -f changes only the slices it's given.
@@ -132,6 +132,7 @@ EOF
 
     # --- Slice 1: the official ESP; slice 3: the config partition -----------------
     dd if="/dev/${src_vn}s1" of="/dev/${dst_vn}s1" bs=1m 2>/dev/null
+    [ $(wc -c <in/config.img) -eq $((CONFIG_SECTORS * 512)) ] || die "config.img isn't $CONFIG_SECTORS sectors"
     dd if=in/config.img of="/dev/${dst_vn}s3" bs=1m 2>/dev/null
 
     # --- Slice 2: disklabel64, boot code, UFS ---------------------------------------

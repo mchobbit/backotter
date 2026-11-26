@@ -76,7 +76,7 @@ most of it kayak's: package downloads, the cull and stripping.
 | 1 | s0 | EFI system partition, FAT32, 34 MiB: `loader64.efi` as `EFI/BOOT/BOOTX64.EFI` |
 | 2 | s1 | Solaris boot (V_BOOT), 1 MiB: `gptzfsboot`, the BIOS loader's second stage |
 | 3 | s2 | Solaris root (V_ROOT), UFS: `/boot`, the kernel, `boot_archive.gz`, the marker |
-| 4 | s3 | Microsoft basic data: the config partition, FAT16 `BACKOTTER`, 32 MiB |
+| 4 | s3 | Microsoft basic data: the config partition, FAT16 `BACKOTTER`, 256 MiB (32 before 2026-11-26) |
 
 The loader (pmbr then `gptzfsboot` with BIOS, `BOOTX64.EFI` with UEFI) reads
 `/boot` from partition 3 and loads the kernel and the boot archive into RAM;

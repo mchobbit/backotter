@@ -28,8 +28,8 @@ PATH=/sbin:/bin:/usr/sbin:/usr/bin
 die() { echo "openbsd/build.sh: $*" >&2; exit 1; }
 
 ESP_START=2048 ESP_SIZE=32768           # 1 MiB in, 16 MiB
-CFG_START=34816 CFG_SIZE=65536          # marker.py's 32 MiB
-ROOT_START=100352                       # to the end of the image
+CFG_START=34816 CFG_SIZE=524288         # marker.py's 256 MiB
+ROOT_START=$((CFG_START + CFG_SIZE))    # 559104, 1 MiB aligned; to the end of the image
 LIB=/usr/local/lib/backotter
 
 # The release's sets, checked again here against SHA256.sig with this

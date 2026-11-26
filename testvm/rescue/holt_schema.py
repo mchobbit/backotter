@@ -8,8 +8,8 @@ can't drift from bko-holt.
 
 Each PATH is a file or a directory:
 
-  - a document (`bko-holt-plan`, `-status`, `-stick`, `-recovery`,
-    `-error`, `-api`): one JSON
+  - a document (`bko-holt-plan`, `-status`, `-stick`, `-stick-copy`,
+    `-recovery`, `-error`, `-api`): one JSON
     value, on one line or pretty-printed (a golden's `version` VERSION lets
     GENERATED and PLAN_SHA256 stand in for the run's own);
   - an events stream (a file named `events` or `*.events`/`*.ndjson`): one
@@ -43,7 +43,9 @@ MIN_VERSION = (0, 2, 6)
 SCHEMA = 1
 STAGES = ("partition", "assemble", "format", "mount", "restore", "boot", "close", "open")
 ERROR_CODES = ("bad_args", "no_commit", "layout_unreadable", "layout_not_json", "layout_refused",
-               "arch_mismatch", "schema_unknown", "json_not_here", "out_unsafe")
+               "arch_mismatch", "schema_unknown", "json_not_here", "out_unsafe",
+               # stick --copy's refusals (exit 1; holt-json.md, open question 8)
+               "config_not_ok", "no_such_machine", "two_machines", "machine_not_ok", "no_layout", "copy_failed")
 FAILURE_CODES = ("cmd_failed", "wrong_passphrase", "archiver_failed", "efi_vars", "readback_failed",
                  "not_done_after", "no_restored_tree", "commit_refused", "write_failed", "lock_held", "internal")
 STATES = ("done", "partly", "not_done", "nothing", "unknown")
@@ -291,6 +293,12 @@ STICK = header(
     here=Obj({"dmi_uuid": S_}),
     machines=List(MACHINE), notes=List(CODED))
 
+# bko-holt stick --copy INSTALL_ID OUT --json (open question 8): the layout
+# system.json carries, written to OUT (a golden's out is "OUT").
+STICK_COPY = header(
+    "bko-holt-stick-copy",
+    install_id=STR, path=STR, out=STR, bytes=INT, sha256=SHA, system_sha256=SHA)
+
 # bko-holt recovery-words OUT --json (RT10p): the words' verdict, never the words.
 RECOVERY = header(
     "bko-holt-recovery",
@@ -298,7 +306,8 @@ RECOVERY = header(
     unknown=List(Obj({"position": INT, "short": BOOL, "suggest": List(STR)})),
     checksum_ok=B_, written=BOOL, error=S_)
 
-DOCUMENTS = {"bko-holt-plan": PLAN, "bko-holt-status": STATUS, "bko-holt-stick": STICK, "bko-holt-recovery": RECOVERY,
+DOCUMENTS = {"bko-holt-plan": PLAN, "bko-holt-status": STATUS, "bko-holt-stick": STICK, "bko-holt-stick-copy": STICK_COPY,
+             "bko-holt-recovery": RECOVERY,
              "bko-holt-error": ERROR, "bko-holt-api": API}
 
 # ---- the events -------------------------------------------------------------
@@ -361,6 +370,11 @@ def check_document(v, where):
                 errs.append("%s: machines[%d]: install_id %s, path %s" % (where, i, json.dumps(m["install_id"]), json.dumps(m["path"])))
         if sum(1 for m in v["machines"] if m["this_computer"]) > 1:
             errs.append("%s: more than one machine is this computer" % where)
+    if fmt == "bko-holt-stick-copy" and not errs:
+        if not UUID.fullmatch(v["install_id"]) or v["path"] != "backotter/machines/%s/system.json" % v["install_id"]:
+            errs.append("%s: install_id %s, path %s" % (where, json.dumps(v["install_id"]), json.dumps(v["path"])))
+        if not (v["out"].startswith("/") or v["out"] == "OUT"):
+            errs.append("%s: out %s isn't absolute" % (where, json.dumps(v["out"])))
     if fmt == "bko-holt-recovery" and not errs:
         if v["ok"] != (v["problem"] is None) or (v["ok"] and v["checksum_ok"] is not True):
             errs.append("%s: ok %s with problem %s, checksum_ok %s" % (where, v["ok"], json.dumps(v["problem"]), v["checksum_ok"]))

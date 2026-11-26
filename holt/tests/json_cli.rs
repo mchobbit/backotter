@@ -102,10 +102,11 @@ fn version_json_is_the_api_document() {
         assert_eq!(v.get_str("version"), Some(env!("CARGO_PKG_VERSION")));
         assert_eq!(v.get_bool("no_commit"), Some(false));
         assert_eq!(v.get_bool("dry_run"), Some(false));
-        for d in ["plan", "status", "events", "stick", "recovery", "error"] {
+        for d in ["plan", "status", "events", "stick", "recovery", "stick_copy", "error"] {
             assert!(v.get("documents").and_then(|x| x.get(d)).is_some(), "{d}");
         }
         assert!(v.get_arr("features").unwrap().iter().any(|f| f.as_str() == Some("no_commit_env")));
+        assert!(v.get_arr("features").unwrap().iter().any(|f| f.as_str() == Some("stick_copy")));
         assert!(v.str_at(&["platform", "os"]).is_some() && v.str_at(&["platform", "arch"]).is_some());
         assert!(v.get_str("run_dir").unwrap().ends_with("/bko-holt"));
     }
@@ -431,6 +432,80 @@ fn stick_is_a_document() {
     let o = run(&["stick", "--json", "--help"], &[], None);
     assert_eq!(o.status.code(), Some(0));
     assert!(out(&o).starts_with("Usage: bko-holt stick --json"));
+}
+
+/// `bko-holt stick --copy INSTALL_ID OUT --json` (open question 8): the
+/// layout the machine's system.json carries, written to a new private OUT,
+/// which load then takes; under the dry-run lock too.
+#[test]
+fn stick_copy_writes_a_layout_load_takes() {
+    use bko_holt::stick::sample;
+    use std::os::unix::fs::PermissionsExt;
+    let t = sample::linux_tree(&sample::config(sample::two_with_layouts()), None);
+    let root = t.root().to_string_lossy().into_owned();
+    let k = t.p("/k");
+    std::fs::create_dir(&k).unwrap();
+    std::fs::set_permissions(&k, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let path = |n: &str| k.join(n).to_string_lossy().into_owned();
+    for (n, env) in [("a.json", &[][..]), ("b.json", &[("BKO_HOLT_NO_COMMIT", "1")][..])] {
+        let o = run(&["stick", "--copy", sample::LOVELACE, &path(n), "--json", "--sysroot", &root], env, None);
+        assert_eq!(o.status.code(), Some(0), "{}{}", out(&o), err(&o));
+        assert!(err(&o).is_empty(), "{}", err(&o));
+        let v = doc(&o);
+        assert_eq!((v.get_str("format"), v.get_bool("dry_run")), (Some("bko-holt-stick-copy"), Some(!env.is_empty())));
+        assert_eq!(v.get_str("out"), Some(path(n).as_str()));
+        let text = std::fs::read_to_string(path(n)).unwrap();
+        assert_eq!(json::parse(&text).unwrap(), json::parse(sample::DUMP).unwrap());
+        assert_eq!(v.get_u64("bytes"), Some(text.len() as u64));
+        assert_eq!(std::fs::metadata(path(n)).unwrap().permissions().mode() & 0o7777, 0o600);
+    }
+    // load takes OUT as the dump it is: the same plan as the dump's own.
+    let (_lt, layout, lroot) = setup();
+    let plan = |file: &str| {
+        // Its problems are this test host's (no target mapped, no tools).
+        let o = run(&["load", file, "--json", "--through", "plan", "--sysroot", &lroot], &[], None);
+        let mut v = doc(&o);
+        assert_eq!(v.get_str("format"), Some("bko-holt-plan"), "{}", err(&o));
+        for k in ["generated", "layout", "args", "text", "plan_sha256"] {
+            v.put(k, Value::Null);
+        }
+        (o.status.code(), v)
+    };
+    assert_eq!(plan(&path("a.json")), plan(&layout));
+    // Text mode's plan the same too, but for the layout's name.
+    let text = |file: &str| out(&run(&["load", file, "--only", "plan", "--sysroot", &lroot], &[], None)).replace(file, "LAYOUT");
+    assert_eq!(text(&path("a.json")), text(&layout));
+    // A system.json given to load: refused, saying what takes its layout.
+    let sj = t.p("/sj.json");
+    std::fs::write(&sj, sample::system(sample::LOVELACE, "lovelace", "", &sample::with_layout(sample::DUMP))).unwrap();
+    let v = assert_error(&run(&["load", sj.to_str().unwrap(), "--json", "--through", "plan", "--sysroot", &lroot], &[], None), 3, "layout_refused");
+    assert!(v.get_str("text").unwrap().contains("stick --copy"), "{}", v.pretty());
+    // Refusals, each a document: OUT there already, not absolute, in a
+    // directory others may enter or through a link; a bad ID; no machine.
+    let v = assert_error(&run(&["stick", "--copy", sample::LOVELACE, &path("a.json"), "--json", "--sysroot", &root], &[], None), 2, "out_unsafe");
+    assert!(v.get_str("text").unwrap().contains("there already"));
+    assert_error(&run(&["stick", "--copy", sample::LOVELACE, "layout.json", "--json", "--sysroot", &root], &[], None), 2, "out_unsafe");
+    std::fs::set_permissions(&k, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let v = assert_error(&run(&["stick", "--copy", sample::LOVELACE, &path("c.json"), "--json", "--sysroot", &root], &[], None), 2, "out_unsafe");
+    assert!(v.get_str("text").unwrap().contains("mode 755"));
+    std::fs::set_permissions(&k, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::os::unix::fs::symlink(&k, t.p("/link")).unwrap();
+    let linked = t.p("/link/c.json").to_string_lossy().into_owned();
+    assert_error(&run(&["stick", "--copy", sample::LOVELACE, &linked, "--json", "--sysroot", &root], &[], None), 2, "out_unsafe");
+    let v = assert_error(&run(&["stick", "--copy", "../../etc", &path("c.json"), "--json", "--sysroot", &root], &[], None), 2, "bad_args");
+    assert!(!v.get_str("text").unwrap().contains("etc"));
+    assert_error(&run(&["stick", "--copy", sample::LOVELACE, "--json"], &[], None), 2, "bad_args");
+    let v = assert_error(&run(&["stick", "--copy", "2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6", &path("c.json"), "--json", "--sysroot", &root], &[], None), 1, "no_such_machine");
+    assert!(v.get_str("text").unwrap().contains("it has 2"));
+    assert!(!k.join("c.json").exists());
+    // Text mode: none.
+    let o = run(&["stick", "--copy", sample::LOVELACE, &path("c.json"), "--sysroot", &root], &[], None);
+    assert_eq!(o.status.code(), Some(2));
+    assert!(out(&o).is_empty() && err(&o).contains("say --json") && !k.join("c.json").exists());
+    // Not a stick: the config's state, exit 1.
+    std::fs::remove_file(t.p("/cdrom/.disk/backotter.json")).unwrap();
+    assert_error(&run(&["stick", "--copy", sample::LOVELACE, &path("c.json"), "--json", "--sysroot", &root], &[], None), 1, "config_not_ok");
+    assert!(!k.join("c.json").exists());
 }
 
 /// `bko-holt recovery-words OUT --json` (RT10p): the words on standard

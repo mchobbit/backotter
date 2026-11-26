@@ -165,8 +165,9 @@ pub fn verdict(text: &str, out: &std::path::Path) -> (Value, u8) {
 
 /// BYTES in OUT, a new file of mode 0600 (O_CREAT|O_EXCL, so neither a
 /// file there nor a symbolic link is followed), synced; on a failure after
-/// it was made, overwritten with zeros and removed.
-fn write_new(out: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+/// it was made, overwritten with zeros and removed.  `stick --copy` writes
+/// its OUT so too.
+pub(crate) fn write_new(out: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::os::unix::fs::{FileExt, OpenOptionsExt};
     let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(out)?;
     let r = f.write_all(bytes).and_then(|_| f.sync_all());

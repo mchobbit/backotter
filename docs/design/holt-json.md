@@ -335,6 +335,7 @@ keeps today's behaviour.
 | `bko-holt load LAYOUT --through STAGE\|--only STAGE ... --json` | `bko-holt-events` | 0, 1, 2, 3, 4, 5 |
 | `bko-holt load LAYOUT --only open ... --json` (RT10o) | `bko-holt-events` | as above |
 | `bko-holt stick --json` (D11, RT10k) | `bko-holt-stick` | 0, 1, 2 |
+| `bko-holt stick --copy INSTALL_ID OUT --json` (open question 8) | `bko-holt-stick-copy` | 0, 1, 2 |
 | `bko-holt recovery-words OUT --json` (J21, RT10p) | `bko-holt-recovery` | 0, 1, 2 |
 | `bko-holt report-bug ... --attach FILE` (RT10i) | text, as today | as today |
 
@@ -430,7 +431,7 @@ Unchanged, plus one under `--json` only:
 
 ```json
 {"format": "bko-holt-api", "schema": 1, "version": "0.3.0",
- "documents": {"plan": [1], "status": [1], "events": [1], "stick": [1], "recovery": [1], "error": [1]},
+ "documents": {"plan": [1], "status": [1], "events": [1], "stick": [1], "recovery": [1], "stick_copy": [1], "error": [1]},
  "features": ["no_commit_env", "stop", "progress", "candidates", "sizes",
               "open_stage", "fit_per_disk"],
  "platform": {"os": "linux", "arch": "x86_64"},
@@ -498,8 +499,11 @@ asked for.
 unsupported OS, a dump made without root), `arch_mismatch`,
 `schema_unknown` (a `--json=N` this bko-holt doesn't write),
 `json_not_here` (`--json` on a command that doesn't take it: `dump`,
-`report-bug`), `out_unsafe` (`recovery-words`' OUT isn't a new file in a
-private directory, RT10p).  `text` is the line text mode prints on stderr, without the
+`report-bug`), `out_unsafe` (`recovery-words`' or `stick --copy`'s OUT
+isn't a new file in a private directory, RT10p), and `stick --copy`'s
+refusals, exit 1: `config_not_ok`, `no_such_machine`, `two_machines`,
+`machine_not_ok`, `no_layout`, `layout_refused` (the copy's own check)
+and `copy_failed` ("bko-holt-stick-copy").  `text` is the line text mode prints on stderr, without the
 usage that follows it.  A reader following an events file must take a
 first line with `format` `bko-holt-error` as the whole stream and show its
 `text` (the demo fails it today as "an event with no \"event\"").
@@ -933,16 +937,61 @@ only when it is a UUID), a string field over 4 KiB
   2 for bad arguments (`bko-holt-error`).  Allowed under
   `BKO_HOLT_NO_COMMIT` (it reads only).  `--sysroot DIR` reads a Linux
   tree instead, for tests (as dump's).
-- The layout itself isn't in the document: bko-rescue copies
-  `system.json` to `/run/bko-rescue/layout.json` for load (*Check* how
-  `system.json` embeds the dump: the backup tool isn't built; and how
-  bko-rescue copies a file off a partition it can't read itself: "What
-  RT10k and RT10p found").
+- The layout itself isn't in the document: `stick --copy` writes it to a
+  file for load (below; open question 8, answered).
 - `password_hint` is text the user wrote and may name things a report
   shouldn't hold: bko-rescue gives it to report-bug as text to strip
   (`--strip-file`, RT10i: a file of strings the Redactor replaces as
   "other identifiers"), and never writes it into its own log or a stick
   document.
+
+### `bko-holt-stick-copy` (open question 8)
+
+`bko-holt stick --copy INSTALL_ID OUT --json` (`--sysroot DIR` as
+`stick`'s): the disk layout machine INSTALL_ID's system.json carries,
+written to OUT for `load`.  It finds the config partition and judges each
+machine exactly as `stick --json` does, keeps the bytes of that machine's
+system.json it read, checks its `.sha256` on them, and writes the dump
+taken from those same bytes: the stick isn't read again between the check
+and the write.
+
+```json
+{"format": "bko-holt-stick-copy", "schema": 1, "version": "0.3.0", "generated": "…", "dry_run": false,
+ "install_id": "0b7e…", "path": "backotter/machines/0b7e…/system.json",
+ "out": "/run/bko-rescue/s-1-0/layout.json", "bytes": 55497,
+ "sha256": "…", "system_sha256": "…"}
+```
+
+- What OUT holds: system.json's top-level `layout`, the whole `bko-holt
+  dump` document (stick-config.md's system.json, a default chosen here),
+  printed as dump prints it (json.rs's `pretty`).  So OUT is a dump, and
+  `load` takes it as it takes any: load, text mode and `report-bug` are
+  unchanged.  `bytes` and `sha256` are OUT's, `system_sha256` the
+  checked system.json's.
+- Its own check: the `layout` must be a document `load`'s
+  `Layout::from_json` takes (format `bko-holt`, a schema it reads, a
+  supported OS, a dump made as root) before OUT is written.
+- The machine: INSTALL_ID must be a UUID (else exit 2, `bad_args`, not
+  echoed), matched case aside among the rows `stick --json` lists.
+- OUT is checked before the stick is read, as `recovery-words`' OUT
+  (`recoverycmd::out_unsafe`): absolute, not there yet, in a real
+  directory of bko-holt's effective user with no group or other bits;
+  else exit 2, `out_unsafe`.  It is written `O_CREAT|O_EXCL`, mode 0600,
+  synced; a write that fails after OUT was made is zeroed and removed.
+- Refusals are `bko-holt-error` documents, exit 1: `config_not_ok` (the
+  config partition isn't `ok`: its state and why), `no_such_machine`,
+  `two_machines` (two directories named by the ID, case aside),
+  `machine_not_ok` (its row isn't `ok`: `checksum_bad`,
+  `checksum_missing`, `schema_unknown`, `unreadable`, with its why),
+  `no_layout` (no `layout`, or one that isn't a document: a system.json
+  of today), `layout_refused` (load wouldn't take it), `copy_failed`
+  (OUT couldn't be written; nothing left there).
+- Exit 0 when OUT is written, 1 refused, 2 bad arguments.  Read-only
+  toward every disk; allowed under `BKO_HOLT_NO_COMMIT`.  Without
+  `--json` it refuses (exit 2), as `stick` does.
+- The layout names hosts, disks and paths as a dump does; no secret is in
+  it (stick-config.md: no secret ever goes in system.json).  bko-rescue
+  keeps OUT in the session's 0700 directory, removed with it.
 
 ### `bko-holt-recovery` (J21, RT10p)
 
@@ -1714,7 +1763,7 @@ RT10h:
 | `src/bugreport.rs`, `src/redact.rs` | `--attach`, `--strip-file`; the Collector on plan documents; `ISSUES`; `--no-redact`'s line; `-o` new-file-only under NO_COMMIT |
 | `src/snapcore.rs` | `recovery-key-file` new-file-only under NO_COMMIT |
 | `src/recovery.rs`, `src/recoverycmd.rs` (new) | `recovery-words OUT --json` (RT10p) |
-| `src/stick.rs` (new) | `stick --json` (RT10k) |
+| `src/stick.rs` (new) | `stick --json` (RT10k); `stick --copy` (open question 8) |
 
 json.rs's writer (`Obj`, `compact`) already does what the documents
 need; `compact()` gives one line per event.
@@ -2012,7 +2061,8 @@ Linux image's) with machines put on by mtools, for RT11.
   most 3 suggestions (`recoverycmd.rs`'s `SUGGEST_MAX`); without `--json`
   both commands refuse (no text form).
 - **Found, not fixed (for RT11, RT12 and the backup tool's spec):**
-  - *The layout's copy.*  "bko-rescue copies system.json to
+  - *The layout's copy* (answered 2026-11-26: open question 8, "What
+    stick --copy found").  "bko-rescue copies system.json to
     /run/bko-rescue/layout.json", but D11 put the FAT reading in bko-holt
     so bko-rescue needn't: it can mount `config.dev` read-only (it mounts
     it read-write for restore logs anyway) and copy the file, which then
@@ -2066,7 +2116,65 @@ RT10k+p":
   image builders and samples stay compiled into the library, as
   json_cli.rs needs them (`#[doc(hidden)]`); open questions 8 and 9 (the
   layout's copy, the word list) block RT12 and RT11's Recovery key
-  screen.
+  screen (8 answered 2026-11-26: "What stick --copy found").
+
+### What stick --copy found
+
+Built 2026-11-26 (open question 8, approved that day by the user): `bko-holt
+stick --copy INSTALL_ID OUT --json` (`src/stick.rs`'s `copy_layout`; the
+scan keeps the asked machine's system.json bytes as it judges them),
+`stick_copy` in the api document's `documents` and `features`, six new
+error codes, and load's refusal of a `backotter-system` document naming
+`stick --copy`.  bko-rescue's layout comes from it (rescue-tui.md, "What
+stick --copy changed").  Tested by unit tests (the machine asked for of
+two, case aside; no such machine; two directories of one ID; a checksum
+that doesn't match; no .sha256; not JSON; no layout; a layout that isn't a
+document; one load refuses; the config missing, reformatted, not root; OUT
+there already and in no directory; `--json` alone keeps no bytes), goldens
+in `holt/tests/fixtures/stick-copy-json`, `tests/json_cli.rs` (as a program,
+under `BKO_HOLT_NO_COMMIT` too; OUT's checks; load's plan of OUT the same as
+of the dump itself, `--json` and text), holt_schema.py, and the gate on
+cinqcent (cargo test 954 passed, 0 failed, 4 ignored; 110 golden plans, 0
+differ; redact-corpus passed).  `testvm/rescue/record-stick.py` records `stick-layouts` (its
+lovelace carries holt/tests/corpus/debian13-stack's dump; babbage none;
+hopper a wrong checksum; and a machine not there) and stick-three's
+`08-copy` (no layout).  OUT came out byte for byte the corpus dump.  Then
+`real-dry-run.py` ran in debian13-stack's HoltTest rescuer on chopin with a
+real stick image (marker.py's config partition on a loop device, its
+medium at /cdrom): `stick --json` found it, `stick --copy` wrote the
+share's layout byte for byte, the dry run would have run 92 commands, and
+every disk and the stick image kept its md5.
+
+- **Decided here** (defaults where the specs were open, each in one place):
+  - system.json carries the dump whole, as its top-level `layout`
+    (stick-config.md's system.json, where the backup tool's spec was
+    open); OUT is that dump, printed as dump prints it.  Nothing in load,
+    its text mode or report-bug changes: it is a dump.
+  - The copy's own check is load's `Layout::from_json`; a layout it
+    refuses is `layout_refused`, exit 1, and OUT isn't written.
+  - Refusals after the arguments are exit 1 with the codes
+    `config_not_ok`, `no_such_machine`, `two_machines`, `machine_not_ok`,
+    `no_layout` and `copy_failed` (`jsonout.rs`'s `ErrorCode`).
+  - The install ID is matched case aside (FAT keeps the case it was
+    given); two directories that match are refused, not chosen between.
+  - The document's fields: `install_id`, `path`, `out`, `bytes`,
+    `sha256`, `system_sha256`.  No text form.
+  - `load` given a system.json refuses it as before (`layout_refused`),
+    its words now naming `stick --copy`.
+- **Spec problems found (for the backup tool's spec):**
+  - stick-config.md left `storage` and `boot` as the system description
+    "with its own design doc", never written.  The dump has both, inside
+    `layout`; the envelope's two stay placeholders.
+  - A dump made with `--keep-luks-header` (Ubuntu Core's encrypted
+    partitions always) needs its header files beside it ("load looks for
+    them there"; `load --luks-header-dir`).  The stick carries none, so such
+    a layout can't be restored from the stick's copy alone.
+  - A system.json is read up to 64 MiB (`stick.rs`'s `SYSTEM_MAX`), a
+    dump up to 1 GiB (`LAYOUT_MAX`), and the BSD images' config partition
+    is 32 MiB: a large dump (ESP images) or several machines may not fit.
+  - "Which copy wins" (the backup's own system.json when the repository is
+    reached) isn't built: the stick's copy is the only layout bko-rescue
+    has.
 
 ## Decisions
 
@@ -2259,8 +2367,9 @@ RT10k+p":
    has no terminal to lose) and SIGINT left at their defaults?
 7. **The events file's size** on a 20-hour copy (~14 MiB): rotate, or
    keep progress to one event every 5 s past an hour?
-8. **The layout's copy for load** (blocks RT12; "What RT10k and RT10p
-   found"): `bko-holt stick --copy INSTALL_ID OUT --json`, the system.json
+8. **The layout's copy for load** (answered: approved 2026-11-26 by the
+   user: stick --copy; built, "What stick --copy found"; was: blocks RT12,
+   "What RT10k and RT10p found"): `bko-holt stick --copy INSTALL_ID OUT --json`, the system.json
    `stick` just checked written to a new 0600 file in bko-rescue's `k/`-like
    private directory, the bytes whose checksum it checked (*recommended*:
    no check-then-use gap, and bko-rescue still reads no FAT).  Or

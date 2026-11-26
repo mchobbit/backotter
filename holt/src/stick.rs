@@ -14,6 +14,13 @@
 //! The layout isn't in the document: only what the Machine screen shows of
 //! each machine, and its state.  `settings.toml` isn't read (no TOML reader
 //! yet: holt-json.md's open question 4), which a note says.
+//!
+//! `bko-holt stick --copy INSTALL_ID OUT --json` (holt-json.md's open
+//! question 8, "bko-holt-stick-copy") reads the partition exactly so, and
+//! writes the disk layout the chosen machine's system.json carries (its
+//! `layout`, a `bko-holt dump` document) to OUT, a new private file: taken
+//! from the bytes whose checksum was checked, with no second read of the
+//! stick between the check and the write.
 
 use crate::bytes::{ByteSource, OffsetSource};
 use crate::fatfs::{Entry, Volume};
@@ -23,6 +30,7 @@ use crate::other::{Family, RawDisk};
 use crate::sys::Sys;
 
 pub const USAGE: &str = "Usage: bko-holt stick --json
+       bko-holt stick --copy INSTALL_ID OUT --json
 
 Reads the BackOtter rescue stick's config partition (backotter/ on its
 BACKOTTER partition) off the disk this system was started from, without
@@ -33,13 +41,22 @@ sequence, DMI UUID, repository and checksum state.  For bko-rescue; run it
 as root, on the rescue stick.
 
   --json          the document (the only form there is)
+  --copy INSTALL_ID OUT
+                  write the disk layout that machine's system.json carries
+                  (the `bko-holt dump` in its `layout`), once the file's
+                  checksum is checked, to OUT for `bko-holt load`: a new file
+                  (mode 0600) in a directory of bko-holt's own user that no
+                  one else may enter.  The document is then
+                  `bko-holt-stick-copy`, or `bko-holt-error` saying why not
   --sysroot DIR   read a Linux tree under DIR (its proc/, sys/, dev/ and
                   cdrom/) instead of this system, running no commands; for
                   tests
   -h, --help      show this help
 
-Exit status: 0 when the config partition was read, 1 when it is missing,
-damaged or unreadable (the document says why), 2 for bad arguments.
+Exit status: 0 when the config partition was read (with --copy: and OUT
+written), 1 when it is missing, damaged or unreadable, or with --copy when
+the machine's layout can't be had (the document says why), 2 for bad
+arguments or an OUT that isn't a new file in a private directory.
 ";
 
 /// The system.json schemas this bko-holt reads.
@@ -76,13 +93,20 @@ pub const DMI_UUID_PLACEHOLDERS: &[&str] = &[
     "12345678-1234-5678-90ab-cddeefaabbcc",
 ];
 
+/// Where system.json carries the disk layout (holt-json.md, open question 8,
+/// a default chosen where the backup tool's spec was open): the whole
+/// `bko-holt dump` document, as this top-level member.
+pub const LAYOUT_KEY: &str = "layout";
+
 /// The config partition's directory, and the machines' under it.
 const DIR: &str = "backotter";
 const MACHINES: &str = "backotter/machines";
 
 /// `bko-holt stick ARGS`: the exit status.
 pub fn main(args: &[String]) -> u8 {
-    const VALUE_FLAGS: &[&str] = &["--sysroot"];
+    // --copy takes two values: its first is skipped here as a value, and
+    // OUT, checked to be absolute, can't be taken for a flag.
+    const VALUE_FLAGS: &[&str] = &["--sysroot", "--copy"];
     if jsonout::asks_for_help(args, VALUE_FLAGS) {
         print!("{USAGE}");
         return 0;
@@ -99,6 +123,7 @@ pub fn main(args: &[String]) -> u8 {
         return refuse(jsonout::ErrorCode::SchemaUnknown, format!("bko-holt stick: {e}"));
     }
     let mut sysroot: Option<String> = None;
+    let mut copy: Option<(String, String)> = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -108,6 +133,11 @@ pub fn main(args: &[String]) -> u8 {
                 Some(d) => return refuse(jsonout::ErrorCode::BadArgs, format!("bko-holt stick: --sysroot {d}: not a directory")),
                 None => return refuse(jsonout::ErrorCode::BadArgs, "bko-holt stick: --sysroot needs a directory".into()),
             },
+            "--copy" if copy.is_some() => return refuse(jsonout::ErrorCode::BadArgs, "bko-holt stick: --copy is given twice".into()),
+            "--copy" => match (it.next(), it.next()) {
+                (Some(id), Some(out)) if !out.starts_with('-') => copy = Some((id.clone(), out.clone())),
+                _ => return refuse(jsonout::ErrorCode::BadArgs, "bko-holt stick: --copy needs an install ID and the file to write".into()),
+            },
             other => return refuse(jsonout::ErrorCode::BadArgs, format!("bko-holt stick: unknown argument {other:?}")),
         }
     }
@@ -115,14 +145,40 @@ pub fn main(args: &[String]) -> u8 {
         eprint!("bko-holt stick: say --json: it writes the stick's config as JSON, for bko-rescue\n\n{USAGE}");
         return 2;
     }
+    if let Some((id, out)) = &copy {
+        // Both checked before the stick is read, as recovery-words checks
+        // its OUT before a word.  An ID that isn't one isn't echoed.
+        if !is_uuid(id) {
+            return refuse(jsonout::ErrorCode::BadArgs, "bko-holt stick --copy: INSTALL_ID isn't an install ID (a UUID, the name of its directory under backotter/machines/)".into());
+        }
+        if !std::path::Path::new(out).is_absolute() {
+            return refuse(jsonout::ErrorCode::OutUnsafe, "bko-holt stick --copy: OUT isn't an absolute path".into());
+        }
+        if let Some(why) = crate::recoverycmd::out_unsafe(out) {
+            return refuse(jsonout::ErrorCode::OutUnsafe, format!("bko-holt stick --copy: {out}: {why}"));
+        }
+    }
     let (sys, fam) = match sysroot {
         // A tree's files are images anyone may read: as root for the reads.
         Some(d) => (Sys::new(d, Box::new(crate::sys::FakeRunner::default()), true), None),
         None => (Sys::host(), Family::current()),
     };
-    let (doc, code) = document(&sys, fam);
-    jsonout::write_stdout(&jsonout::line(&doc));
-    code
+    let Some((id, out)) = copy else {
+        let (doc, code) = document(&sys, fam);
+        jsonout::write_stdout(&jsonout::line(&doc));
+        return code;
+    };
+    match copy_layout(&sys, fam, &id, std::path::Path::new(&out)) {
+        Ok(doc) => {
+            jsonout::write_stdout(&jsonout::line(&doc));
+            0
+        }
+        Err((code, line)) => {
+            jsonout::write_stdout(&jsonout::error_doc(1, code, &line));
+            eprintln!("{line}");
+            1
+        }
+    }
 }
 
 /// What the image's marker (`/.disk/backotter.json`) says of the config
@@ -198,7 +254,14 @@ struct Located {
 /// The `bko-holt-stick` document for this system (FAM: Linux when None),
 /// and the exit status: 0 when the config partition was read, else 1.
 pub fn document(sys: &Sys, fam: Option<Family>) -> (Value, u8) {
-    let mut d = Doc { boot_disk: Value::Null, partition: None, label: None, dev: None, image: Value::Null, stick: Value::Null, machines: Vec::new(), notes: Vec::new() };
+    let (doc, code, _) = scan(sys, fam, None);
+    (doc, code)
+}
+
+/// As `document`, keeping the system.json bytes read of each machine
+/// directory named KEEP (case aside), with that directory's name.
+fn scan(sys: &Sys, fam: Option<Family>, keep: Option<&str>) -> (Value, u8, Vec<(String, Option<Vec<u8>>)>) {
+    let mut d = Doc { boot_disk: Value::Null, partition: None, label: None, dev: None, image: Value::Null, stick: Value::Null, machines: Vec::new(), notes: Vec::new(), keep: keep.map(str::to_string), kept: Vec::new() };
     let r = read(sys, fam, &mut d);
     let (state, why) = match &r {
         Ok(()) => ("ok", None),
@@ -207,6 +270,7 @@ pub fn document(sys: &Sys, fam: Option<Family>) -> (Value, u8) {
     if r.is_err() {
         d.stick = Value::Null;
         d.machines.clear();
+        d.kept.clear();
     }
     let here_uuid = dmi_uuid_here(sys, fam);
     let mine = this_computer(&d.machines, here_uuid.as_deref());
@@ -228,7 +292,64 @@ pub fn document(sys: &Sys, fam: Option<Family>) -> (Value, u8) {
         .set("machines", d.machines)
         .set("notes", d.notes)
         .build();
-    (doc, if state == "ok" { 0 } else { 1 })
+    (doc, if state == "ok" { 0 } else { 1 }, d.kept)
+}
+
+/// `stick --copy ID OUT`: the `bko-holt-stick-copy` document once machine
+/// ID's layout is in OUT (checked by the caller to be a new file in a
+/// private directory), else the refusal's code and line.  The layout is
+/// taken from the system.json bytes whose checksum `scan` checked, held
+/// since: the stick isn't read again.
+pub fn copy_layout(sys: &Sys, fam: Option<Family>, id: &str, out: &std::path::Path) -> Result<Value, (jsonout::ErrorCode, String)> {
+    use jsonout::ErrorCode as E;
+    let say = |what: String| format!("bko-holt stick --copy: {what}");
+    let (doc, code, kept) = scan(sys, fam, Some(id));
+    if code != 0 {
+        let state = doc.str_at(&["config", "state"]).unwrap_or("unreadable");
+        let why = doc.str_at(&["config", "why"]).unwrap_or("");
+        return Err((E::ConfigNotOk, say(format!("the config partition is {state}: {why}"))));
+    }
+    let rows: Vec<&Value> = doc.arr_at(&["machines"]).iter().filter(|m| m.get_str("install_id").is_some_and(|x| x.eq_ignore_ascii_case(id))).collect();
+    let row = match rows.as_slice() {
+        [r] => *r,
+        [] => {
+            let n = doc.arr_at(&["machines"]).len();
+            let over = doc.arr_at(&["notes"]).iter().any(|x| x.get_str("code") == Some("machines_over_limit"));
+            let more = if over { format!(" (it lists the first {MACHINES_MAX} by name)") } else { String::new() };
+            return Err((E::NoSuchMachine, say(format!("the stick has no machine {id}: it has {n}{more}"))));
+        }
+        many => return Err((E::TwoMachines, say(format!("{} directories of {MACHINES}/ are named {id}, case aside: it can't tell which is the machine's", many.len())))),
+    };
+    let path = row.get_str("path").unwrap_or_default().to_string();
+    let host = row.get_str("hostname").map(|h| format!(" ({h})")).unwrap_or_default();
+    match row.get_str("state") {
+        Some("ok") => {}
+        st => return Err((E::MachineNotOk, say(format!("machine {id}{host} is {}: {}", st.unwrap_or("unreadable"), row.get_str("why").unwrap_or(""))))),
+    }
+    // Its row is ok: its bytes were kept, are JSON and passed the checksum.
+    let body = kept.into_iter().find(|(n, _)| n.eq_ignore_ascii_case(id)).and_then(|(_, b)| b).ok_or_else(|| (E::MachineNotOk, say(format!("{path} wasn't kept as it was read"))))?;
+    let v = std::str::from_utf8(&body).ok().and_then(|t| crate::json::parse(t).ok()).ok_or_else(|| (E::MachineNotOk, say(format!("{path} isn't JSON"))))?;
+    let layout = match v.get(LAYOUT_KEY) {
+        Some(l @ Value::Obj(_)) => l,
+        Some(_) => return Err((E::NoLayout, say(format!("{path}'s \"{LAYOUT_KEY}\" isn't a bko-holt dump document: it carries no disk layout")))),
+        None => return Err((E::NoLayout, say(format!("{path} carries no disk layout: it has no \"{LAYOUT_KEY}\", where the backup tool puts the bko-holt dump")))),
+    };
+    // Its own check: what load makes of a layout before it reads one.
+    if let Err(e) = crate::load::layout::Layout::from_json(layout.clone()) {
+        return Err((E::LayoutRefused, say(format!("{path}'s {LAYOUT_KEY} isn't a layout bko-holt load takes: {e}"))));
+    }
+    let text = layout.pretty();
+    if let Err(e) = crate::recoverycmd::write_new(out, text.as_bytes()) {
+        return Err((E::CopyFailed, say(format!("{}: {e} (nothing left there)", out.display()))));
+    }
+    Ok(jsonout::header("bko-holt-stick-copy")
+        .set("install_id", row.get_str("install_id"))
+        .set("path", path.as_str())
+        .set("out", out.display().to_string())
+        .set("bytes", text.len())
+        .set("sha256", crate::bytes::sha256_hex(text.as_bytes()))
+        .set("system_sha256", crate::bytes::sha256_hex(&body))
+        .build())
 }
 
 /// The rows of MACHINES backed up from this computer, whose DMI UUID is
@@ -263,6 +384,9 @@ struct Doc {
     stick: Value,
     machines: Vec<Value>,
     notes: Vec<Value>,
+    /// The machine directory whose system.json bytes are kept (--copy).
+    keep: Option<String>,
+    kept: Vec<(String, Option<Vec<u8>>)>,
 }
 
 fn note(code: &str, text: impl Into<String>) -> Value {
@@ -356,13 +480,18 @@ fn read_config(vol: &Volume, m: &Marker, d: &mut Doc) -> Result<(), NotOk> {
     }
     ids.extend(kids.into_iter().take(MACHINES_MAX));
     for e in ids {
-        d.machines.push(machine(vol, e, m));
+        let (row, body) = machine(vol, e, m);
+        if d.keep.as_deref().is_some_and(|k| k.eq_ignore_ascii_case(&e.name)) {
+            d.kept.push((e.name.clone(), body));
+        }
+        d.machines.push(row);
     }
     Ok(())
 }
 
-/// One machine's entry, from its directory E.
-fn machine(vol: &Volume, e: &Entry, m: &Marker) -> Value {
+/// One machine's entry, from its directory E, and the system.json bytes it
+/// was judged by, when they could be read.
+fn machine(vol: &Volume, e: &Entry, m: &Marker) -> (Value, Option<Vec<u8>>) {
     let id = e.name.as_str();
     let path = format!("{MACHINES}/{id}/system.json");
     let o = Obj::new().set("install_id", id).set("path", path.as_str());
@@ -375,18 +504,25 @@ fn machine(vol: &Volume, e: &Entry, m: &Marker) -> Value {
     };
     let body = match body {
         Ok(b) => b,
-        Err(why) => return fields(o, "unreadable", Some(why), None, m),
+        Err(why) => return (fields(o, "unreadable", Some(why), None, m), None),
     };
-    let (state, why) = match find("system.json.sha256").map(|f| vol.read_file(&f, SMALL_MAX)) {
+    let row = judge(vol, o, id, &path, &body, find("system.json.sha256"), m);
+    (row, Some(body))
+}
+
+/// The row of machine ID, whose system.json at PATH is BODY and whose
+/// .sha256 is SUM.
+fn judge(vol: &Volume, o: Obj, id: &str, path: &str, body: &[u8], sum: Option<Entry>, m: &Marker) -> Value {
+    let (state, why) = match sum.map(|f| vol.read_file(&f, SMALL_MAX)) {
         None => ("checksum_missing", Some(format!("{path}.sha256 is missing"))),
         Some(Err(err)) => ("checksum_missing", Some(format!("{path}.sha256 can't be read: {err}"))),
-        Some(Ok(sum)) => match checksum_ok(&sum, &body) {
+        Some(Ok(sum)) => match checksum_ok(&sum, body) {
             Ok(true) => ("ok", None),
             Ok(false) => ("checksum_bad", Some(format!("{path} doesn't match its .sha256: damaged, or edited by hand"))),
             Err(err) => ("checksum_bad", Some(format!("{path}.sha256 {err}"))),
         },
     };
-    let v = match std::str::from_utf8(&body).ok().map(crate::json::parse) {
+    let v = match std::str::from_utf8(body).ok().map(crate::json::parse) {
         Some(Ok(v)) => v,
         _ if state != "ok" => return fields(o, state, why, None, m),
         _ => return fields(o, "unreadable", Some(format!("{path} isn't JSON")), None, m),
@@ -768,6 +904,35 @@ pub mod sample {
         t
     }
 
+    /// A dump of one Debian 13 machine (one BIOS + MBR disk, one ext4), as
+    /// system.json carries it in `layout` (holt-json.md, open question 8).
+    pub const DUMP: &str = r#"{
+  "format": "bko-holt", "schema": 1, "privileged": true,
+  "host": {"hostname": "t"}, "os": {"id": "debian", "version_id": "13"},
+  "storage": {
+    "disks": [{"name": "vda", "kind": "disk", "size_bytes": 1073741824, "logical_sector_size": 512,
+      "partition_table": {"type": "dos", "disk_signature": "0x00c0ffee"},
+      "partitions": [{"name": "vda1", "number": 1, "start_lba": 2048, "sectors": 2095104, "type": "0x83", "bootable": true,
+        "content": {"type": "ext4", "uuid": "11111111-2222-4333-8444-555555555555", "features": ["has_journal", "extent"]}}],
+      "content": null, "boot_code": {"kind": "grub2"}}],
+    "fstab": [{"spec": "UUID=11111111-2222-4333-8444-555555555555", "file": "/", "type": "ext4", "options": "errors=remount-ro", "resolves_to": "vda1"}]
+  },
+  "boot": {"loader": {"name": "grub", "firmware": "bios"}}
+}"#;
+
+    /// system.json's tail carrying LAYOUT as its `layout`.
+    pub fn with_layout(layout: &str) -> String {
+        format!(", \"layout\": {layout}")
+    }
+
+    /// A stick whose lovelace and babbage each carry a layout (babbage's
+    /// host named babbage-host), with good checksums.
+    pub fn two_with_layouts() -> Vec<Node> {
+        let a = system(LOVELACE, "lovelace", "", &with_layout(DUMP));
+        let b = system(BABBAGE, "babbage", "", &with_layout(&DUMP.replace("\"hostname\": \"t\"", "\"hostname\": \"babbage-host\"")));
+        vec![machine_dir(LOVELACE, &a, Some(&sum(&a))), machine_dir(BABBAGE, &b, Some(&sum(&b)))]
+    }
+
     pub fn three() -> Vec<Node> {
         let a = system(LOVELACE, "lovelace", "4C4C4544-0000-1111-2222-333344445555", ", \"password_hint\": \"the boat's name\"");
         let b = system(BABBAGE, "babbage", "11111111-2222-3333-4444-555555555555", "");
@@ -1110,5 +1275,151 @@ mod tests {
         assert_eq!(disk_of(&nb, Family::NetBsd, "/dev/dk3", &sd).as_deref(), Some("sd1"));
         let hk: Vec<RawDisk> = vec![RawDisk { name: "usb_0_0".into(), path: "/dev/disk/usb/0/0/raw".into(), size: 0, sector: 512, model: None, serial: None }];
         assert_eq!(disk_of(&sys, Family::Haiku, "/dev/disk/usb/0/0/0", &hk).as_deref(), Some("usb_0_0"));
+    }
+    // ---- --copy (open question 8) ----
+
+    fn private_dir() -> crate::testutil::TempDir {
+        use std::os::unix::fs::PermissionsExt;
+        let d = crate::testutil::TempDir::new("stick-copy");
+        std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        d
+    }
+
+    fn sys_of(t: &Tree) -> Sys {
+        Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), true)
+    }
+
+    /// An error as main writes it: its document, for a golden.
+    fn refused(r: Result<Value, (jsonout::ErrorCode, String)>, want: jsonout::ErrorCode) -> (Value, String) {
+        let (code, line) = r.expect_err("a refusal");
+        assert_eq!(code, want, "{line}");
+        assert!(line.starts_with("bko-holt stick --copy: ") && !line.contains('\n'), "{line}");
+        (crate::json::parse(&jsonout::error_doc(1, code, &line)).unwrap(), line)
+    }
+
+    #[test]
+    fn copy_writes_the_checked_layout_of_the_machine_asked_for() {
+        use std::os::unix::fs::PermissionsExt;
+        let ms = two_with_layouts();
+        let t = linux_tree(&config(ms), None);
+        let d = private_dir();
+        let out = d.path().join("layout.json");
+        let v = copy_layout(&sys_of(&t), None, BABBAGE, &out).unwrap();
+        let text = std::fs::read_to_string(&out).unwrap();
+        // The dump babbage's system.json carries, whole, as dump prints it.
+        let b = system(BABBAGE, "babbage", "", &with_layout(&DUMP.replace("\"hostname\": \"t\"", "\"hostname\": \"babbage-host\"")));
+        let carried = crate::json::parse(&b).unwrap().get(LAYOUT_KEY).unwrap().clone();
+        assert_eq!(crate::json::parse(&text).unwrap(), carried);
+        assert_eq!(text, carried.pretty());
+        assert_eq!(crate::json::parse(&text).unwrap().str_at(&["host", "hostname"]), Some("babbage-host"));
+        // load takes it as it takes a dump.
+        assert!(crate::load::layout::Layout::from_json(crate::json::parse(&text).unwrap()).is_ok());
+        assert_eq!(std::fs::metadata(&out).unwrap().permissions().mode() & 0o7777, 0o600);
+        assert_eq!(v.get_str("format"), Some("bko-holt-stick-copy"));
+        assert_eq!((v.get_str("install_id"), v.get_str("path")), (Some(BABBAGE), Some(format!("{MACHINES}/{BABBAGE}/system.json").as_str())));
+        assert_eq!(v.get_u64("bytes"), Some(text.len() as u64));
+        assert_eq!(v.get_str("sha256"), Some(crate::bytes::sha256_hex(text.as_bytes()).as_str()));
+        assert_eq!(v.get_str("system_sha256"), Some(crate::bytes::sha256_hex(b.as_bytes()).as_str()));
+        assert_eq!(v.get_str("out"), Some(out.to_str().unwrap()));
+        let keys: Vec<&str> = v.as_object().unwrap().iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["format", "schema", "version", "generated", "dry_run", "install_id", "path", "out", "bytes", "sha256", "system_sha256"]);
+        let mut g = v.clone();
+        g.put("out", "OUT");
+        crate::testutil::golden_json("stick-copy-json", "ok", &g);
+        // The ID in capitals: the same machine, case aside.
+        let out2 = d.path().join("again.json");
+        let v = copy_layout(&sys_of(&t), None, &LOVELACE.to_uppercase(), &out2).unwrap();
+        assert_eq!(v.get_str("install_id"), Some(LOVELACE));
+        assert_eq!(crate::json::parse(&std::fs::read_to_string(&out2).unwrap()).unwrap(), crate::json::parse(DUMP).unwrap());
+        // OUT there already: refused, and the file there left as it is.
+        let (_, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), jsonout::ErrorCode::CopyFailed);
+        assert!(line.contains("layout.json"), "{line}");
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), text);
+    }
+
+    #[test]
+    fn copy_refuses_what_it_cant_take() {
+        use jsonout::ErrorCode as E;
+        let d = private_dir();
+        let out = d.path().join("layout.json");
+        let gone = |out: &std::path::Path| assert!(!out.exists(), "{} written", out.display());
+        // No such machine.
+        let t = linux_tree(&config(two_with_layouts()), None);
+        let (_, line) = refused(copy_layout(&sys_of(&t), None, "2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6", &out), E::NoSuchMachine);
+        assert!(line.contains("it has 2"), "{line}");
+        gone(&out);
+        // Two directories named by it, case aside.
+        let up = LOVELACE.to_uppercase();
+        let a = system(LOVELACE, "lovelace", "", &with_layout(DUMP));
+        let b = system(&up, "lovelace", "", &with_layout(DUMP));
+        let t = linux_tree(&config(vec![machine_dir(LOVELACE, &a, Some(&sum(&a))), machine_dir(&up, &b, Some(&sum(&b)))]), None);
+        let (dv, _) = document(&sys_of(&t), None);
+        assert_eq!(dv.arr_at(&["machines"]).len(), 2, "{}", dv.pretty());
+        let (_, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), E::TwoMachines);
+        assert!(line.contains("2 directories"), "{line}");
+        gone(&out);
+        // A checksum that doesn't match: not copied, said why.
+        let edited = a.replace("\"vda1\"", "\"vda9\"");
+        let t = linux_tree(&config(vec![machine_dir(LOVELACE, &edited, Some(&sum(&a)))]), None);
+        let (v, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), E::MachineNotOk);
+        assert!(line.contains("(lovelace) is checksum_bad: ") && line.contains("doesn't match its .sha256"), "{line}");
+        crate::testutil::golden_json("stick-copy-json", "checksum-bad", &v);
+        gone(&out);
+        // Damaged: no .sha256, or not JSON.
+        let t = linux_tree(&config(vec![machine_dir(LOVELACE, &a, None), machine_dir(BABBAGE, "{\"format\": \"backot", Some(&sum("{\"format\": \"backot")))]), None);
+        let (_, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), E::MachineNotOk);
+        assert!(line.contains("checksum_missing"), "{line}");
+        let (_, line) = refused(copy_layout(&sys_of(&t), None, BABBAGE, &out), E::MachineNotOk);
+        assert!(line.contains("unreadable") && line.contains("isn't JSON"), "{line}");
+        gone(&out);
+        // Today's system.json, with no layout in it; or one that isn't a document.
+        let plain = system(LOVELACE, "lovelace", "", "");
+        let odd = system(BABBAGE, "babbage", "", ", \"layout\": \"see the backup\"");
+        let t = linux_tree(&config(vec![machine_dir(LOVELACE, &plain, Some(&sum(&plain))), machine_dir(BABBAGE, &odd, Some(&sum(&odd)))]), None);
+        let (v, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), E::NoLayout);
+        assert!(line.contains("carries no disk layout"), "{line}");
+        crate::testutil::golden_json("stick-copy-json", "no-layout", &v);
+        let (_, line) = refused(copy_layout(&sys_of(&t), None, BABBAGE, &out), E::NoLayout);
+        assert!(line.contains("isn't a bko-holt dump document"), "{line}");
+        gone(&out);
+        // A layout load wouldn't take: another format, an OS it doesn't support.
+        let other = system(LOVELACE, "lovelace", "", &with_layout(&DUMP.replace("\"bko-holt\"", "\"other\"")));
+        let os = system(BABBAGE, "babbage", "", &with_layout(&DUMP.replace("\"debian\"", "\"plan9\"")));
+        let t = linux_tree(&config(vec![machine_dir(LOVELACE, &other, Some(&sum(&other))), machine_dir(BABBAGE, &os, Some(&sum(&os)))]), None);
+        let (_, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), E::LayoutRefused);
+        assert!(line.contains("not a bko-holt dump"), "{line}");
+        let (_, line) = refused(copy_layout(&sys_of(&t), None, BABBAGE, &out), E::LayoutRefused);
+        assert!(line.contains("plan9"), "{line}");
+        gone(&out);
+        // The config partition itself: missing, or reformatted.
+        let t = Tree::new("stick");
+        t.file("/proc/self/mountinfo", "");
+        let (_, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), E::ConfigNotOk);
+        assert!(line.contains("is missing: "), "{line}");
+        let mut c = config(two_with_layouts());
+        c[39] ^= 1;
+        let (_, line) = refused(copy_layout(&sys_of(&linux_tree(&c, None)), None, LOVELACE, &out), E::ConfigNotOk);
+        assert!(line.contains("is damaged: ") && line.contains("reformatted"), "{line}");
+        // Not root.
+        let t = linux_tree(&config(two_with_layouts()), None);
+        let (_, line) = refused(copy_layout(&Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), false), None, LOVELACE, &out), E::ConfigNotOk);
+        assert!(line.contains("is unreadable: "), "{line}");
+        gone(&out);
+        // OUT in a directory that isn't there: nothing left behind.
+        let (_, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &d.path().join("no/such/layout.json")), E::CopyFailed);
+        assert!(line.contains("nothing left there"), "{line}");
+    }
+
+    #[test]
+    fn a_stick_document_keeps_no_bytes() {
+        // --json alone: what --copy keeps is never kept, nor the layout shown.
+        let t = linux_tree(&config(two_with_layouts()), None);
+        let (v, code, kept) = scan(&sys_of(&t), None, None);
+        assert_eq!(code, 0);
+        assert!(kept.is_empty());
+        assert!(!jsonout::line(&v).contains("ext4") && !jsonout::line(&v).contains("\"layout\""));
+        let (_, _, kept) = scan(&sys_of(&t), None, Some(BABBAGE));
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].0, BABBAGE);
     }
 }

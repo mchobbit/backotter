@@ -9,8 +9,9 @@
 //! of each candidate (RT10d).  The status document is status.rs's
 //! (RT10e), made with header and line here.  The writing stages' events
 //! (RT10f, RT10g) are made here and written by exec.rs as they happen.
-//! `bko-holt stick --json`'s document is stick.rs's (RT10k), and
-//! `recovery-words`' recoverycmd.rs's (RT10p).
+//! `bko-holt stick --json`'s document is stick.rs's (RT10k), as is `stick
+//! --copy`'s (open question 8), and `recovery-words`' recoverycmd.rs's
+//! (RT10p).
 //! Text mode never comes here: everything is behind `--json` or the
 //! variable.
 
@@ -32,12 +33,12 @@ pub const NO_COMMIT_VAR: &str = "BKO_HOLT_NO_COMMIT";
 /// What `features` in the api document names: the parts of the protocol
 /// this bko-holt has, so a screen needing a later one can say "not on this
 /// stick".  Grows with RT10's steps.
-pub const FEATURES: &[&str] = &["no_commit_env", "stop", "progress", "candidates", "sizes", "stick", "recovery_words"];
+pub const FEATURES: &[&str] = &["no_commit_env", "stop", "progress", "candidates", "sizes", "stick", "recovery_words", "stick_copy"];
 
 /// The documents this bko-holt writes, each with the schemas it writes.
 /// Grows with RT10's steps (plan: RT10c, status: RT10e, events: RT10f,
-/// stick: RT10k, recovery: RT10p).
-pub const DOCUMENTS: &[(&str, &[u64])] = &[("plan", &[SCHEMA]), ("status", &[SCHEMA]), ("events", &[SCHEMA]), ("stick", &[SCHEMA]), ("recovery", &[SCHEMA]), ("error", &[SCHEMA])];
+/// stick: RT10k, recovery: RT10p, stick_copy: open question 8).
+pub const DOCUMENTS: &[(&str, &[u64])] = &[("plan", &[SCHEMA]), ("status", &[SCHEMA]), ("events", &[SCHEMA]), ("stick", &[SCHEMA]), ("recovery", &[SCHEMA]), ("stick_copy", &[SCHEMA]), ("error", &[SCHEMA])];
 
 /// `bko-holt-error`'s codes (holt-json.md, "bko-holt-error").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,10 +53,20 @@ pub enum ErrorCode {
     JsonNotHere,
     /// recovery-words' OUT isn't a new file in a private directory (RT10p).
     OutUnsafe,
+    /// `stick --copy`'s refusals (exit 1, open question 8): the config
+    /// partition isn't `ok`; no machine of that install ID; two directories
+    /// named by it, case aside; the machine's row isn't `ok`; its
+    /// system.json carries no layout; OUT couldn't be written (removed).
+    ConfigNotOk,
+    NoSuchMachine,
+    TwoMachines,
+    MachineNotOk,
+    NoLayout,
+    CopyFailed,
 }
 
 impl ErrorCode {
-    pub const ALL: [ErrorCode; 9] = [
+    pub const ALL: [ErrorCode; 15] = [
         ErrorCode::BadArgs,
         ErrorCode::NoCommit,
         ErrorCode::LayoutUnreadable,
@@ -65,6 +76,12 @@ impl ErrorCode {
         ErrorCode::SchemaUnknown,
         ErrorCode::JsonNotHere,
         ErrorCode::OutUnsafe,
+        ErrorCode::ConfigNotOk,
+        ErrorCode::NoSuchMachine,
+        ErrorCode::TwoMachines,
+        ErrorCode::MachineNotOk,
+        ErrorCode::NoLayout,
+        ErrorCode::CopyFailed,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -78,6 +95,12 @@ impl ErrorCode {
             ErrorCode::SchemaUnknown => "schema_unknown",
             ErrorCode::JsonNotHere => "json_not_here",
             ErrorCode::OutUnsafe => "out_unsafe",
+            ErrorCode::ConfigNotOk => "config_not_ok",
+            ErrorCode::NoSuchMachine => "no_such_machine",
+            ErrorCode::TwoMachines => "two_machines",
+            ErrorCode::MachineNotOk => "machine_not_ok",
+            ErrorCode::NoLayout => "no_layout",
+            ErrorCode::CopyFailed => "copy_failed",
         }
     }
 }
@@ -1088,7 +1111,7 @@ mod tests {
     #[test]
     fn error_document() {
         let codes: Vec<&str> = ErrorCode::ALL.iter().map(|c| c.as_str()).collect();
-        assert_eq!(codes, ["bad_args", "no_commit", "layout_unreadable", "layout_not_json", "layout_refused", "arch_mismatch", "schema_unknown", "json_not_here", "out_unsafe"]);
+        assert_eq!(codes, ["bad_args", "no_commit", "layout_unreadable", "layout_not_json", "layout_refused", "arch_mismatch", "schema_unknown", "json_not_here", "out_unsafe", "config_not_ok", "no_such_machine", "two_machines", "machine_not_ok", "no_layout", "copy_failed"]);
         let d = error_doc(2, ErrorCode::BadArgs, "bko-holt load: unknown argument \"--frob\"\n");
         assert!(d.ends_with('\n') && d.matches('\n').count() == 1, "{d}");
         let v = crate::json::parse(&d).unwrap();

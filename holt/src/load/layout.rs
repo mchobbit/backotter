@@ -173,6 +173,10 @@ impl Layout {
     /// Checks the document is a dump `load` can read, and reads its disks.
     pub fn from_json(v: Value) -> Result<Layout, String> {
         let format = v.get("format").and_then(Value::as_str).unwrap_or("");
+        if format == "backotter-system" {
+            // A stick's system.json: the dump is inside it (open question 8).
+            return Err("a backotter-system document (a stick's system.json), not a bko-holt dump: `bko-holt stick --copy INSTALL_ID OUT --json` writes the layout it carries to OUT, which load takes".into());
+        }
         if !FORMATS.contains(&format) {
             return Err(format!("not a bko-holt dump (format {format:?}, want {:?})", FORMATS[0]));
         }

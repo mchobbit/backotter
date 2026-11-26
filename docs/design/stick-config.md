@@ -284,9 +284,20 @@ backup engine, still to be chosen (restic or borg).
   "requirements": {
     "zfs_features": ["encryption", "draid"],
     "kernel_modules": ["nvme", "e1000e", "iwlwifi"]
-  }
+  },
+  "layout": {"format": "bko-holt", "schema": 1, "…": "the bko-holt dump of this machine, whole"}
 }
 ```
+
+- `layout` is the machine's disk layout: the whole `bko-holt dump`
+  document, as a JSON object, as dump wrote it.  The restore reads it with
+  `bko-holt stick --copy INSTALL_ID OUT --json`, which checks the file's
+  `.sha256` and writes this member to OUT for `bko-holt load`
+  (holt-json.md, "bko-holt-stick-copy").  A default chosen 2026-11-26
+  where this spec was open (holt-json.md's open question 8): `storage` and
+  `boot` above stay placeholders, since the dump has its own, inside
+  `layout`.  A system.json without `layout` (none is written yet) gives the
+  restore no layout from the stick.
 
 - `sequence` goes up by one with each backup of that machine, so "which copy is
   newer" never depends on clocks.
@@ -373,8 +384,9 @@ On the stick, the restore code looks only at the disk it booted from:
    pick one.
 2. It never scans other disks for a `BACKOTTER` label: a second stick, or a
    disk of the machine being rescued, could carry one.
-3. The config partition is mounted read-only, and read-write only to save a
-   restore log.
+3. The config partition is read through bko-holt, mounted nowhere (`bko-holt
+   stick --json`, and `stick --copy` for the layout), and mounted read-write
+   only to save a restore log.
 4. If there's one machine directory, it's proposed.  If there are several, the
    one whose `dmi.system_uuid` matches this machine is preselected, otherwise
    the user chooses.  Before anything is written, a confirmation screen shows
@@ -458,8 +470,11 @@ feature means the stick can't import the pool at all.
   the old way), runs `stick/PLATFORM/checks.sh`, and checks from inside that the
   live system finds the config partition the way "Finding the config at boot"
   says, and can write to it.
-- Not built: the backup tool's stick module, the restore side's config reader,
-  restore logs, and `backotter stick repair`.  They come with the backup tool.
+- The restore side's config reader is bko-holt's (`stick --json`, and
+  `stick --copy` for a machine's layout); bko-rescue writes the restore logs.
+- Not built: the backup tool's stick module (and so no system.json carries a
+  `layout` yet), and `backotter stick repair`.  They come with the backup
+  tool.
 
 ## Decisions (2026-10-29)
 

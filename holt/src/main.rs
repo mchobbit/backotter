@@ -12,6 +12,7 @@ const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
        bko-holt report-bug [--output FILE] [--stderr FILE]... [-- LOAD-ARGS...]
        bko-holt recovery-key-file OUT
        bko-holt stick --json
+       bko-holt stick --copy INSTALL_ID OUT --json
        bko-holt recovery-words OUT --json
        bko-holt -h | --help | -V | --version | --license
 
@@ -24,7 +25,8 @@ const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
               turns Ubuntu Core's recovery key (on standard input) into the
               key file cryptsetup and `load --key-file` take
   stick       reads the rescue stick's config partition (its machines),
-              as JSON, for bko-rescue
+              as JSON, for bko-rescue; with --copy, writes one machine's
+              disk layout from it to a file for load
   recovery-words
               checks a BackOtter recovery key (its words on standard input)
               and writes the repository password it stands for, for

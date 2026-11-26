@@ -18,6 +18,11 @@ Haiku; Redox and Sculpt OS from Linux):
   machines' `system.json`) off the disk the system booted from, without
   mounting it, for bko-rescue (`src/stick.rs`, `src/fatfs.rs`;
   docs/design/holt-json.md, "bko-holt-stick").
+- `bko-holt stick --copy INSTALL_ID OUT --json` reads it the same way and
+  writes that machine's disk layout to a new private file OUT for `load`:
+  the `bko-holt dump` its system.json carries as `layout`, taken from the
+  bytes whose `.sha256` it checked (`src/stick.rs`; holt-json.md,
+  "bko-holt-stick-copy").
 - `bko-holt recovery-words OUT --json` checks a BackOtter recovery key, its
   words on standard input, and writes the repository password it stands
   for to a new private file OUT, for bko-rescue (`src/recoverycmd.rs`;

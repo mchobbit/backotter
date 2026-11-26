@@ -1,9 +1,9 @@
 # Spec: faster rescue-image rebuilds, and farm balance
 
-Status: **the seven speedups are approved in principle** by the user
-(2026-11-26, "Yes to all 1-7"). This spec designs them and lists the
-decisions the user still has to take (§13, D1-D17 and FD1-FD6), each with my
-recommendation. Nothing is built. Reviewed against the scripts on
+Status: **approved.** The seven speedups were approved in principle by the user
+(2026-11-26, "Yes to all 1-7"), and every recommendation of §13 (D1-D17,
+FD1-FD6) on 2026-11-26 ("Approve all"), D6 as the standing rule (each round
+deletes `images/P/prev-*` and `prev-x*` sets older than the last two). Nothing is built. Reviewed against the scripts on
 2026-11-26 (§16 lists what the review changed). Hosts: chopin, cinqcent (big), copland,
 cage, czerny (small, build role), choubox (small, no build role), all amd64.
 Bigfoot (arm64) is out of scope except where noted. est. marks an estimate;

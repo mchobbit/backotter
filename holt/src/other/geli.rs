@@ -300,7 +300,8 @@ enum KeyedBy {
     /// Key files and a passphrase.
     Both,
     /// A keyed_by this holt doesn't know (a newer dump's): none of the
-    /// three, so load takes it as it took any other word, a temporary key.
+    /// three, so load refuses it (geli_refusals) rather than make it with
+    /// a temporary key that boot never replaces.
     Unknown,
 }
 
@@ -649,6 +650,10 @@ impl Builder<'_> {
         }
         if m.slots().contains(&1) && self.geli_key(p, 1).is_none() {
             self.problems.push(format!("{src}: the source's GELI key slot 1 is in use; give its passphrase with --key-file {src}:1=FILE, or the restored system loses that way in"));
+        }
+        if p.keyed_by() == KeyedBy::Unknown {
+            let word = p.rec.get("keyed_by").and_then(Value::as_str).unwrap_or("");
+            self.problems.push(format!("{src}: GELI keyed by {word:?}, which this bko-holt doesn't know (passphrase, keyfile, both), so it can't tell what unlocks the restored provider"));
         }
         if p.keyed_by() == KeyedBy::Keyfile && p.keyfiles().is_empty() && self.geli_key(p, 0).is_none() {
             self.problems.push(format!("{src}: a GELI key file unlocks it, and the dump doesn't say which (loader.conf, rc.conf); give it with --key-file {src}=FILE"));
@@ -1146,6 +1151,9 @@ mod tests {
                 put(r, "keyed_by", Value::from("keyfile"));
                 put(r, "iterations", Value::from(-1i64));
             }), "vtbd0p3: a GELI key file unlocks it, and the dump doesn't say which (loader.conf, rc.conf); give it with --key-file vtbd0p3=FILE"),
+            // A keyed_by this holt doesn't know: refused, not made with a
+            // temporary key that nothing replaces.
+            (Box::new(|r| put(r, "keyed_by", Value::from("Both"))), "vtbd0p3: GELI keyed by \"Both\", which this bko-holt doesn't know (passphrase, keyfile, both), so it can't tell what unlocks the restored provider"),
         ];
         for (change, want) in cases {
             let b = plan(zfs_on_geli(change), &[]);

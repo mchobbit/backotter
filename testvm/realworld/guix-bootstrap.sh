@@ -15,6 +15,11 @@
 #   KEYS_DIR  authorized_keys (root's login) and ssh_host_ed25519_key{,.pub}
 #             (the fixed host key), BackShot1's keys/ on the backup drive
 #
+# TARBALL and KEYS_DIR may be under /mnt (the backup drive at /mnt/bs1-backup),
+# which the target's mounts on /mnt cover: they are opened before the first
+# mount and read through the open files afterwards (and bash holds this
+# script open), so nothing is read by path once the target is mounted.
+#
 # Layout (UEFI, GPT): 1 GiB ESP vfat at /boot/efi, 8 GiB swap, the rest Btrfs
 # labelled guixroot with subvolumes @ (/), @home and @gnu (/gnu).  GRUB by
 # grub-efi-bootloader: EFI/Guix/grubx64.efi and its own NVRAM entry.  No
@@ -85,6 +90,11 @@ if [[ $MODE != prepare ]]; then
         command -v $t >/dev/null || die "this system has no $t"
     done
     [[ ! -e /gnu && ! -e /var/guix ]] || die "/gnu or /var/guix exists already: a Guix is installed here"
+    # Before /mnt is covered by the target: root's login key read now, the
+    # tarball (fd 3) and the host key pair (fds 4, 5) held open and read from
+    # those fds later.  Nothing is copied off the drive.
+    key=$(head -n 1 "$KEYS/authorized_keys")
+    exec 3<"$TARBALL" 4<"$KEYS/ssh_host_ed25519_key" 5<"$KEYS/ssh_host_ed25519_key.pub"
 fi
 if [[ $MODE != plain ]]; then
     for t in cryptsetup sfdisk wipefs blockdev; do command -v $t >/dev/null || die "this system has no $t"; done
@@ -142,7 +152,7 @@ capitals), open once.
 
 Then:
 
-    sudo bash $0 --luks install $SERIAL TARBALL KEYS_DIR HOSTNAME
+    sudo bash $(readlink -f "$0") --luks install $SERIAL TARBALL KEYS_DIR HOSTNAME
 
 BKO-GUIX-LUKS-PREPARED
 EOF
@@ -202,7 +212,8 @@ btrfs subvolume list /mnt
 
 step "Guix's binary tarball, its store on the target"
 mkdir -p "$BOOT"
-tar --warning=no-timestamp -C "$BOOT" -xf "$TARBALL"
+tar --warning=no-timestamp -C "$BOOT" -xJf - <&3    # TARBALL, opened above
+exec 3<&-
 mkdir -p /gnu /var/guix
 mount --bind "$BOOT/gnu" /gnu
 mount --bind "$BOOT/var/guix" /var/guix
@@ -217,7 +228,7 @@ done
 "$GUIX/bin/guix" archive --authorize <"$GUIX/share/guix/ci.guix.gnu.org.pub"
 "$GUIX/bin/guix" archive --authorize <"$GUIX/share/guix/bordeaux.guix.gnu.org.pub"
 export GUIX_LOCPATH=$GUIX/lib/locale
-"$GUIX/bin/guix-daemon" --build-users-group=guixbuild >/var/log/guix-daemon.log 2>&1 </dev/null &
+"$GUIX/bin/guix-daemon" --build-users-group=guixbuild >/var/log/guix-daemon.log 2>&1 </dev/null 4<&- 5<&- &
 daemon=$!
 for i in $(seq 30); do [[ -S /var/guix/daemon-socket/socket ]] && break; sleep 1; done
 [[ -S /var/guix/daemon-socket/socket ]] || die "guix-daemon didn't start: $(cat /var/log/guix-daemon.log)"
@@ -227,7 +238,6 @@ step "/mnt/etc/config.scm"
 root_uuid=$(blkid -s UUID -o value "$(part 3)")    # --luks: the LUKS header's UUID
 swap_uuid=$(blkid -s UUID -o value "$(part 2)")
 esp_uuid=$(blkid -s UUID -o value "$(part 1)")
-key=$(head -n 1 "$KEYS/authorized_keys")
 mkdir -p /mnt/etc
 fs() {  # fs MOUNT SUBVOL [extra]
     if [[ $MODE == plain ]]; then
@@ -320,8 +330,9 @@ echo "guix system init took $(( $(date +%s) - t0 )) s"
 
 step "the fixed host key, before the first boot's activation makes its own"
 install -d -m 755 /mnt/etc/ssh
-install -m 600 "$KEYS/ssh_host_ed25519_key" /mnt/etc/ssh/ssh_host_ed25519_key
-install -m 644 "$KEYS/ssh_host_ed25519_key.pub" /mnt/etc/ssh/ssh_host_ed25519_key.pub
+install -m 600 /dev/stdin /mnt/etc/ssh/ssh_host_ed25519_key <&4    # opened above
+install -m 644 /dev/stdin /mnt/etc/ssh/ssh_host_ed25519_key.pub <&5
+exec 4<&- 5<&-
 
 step "facts"
 sys=$(readlink -f /mnt/var/guix/profiles/system); sys=${sys#/mnt}

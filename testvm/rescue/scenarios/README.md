@@ -122,6 +122,16 @@ of lovelace's layout, which Disks runs before its first plan (the Rust
 tests' fake answers it too).  `stick-three`'s `08-copy` is the refusal
 (`no_layout`): app-three's and app-dry's Disks show it.
 
+The fakes match calls by argv only, so some answers don't belong
+together.  The `app-rec-*` plans were recorded against the HoltTest
+share's dump (its sha256 is in each plan's `layout`), and their
+`03-copy/out` is the corpus dump.  The copy documents say `dry_run`
+false and name the recording host's temp path in `out`, as recorded.
+Every other document in a dry scenario says `dry_run` false too.
+bko-rescue reads none of this: it takes `dry_run` from the api document
+only, and checks a copy by its exit, schema, version, install ID and
+`bytes`.
+
 | Scenario | What Disks to Review see |
 |---|---|
 | `app-rec-debian13` | recorded: rec-debian13-stack's whole-run plan for every plan, its status after partition for every status (a resume: Go on) |

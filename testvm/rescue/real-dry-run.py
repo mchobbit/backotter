@@ -81,6 +81,21 @@ def md5(path):
             h.update(b)
 
 
+def release(dev, img, mnt=None):
+    """Undoes make_stick: its mounts (MNT, and /cdrom when it is DEV's)
+    and the loop device, while it is still IMG's (the host is shared: a
+    loop device freed once may be another's by now).  Safe to run twice,
+    and on any path out."""
+    back = sh("losetup -n -O BACK-FILE %s" % dev, check_rc=False).strip()
+    if back not in (img, os.path.abspath(img), os.path.realpath(img)):
+        return
+    for m in ([mnt] if mnt else []) + ["/cdrom"]:
+        src = sh("findmnt -n -o SOURCE %s" % m, check_rc=False).strip()
+        if src == dev or src.startswith(dev + "p"):
+            sh("umount %s" % m, check_rc=False)
+    sh("losetup -d %s" % dev, check_rc=False)
+
+
 def make_stick(a, system):
     """The stick: a GPT disk image on a loop device, partition 1 a FAT with
     the marker in .disk/ (mounted at /cdrom read-only), 2 a filler, 3 the
@@ -103,25 +118,29 @@ def make_stick(a, system):
     table = "label: gpt\nstart=2048, size=16384, type=%s\nstart=18432, size=2048, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4\nstart=%d, size=%d, type=%s\n" % (fat, p3, cp["sectors"], fat)
     subprocess.run(["sfdisk", "-q", img], input=table.encode(), check=True)
     dev = sh("losetup -fP --show %s" % img).strip()
-    sh("udevadm settle", check_rc=False)
-    for _ in range(50):
-        if os.path.exists(dev + "p3"):
-            break
-        time.sleep(0.1)
-    sh("mkfs.vfat -n BKOMEDIUM %sp1 >/dev/null" % dev)
-    sh("dd if=%s of=%sp3 bs=1M conv=fsync status=none" % (os.path.join(a.stick_dir, "config.img"), dev))
     mnt = os.path.join(a.out, "stick-mnt")
-    os.makedirs(mnt, exist_ok=True)
-    rel = "backotter/machines/%s" % INSTALL_ID
-    body = (json.dumps(system, indent=2) + "\n").encode()
-    sh("mount -t vfat %sp3 %s && mkdir -p %s/%s" % (dev, mnt, mnt, rel))
-    with open(os.path.join(mnt, rel, "system.json"), "wb") as f:
-        f.write(body)
-    with open(os.path.join(mnt, rel, "system.json.sha256"), "w") as f:
-        f.write("%s  system.json\n" % hashlib.sha256(body).hexdigest())
-    sh("sync && umount %s" % mnt)
-    sh("mount -t vfat %sp1 %s && mkdir -p %s/.disk && cp %s %s/.disk/backotter.json && sync && umount %s" % (dev, mnt, mnt, marker_path, mnt, mnt))
-    sh("mkdir -p /cdrom && mount -t vfat -o ro %sp1 /cdrom" % dev)
+    try:
+        sh("udevadm settle", check_rc=False)
+        for _ in range(50):
+            if os.path.exists(dev + "p3"):
+                break
+            time.sleep(0.1)
+        sh("mkfs.vfat -n BKOMEDIUM %sp1 >/dev/null" % dev)
+        sh("dd if=%s of=%sp3 bs=1M conv=fsync status=none" % (os.path.join(a.stick_dir, "config.img"), dev))
+        os.makedirs(mnt, exist_ok=True)
+        rel = "backotter/machines/%s" % INSTALL_ID
+        body = (json.dumps(system, indent=2) + "\n").encode()
+        sh("mount -t vfat %sp3 %s && mkdir -p %s/%s" % (dev, mnt, mnt, rel))
+        with open(os.path.join(mnt, rel, "system.json"), "wb") as f:
+            f.write(body)
+        with open(os.path.join(mnt, rel, "system.json.sha256"), "w") as f:
+            f.write("%s  system.json\n" % hashlib.sha256(body).hexdigest())
+        sh("sync && umount %s" % mnt)
+        sh("mount -t vfat %sp1 %s && mkdir -p %s/.disk && cp %s %s/.disk/backotter.json && sync && umount %s" % (dev, mnt, mnt, marker_path, mnt, mnt))
+        sh("mkdir -p /cdrom && mount -t vfat -o ro %sp1 /cdrom" % dev)
+    except BaseException:
+        release(dev, img, mnt)
+        raise
     return img, dev
 
 
@@ -174,120 +193,121 @@ def main():
         "layout": layout,
     }
     img, dev = make_stick(a, system)
-
-    # bko-holt's view of it, read only: the stick found, the machine ok,
-    # and its copy the share's layout.
-    st = json.loads(sh("BKO_HOLT_NO_COMMIT=1 %s stick --json" % holt))
-    machines = st.get("machines") or []
-    check(st["config"]["state"] == "ok" and st["config"]["dev"] == dev + "p3", "stick --json: the config partition %s found on %s (%s)" % (
-        st["config"]["dev"], (st.get("boot_disk") or {}).get("node"), st["config"]["why"]))
-    check(len(machines) == 1 and machines[0]["state"] == "ok" and machines[0]["install_id"] == INSTALL_ID,
-          "stick --json: the machine is there and ok (%s)" % [(m["install_id"], m["state"], m["why"]) for m in machines])
-    kdir = os.path.join(a.out, "copy-check")
-    sh("rm -rf %s && mkdir -m 700 %s" % (kdir, kdir))
-    r = subprocess.run([holt, "stick", "--copy", INSTALL_ID, os.path.join(kdir, "layout.json"), "--json"], capture_output=True,
-                       env=dict(os.environ, BKO_HOLT_NO_COMMIT="1"))
-    copied = open(os.path.join(kdir, "layout.json"), "rb").read() if os.path.exists(os.path.join(kdir, "layout.json")) else b""
-    check(r.returncode == 0 and json.loads(r.stdout).get("format") == "bko-holt-stick-copy", "stick --copy: exit 0, its document (%s)" % r.stdout.decode(errors="replace")[:300])
-    check(copied and json.loads(copied) == layout, "stick --copy: OUT is the share's layout (%d bytes, byte for byte: %s)" % (len(copied), copied == layout_text))
-    summary_copy = {"bytes": len(copied), "same_bytes": copied == layout_text}
-    sh("rm -rf %s" % kdir)
-
-    # Before: every disk the run could touch, and the stick, whole.
-    disks = ["/dev/%s" % t for t in targets + [a.decoy]]
-    sh("sync")
-    before = {d: md5(d) for d in disks}
-    before[img] = md5(img)
-    with open(os.path.join(a.out, "md5-before.json"), "w") as f:
-        json.dump(before, f, indent=1)
-    holt_state_before = sorted(os.listdir("/run/bko-holt")) if os.path.isdir("/run/bko-holt") else []
-
-    env = {"TERM": "xterm", "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
-    d = drive.Drive(a.bko_rescue, ["--dry-run", "--plain", "--holt", holt, "--rustic", rustic], 24, 80, env, timeout=120)
-    summary = {"host": snap_host, "version": version, "stick_dev": dev, "copy": summary_copy}
-    pp = "dry-run passphrase"
     try:
-        d.wait("t, s]: ")
-        d.type("1", line=True)
-        d.wait("Type the backup password, or press Enter alone for other choices:")
-        d.type(open(pw_file).read().strip(), line=True)
-        m = d.mark()
-        d.wait(", b]: ", since=m)
-        m = d.mark()
-        d.type("1", line=True)
-        overview = "o) these are right"
-        d.wait(overview, since=m)
-        for i, t in enumerate(targets, 1):
-            m = d.mark()
-            d.type(str(i), line=True)
-            d.wait("where does it go?", since=m)
-            d.wait("Choose [", since=m)
-            text = d.text[m:].decode(errors="replace")
-            row = re.search(r"(\d+)\) %s, " % t, text)
-            check(row is not None, "old disk %d: its target %s is offered" % (i, t))
-            m = d.mark()
-            d.type(row.group(1) if row else "b", line=True)
-            d.wait(overview, since=m)
-        d.type("o", line=True)
-        d.wait("Passphrase: ")
-        d.type(pp, line=True)
-        d.wait("Type it again: ")
-        # Each mark before the line typed: its answer comes as it is sent.
-        m = d.mark()
-        d.type(pp, line=True)
-        for n in range(1, len(targets) + 1):
-            d.wait("or b to go back: ", since=m)
-            text = d.text[m:].decode(errors="replace")
-            want = re.search(r"type its size and name, (.+?), or b to go back: ", text)
-            if not want:
-                check(False, "disk %d: its confirmation asked by size and name (no serial here)" % n)
-                break
-            m = d.mark()
-            d.type(want.group(1), line=True)
-        d.wait("Choose [r, c, a, b]: ", since=m)
-        # Anchored after the "r": an earlier prompt never stands for Done's.
-        m = d.mark()
-        d.type("r", line=True)
-        d.wait("is done", secs=600, since=m)
-        d.wait("leave bko-rescue", since=m)
-        at = d.text.find(b"leave bko-rescue", m)
-        d.wait("Choose [", since=at)
-        text = d.dump()
-        n = re.search(r"Nothing was written: (\d+) commands? would have run, and none did\.", text)
-        check(n is not None, "Done: nothing was written, N commands would have run")
-        summary["would"] = int(n.group(1)) if n else None
-        leave = re.search(r"(\w)\) leave bko-rescue", text)
-        d.type(leave.group(1) if leave else "q", line=True)
-        code = d.exit(30)
-        check(code == 0, "bko-rescue exits 0 (%s)" % code)
-    except drive.Failed as e:
-        check(False, "the flow: %s" % e)
-    finally:
-        with open(os.path.join(a.out, "transcript.txt"), "w") as f:
-            f.write(d.dump())
-        d.close()
-    text = open(os.path.join(a.out, "transcript.txt")).read()
-    check("DRY RUN: nothing will be written" in text, "the banner on every screen")
-    check("\x1b" not in text, "plain mode: no escape sequences")
-    check(pp not in text, "the passphrase never shown")
+        # bko-holt's view of it, read only: the stick found, the machine ok,
+        # and its copy the share's layout.
+        st = json.loads(sh("BKO_HOLT_NO_COMMIT=1 %s stick --json" % holt))
+        machines = st.get("machines") or []
+        check(st["config"]["state"] == "ok" and st["config"]["dev"] == dev + "p3", "stick --json: the config partition %s found on %s (%s)" % (
+            st["config"]["dev"], (st.get("boot_disk") or {}).get("node"), st["config"]["why"]))
+        check(len(machines) == 1 and machines[0]["state"] == "ok" and machines[0]["install_id"] == INSTALL_ID,
+              "stick --json: the machine is there and ok (%s)" % [(m["install_id"], m["state"], m["why"]) for m in machines])
+        kdir = os.path.join(a.out, "copy-check")
+        sh("rm -rf %s && mkdir -m 700 %s" % (kdir, kdir))
+        r = subprocess.run([holt, "stick", "--copy", INSTALL_ID, os.path.join(kdir, "layout.json"), "--json"], capture_output=True,
+                           env=dict(os.environ, BKO_HOLT_NO_COMMIT="1"))
+        copied = open(os.path.join(kdir, "layout.json"), "rb").read() if os.path.exists(os.path.join(kdir, "layout.json")) else b""
+        check(r.returncode == 0 and json.loads(r.stdout).get("format") == "bko-holt-stick-copy", "stick --copy: exit 0, its document (%s)" % r.stdout.decode(errors="replace")[:300])
+        check(copied and json.loads(copied) == layout, "stick --copy: OUT is the share's layout (%d bytes, byte for byte: %s)" % (len(copied), copied == layout_text))
+        summary_copy = {"bytes": len(copied), "same_bytes": copied == layout_text}
+        sh("rm -rf %s" % kdir)
 
-    sh("sync")
-    after = {x: md5(x) for x in disks}
-    sh("umount /cdrom", check_rc=False)
-    sh("losetup -d %s" % dev, check_rc=False)
-    check(not sh("findmnt -n /cdrom", check_rc=False).strip(), "/cdrom unmounted")
-    after[img] = md5(img)
-    with open(os.path.join(a.out, "md5-after.json"), "w") as f:
-        json.dump(after, f, indent=1)
-    for x in before:
-        check(before[x] == after[x], "%s unchanged (md5 %s)" % (x, after[x][:12]))
-    state = sorted(os.listdir("/run/bko-holt")) if os.path.isdir("/run/bko-holt") else []
-    check("partitioned" not in state and "load.lock" not in state, "bko-holt made no partition record and holds no lock (%s, before %s)" % (state, holt_state_before))
-    summary.update(checks_failed=FAILS, before=before, after=after, holt_state=state)
-    with open(os.path.join(a.out, "summary.json"), "w") as f:
-        json.dump(summary, f, indent=1)
-    print("%d failed" % len(FAILS))
-    return 1 if FAILS else 0
+        # Before: every disk the run could touch, and the stick, whole.
+        disks = ["/dev/%s" % t for t in targets + [a.decoy]]
+        sh("sync")
+        before = {d: md5(d) for d in disks}
+        before[img] = md5(img)
+        with open(os.path.join(a.out, "md5-before.json"), "w") as f:
+            json.dump(before, f, indent=1)
+        holt_state_before = sorted(os.listdir("/run/bko-holt")) if os.path.isdir("/run/bko-holt") else []
+
+        env = {"TERM": "xterm", "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+        d = drive.Drive(a.bko_rescue, ["--dry-run", "--plain", "--holt", holt, "--rustic", rustic], 24, 80, env, timeout=120)
+        summary = {"host": snap_host, "version": version, "stick_dev": dev, "copy": summary_copy}
+        pp = "dry-run passphrase"
+        try:
+            d.wait("t, s]: ")
+            d.type("1", line=True)
+            d.wait("Type the backup password, or press Enter alone for other choices:")
+            d.type(open(pw_file).read().strip(), line=True)
+            m = d.mark()
+            d.wait(", b]: ", since=m)
+            m = d.mark()
+            d.type("1", line=True)
+            overview = "o) these are right"
+            d.wait(overview, since=m)
+            for i, t in enumerate(targets, 1):
+                m = d.mark()
+                d.type(str(i), line=True)
+                d.wait("where does it go?", since=m)
+                d.wait("Choose [", since=m)
+                text = d.text[m:].decode(errors="replace")
+                row = re.search(r"(\d+)\) %s, " % t, text)
+                check(row is not None, "old disk %d: its target %s is offered" % (i, t))
+                m = d.mark()
+                d.type(row.group(1) if row else "b", line=True)
+                d.wait(overview, since=m)
+            d.type("o", line=True)
+            d.wait("Passphrase: ")
+            d.type(pp, line=True)
+            d.wait("Type it again: ")
+            # Each mark before the line typed: its answer comes as it is sent.
+            m = d.mark()
+            d.type(pp, line=True)
+            for n in range(1, len(targets) + 1):
+                d.wait("or b to go back: ", since=m)
+                text = d.text[m:].decode(errors="replace")
+                want = re.search(r"type its size and name, (.+?), or b to go back: ", text)
+                if not want:
+                    check(False, "disk %d: its confirmation asked by size and name (no serial here)" % n)
+                    break
+                m = d.mark()
+                d.type(want.group(1), line=True)
+            d.wait("Choose [r, c, a, b]: ", since=m)
+            # Anchored after the "r": an earlier prompt never stands for Done's.
+            m = d.mark()
+            d.type("r", line=True)
+            d.wait("is done", secs=600, since=m)
+            d.wait("leave bko-rescue", since=m)
+            at = d.text.find(b"leave bko-rescue", m)
+            d.wait("Choose [", since=at)
+            text = d.dump()
+            n = re.search(r"Nothing was written: (\d+) commands? would have run, and none did\.", text)
+            check(n is not None, "Done: nothing was written, N commands would have run")
+            summary["would"] = int(n.group(1)) if n else None
+            leave = re.search(r"(\w)\) leave bko-rescue", text)
+            d.type(leave.group(1) if leave else "q", line=True)
+            code = d.exit(30)
+            check(code == 0, "bko-rescue exits 0 (%s)" % code)
+        except drive.Failed as e:
+            check(False, "the flow: %s" % e)
+        finally:
+            with open(os.path.join(a.out, "transcript.txt"), "w") as f:
+                f.write(d.dump())
+            d.close()
+        text = open(os.path.join(a.out, "transcript.txt")).read()
+        check("DRY RUN: nothing will be written" in text, "the banner on every screen")
+        check("\x1b" not in text, "plain mode: no escape sequences")
+        check(pp not in text, "the passphrase never shown")
+
+        sh("sync")
+        after = {x: md5(x) for x in disks}
+        release(dev, img)
+        check(not sh("findmnt -n /cdrom", check_rc=False).strip(), "/cdrom unmounted")
+        after[img] = md5(img)
+        with open(os.path.join(a.out, "md5-after.json"), "w") as f:
+            json.dump(after, f, indent=1)
+        for x in before:
+            check(before[x] == after[x], "%s unchanged (md5 %s)" % (x, after[x][:12]))
+        state = sorted(os.listdir("/run/bko-holt")) if os.path.isdir("/run/bko-holt") else []
+        check("partitioned" not in state and "load.lock" not in state, "bko-holt made no partition record and holds no lock (%s, before %s)" % (state, holt_state_before))
+        summary.update(checks_failed=FAILS, before=before, after=after, holt_state=state)
+        with open(os.path.join(a.out, "summary.json"), "w") as f:
+            json.dump(summary, f, indent=1)
+        print("%d failed" % len(FAILS))
+        return 1 if FAILS else 0
+    finally:
+        release(dev, img)
 
 
 if __name__ == "__main__":

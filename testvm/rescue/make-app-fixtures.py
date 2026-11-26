@@ -101,11 +101,12 @@ def main():
     os.remove(os.path.join(app, "recorded.txt"))
     write(app, "README", "stick-three's recorded calls (version, stick, recovery-words, stick --copy's no_layout), and report-bug's, "
                          "hand-written: written by make-app-fixtures.py for app-test.py.\n")
-    report = os.path.join(app, "08-report")
+    # After stick-three's 08-copy.
+    report = os.path.join(app, "09-report")
     write(report, "argv", "report-bug\n--output\n*\n--strip-file\n*\n")
     write(report, "out", "BackOtter bug report (fake-bko-holt's)\nhost-1: a redacted report\n")
     write(report, "stderr", "bko-holt report-bug: (the fake's report)\n")
-    report = os.path.join(app, "09-report-unredacted")
+    report = os.path.join(app, "10-report-unredacted")
     write(report, "argv", "report-bug\n--output\n*\n--no-redact\n")
     write(report, "out", "BackOtter bug report, NOT redacted (fake-bko-holt's)\nlovelace: an unredacted report\n")
     # A dry run's: the api says the lock took (no_commit, dry_run).

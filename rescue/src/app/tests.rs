@@ -88,6 +88,9 @@ struct Fake {
     /// Calls answered in turn, as fake-bko-holt's FAKE_BKO_HOLT_STATE does:
     /// the first matching one not answered yet, then the last again.
     in_turn: bool,
+    /// `stick --copy`'s exit and document, when not the scenario's (its
+    /// OUT is still written, with stick-layouts' dump).
+    copy: Option<(i32, String)>,
 }
 
 /// A scenario's events file as fake-bko-holt streams it: its lines but
@@ -208,6 +211,11 @@ impl Fake {
         match prog.as_str() {
             "bko-holt" => match a[0].as_str() {
                 "--version" => ok(self.version.clone().map(String::into_bytes).unwrap_or_else(|| fixture(&format!("scenarios/{}/01-version/stdout", self.holt)))),
+                "stick" if a.get(1).map(String::as_str) == Some("--copy") && self.copy.is_some() => {
+                    let (code, doc) = self.copy.clone().unwrap();
+                    write_new(Path::new(&a[3]), &fixture("scenarios/stick-layouts/03-copy/out")).unwrap();
+                    Output { code: Some(code), stdout: doc.into_bytes(), ..Output::default() }
+                }
                 "stick" if a.get(1).map(String::as_str) == Some("--copy") => {
                     // The layout's copy: the disks scenario's recorded
                     // call, else the stick's (a refusal), writing its OUT.
@@ -447,6 +455,7 @@ fn t_with(holt: &str, rustic: &str, wh: Where, dry_run: bool, f: impl FnOnce(&mu
         tools: vec!["bko-holt", "rustic-bko", "ckbcomp", "loadkeys", "mount", "umount", "gzip", "reboot", "poweroff"],
         disks: "app-lovelace".into(),
         in_turn: false,
+        copy: None,
     };
     f(&mut fake);
     let session = Session::new(&base).unwrap();
@@ -783,7 +792,7 @@ fn rustics_failures_each_have_their_help() {
             }
         }
         let base = t.base.0.clone();
-        let fake = Fake { base: base.clone(), holt: "stick-three".into(), version: None, stick: None, rustic: "lovelace".into(), disks: "app-lovelace".into(), config: None, seen: t.seen.clone(), tools: vec!["bko-holt", "rustic-bko"], in_turn: false };
+        let fake = Fake { base: base.clone(), holt: "stick-three".into(), version: None, stick: None, rustic: "lovelace".into(), disks: "app-lovelace".into(), config: None, seen: t.seen.clone(), tools: vec!["bko-holt", "rustic-bko"], in_turn: false, copy: None };
         t.app = App::new(Box::new(Failing(fake, stderr)), Session::new(&base).unwrap(), Opts { holt: None, rustic: "rustic-bko".into(), dry_run: false }, LINUX);
         let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, B(B_RAW), Reply::Ok, Back, Reply::Quit]]));
         assert_eq!(t.app.run(&mut ui), Exit::Quit, "{title}");
@@ -870,6 +879,14 @@ fn bko_holt_missing_too_old_or_two_sticks() {
     assert_eq!(t.app.run(&mut ui), Exit::Quit);
     assert!(ui.flat("Problem: this stick's bko-holt", 0).contains("too old for this bko-rescue"));
     ui.golden("Problem: this stick's bko-holt", 0, "holt-too-old");
+    // One without stick --copy is too old too: said at the start, not on Disks.
+    let api = String::from_utf8(fixture("scenarios/stick-three/01-version/stdout")).unwrap();
+    let old = api.replace(r#""stick_copy":[1],"#, "");
+    assert_ne!(old, api);
+    let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| f.version = Some(old));
+    let mut ui = Shots::new([P, Reply::Quit]);
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    assert!(ui.flat("Problem: this stick's bko-holt", 0).contains("too old for this bko-rescue"));
     let two = String::from_utf8(fixture("scenarios/stick-missing/02-stick/stdout")).unwrap().replace(r#""state":"missing""#, r#""state":"two_sticks""#);
     let mut t = t_with("stick-missing", "lovelace", LINUX, false, |f| f.stick = Some(two));
     let mut ui = Shots::new(script(&[&start(), &[B(B_TRY), P, P, Reply::Quit]]));
@@ -1597,9 +1614,45 @@ fn a_layout_bko_holt_wont_copy_is_said_in_its_words() {
     assert_eq!(t.app.run(&mut ui), Exit::Quit);
     let p = ui.flat("Problem: the old disks' layout isn't here", 0);
     assert!(p.contains("bko-holt couldn't copy the layout off the BACKOTTER partition:") && p.contains("carries no disk layout"), "{p}");
+    assert!(!p.contains("bko-holt stick --copy:"), "bko-holt named once: {p}");
     assert!(!t.app.session.path("layout.json").exists(), "nothing left for load");
     assert!(t.app.layout.is_none());
     assert!(!ran(&t).iter().any(|l| l.contains("bko-holt load")), "no plan without a layout");
+}
+
+#[test]
+fn a_copy_that_isnt_as_bko_holt_says_is_wiped() {
+    // A stick-copy document with OUT written, but not as it says: another
+    // size, another machine, or an exit that isn't 0.
+    let good = String::from_utf8(fixture("scenarios/stick-layouts/03-copy/stdout")).unwrap();
+    let bytes = fixture("scenarios/stick-layouts/03-copy/out").len();
+    let other = "2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6";
+    for (code, doc) in [
+        (0, good.replace(&format!("\"bytes\":{bytes}"), &format!("\"bytes\":{}", bytes - 1))),
+        (0, good.replace("0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90\",\"path\"", &format!("{other}\",\"path\""))),
+        (1, good.clone()),
+    ] {
+        assert!(code != 0 || doc != good, "the document is changed");
+        let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| {
+            f.disks = "app-lovelace".into();
+            f.copy = Some((code, doc.clone()));
+        });
+        let mut ui = Shots::new(script(&[&to_disks(), &[Reply::Quit]]));
+        assert_eq!(t.app.run(&mut ui), Exit::Quit);
+        let p = ui.flat("Problem: the old disks' layout isn't here", 0);
+        assert!(p.contains(super::strings::LAYOUT_NOT_WRITTEN), "{p}");
+        assert!(!t.app.session.path("layout.json").exists(), "wiped: {code} {doc}");
+        assert!(t.app.layout.is_none());
+        assert!(!ran(&t).iter().any(|l| l.contains("bko-holt load")), "no plan without a layout");
+    }
+    // As it says: taken.
+    let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| {
+        f.disks = "app-lovelace".into();
+        f.copy = Some((0, good.clone()));
+    });
+    let mut ui = Shots::new(script(&[&to_disks(), &[Reply::Quit]]));
+    t.app.run(&mut ui);
+    assert!(t.app.layout.is_some() && t.app.session.path("layout.json").exists());
 }
 
 #[test]

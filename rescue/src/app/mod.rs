@@ -65,8 +65,10 @@ use time::Zone;
 
 /// The api document's schema this reads, and the documents it needs.
 pub const API_SCHEMA: u64 = 1;
-pub const NEEDS: &[(&str, u64)] = &[("stick", 1), ("recovery", 1), ("plan", plan::PLAN_SCHEMA), ("status", plan::STATUS_SCHEMA)];
-/// How long `--version --json` and `stick --json` may take.
+pub const NEEDS: &[(&str, u64)] = &[("stick", 1), ("recovery", 1), ("stick_copy", layout::COPY_SCHEMA), ("plan", plan::PLAN_SCHEMA), ("status", plan::STATUS_SCHEMA)];
+/// How long `--version --json`, `stick --json` and `stick --copy` may
+/// take.  `stick --json` reads and checks every machine's system.json
+/// (each up to 64 MiB, a dump inside); `stick --copy` the chosen one's.
 pub const HOLT_MS: u64 = 60_000;
 /// A connection to the repository's server, to tell if the network is
 /// there, waits this long.

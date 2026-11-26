@@ -1771,6 +1771,21 @@ interim is gone: a system.json with a layout now passes, and one without
   commands and exited 0, and vdb, vdc, the decoy vdd and the stick image
   kept their md5; no partition record, no lock, no session left.  Then
   `ht1-debug done`.
+- **Review fixes** (2026-11-26): the api document must list
+  `stick_copy` (`NEEDS`), so an older bko-holt is "too old" at the start,
+  not an unknown `--copy` on Disks.  A refusal names bko-holt once: its
+  "bko-holt stick --copy:" prefix is taken off before
+  `strings::layout_refused`.  A Rust test covers `LAYOUT_NOT_WRITTEN`
+  (another size, another machine, exit 1 with a copy document: the file
+  wiped, no load run).  `HOLT_MS` covers `stick --copy` too, and says
+  what each reads.  `real-dry-run.py` unmounts /cdrom and frees its loop
+  device on every path out, only while the loop device is still its
+  image's.  app-three's and app-dry's report calls are `09-report` and
+  `10-report-unredacted`, after stick-three's `08-copy`.  Not changed,
+  with why: the document's `out` isn't compared with the path asked for
+  (the file at that path was wiped before the run, so what is there now
+  is this run's); the copy runs without a gauge (it now reads one
+  machine's system.json, at most 64 MiB, within `HOLT_MS`).
 
 ## The app on top (later)
 

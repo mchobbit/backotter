@@ -5,9 +5,10 @@
 //!
 //! bko-holt finds the config partition as `stick --json` did, checks the
 //! machine's system.json against its `.sha256`, and writes the dump it
-//! carries (its `layout`) from the bytes it checked to OUT, a new 0600 file.
-//! So bko-rescue mounts nothing to have it and reads no FAT (D11), and the
-//! file load reads is the one whose checksum was checked.  bko-holt's
+//! carries (its `layout`) to OUT, a new 0600 file: parsed from the bytes it
+//! checked, with no second read, and printed as dump prints it.  So
+//! bko-rescue mounts nothing to have it and reads no FAT (D11), and what
+//! load reads is the JSON whose checksum was checked.  bko-holt's
 //! refusal (no layout in system.json, a checksum gone bad since, a layout
 //! load won't take) is shown in its words on the Disks screen.  A typed
 //! location has no system.json on the stick: the backup's own copy waits
@@ -68,7 +69,9 @@ impl App {
             }
             Err(why) => {
                 sys::wipe_file(&out);
-                Err(super::strings::layout_refused(&why))
+                // bko-holt's line names itself; the words before it do too.
+                let why = why.strip_prefix("bko-holt stick --copy: ").unwrap_or(&why);
+                Err(super::strings::layout_refused(why))
             }
         }
     }

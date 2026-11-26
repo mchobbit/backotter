@@ -463,12 +463,14 @@ def generate(source_name, source_gen, dump, seed, caps=None, n_edits=None, with_
             targets = t2
     opts, snaps = ([], None)
     if with_options:
-        opts, snaps = sweep.draw(rng, dump, d, targets, caps, h)
+        # --reformat's own stream (sweep.draw): a case without one is the same as before it was drawn.
+        more = {"edits": edits, "planted": planted, "content": content, "reformat_seed": f"{source_name}:{seed}:reformat"}
+        opts, snaps = sweep.draw(rng, dump, d, targets, caps, h, **more)
         if opts is None:
             # The target can't be fitted: drop it, keep the rest.
             edits = [e for e in edits if e["op"] != "target_size"]
             targets = {dk["name"]: dk["size_bytes"] for dk in dumpx.disks(d)}
-            opts, snaps = sweep.draw(rng, dump, d, targets, caps, h)
+            opts, snaps = sweep.draw(rng, dump, d, targets, caps, h, **dict(more, edits=edits))
             opts = opts or []
     elif any(targets[k] < v["size_bytes"] for k, v in ((dk["name"], dk) for dk in dumpx.disks(d))):
         opts = ["--fit-largest", str(fitcalc.pct_needed(d, targets))]

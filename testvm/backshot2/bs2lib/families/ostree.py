@@ -12,9 +12,12 @@ entry against the restored tree.
   bootupd's static grub.cfg finds /boot by label or UUID (boot.grub's
   search_uuids), which rule 3 keeps.  BIOS, LUKS and LVM ostree sources
   are load's plan problems, and no drift adds a layer.
+- Sweep: no --reformat.  load refuses it on an ostree system (reformat.rs
+  layout_refusal, "own_tools"): ostree's own configuration names its
+  filesystems, and its boot stage doesn't run `bko-holt rewrite`.
 """
 
-from .base import Trait, strings
+from .base import Trait, no_reformat, strings
 
 
 def texts(dump):
@@ -26,4 +29,5 @@ TRAITS = [Trait(
     name="ostree",
     matches=lambda source, dump: bool((dump.get("boot") or {}).get("ostree")),
     config_texts=texts,
+    sweep=no_reformat,
 )]

@@ -33,11 +33,14 @@ own boot parameters and their own /etc (holt/src/store.rs).
   /srv is on the root filesystem, read-write (bcachefs on nixos2605:
   bcachefs-1); only /nix/store is mounted read-only, and nothing is planted
   there.
+- Sweep: no --reformat.  load refuses it on a store system (reformat.rs
+  layout_refusal, "own_tools"): each generation's fstab and initrd are
+  store items naming the old type, which boot doesn't rewrite.
 """
 
 import re
 
-from .base import Family, Quirk, holds_something, layers_quirk, os_id, walk_moves
+from .base import Family, Quirk, holds_something, layers_quirk, no_reformat, os_id, walk_moves
 from .linux import content as linux_content
 
 GEN_TITLE = re.compile(r"Configuration (\d+)")
@@ -99,5 +102,6 @@ FAMILY = Family(
     ],
     config_texts=store_texts,
     content=linux_content,
+    sweep=no_reformat,
     tier0="plan",
 )

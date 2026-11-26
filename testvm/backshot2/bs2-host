@@ -994,8 +994,12 @@ def cmd_plant(a):
         print(f"could not plant: {CT.DIR} under {a.root}: {x.strerror or x} (an absolute /srv link, or one out of the "
               f"source, is never followed: content._open_nofollow)")
         sys.exit(1)
+    # With --reformat, the one restored onto is the new type's, where it
+    # holds DIR (sweep.reformatted: XFS's 1,024 bytes; a new ext4's 4 KiB block).
     fs = _content_fs(at)
-    lim = CT.tightest(CT.fs_symlink_max(fs, os.statvfs(at).f_bsize), CT.symlink_max(dumpx.load(a.layout)) if a.layout else None)
+    from bs2lib import sweep
+    restored = sweep.reformatted(dumpx.load(a.layout), sweep.expected(c)["reformat"]) if a.layout else None
+    lim = CT.tightest(CT.fs_symlink_max(fs, os.statvfs(at).f_bsize), CT.symlink_max(restored) if restored else None)
     entries = CT.plan(c["content"], fs, symlink_max=lim)
     fails = CT.plant(a.root, entries)
     for i, why in fails:

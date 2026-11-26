@@ -110,6 +110,24 @@ class Trait(Module):
 
 # ---- helpers the modules share ---------------------------------------------------
 
+def without_option(opts, flag):
+    """OPTS without each FLAG and the value after it (load's MOUNT=TYPE, PCT, @I)."""
+    out, i = [], 0
+    while i < len(opts):
+        if opts[i] == flag:
+            i += 2
+            continue
+        out.append(opts[i])
+        i += 1
+    return out
+
+
+def no_reformat(dump, opts):
+    """A sweep hook: no --reformat (load refuses it for the whole layout:
+    reformat.rs layout_refusal), for a family or trait whose docstring says why."""
+    return without_option(opts, "--reformat")
+
+
 def os_id(dump):
     return (dump.get("os") or {}).get("id")
 

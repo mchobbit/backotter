@@ -47,4 +47,10 @@ test hosts.  Stdlib only; Python 3.9 or newer.
 # over it, so a case on an XFS source that drew a longer log changes
 # (slackware15-uefi-5125fd5f9417d3ee's 2139430912 bytes: "Value is too
 # large"); every other case is GENERATOR 7's but for the field.
-GENERATOR = "8"
+# 9 (2026-11-26): the sweep draws --reformat MOUNT=TYPE (decision 4,
+# approved 2026-11-26) in sweep.REFORMAT_P of the cases, where load is meant
+# to take one (sweep.reformat_choices) and the case has no --fit-largest or
+# --new-uuids, from a stream of its own ("SOURCE:SEED:reformat"): a case
+# that draws one is GENERATOR 8's with "--reformat MOUNT=TYPE" after its
+# other options, every other case is GENERATOR 8's but for the field.
+GENERATOR = "9"

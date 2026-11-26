@@ -18,6 +18,10 @@ full copy, so the filesystem holds more than the source's bytes_used.
   shrink is load's own and outside the drift; not checked here.)
 - No rule 3 texts: snapper's configs and grub-btrfs's menu name snapshots
   by subvolume path and the filesystem by UUID, both kept.
+- Sweep: --reformat is kept.  load takes a snapper btrfs onto another type
+  (reformat.md): it leaves the snapshots and the root's alias out of the
+  restore, and ht1-bs2.sh's snapshot check and judge.py expect it so
+  (HoltTest1 tumbleweed /=ext4 PASS, 2026-11-14).
 """
 
 import re

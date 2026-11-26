@@ -506,6 +506,9 @@ for ~10 days in all (est.).
    rustic-bko); or later.
 4. **`--reformat` in the sweep** only after `claude/holt-reformat` is merged into
    main (recommended); or merge it first, as part of B9.
+   Merged (ported onto main 2026-11-14); **drawn since 2026-11-26** (approved
+   by the user that day): GENERATOR 9's sweep draws `--reformat MOUNT=TYPE`
+   where load is meant to take it (`bs2lib/sweep.py` `reformat_choices()`).
 5. **The words** `BackShot2Alpine` and `BackShot2` as above, results in Test2's
    ledger (recommended).
 6. **Tier 3's budget:** 5 Thinkpad cases per BackShot2Alpine round (recommended),

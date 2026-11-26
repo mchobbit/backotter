@@ -76,10 +76,13 @@ What isn't excluded, on purpose:
   puts on the chroot's PATH after the usual directories.  /run/current-system
   isn't needed (Guix mounts no tmpfs on /run, but the copy is of a shut-down
   guest).
+- Sweep: no --reformat.  load refuses it on a store system (reformat.rs
+  layout_refusal, "own_tools"): each generation's file-systems and initrd
+  are store items naming the old type, which boot doesn't rewrite.
 """
 
 from .. import dumpx
-from .base import Family, Quirk, holds_something, layers_quirk, os_id, walk_moves
+from .base import Family, Quirk, holds_something, layers_quirk, no_reformat, os_id, walk_moves
 
 RECIPES = {
     # alpine-small-1's shape (the planter's knobs), for Guix's / (ext4 or Btrfs's @).
@@ -151,5 +154,6 @@ FAMILY = Family(
     config_texts=store_texts,
     recipes=RECIPES,
     content=lambda dump, fstype: RECIPE,
+    sweep=no_reformat,
     tier0="chroot",
 )

@@ -41,7 +41,7 @@ def _opt_groups(opts):
     """load_options as droppable groups: a flag with its value."""
     out, i = [], 0
     while i < len(opts):
-        if opts[i] in ("--fit-largest", "--snapshot") and i + 1 < len(opts):
+        if opts[i] in ("--fit-largest", "--snapshot", "--reformat") and i + 1 < len(opts):
             out.append(opts[i:i + 2])
             i += 2
         else:

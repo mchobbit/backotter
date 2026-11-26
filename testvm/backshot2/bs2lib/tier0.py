@@ -8,6 +8,9 @@ copy of the source guest's root (tools_root): the plan's sfdisk script and
 every mke2fs and mkfs.xfs it runs, on sparse scratch files of the right
 sizes, read back with the source's sfdisk --json, dumpe2fs and mkfs.xfs -N.
 What they make must be what the drifted layout records.
+A filesystem the case's --reformat makes anew has no record to be held
+to: the source's tools must only make it from load's command
+(reformat_dry_run).
 
 Verdicts:
   PASS     load planned it (exit 0), the invariants hold, the dry runs agree
@@ -336,10 +339,15 @@ def with_lazy(argv):
     return a
 
 
-def dry_runs(tools, name, plan, drifted, targets, fitted, shifts=None, fit_blocks=None):
+def dry_runs(tools, name, plan, drifted, targets, fitted, shifts=None, fit_blocks=None, reformats=None):
     """[(verdict, why)] from the dry runs; empty: they agree.  FITTED: the
     device names --fit-largest resizes (their sizes are the fit's);
     FIT_BLOCKS, the block counts judge.py's fit gives their filesystems.
+    REFORMATS: {UUID: TYPE} of the filesystems the case's --reformat makes
+    anew (reformat_uuids): the layout records the old type, so there is no
+    geometry to hold the new one to; the source's own tools must still make
+    it from load's command (its features are chosen for the restored
+    system's kernel and tools: reformat.md, "Features"), or it's a FAIL.
 
     A fitted ext filesystem is expected as resize2fs would leave the
     layout's at its fitted size (geometry.ext4_resize2fs), and the
@@ -387,6 +395,9 @@ def dry_runs(tools, name, plan, drifted, targets, fitted, shifts=None, fit_block
             continue
         dev, want = by_uuid[u]
         devnode = next((a for a in argv if a.startswith("/dev/")), None)
+        if u in (reformats or {}):
+            out += reformat_dry_run(tools, name, argv, devnode, dev, reformats[u])
+            continue
         skip = FIT_CHANGES if dev["name"] in fitted else set()
         modelled = False
         if argv[0] == "mke2fs" and dev["name"] in fitted and want.get("blocks_per_group"):
@@ -438,6 +449,47 @@ def dry_runs(tools, name, plan, drifted, targets, fitted, shifts=None, fit_block
                                      + (f"; the generator's own: {'; '.join(cdiffs)}" if cdiffs else "")))
         tools.drop(real)
     return out
+
+
+def reformat_uuids(case, drifted):
+    """{UUID: TYPE} of the filesystems the case's --reformat MOUNT=TYPE makes
+    anew (sweep.expected), each found by MOUNT's fstab entry in DRIFTED."""
+    out = {}
+    devs = dumpx.devices(drifted)
+    fstab = dumpx.storage(drifted).get("fstab") or []
+    for r in sweep.expected(case)["reformat"]:
+        mount, _, to = r.partition("=")
+        src = next((e.get("resolves_to") for e in fstab if e.get("file") == mount and e.get("type") != "swap"), None)
+        u = ((devs.get(src) or {}).get("content") or {}).get("uuid")
+        if u:
+            out[u] = to
+    return out
+
+
+def reformat_dry_run(tools, name, argv, devnode, dev, to):
+    """[(verdict, why)]: load's command for DEV's new TO filesystem (a
+    --reformat), run by the source's own tools on a scratch file of DEV's
+    size: refused is a FAIL, made is nothing to say."""
+    inside, real = tools.scratch_file(f"{name}.fs", dumpx.size_of(dev) + (1 << 20))
+    mine = [inside if a == devnode else a for a in argv]
+    try:
+        if argv[0] == "mke2fs":
+            rc, txt = tools.run(with_lazy(mine))
+            if rc == 0 and read_ext(tools, inside)[0] is None:
+                rc, txt = 1, "no ext superblock made"
+        else:
+            rc, txt = tools.run(["mkfs.xfs", "-N"] + mine[1:])
+            for _ in range(8):
+                older = without_unknown_off(mine, txt) if rc else None
+                if older is None:
+                    break
+                mine = older
+                rc, txt = tools.run(["mkfs.xfs", "-N"] + mine[1:])
+    finally:
+        tools.drop(real)
+    if rc:
+        return [("FAIL", f"{dev['name']} --reformat {to}: the source's {argv[0]} refuses load's command: {txt.strip()[-200:]}")]
+    return []
 
 
 def without_unknown_off(argv, out):
@@ -538,7 +590,7 @@ def judge_one(name, case, drifted, targets, res, tools, caps):
         return "PASS", ["planned; no dry runs (no source tools here)"]
     try:
         found = dry_runs(tools, name, res["out"], drifted, targets, fitted_devices(drifted, targets, case),
-                         fit_shifts(drifted, targets, case), fit_blocks(drifted, targets, case))
+                         fit_shifts(drifted, targets, case), fit_blocks(drifted, targets, case), reformat_uuids(case, drifted))
     except (OSError, subprocess.SubprocessError) as e:
         return "HARNESS", [f"dry runs: {e}"]
     for v in ("INVALID", "FAIL"):

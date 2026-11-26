@@ -21,10 +21,13 @@ boot.snapcore.
   partitions hold no /usr.
 - No content drift (families/linux.py choose()): no mounted filesystem
   holds /srv.
+- Sweep: no --reformat.  snap-bootstrap's fstab names no device load could
+  reformat (/ is the base snap's squashfs), and ubuntu-data's ext4 is the
+  gadget's: load's boot stage, which rewrites nothing here, couldn't follow.
 """
 
 from .. import dumpx
-from .base import Quirk, Trait
+from .base import Quirk, Trait, no_reformat
 
 
 def snapcore(dump):
@@ -69,4 +72,5 @@ TRAITS = [Trait(
     quirks=[Quirk("snapcore-gadget-sizes",
                   "the pc gadget fixes every partition's size but ubuntu-data's, and load makes them as the dump has them",
                   check_sizes)],
+    sweep=no_reformat,
 )]

@@ -237,7 +237,7 @@ load itself.
 | B6 shrinker, corpus | `bs2lib/shrink.py`, `cases/` |
 | B7 the Alpine sources | `testvm/make-bootstrap.sh alpine-uefi|alpine-lvm|alpine-luks` |
 | B8 content drift | `bs2lib/content.py` |
-| B9 option sweep | `bs2lib/sweep.py`; judge.py `--new-uuids`, `--removable`, `--nvram-kept`, `--disk-ports`; bs1-restore and bs1-verify (below) |
+| B9 option sweep | `bs2lib/sweep.py` (`--reformat MOUNT=TYPE` drawn since GENERATOR 9: `reformat_choices()`); judge.py `--new-uuids`, `--removable`, `--nvram-kept`, `--disk-ports`, `--reformat`; bs1-restore and bs1-verify (below) |
 | ledger | `bs2lib/ledger.py`: Test2's ledger, family `bs2` |
 | A1 the family interface (BackShot2All) | `bs2lib/families/` (registry `__init__.py`, `base.py`, one module per family or trait); `tests/test_families.py` (registry, goldens `tests/golden/FAMILY.json`, smoke over every Linux corpus dump), `tests/test_family_*.py` |
 | A2 every built Linux source at tiers 1 and 2 | `bs2lib/sources.py` (the source table), `bs2lib/room.py` (`scratch()`: RAM or SSD), bs2-host's queue (the SSD lane), `tests/test_bs2_sources.py`, `tests/test_bs2_placement.py` |
@@ -767,6 +767,18 @@ otherwise finish early (`bs2 BackShot2 mint22 mx25 neon24 ...`) takes them.
 - **`--new-uuids`** is drawn only when the build plans it (`caps.json`):
   today's load refuses it ("isn't built yet").  judge.py's `--new-uuids` mode
   is built and tested for when it is.
+- **`--reformat MOUNT=TYPE`** is drawn since GENERATOR 9 (approved
+  2026-11-26) in about one case in seven (`sweep.REFORMAT_P`) that has no
+  `--fit-largest` or `--new-uuids`, from the case's own stream, so the
+  other cases are GENERATOR 8's.  Only what load is meant to take
+  (`sweep.reformat_choices()`, after `docs/design/reformat.md` and
+  `reformat.rs`: ext4, XFS, btrfs; the source's fsck for the new type; an
+  initramfs generator and loader load rewrites for /; ext4 only where GRUB
+  or LILO reads the kernels; 1 GiB and up, with room to spare; no geometry
+  edit on it); ostree, ABRoot, Ubuntu Core, NixOS and Guix drop it (their
+  `sweep` hooks).  Tier 0 has the source's tools make the new filesystem
+  from load's command; the planter caps the long symlink for the new type
+  (`sweep.reformatted()`).
 - **`fat_geometry`** isn't drawn: the spec puts it at tier 3.  An ESP that
   moves keeps its FAT; its hidden sectors follow its start where they
   recorded it (0 stays 0), as load moves them.

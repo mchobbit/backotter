@@ -38,9 +38,12 @@ abroot.cfg to its own kernel, initramfs and filesystem.
   record: content drift lands in /var/srv, on /var's filesystem, and is
   charged and judged there (content.plant() follows the link inside the
   source).
+- Sweep: no --reformat.  load refuses it on an ABRoot system (reformat.rs
+  layout_refusal, "own_tools"): each root's fstab and abroot.cfg are
+  ABRoot's, and its boot stage doesn't run `bko-holt rewrite`.
 """
 
-from .base import Trait, strings
+from .base import Trait, no_reformat, strings
 
 
 def texts(dump):
@@ -59,4 +62,5 @@ TRAITS = [Trait(
     matches=lambda source, dump: bool((dump.get("boot") or {}).get("abroot")),
     config_texts=texts,
     srv=lambda dump: "/var/srv",
+    sweep=no_reformat,
 )]

@@ -34,7 +34,8 @@ platform's action, deals the build units and writes RUN/plan.json.
    room free now preferred).
 
 RUN is a name (a directory of BKO_ROUND_DIR, default ~/backotter-work/img-rounds) or a path.
-Exit 0 with a plan; 1 when a platform the plan builds has no host; 2 on bad usage; 3 when
+Exit 0 with a plan; 1 when a platform the plan builds has no host, or the reference gave no
+digest of a platform (action none); 2 on bad usage; 3 when
 the plan is refused (the reference not reached, the sets differ).
 """
 
@@ -114,10 +115,12 @@ def proven(rows, plat, sha):
             why = why or "its ImgTest2 PASS ran from an uncommitted copy"
             continue
         res = p.get("result")
-        if res == "pass" or (res in (None, "none") and not p.get("needed")):
+        # (A row that records no panel at all proves nothing about it: "not needed" is
+        # ImgTest2's own verdict, result "none" with needed false.)
+        if res == "pass" or (res == "none" and p.get("needed") is False):
             good = r
         elif good is None:
-            why = f"its +img panel is {res or 'not run'}"
+            why = f"its +img panel is {res or 'not recorded'}"
     if good is not None:
         return True, f"ImgTest2 PASS {good.get('t')} ({good.get('host')})"
     return False, why or "no ImgTest2 PASS of it"
@@ -305,7 +308,7 @@ def decide(plat, ref, gathered, rows, opts, today, refresh_ready):
         out["holders"] = holders
         out["epoch"] = (pv.get("base") or {}).get("os_epoch")
         out["age_days"] = epoch_age(pv, today)
-    if ref is None or "base" not in ref:
+    if not isinstance(ref, dict) or "base" not in ref:
         out.update(action="none", why=f"the reference has no digest of {plat} ({(ref or {}).get('error', 'none')})")
         return out
     if plat in opts["full"]:
@@ -420,7 +423,7 @@ def plan_round(gathered, builders, ref, rows, opts, today, table=None):
     fits = {h: {} for h in usable}
     for p in PLATFORMS:
         ref_dig = (rf.get("digests") or {}).get(p)
-        row = decide(p, ref_dig if isinstance(ref_dig, dict) and "base" in ref_dig else None,
+        row = decide(p, ref_dig,
                      {h: gathered[h] for h in gathered if (gathered[h].get("facts") is not None)},
                      rows, opts, today, refresh_ready)
         row["able"] = {}
@@ -439,6 +442,10 @@ def plan_round(gathered, builders, ref, rows, opts, today, table=None):
                 able = [h for h in usable if row["able"][h] is None]
             row["minutes"] = DEAL.img_minutes(p, row["action"])
             units.append({"platform": p, "action": row["action"], "able": able})
+        elif row["action"] == "none":
+            # (Neither built nor proven current: the plan can't stand for it, so it says so and
+            # exits 1, as for a unit no host can take.)
+            plan["left"].append({"platform": p, "why": row["why"]})
         plan["platforms"][p] = row
     ihosts = [DEAL.ImgHost(h, plan["hosts"][h]["class"], lpc[h], fits[h]) for h in usable]
     ihosts, placed, left = DEAL.deal_images(ihosts, units)

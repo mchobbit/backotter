@@ -256,6 +256,11 @@ class ProofC4(unittest.TestCase):
         r = self.action(lambda s: [pass_row("linux", s, panel={"result": "none", "needed": False})])
         self.assertEqual(r["action"], "reuse")
 
+    def test_a_row_recording_no_panel_is_not_proven(self):
+        r = self.action(lambda s: [pass_row("linux", s, panel={})])
+        self.assertEqual(r["action"], "full")
+        self.assertIn("panel is not recorded", r["why"])
+
     def test_boot_row_then_panel_row(self):
         r = self.action(lambda s: [pass_row("linux", s, panel={"result": "owed", "needed": True}, t="2026-11-26T11:00:00Z"),
                                    pass_row("linux", s, t="2026-11-26T11:30:00Z")])
@@ -384,6 +389,16 @@ class Hosts(unittest.TestCase):
         self.assertEqual(p["left"][0]["platform"], "haiku")
         self.assertIsNone(p["platforms"]["haiku"]["host"])
         self.assertTrue(any(x.startswith("  NOT PLACED: haiku") for x in R.render(p)))
+
+
+    def test_no_reference_digest_is_said_and_left(self):
+        g, rows, _ = fresh_world()
+        g["chopin"]["facts"]["digests"]["haiku"] = {"error": "OSError: a glob names no file"}
+        p = plan(g, rows)
+        r = p["platforms"]["haiku"]
+        self.assertEqual(r["action"], "none")
+        self.assertIn("a glob names no file", r["why"])
+        self.assertEqual([x["platform"] for x in p["left"]], ["haiku"])   # (the CLI exits 1)
 
 
 class Deal(unittest.TestCase):

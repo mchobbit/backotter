@@ -647,7 +647,7 @@ inputs are the reference's digests. C4 is read from the Mac's ledger: a
 valid, committed `img:P` PASS of the test image's SHA-256
 (`inputs.bin["P/test-image"]`) whose panel passed **or was not needed**
 (storage pieces unchanged, or no panel), with no failing row of it since; a
-panel owed is not proven. (The last set's freebsd row had no panel due, so a
+panel owed, or a row that records no panel, is not proven. (The last set's freebsd row had no panel due, so a
 panel PASS alone would never let it be reused.) The base is compared less its
 media (`base_view`): `platform.conf`, a base input, pins them, a full build's
 own fetch sets them (as `moved()` already takes them), and
@@ -662,8 +662,9 @@ img-lanes.sh's (`peak-kib`, else 6, linux 1; memory 10) against its ceiling.
 The deal is `deal-units.py`'s `deal_images` (also `img-units`, `img-deal`):
 hosts in hosts.py's tie order, a host's estimate times 1 + pick-host's load
 a core (Chopin's +4), and 5 min more when a reservation doesn't fit its room
-now. `plan` writes `RUN/plan.json` and `RUN/facts.json`; `run` and `fanout`
-say they are I8's. On the farm (2026-11-26, from a private stick/ copy)
+now. `plan` writes `RUN/plan.json` and `RUN/facts.json`, and exits 1 when a
+unit has no host or the reference gave no digest of a platform (action
+`none`); `run` and `fanout` say they are I8's. On the farm (2026-11-26, from a private stick/ copy)
 `plan` took 23 s and said full ×7, "no provenance (an image from before
 I1)": linux off the small hosts (no ISO, no slim: I7), FreeBSD on Chopin
 alone (the only builder with a fingerprint), haiku off cinqcent (its haiku6

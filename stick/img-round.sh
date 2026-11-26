@@ -12,8 +12,9 @@
 # (stick/deal-units.py's image units).  It writes RUN/plan.json and RUN/facts.json (RUN:
 # a name under BKO_ROUND_DIR, default ~/backotter-work/img-rounds, or a path) and prints
 # the plan.  stick/img_round.py holds the rules and says the options.  Exit 0 with a
-# plan; 1 when a unit has no host; 2 on bad usage; 3 when the plan is refused (the sets
-# differ between builders, or the reference host gave no facts).
+# plan; 1 when a unit has no host or the reference gave no digest of a platform; 2 on
+# bad usage; 3 when the plan is refused (the sets differ between builders, or the
+# reference host gave no facts).
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 case ${1:-} in

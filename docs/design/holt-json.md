@@ -432,6 +432,7 @@ Unchanged, plus one under `--json` only:
 ```json
 {"format": "bko-holt-api", "schema": 1, "version": "0.3.0",
  "documents": {"plan": [1], "status": [1], "events": [1], "stick": [1], "recovery": [1], "stick_copy": [1], "error": [1]},
+ "dump_schemas": [1],
  "features": ["no_commit_env", "stop", "progress", "candidates", "sizes",
               "open_stage", "fit_per_disk"],
  "platform": {"os": "linux", "arch": "x86_64"},
@@ -442,6 +443,12 @@ Unchanged, plus one under `--json` only:
   that needs `fit_per_disk` or `open_stage` can say "not on this stick"
   instead of failing.  `no_commit` is whether `BKO_HOLT_NO_COMMIT` is in
   force for this process.
+- `dump_schemas` lists the dump schemas this bko-holt's `load` reads
+  (`layout.rs`'s `DUMP_SCHEMAS`).  An image build copies it into the
+  stick's marker (`marker.py --holt-api`), so the backup tool can warn
+  when a stick can't read a machine's dump (open question 11).  A
+  bko-holt from before 2026-11-26 has no `dump_schemas`, and reads dump
+  schema 1 only.
 
 ## The documents
 
@@ -863,7 +870,7 @@ reads boot sectors only, the *Check* settled at RT10k).
 {"format": "bko-holt-stick", "schema": 1, "version": "0.3.0", "generated": "…", "dry_run": false,
  "boot_disk": {"node": "sdc", "found_by": "cdrom_mount"},
  "config": {"state": "ok", "partition": 3, "label": "BACKOTTER", "why": null, "dev": "/dev/sdc3"},
- "image": {"image_id": "6f1c…", "platform": "linux", "built": "…", "system_schemas": [1]},
+ "image": {"image_id": "6f1c…", "platform": "linux", "built": "…", "system_schemas": [1], "dump_schemas": [1]},
  "stick": {"stick_id": "…", "name": null},
  "here": {"dmi_uuid": "5a6b…"},
  "machines": [
@@ -939,6 +946,12 @@ only when it is a UUID), a string field over 4 KiB
   tree instead, for tests (as dump's).
 - The layout itself isn't in the document: `stick --copy` writes it to a
   file for load (below; open question 8, answered).
+- `image` is what the marker says: `system_schemas`, and `dump_schemas`
+  (the dump schemas the image's bko-holt load reads, open question 11),
+  null when the marker is from before markers named them.  Such an image
+  reads dump schema 1 only (`stick.rs`'s `DUMP_SCHEMAS_UNNAMED`).
+  Informational: the running bko-holt is the image's, and `stick --copy`
+  refuses a layout it can't read (`layout_refused`).
 - `password_hint` is text the user wrote and may name things a report
   shouldn't hold: bko-rescue gives it to report-bug as text to strip
   (`--strip-file`, RT10i: a file of strings the Redactor replaces as
@@ -2207,6 +2220,55 @@ every disk and the stick image kept its md5.
     removed) has no test: it needs a full disk or an I/O error, and the
     code is recoverycmd's shared `write_new`.
 
+### What the marker's dump_schemas built
+
+Built 2026-11-26 (open question 11, approved that day by the user):
+
+- bko-holt: `layout.rs`'s `DUMP_SCHEMAS` (`[1]`), which load's schema
+  check now reads, and the api document's `dump_schemas`.  `stick --json`'s
+  `image` gives the marker's `dump_schemas` (null when it has none).
+- The write-time check: `stick.rs`'s `schema_warnings(marker, system)`,
+  in the bko_holt library.  It gives `system_schema_unread` when
+  system.json's schema isn't in the marker's `system_schemas`, and
+  `dump_schema_unread` when `layout.schema` isn't in the marker's
+  `dump_schemas`; each with words for the user.  The backup tool isn't
+  built: this is the check it must call before each write, and it still
+  writes after a warning (stick-config.md, "Is this stick good enough?").
+  It has no command of its own; one comes with the backup tool if that
+  isn't Rust.
+- `marker.py --holt-api FILE` (required): the image's own `bko-holt
+  --version --json`.  `make-img.sh` runs the layer's bko-holt on the
+  build host (an image is built on a host of its architecture);
+  `make-img-bsd.sh` runs `in/bko-holt` in the build VM.
+  `record-stick.py` passes the bko-holt it records.
+- Each platform's `checks.sh` has `dump-schemas`: the marker's list
+  equals the running bko-holt's.
+- **Defaults chosen** (each in one place): a marker or a bko-holt that
+  names no dump schemas reads dump schema 1 only
+  (`DUMP_SCHEMAS_UNNAMED` in `stick.rs` and `marker.py`; every bko-holt
+  before this read only schema 1).  `marker.py` then writes `[1]` and says
+  so on standard error, rather than refuse an image built with an older
+  holt-bin.  `dump_schemas` in the api document and the marker is a
+  list, like `system_schemas`.  The warning codes and words are
+  `schema_warnings`'s.
+- **Tested:** `stick.rs`'s unit tests (the marker's field, old markers,
+  every warning and its words), the `stick-json` goldens re-blessed for
+  the one new member, `jsonout.rs`'s and `tests/json_cli.rs`'s api
+  checks, `testvm/test2/tests/test_marker.py` (marker.py's field, its
+  fallback and refusals; every platform's boot check as `sh -c` runs it),
+  `test_arm64_image.py` (make-img.sh with a bko-holt that prints its api
+  document), holt_schema.py over the scenarios and goldens, and the holt
+  gate on cinqcent (cargo test 956 passed, 0 failed, 4 ignored; 110
+  golden plans, 0 differ; redact-corpus passed).
+- **Not done:** no image was rebuilt.  The next image round must use a
+  holt-bin with this bko-holt (img-refresh-holt.sh) so the marker's
+  `dump_schemas` comes from bko-holt itself, and its boot tests then run
+  `dump-schemas` on every platform.  Images built before it have no
+  `dump_schemas`; the check reads them as `[1]`.
+- **Spec problem:** `marker.py`'s `system_schemas` is still its own
+  constant, not bko-holt's `stick.rs` `SYSTEM_SCHEMAS`.  The api document
+  could carry both; left as it is.
+
 ## Decisions
 
 - **J1. How bko-rescue finds bko-holt's protocol.**  `bko-holt --version
@@ -2430,7 +2492,7 @@ every disk and the stick image kept its md5.
     the record and have `stick --copy` build a dump from them (a second
     format to keep in step with dump).  Until it is answered,
     stick-config.md says `layout` is the record and the two are unused.
-11. **The dump's schema and the stick's age** (answered: approved 2026-11-26 by the user, the recommendation; not built yet).
+11. **The dump's schema and the stick's age** (answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26, ae051fb and this docs commit: "What the marker's dump_schemas built").
     The marker's `system_schemas` covers system.json's envelope only.  A
     backup machine whose bko-holt writes dump schema 2 passes the
     write-time check, and an old stick's `stick --copy` then refuses the

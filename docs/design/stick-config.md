@@ -111,6 +111,7 @@ system.  It's read-only, so it describes the image, not the stick:
   "kernel": "7.0.0-30-generic",
   "zfs": {"version": "2.4.1", "features": ["allocation_classes", "..."]},
   "system_schemas": [1],
+  "dump_schemas": [1],
   "config_partition": {"number": 3, "sectors": 65536, "label": "BACKOTTER",
                        "fat_serial": "3F2A-9C71"}
 }
@@ -132,6 +133,13 @@ system.  It's read-only, so it describes the image, not the stick:
   that system's `zpool upgrade -v` lists.
 - `system_schemas` lists the `system.json` schema versions the stick's restore
   code can read.
+- `dump_schemas` lists the dump schemas (the `bko-holt dump` in system.json's
+  `layout`) the image's bko-holt load reads.  The image build takes it from
+  that bko-holt itself: `marker.py --holt-api` reads its `bko-holt --version
+  --json`.  A marker without it is from before 2026-11-26, and its image
+  reads dump schema 1 only; so does a bko-holt whose api document has none
+  (`marker.py` then writes `[1]` and says so).  Each image's boot test
+  checks the marker's list against its bko-holt's (`dump-schemas`).
 - `config_partition` describes the config partition as built: its number, size,
   FAT label, and FAT volume serial (random per build, in the form `blkid`
   shows). A stick that was repartitioned or reformatted afterwards no longer
@@ -431,10 +439,12 @@ compares `system.json`'s `requirements` with the marker:
 
 - every `zfs_features` entry must be in the marker's `zfs.features`, or the
   stick can't import the pool;
-- the schema must be in `system_schemas`; the marker doesn't name the dump
-  schemas the stick reads, so `layout`'s schema isn't checked yet
-  (holt-json.md's open question 11, approved 2026-11-26: the marker gets
-  `dump_schemas` and this check warns; not built yet);
+- the schema must be in `system_schemas`, and `layout`'s schema (the dump's)
+  in `dump_schemas`, or that stick's restore refuses it (holt-json.md's open
+  question 11, built 2026-11-26).  A marker with no `dump_schemas` counts as
+  `[1]`.  The check is `schema_warnings(marker, system)` in bko-holt's
+  `src/stick.rs` (codes `system_schema_unread` and `dump_schema_unread`,
+  each with its words): the backup tool calls it before each write;
 - for kernel modules, the backup tool can't check the stick's module list from
   the marker alone; schema 1 only warns when the machine runs a newer kernel
   series than the stick (say 7.2 against 7.0);
@@ -482,8 +492,12 @@ feature means the stick can't import the pool at all.
   says, and can write to it.
 - The restore side's config reader is bko-holt's (`stick --json`, and
   `stick --copy` for a machine's layout); bko-rescue writes the restore logs.
+- The schema half of "Is this stick good enough?" is built, as a function
+  for the backup tool (`stick.rs`'s `schema_warnings`); the marker carries
+  `dump_schemas` from the image's own bko-holt.
 - Not built: the backup tool's stick module (and so no system.json carries a
-  `layout` yet), and `backotter stick repair`.  They come with the backup
+  `layout` yet), the rest of the write-time check (ZFS features, kernel,
+  bcachefs), and `backotter stick repair`.  They come with the backup
   tool.
 
 ## Decisions (2026-10-29)

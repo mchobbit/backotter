@@ -23,6 +23,11 @@ Haiku; Redox and Sculpt OS from Linux):
   file OUT for `load`: the `bko-holt dump` its system.json carries as
   `layout`, parsed from the bytes whose `.sha256` it checked and printed as
   dump prints it (`src/stick.rs`; holt-json.md, "bko-holt-stick-copy").
+- `bko-holt --version --json` lists the dump schemas `load` reads
+  (`dump_schemas`), which an image build copies into the stick's marker.
+  `stick::schema_warnings` is the backup tool's write-time check against
+  that marker: system.json's schema and its layout's (holt-json.md, open
+  question 11).
 - `bko-holt recovery-words OUT --json` checks a BackOtter recovery key, its
   words on standard input, and writes the repository password it stands
   for to a new private file OUT, for bko-rescue (`src/recoverycmd.rs`;

@@ -1786,6 +1786,13 @@ interim is gone: a system.json with a layout now passes, and one without
   (the file at that path was wiped before the run, so what is there now
   is this run's); the copy runs without a gauge (it now reads one
   machine's system.json, at most 64 MiB, within `HOLT_MS`).
+- **The marker's dump_schemas** (2026-11-26, holt-json.md's open question
+  11): nothing in bko-rescue changed.  The backup tool now has a check to
+  warn at write time when a stick can't read a machine's dump schema; a
+  stick that still gets one shows `layout_refused` on Disks, as before.
+  `stick --json`'s `image.dump_schemas` and the api document's
+  `dump_schemas` are new members bko-rescue doesn't read; holt_schema.py
+  takes both.
 
 ## The app on top (later)
 

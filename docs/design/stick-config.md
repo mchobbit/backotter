@@ -256,10 +256,10 @@ template, and not the DMI UUID, which changes when the hardware is replaced:
 the replacement machine is exactly the case BackOtter exists for.
 
 This document fixes the envelope.  The disks and the boot are recorded in
-`layout`, the machine's `bko-holt dump` (below).  The `storage` and `boot`
-sections were meant for a system description with its own design doc,
-never written; they are unused (holt-json.md's open question 10 asks
-whether to drop them).  `backup` depends on the backup engine, still to be
+`layout`, the machine's `bko-holt dump` (below), the one record of the
+disks and the boot, the pools' features included.  Schema 1 has no
+`storage` or `boot` section of its own (approved 2026-11-26 by the user,
+holt-json.md's open question 10).  `backup` depends on the backup engine, still to be
 chosen (restic or borg).
 
 ```json
@@ -276,8 +276,6 @@ chosen (restic or borg).
   },
   "os": {"id": "ubuntu", "version_id": "26.04", "kernel": "7.0.0-30-generic",
          "boot_mode": "uefi", "secure_boot": true},
-  "storage": {"…": "unused: the dump in layout records the disks (open question 10)"},
-  "boot": {"…": "unused: the dump in layout records the boot (open question 10)"},
   "backup": {
     "engine": "restic",
     "repository": {"kind": "sftp", "url": "sftp://nas.local/backotter/lovelace"},
@@ -298,11 +296,13 @@ chosen (restic or borg).
   writes this member to OUT for `bko-holt load` (holt-json.md,
   "bko-holt-stick-copy").  OUT is printed again as dump prints it: the
   same JSON, and the same bytes only when `layout` is held as dump
-  printed it.  A default chosen 2026-11-26 where this spec was open, not
-  yet approved (holt-json.md's open questions 8 and 10).  A system.json
+  printed it.  Approved 2026-11-26 by the user (holt-json.md's open questions 8
+  and 10).  A system.json
   without `layout` (none is written yet) gives the restore no layout from
   the stick.  A dump that kept LUKS2 headers can't be restored from the
-  stick alone yet (open question 12).
+  stick alone yet (holt-json.md's open question 12, approved 2026-11-26: the headers
+  go in the repository and bko-rescue fetches them after the password;
+  not built yet).
 
 - `sequence` goes up by one with each backup of that machine, so "which copy is
   newer" never depends on clocks.
@@ -433,7 +433,8 @@ compares `system.json`'s `requirements` with the marker:
   stick can't import the pool;
 - the schema must be in `system_schemas`; the marker doesn't name the dump
   schemas the stick reads, so `layout`'s schema isn't checked yet
-  (holt-json.md's open question 11);
+  (holt-json.md's open question 11, approved 2026-11-26: the marker gets
+  `dump_schemas` and this check warns; not built yet);
 - for kernel modules, the backup tool can't check the stick's module list from
   the marker alone; schema 1 only warns when the machine runs a newer kernel
   series than the stick (say 7.2 against 7.0);

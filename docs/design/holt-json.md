@@ -2408,7 +2408,7 @@ every disk and the stick image kept its md5.
    `.sha256` itself (a SHA-256 in bko-rescue, D2).  Either way load can't
    take a `backotter-system` document until the backup tool's spec says
    how system.json carries the dump.  How it carries it was then chosen
-   by the builder, not the user: open question 10.
+   by the builder and approved by the user 2026-11-26: open question 10.
 9. **The Recovery key screen's word list** (blocks RT11's completion: a
    word filled in after 4 letters, an unknown one named as it is typed):
    `bip39-english.txt` taken by `include_str!` from `holt/src` (D2 amended
@@ -2416,8 +2416,10 @@ every disk and the stick image kept its md5.
    call to fail) (*recommended*).  Or `bko-holt recovery-words --list`,
    the 2048 words on stdout, read once at start.  The check itself stays
    in holt either way.
-10. **Where system.json carries the dump** (from the stick --copy
-    review, 2026-11-26; built as the default, not approved).  The
+10. **Where system.json carries the dump** (answered: approved
+    2026-11-26 by the user, the recommendation: `layout` as built, the
+    envelope's `storage` and `boot` dropped from schema 1; from the stick
+    --copy review).  The
     builder put the whole `bko-holt dump` in a top-level `layout` member,
     and `stick --copy` writes that member.  stick-config.md's envelope
     also has `storage` and `boot`, meant for a system description that
@@ -2428,7 +2430,7 @@ every disk and the stick image kept its md5.
     the record and have `stick --copy` build a dump from them (a second
     format to keep in step with dump).  Until it is answered,
     stick-config.md says `layout` is the record and the two are unused.
-11. **The dump's schema and the stick's age** (from the same review).
+11. **The dump's schema and the stick's age** (answered: approved 2026-11-26 by the user, the recommendation; not built yet).
     The marker's `system_schemas` covers system.json's envelope only.  A
     backup machine whose bko-holt writes dump schema 2 passes the
     write-time check, and an old stick's `stick --copy` then refuses the
@@ -2437,7 +2439,7 @@ every disk and the stick image kept its md5.
     and the backup tool's write-time check warns when `layout.schema`
     isn't in it, as it does for `system_schemas`.  Or nothing: the
     restore says it, late.
-12. **LUKS headers a dump kept** (from the same review).  A dump made
+12. **LUKS headers a dump kept** (answered: approved 2026-11-26 by the user, the recommendation; not built yet).  A dump made
     with `--keep-luks-header` (an Ubuntu Core's encryption always) needs
     its header files beside it, and nothing puts them on the stick.
     Until this is answered, `stick --copy` refuses such a layout
@@ -2449,7 +2451,7 @@ every disk and the stick image kept its md5.
     Or the stick carries them beside system.json, each with its
     `.sha256`, and `stick --copy` copies them too (they fill a 32 MiB
     partition fast).
-13. **Room on the config partition** (from the same review).  A
+13. **Room on the config partition** (answered: approved 2026-11-26 by the user, the recommendation; not built yet).  A
     system.json is read up to 64 MiB (`stick.rs`'s `SYSTEM_MAX`), a dump
     may be up to 1 GiB (`LAYOUT_MAX`), the BSD images' config partition
     is 32 MiB, and each machine's restore logs may take 20 MiB.  A large

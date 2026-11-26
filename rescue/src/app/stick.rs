@@ -145,6 +145,12 @@ impl Machine {
         }
     }
 
+    /// Its layout was left out as too big for any stick (`system_too_big`):
+    /// another stick can't hold it either, so the advice never offers one.
+    pub fn layout_too_big(&self) -> bool {
+        matches!(self.layout, OnStick::LeftOut { code: Some("system_too_big"), .. })
+    }
+
     /// The hostname, cleaned, or `(no name)`.
     pub fn name(&self) -> Clean {
         match &self.hostname {

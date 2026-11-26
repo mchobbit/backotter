@@ -2596,11 +2596,12 @@ fn a_machine_whose_stick_holds_no_layout_is_said_before_the_password() {
     assert_eq!(t.app.run(&mut ui), Exit::Quit);
     assert_eq!(ui.titles(), ["Which machine is this?", "The backup password"]);
     // Each other reason: the notice, with the advice for it alone.  Back
-    // stays on Machine; Go on goes to the password.
+    // stays on Machine, the focus on the machine picked; Go on goes to the
+    // password.
     for (i, says, advice, never) in [
         (1, "as the stick had no room for it at the machine's last backup (with it, the file was 20.0 MiB)", "make room on the stick, or write a newer image to it", "No stick can hold it"),
         (2, "as with it the file was 70.0 MiB, more than a stick's bko-holt reads", "No stick can hold it, so room on this one won't help", "make room"),
-        (3, "its settings on this stick carry none, and don't say why", "back it up again with this stick plugged in", "make room"),
+        (3, "the file this stick keeps for it (its system.json) carries none, and doesn't say why", "back it up again with this stick plugged in", "make room"),
     ] {
         let mut t = tt("stick-left-out", "lovelace");
         let mut ui = Shots::new(script(&[&start(), &[Pick(i), Back, Pick(i), P, Reply::Quit]]));
@@ -2613,6 +2614,11 @@ fn a_machine_whose_stick_holds_no_layout_is_said_before_the_password() {
         assert!(p.contains(says) && p.contains(advice) && !p.contains(never), "{i}: {p}");
         // This bko-holt reads a backup's own layout (open question 15).
         assert!(p.contains("bko-rescue reads it from the backup you choose"), "{p}");
+        // Too big for any stick: another stick is never offered.
+        assert!(i != 2 || !p.contains("stick that holds"), "{p}");
+        // Back kept the pick: Machine again, its focus on that row.
+        let again = ui.text("Which machine is this?", 1);
+        assert!(again.contains(&format!("(*) {name}")), "{again}");
         assert_eq!(t.app.machine, Some(i), "chosen once Go on is pressed");
         assert!(!ran(&t).iter().any(|l| l.contains("stick --copy") || l.contains("rustic")), "nothing more is asked before the password: {:?}", ran(&t));
     }
@@ -2625,6 +2631,15 @@ fn a_machine_whose_stick_holds_no_layout_is_said_before_the_password() {
     assert_eq!(t.app.run(&mut ui), Exit::Quit);
     let p = ui.flat(st::NO_LAYOUT_NOTICE_TITLE, 0);
     assert!(p.contains("can't read a backup's own layout, so this stick can't restore this machine's disks") && !p.contains("reads it from the backup you choose"), "{p}");
+    assert!(p.contains("Restore with another stick that holds its layout"), "{p}");
+    // Too big for any stick: a newer image, never another stick.
+    let mut t = t_with("stick-left-out", "lovelace", LINUX, false, |f| {
+        f.version = Some(String::from_utf8(fixture("scenarios/stick-three/01-version/stdout")).unwrap());
+    });
+    let mut ui = Shots::new(script(&[&start(), &[Pick(2), Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    let p = ui.flat(st::NO_LAYOUT_NOTICE_TITLE, 0);
+    assert!(p.contains("Restore with a stick that has a newer image: its bko-holt reads the layout from the backup you choose") && p.contains("No stick can hold it") && !p.contains("stick that holds"), "{p}");
     // An older bko-holt's rows say nothing of it: no notice (stick-three).
     let mut t = tt("stick-three", "lovelace");
     let mut ui = Shots::new(script(&[&start(), &[Pick(1), Reply::Quit]]));
@@ -2639,10 +2654,12 @@ fn disks_gives_the_advice_for_the_reason_the_stick_said() {
     // gives that reason's advice, not "if bko-holt's words say".
     let copy = |n: &str| String::from_utf8(fixture(&format!("scenarios/stick-left-out/{n}/stdout"))).unwrap();
     let notice_to_disks = script(&[&start(), &[Pick(0), P, Sec(PASSWORD.to_vec()), P, P, Pick(0), P]]);
-    for (row, call, advice, never) in [
-        (1, "03-copy-stick-full", st::ADVICE_ROOM, st::ADVICE_TOO_BIG),
-        (2, "04-copy-too-big", st::ADVICE_TOO_BIG, "make room"),
-        (3, "05-copy-none", st::ADVICE_NONE, "make room"),
+    // Too big for any stick (row 2): the first words never offer another
+    // stick (open question 18's review).
+    for (row, call, advice, never, on_stick, in_backup) in [
+        (1, "03-copy-stick-full", st::ADVICE_ROOM, st::ADVICE_TOO_BIG, st::NO_LAYOUT_ON_STICK_FIRST, st::NO_LAYOUT_IN_BACKUP_FIRST),
+        (2, "04-copy-too-big", st::ADVICE_TOO_BIG, "stick that holds", st::NO_LAYOUT_ON_STICK_FIRST_TOO_BIG, st::NO_LAYOUT_IN_BACKUP_FIRST_TOO_BIG),
+        (3, "05-copy-none", st::ADVICE_NONE, "make room", st::NO_LAYOUT_ON_STICK_FIRST, st::NO_LAYOUT_IN_BACKUP_FIRST),
     ] {
         let (stick, refusal) = (stick_three_with(&left_out_layout(row)), copy(call));
         let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| {
@@ -2654,7 +2671,7 @@ fn disks_gives_the_advice_for_the_reason_the_stick_said() {
         assert_eq!(t.app.run(&mut ui), Exit::Quit);
         let p = ui.flat("Problem: the old disks' layout isn't here", 0);
         let flat = |x: &str| x.replace("  ", " ");
-        assert!(p.contains(&flat(st::NO_LAYOUT_ON_STICK_FIRST)) && p.contains(&flat(advice)), "{row}: {p}");
+        assert!(p.contains(&flat(on_stick)) && p.contains(&flat(advice)), "{row}: {p}");
         assert!(!p.contains("If bko-holt's words say") && !p.contains(never), "{row}: {p}");
         assert!(t.app.layout.is_none() && !ran(&t).iter().any(|l| l.contains("bko-holt load")), "no plan without a layout");
         // The backup asked, and holding none of its own: its own first words.
@@ -2668,7 +2685,7 @@ fn disks_gives_the_advice_for_the_reason_the_stick_said() {
         let mut ui = Shots::new(script(&[&notice_to_disks, &[Reply::Quit]]));
         assert_eq!(t.app.run(&mut ui), Exit::Quit);
         let p = ui.flat("Problem: the old disks' layout isn't here", 0);
-        assert!(p.contains("This backup holds none of its own") && p.contains(&flat(st::NO_LAYOUT_IN_BACKUP_FIRST)) && p.contains(&flat(advice)), "{row}: {p}");
+        assert!(p.contains("This backup holds none of its own") && p.contains(&flat(in_backup)) && p.contains(&flat(advice)), "{row}: {p}");
         assert!(!p.contains("If bko-holt's words say") && !p.contains(never), "{row}: {p}");
     }
 }

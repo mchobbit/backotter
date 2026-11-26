@@ -223,11 +223,18 @@ impl App {
         // The stick's row says why it holds none (open question 18): the
         // advice for that reason alone.  Not said (an older bko-holt): the
         // words that offer room only if bko-holt's say so.
+        // Too big for any stick: the first words never offer another.
         let advice = self.chosen().and_then(super::stick::Machine::no_layout).map(|(_, a)| a);
+        let too_big = self.chosen().is_some_and(super::stick::Machine::layout_too_big);
+        let (in_backup, on_stick) = if too_big {
+            (s::NO_LAYOUT_IN_BACKUP_FIRST_TOO_BIG, s::NO_LAYOUT_ON_STICK_FIRST_TOO_BIG)
+        } else {
+            (s::NO_LAYOUT_IN_BACKUP_FIRST, s::NO_LAYOUT_ON_STICK_FIRST)
+        };
         let (why, todo) = match (n.none_on_stick, n.none_in_backup, advice) {
-            (true, true, Some(a)) => (s::NO_LAYOUT_IN_BACKUP_WHY, s::no_layout_todo(s::NO_LAYOUT_IN_BACKUP_FIRST, a)),
+            (true, true, Some(a)) => (s::NO_LAYOUT_IN_BACKUP_WHY, s::no_layout_todo(in_backup, a)),
             (true, true, None) => (s::NO_LAYOUT_IN_BACKUP_WHY, s::NO_LAYOUT_IN_BACKUP_TODO.to_string()),
-            (true, false, Some(a)) => (s::NO_LAYOUT_ON_STICK_WHY, s::no_layout_todo(s::NO_LAYOUT_ON_STICK_FIRST, a)),
+            (true, false, Some(a)) => (s::NO_LAYOUT_ON_STICK_WHY, s::no_layout_todo(on_stick, a)),
             (true, false, None) => (s::NO_LAYOUT_ON_STICK_WHY, s::NO_LAYOUT_ON_STICK_TODO.to_string()),
             _ => (s::NO_LAYOUT_WHY, s::NO_LAYOUT_TODO.to_string()),
         };

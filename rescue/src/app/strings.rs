@@ -393,10 +393,15 @@ pub const ADVICE_ROOM: &str = "To keep it on this stick: while the machine still
 pub const ADVICE_TOO_BIG: &str = "No stick can hold it, so room on this one won't help.";
 /// No layout, and no reason given.
 pub const ADVICE_NONE: &str = "While the machine still runs, back it up again with this stick plugged in.";
-pub const FROM_BACKUP: &str = "Each backup the backup tool makes holds its own layout, and bko-rescue reads it from the backup you choose.  A backup made before backups kept one can't be restored with this stick.";
+pub const FROM_BACKUP: &str = "A backup can hold its own copy of the layout, and bko-rescue reads it from the backup you choose.  A backup that holds none (one made before backups kept it) can't be restored with this stick.";
 pub const NOT_FROM_BACKUP: &str = "This stick's bko-holt can't read a backup's own layout, so this stick can't restore this machine's disks.  Restore with another stick that holds its layout, or write a newer image to this one.";
+/// `system_too_big`: no stick holds it, so a newer image's bko-holt,
+/// which reads it from the backup, is the way.
+pub const NOT_FROM_BACKUP_TOO_BIG: &str = "This stick's bko-holt can't read a backup's own layout, so this stick can't restore this machine's disks.  Restore with a stick that has a newer image: its bko-holt reads the layout from the backup you choose.";
 pub const NO_LAYOUT_ON_STICK_FIRST: &str = "Restore with another stick that holds this machine's layout, if you have one.";
+pub const NO_LAYOUT_ON_STICK_FIRST_TOO_BIG: &str = "Restore with a stick that has a newer image: its bko-holt reads the layout from the backup you choose.";
 pub const NO_LAYOUT_IN_BACKUP_FIRST: &str = "Go back and choose a newer backup, or use a stick that holds this machine's layout.";
+pub const NO_LAYOUT_IN_BACKUP_FIRST_TOO_BIG: &str = "Go back and choose a newer backup.";
 pub const SHELL_LOOKS: &str = "The shell can look at the BACKOTTER partition.";
 /// N bytes in MiB to a tenth, rounded up (bko-holt's words round a need so).
 pub fn mib_up(n: u64) -> String {
@@ -407,7 +412,7 @@ pub fn mib_up(n: u64) -> String {
 /// named), or NONE (no layout, no reason).
 pub fn left_out_why(code: Option<&str>, bytes: Option<u64>, none: bool) -> String {
     if none {
-        return "its settings on this stick carry none, and don't say why.".to_string();
+        return "the file this stick keeps for it (its system.json) carries none, and doesn't say why.".to_string();
     }
     match (code, bytes) {
         (Some("stick_full"), Some(n)) => format!("the backup tool left it out, as the stick had no room for it at the machine's last backup (with it, the file was {}).", mib_up(n)),
@@ -418,9 +423,14 @@ pub fn left_out_why(code: Option<&str>, bytes: Option<u64>, none: bool) -> Strin
     }
 }
 /// The Machine screen's notice for NAME: WHY, what the backup gives
-/// (FROM: this bko-holt reads a backup's own layout), and ADVICE.
-pub fn no_layout_notice(name: &str, why: &str, from: bool, advice: &str) -> String {
-    let from = if from { FROM_BACKUP } else { NOT_FROM_BACKUP };
+/// (FROM: this bko-holt reads a backup's own layout; TOO_BIG: no stick
+/// can hold it, so another isn't offered), and ADVICE.
+pub fn no_layout_notice(name: &str, why: &str, from: bool, advice: &str, too_big: bool) -> String {
+    let from = match (from, too_big) {
+        (true, _) => FROM_BACKUP,
+        (false, false) => NOT_FROM_BACKUP,
+        (false, true) => NOT_FROM_BACKUP_TOO_BIG,
+    };
     let advice = if advice.is_empty() { String::new() } else { format!("\n\n{advice}") };
     format!("This stick holds no disk layout for {name}: {why}\n\n{from}{advice}")
 }
@@ -1190,7 +1200,7 @@ pub const ALL: &[&str] = &[
     REPORT_TITLE, REPORT_DRY_RUN, REPORT_GITHUB, REPORT_REDACTED, REPORT_PRIVATE, BTN_VIEW, BTN_ADVANCED,
     REPORT_FAILED_TITLE, REPORT_FAILED, REPORT_NO_STRIP, VIEW_TITLE, ADVANCED_TITLE, ADVANCED_TEXT, ADVANCED_WARN, ADVANCED_PLAIN, TYPE_YES,
     TYPE_YES_FIRST, BTN_MAKE_IT, YES, SESSION_FAILED,
-    SCR_PASSPHRASES, SCR_RESUME, SCR_REVIEW, SCR_RESTORE, SCR_DONE, SCR_FAILURE, BTN_BACK, DISKS_TITLE, DISKS_KEYS, PLANNING_TITLE, PLANNING, PLANNING_FIT, PLANNING_REVIEW, STATUS_TITLE, STATUS_TEXT, ROLE_SYSTEM, ROLE_SYSTEM_SHORT, ROLE_NOTHING, BY_WWID, BY_IDENTITY, WILL_BE_ERASED, CHOSEN_BY_YOU, NO_TARGET, PLAIN_NO_TARGET, PLAIN_ERASED, NOT_USED, NOT_OFFERED, ALREADY_USED, BLANK, REFUSED_STICK, REFUSED_BACKUP, REFUSED_ROOT, REFUSED_IN_USE, REFUSED_READ_ONLY, REFUSED_SECTOR, BTN_OK, BTN_THESE_ARE_RIGHT, PLAN_FAILED_TITLE, PLAN_FAILED_WHY, PLAN_FAILED_TODO, NO_LAYOUT_TITLE, NO_LAYOUT_WHY, NO_LAYOUT_TODO, NO_LAYOUT_ON_STICK_WHY, NO_LAYOUT_ON_STICK_TODO, LAYOUT_NONE_TYPED, LAYOUT_NO_ID, LAYOUT_NO_HOLT, LAYOUT_NOT_WRITTEN, HEADERS_TITLE, HEADERS_TEXT, HEADERS_FAILED_TITLE, HEADERS_FAILED_WHY, HEADERS_FAILED_TODO, HEADERS_MISMATCH_STICK_TODO, HEADERS_MISMATCH_UNASKED_TODO, LAYOUT_DIFFERS, HEADERS_NO_REPO, HEADERS_NOT_WRITTEN, SNAP_LAYOUT_TITLE, SNAP_LAYOUT_TEXT, SNAP_LAYOUT_FAILED_TITLE, SNAP_LAYOUT_FAILED_WHY, SNAP_LAYOUT_FAILED_TODO, SNAP_LAYOUT_NOT_WRITTEN, NO_LAYOUT_IN_BACKUP_WHY, NO_LAYOUT_IN_BACKUP_TODO, LAYOUT_NONE_TYPED_IN_BACKUP, NO_LAYOUT_NOTICE_TITLE, ADVICE_ROOM, ADVICE_TOO_BIG, ADVICE_NONE, FROM_BACKUP, NOT_FROM_BACKUP, NO_LAYOUT_ON_STICK_FIRST, NO_LAYOUT_IN_BACKUP_FIRST, SHELL_LOOKS, ONE_DISK_KEYS, PUT_IT_ON, NO_SERIAL, NO_CANDIDATES, CANT_RESIZE_WHY, MUCH_SMALLER, A_LITTLE_SMALLER, TOO_SMALL, BIGGER, LITTLE_SMALLER_TITLE, LITTLE_BIGGER_TITLE, MUCH_SMALLER_TITLE, MUCH_BIGGER_TITLE, OFFER_KEYS, SLACK_TEXT, OR_ANOTHER, BTN_SHRINK, BTN_GROW, BTN_KEEP_SIZES, BTN_ANOTHER_DISK, DECIDE_WHY, BEYOND_LIMIT, CHOOSE_ANOTHER, CHOOSE_ONE_FIRST, PASS_NEW, PASS_KEPT_HEADER, PASS_RESUME, LABEL_PASSPHRASE, LABEL_AGAIN, PASSPHRASE_KEYS, PASS_EMPTY, PASS_MISMATCH, BOOT_KB_TITLE, KEY_BLOCKED_TITLE, KEY_FILE_ELSEWHERE, KEY_BLOCKED_TODO, RESUME_TITLE, STARTED_NOT_FINISHED, RESUME_CHOICES, BTN_GO_ON, BTN_START_AGAIN, REVIEW_TITLE, REVIEW_KEYS, REVIEW_ERASE, REVIEW_ERASE_PLAIN, WORD_ERASED, WORD_WRITTEN, WORD_GOES_ON, CHANGES, CHANGES_NONE, NO_PROBLEMS, THIS_STICK, NOTHING_ELSE, NOTHING_CHANGED, CHANGE_PASSPHRASE, NO_OTHER_FS, BTN_RESTORE, BTN_RESTORE_NOW, BTN_SHOW_WHAT, BTN_COMMANDS, BTN_EVERY_COMMAND, REVIEW_PROBLEM_TITLE, REVIEW_PROBLEM_WHY, ERASE_PROBLEM_WHY, REVIEW_PROBLEM_TODO, BTN_TO_DISKS, BTN_TO_PASSPHRASES, BTN_TO_RESUME, RESUME_KEYS, REVIEW_KEYS_DRY, REVIEW_NO_ROWS, YZ_SWAPPED_BOOT, DECIDE_KEYS, MUCH_BIGGER_KEYS, COMMANDS_TITLE, ADVANCED_FS_TITLE, ADVANCED_FS_TEXT, ADVANCED_FS_AFTER, AS_IT_WAS, CHANGED, CANT_CHANGE, BTN_UNDO_ALL,
+    SCR_PASSPHRASES, SCR_RESUME, SCR_REVIEW, SCR_RESTORE, SCR_DONE, SCR_FAILURE, BTN_BACK, DISKS_TITLE, DISKS_KEYS, PLANNING_TITLE, PLANNING, PLANNING_FIT, PLANNING_REVIEW, STATUS_TITLE, STATUS_TEXT, ROLE_SYSTEM, ROLE_SYSTEM_SHORT, ROLE_NOTHING, BY_WWID, BY_IDENTITY, WILL_BE_ERASED, CHOSEN_BY_YOU, NO_TARGET, PLAIN_NO_TARGET, PLAIN_ERASED, NOT_USED, NOT_OFFERED, ALREADY_USED, BLANK, REFUSED_STICK, REFUSED_BACKUP, REFUSED_ROOT, REFUSED_IN_USE, REFUSED_READ_ONLY, REFUSED_SECTOR, BTN_OK, BTN_THESE_ARE_RIGHT, PLAN_FAILED_TITLE, PLAN_FAILED_WHY, PLAN_FAILED_TODO, NO_LAYOUT_TITLE, NO_LAYOUT_WHY, NO_LAYOUT_TODO, NO_LAYOUT_ON_STICK_WHY, NO_LAYOUT_ON_STICK_TODO, LAYOUT_NONE_TYPED, LAYOUT_NO_ID, LAYOUT_NO_HOLT, LAYOUT_NOT_WRITTEN, HEADERS_TITLE, HEADERS_TEXT, HEADERS_FAILED_TITLE, HEADERS_FAILED_WHY, HEADERS_FAILED_TODO, HEADERS_MISMATCH_STICK_TODO, HEADERS_MISMATCH_UNASKED_TODO, LAYOUT_DIFFERS, HEADERS_NO_REPO, HEADERS_NOT_WRITTEN, SNAP_LAYOUT_TITLE, SNAP_LAYOUT_TEXT, SNAP_LAYOUT_FAILED_TITLE, SNAP_LAYOUT_FAILED_WHY, SNAP_LAYOUT_FAILED_TODO, SNAP_LAYOUT_NOT_WRITTEN, NO_LAYOUT_IN_BACKUP_WHY, NO_LAYOUT_IN_BACKUP_TODO, LAYOUT_NONE_TYPED_IN_BACKUP, NO_LAYOUT_NOTICE_TITLE, ADVICE_ROOM, ADVICE_TOO_BIG, ADVICE_NONE, FROM_BACKUP, NOT_FROM_BACKUP, NOT_FROM_BACKUP_TOO_BIG, NO_LAYOUT_ON_STICK_FIRST, NO_LAYOUT_ON_STICK_FIRST_TOO_BIG, NO_LAYOUT_IN_BACKUP_FIRST, NO_LAYOUT_IN_BACKUP_FIRST_TOO_BIG, SHELL_LOOKS, ONE_DISK_KEYS, PUT_IT_ON, NO_SERIAL, NO_CANDIDATES, CANT_RESIZE_WHY, MUCH_SMALLER, A_LITTLE_SMALLER, TOO_SMALL, BIGGER, LITTLE_SMALLER_TITLE, LITTLE_BIGGER_TITLE, MUCH_SMALLER_TITLE, MUCH_BIGGER_TITLE, OFFER_KEYS, SLACK_TEXT, OR_ANOTHER, BTN_SHRINK, BTN_GROW, BTN_KEEP_SIZES, BTN_ANOTHER_DISK, DECIDE_WHY, BEYOND_LIMIT, CHOOSE_ANOTHER, CHOOSE_ONE_FIRST, PASS_NEW, PASS_KEPT_HEADER, PASS_RESUME, LABEL_PASSPHRASE, LABEL_AGAIN, PASSPHRASE_KEYS, PASS_EMPTY, PASS_MISMATCH, BOOT_KB_TITLE, KEY_BLOCKED_TITLE, KEY_FILE_ELSEWHERE, KEY_BLOCKED_TODO, RESUME_TITLE, STARTED_NOT_FINISHED, RESUME_CHOICES, BTN_GO_ON, BTN_START_AGAIN, REVIEW_TITLE, REVIEW_KEYS, REVIEW_ERASE, REVIEW_ERASE_PLAIN, WORD_ERASED, WORD_WRITTEN, WORD_GOES_ON, CHANGES, CHANGES_NONE, NO_PROBLEMS, THIS_STICK, NOTHING_ELSE, NOTHING_CHANGED, CHANGE_PASSPHRASE, NO_OTHER_FS, BTN_RESTORE, BTN_RESTORE_NOW, BTN_SHOW_WHAT, BTN_COMMANDS, BTN_EVERY_COMMAND, REVIEW_PROBLEM_TITLE, REVIEW_PROBLEM_WHY, ERASE_PROBLEM_WHY, REVIEW_PROBLEM_TODO, BTN_TO_DISKS, BTN_TO_PASSPHRASES, BTN_TO_RESUME, RESUME_KEYS, REVIEW_KEYS_DRY, REVIEW_NO_ROWS, YZ_SWAPPED_BOOT, DECIDE_KEYS, MUCH_BIGGER_KEYS, COMMANDS_TITLE, ADVANCED_FS_TITLE, ADVANCED_FS_TEXT, ADVANCED_FS_AFTER, AS_IT_WAS, CHANGED, CANT_CHANGE, BTN_UNDO_ALL,
     RESTORE_AFTER, DRY_AFTER, RESTORE_KEYS, BTN_CANCEL, BTN_STOP_PLAIN, BTN_LOG, NOW_STARTING, NOW_STOPPING, NOW_BETWEEN, NOTHING_TO_DO, FAILED_WORD, STOPPED_WORD, LESS_THAN_A_MINUTE, STOP_TITLE, DRY_STOP_TITLE, DRY_STOP_TEXT, BTN_KEEP_GOING, BTN_STOP, STOP_KEYS, STOP_FAILED_TITLE, STOP_NO_PID, STOP_NO_LOCK, STOP_LOCK_OTHER, STOP_NOT_SENT, LOG_TITLE, DRY_LOG_TITLE, LOG_NONE,
     DONE_PASSPHRASE, AFTER_FIRST, LOG_NO_HOLT_LOG, LOG_NO_FOLDER, LOG_NOT_READ, BTN_RESTART, BTN_POWER_OFF, BTN_RESTART_ANYWAY, BTN_SHOW_COMMANDS, BTN_LEAVE, DONE_KEYS, DRY_DONE_KEYS, STICK_IN_TITLE, STICK_IN, OFF_FAILED_TITLE,
     STOPPED_EARLY, STOPPED_BY_YOU, BTN_HELP, FAILURE_KEYS, POWER_OFF_TITLE, POWER_OFF_TEXT, NOT_STARTED, BAD_EVENTS, NO_END, NOT_ASKED, UNCLEAR, ATTACHED_NO_RETRY,
@@ -1232,10 +1242,13 @@ mod tests {
             left_out_why(Some("stick_full"), Some(20 << 20), false),
             left_out_why(Some("system_too_big"), Some(70 << 20), false),
             left_out_why(None, None, true),
-            no_layout_notice("lovelace", "x.", true, ADVICE_ROOM),
-            no_layout_notice("lovelace", "x.", false, ""),
+            no_layout_notice("lovelace", "x.", true, ADVICE_ROOM, false),
+            no_layout_notice("lovelace", "x.", false, "", false),
+            no_layout_notice("lovelace", "x.", false, ADVICE_TOO_BIG, true),
             no_layout_todo(NO_LAYOUT_ON_STICK_FIRST, ADVICE_NONE),
             no_layout_todo(NO_LAYOUT_IN_BACKUP_FIRST, ""),
+            no_layout_todo(NO_LAYOUT_ON_STICK_FIRST_TOO_BIG, ADVICE_TOO_BIG),
+            no_layout_todo(NO_LAYOUT_IN_BACKUP_FIRST_TOO_BIG, ADVICE_TOO_BIG),
         ] {
             assert_eq!(Clean::text(&s, usize::MAX).as_str(), s);
         }

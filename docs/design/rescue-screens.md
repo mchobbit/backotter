@@ -206,8 +206,9 @@ layout can be offered then (see "The keyboard offer").  This changes
   shows UTC.
 - Fed by `bko-holt stick --json` (D11): each machine's hostname, OS,
   `system.json`'s `written` and `sequence`, `dmi.system_uuid` (compared
-  with this computer's), the checksum state, and now its `keyboard` and
-  `time` sections.
+  with this computer's), the checksum state, its `keyboard` and `time`
+  sections, and whether its system.json carries the disk layout (the
+  row's `layout`, holt-json.md's open question 18; below).
 - A machine whose checksum fails or whose schema the stick doesn't know is
   listed with that reason in words and can't be chosen.
 - `s` or < Shell > opens a shell; leaving it comes back here.  `L` cycles
@@ -223,6 +224,59 @@ layout can be offered then (see "The keyboard offer").  This changes
   drawn (see "Keyboard layout").
 - Two sticks from one image on illumos: a message box asks for the other
   one to be removed (`stick-config.md`, step 1), with Retry and Shell.
+
+### No disk layout on this stick
+
+When the machine chosen has a row whose `layout` is `left_out` or
+`none`, this comes before the password (holt-json.md's open question 18).
+Here babbage's was left out for the stick's room:
+
+```text
+ BackOtter rescue                                                        Machine
+
+
+
+  ┌────────────────────── No disk layout on this stick ──────────────────────┐
+  │                                                                          │
+  │ This stick holds no disk layout for babbage: the backup tool left it     │
+  │ out, as the stick had no room for it at the machine's last backup (with  │
+  │ it, the file was 20.0 MiB).                                              │
+  │                                                                          │
+  │ A backup can hold its own copy of the layout, and bko-rescue reads it    │
+  │ from the backup you choose.  A backup that holds none (one made before   │
+  │ backups kept it) can't be restored with this stick.                      │
+  │                                                                          │
+  │ To keep it on this stick: while the machine still runs, make room on the │
+  │ stick, or write a newer image to it, then back the machine up again.     │
+  │                                                                          │
+  │                    < Go on >    < Shell >    < Back >                    │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+ Tab: next | Left/Right: button | Enter: Go on | s: shell | Esc: back
+```
+
+- First why, from the row: the code (`stick_full`, `system_too_big`) and
+  the whole file's size, or that the file carries none and doesn't say
+  why.
+- Then what the backup gives.  With a bko-holt that reads a backup's own
+  layout (`snapshot_layout` in its api document), the paragraph above.
+  Without one: this stick can't restore the machine's disks; restore
+  with another stick that holds its layout, or write a newer image.  For
+  `system_too_big` no stick can hold it, so it says only: restore with a
+  stick that has a newer image.
+- Then the advice for that code alone: `stick_full`, make room or write a
+  newer image, then back up again; `system_too_big`, no stick can hold
+  it, so room won't help; none, back up again with this stick plugged
+  in; a code bko-holt doesn't name, nothing.
+- < Go on > (Enter) goes to the password: the machine can still be
+  chosen, since the backup may hold its own layout.  < Back > (Esc)
+  returns to Machine, the focus still on the machine picked.  `s` or
+  < Shell > opens a shell, then Machine again.
+- A row without `layout` (an older bko-holt) shows nothing here.  The
+  Disks screen's `no_layout` problem gives the same advice later.
 
 ### Type a location
 

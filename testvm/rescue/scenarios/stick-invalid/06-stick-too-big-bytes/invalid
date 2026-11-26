@@ -1,0 +1,2 @@
+layout system_too_big of 20971520 bytes
+A layout left out as too big for any stick, yet not over the 64 MiB a stick's bko-holt reads: bko-holt never says so.

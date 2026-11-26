@@ -1471,7 +1471,7 @@ pub fn stick_write(m: &Marker, system: &Value, len: u64, r: &Room) -> StickWrite
             format!(" To keep the layout on the stick: {remedy}, then back the machine up again.")
         }
     };
-    let gets = "the stick gets this machine's system.json without its disk layout: the stick still finds the backup, but it can't restore this machine's disks until the layout comes from the backup, which bko-rescue can't do yet. The backup keeps the whole file.";
+    let gets = "the stick gets this machine's system.json without its disk layout. The backup keeps the whole file: the stick still finds the backup, and bko-rescue reads the layout from it at restore time.";
     let bare = match room_check(m, body.len() as u64, r) {
         Ok(warnings) => {
             let text = format!("{}. So {gets}{}", refused.text, todo(&refused.remedy));
@@ -3042,7 +3042,7 @@ mod tests {
         );
         assert_eq!(
             text,
-            "this machine's system.json is 64.1 MiB, over the 64.0 MiB a stick's bko-holt reads. So the stick gets this machine's system.json without its disk layout: the stick still finds the backup, but it can't restore this machine's disks until the layout comes from the backup, which bko-rescue can't do yet. The backup keeps the whole file."
+            "this machine's system.json is 64.1 MiB, over the 64.0 MiB a stick's bko-holt reads. So the stick gets this machine's system.json without its disk layout. The backup keeps the whole file: the stick still finds the backup, and bko-rescue reads the layout from it at restore time."
         );
         // No room for the whole file, room for one without: the remedy is said.
         let w = stick_write(
@@ -3068,8 +3068,8 @@ mod tests {
             ["stick_room_short"],
             "its own write's warning"
         );
-        assert!(text.starts_with("this machine's system.json needs 20.0 MiB while the stick still holds its two older copies, and the stick's config partition has 1.0 MiB free. So the stick gets this machine's system.json without its disk layout: "), "{text}");
-        assert!(text.ends_with("The backup keeps the whole file. To keep the layout on the stick: remove other machines' folders from the stick, or write a newer image to it (this one's config partition is 32.0 MiB, a newer one's 256 MiB), then back the machine up again."), "{text}");
+        assert!(text.starts_with("this machine's system.json needs 20.0 MiB while the stick still holds its two older copies, and the stick's config partition has 1.0 MiB free. So the stick gets this machine's system.json without its disk layout. "), "{text}");
+        assert!(text.ends_with("bko-rescue reads the layout from it at restore time. To keep the layout on the stick: remove other machines' folders from the stick, or write a newer image to it (this one's config partition is 32.0 MiB, a newer one's 256 MiB), then back the machine up again."), "{text}");
         // A layout_left_out that was there is replaced, not doubled.
         let again = without_layout(&without_layout(&sys, "stick_full", 9), "system_too_big", 7);
         assert_eq!(
@@ -3110,7 +3110,7 @@ mod tests {
         assert!(crate::json::parse(&body).unwrap().get(LAYOUT_KEY).is_none());
         assert_eq!(
             text,
-            "this machine's system.json needs 20.0 MiB while the stick still holds its two older copies, and the stick's config partition has 0.0 MiB free. Even without its disk layout, this machine's system.json needs 0.1 MiB while the stick still holds its two older copies, and the stick's config partition has 0.0 MiB free. So this machine's older copies (system.json and system.prev.json) are removed from the stick first, then the stick gets this machine's system.json without its disk layout: the stick still finds the backup, but it can't restore this machine's disks until the layout comes from the backup, which bko-rescue can't do yet. The backup keeps the whole file. To keep the layout on the stick: free room on the stick's config partition, then back the machine up again."
+            "this machine's system.json needs 20.0 MiB while the stick still holds its two older copies, and the stick's config partition has 0.0 MiB free. Even without its disk layout, this machine's system.json needs 0.1 MiB while the stick still holds its two older copies, and the stick's config partition has 0.0 MiB free. So this machine's older copies (system.json and system.prev.json) are removed from the stick first, then the stick gets this machine's system.json without its disk layout. The backup keeps the whole file: the stick still finds the backup, and bko-rescue reads the layout from it at restore time. To keep the layout on the stick: free room on the stick's config partition, then back the machine up again."
         );
         // Open question 19: once the older copies are gone, the whole file
         // is tried before BODY, and keeps the layout.  Their removal frees

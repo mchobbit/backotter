@@ -36,6 +36,8 @@ import os
 import re
 import sys
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+
 # The first bko-holt that writes schema 1 of the protocol (RT10a-RT10g
 # landed while main's version was 0.2.6): a recorded run's start.version
 # older than this can't be one of its runs.
@@ -289,6 +291,12 @@ MACHINE_STATES = ("ok", "checksum_bad", "checksum_missing", "schema_unknown", "u
 # layout_left_out that bko-holt passes on (stick.rs's LAYOUT_LEFT_OUT_CODES).
 LAYOUT_STATES = ("present", "left_out", "none")
 LEFT_OUT_CODES = ("system_too_big", "stick_full")
+# The most of a system.json a stick's bko-holt reads (stick.rs's SYSTEM_MAX).
+SYSTEM_MAX = 64 << 20
+# Where the same codes are kept in the sources, checked against
+# LEFT_OUT_CODES when this runs from a whole tree (open question 18's
+# review): (file from the tree's top, the constant's name).
+CODE_LISTS = (("holt/src/stick.rs", "LAYOUT_LEFT_OUT_CODES"), ("rescue/src/app/stick.rs", "LEFT_OUT_CODES"))
 MACHINE = Obj({"install_id": STR, "path": STR, "state": Enum(*MACHINE_STATES), "why": S_, "schema": I_,
                "known_schema": BOOL, "hostname": S_, "os": Obj({"id": S_, "version_id": S_}), "written": S_,
                "sequence": I_, "dmi_uuid": S_, "this_computer": BOOL,
@@ -408,6 +416,9 @@ def check_document(v, where):
                 errs.append("%s: machines[%d]: layout %s" % (where, i, json.dumps(lay, sort_keys=True)))
             if lay is None and "layout" in m and m["state"] == "ok":
                 errs.append("%s: machines[%d]: state ok, yet layout null" % (where, i))
+            # system_too_big's size is over SYSTEM_MAX, or not given.
+            if lay is not None and lay["code"] == "system_too_big" and lay["bytes"] is not None and lay["bytes"] <= SYSTEM_MAX:
+                errs.append("%s: machines[%d]: layout system_too_big of %d bytes, not over %d" % (where, i, lay["bytes"], SYSTEM_MAX))
         if sum(1 for m in v["machines"] if m["this_computer"]) > 1:
             errs.append("%s: more than one machine is this computer" % where)
     if fmt == "bko-holt-stick-copy" and not errs:
@@ -653,6 +664,23 @@ def walk(top):
     return out
 
 
+def check_code_lists(top):
+    """What is wrong with the sources' copies of LEFT_OUT_CODES under TOP
+    (the tree's top): a list of reasons, or None when they aren't there."""
+    errs, seen = [], 0
+    for f, name in CODE_LISTS:
+        p = os.path.join(top, f)
+        if not os.path.exists(p):
+            continue
+        seen += 1
+        with open(p) as fh:
+            m = re.search(r"\b%s: &\[&str\] = &\[([^\]]*)\];" % name, fh.read())
+        got = tuple(re.findall(r'"([^"]*)"', m.group(1))) if m else None
+        if got != LEFT_OUT_CODES:
+            errs.append("%s: %s is %s, not %s as here" % (f, name, json.dumps(got), json.dumps(list(LEFT_OUT_CODES))))
+    return errs if seen else None
+
+
 def main(argv):
     quiet = "--quiet" in argv
     paths = [a for a in argv if a != "--quiet"]
@@ -680,6 +708,12 @@ def main(argv):
             bad.extend(errs)
             if not quiet:
                 print(("ok    " if not errs else "FAIL  ") + x)
+    codes = check_code_lists(os.path.join(HERE, "..", ".."))
+    if codes is not None:
+        n += 1
+        bad.extend(codes)
+        if not quiet:
+            print(("ok    " if not codes else "FAIL  ") + "layout_left_out's codes in holt and rescue")
     for e in bad:
         print("  " + e)
     print("%d checked, %d problems" % (n, len(bad)))

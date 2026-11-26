@@ -2747,7 +2747,10 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
   - The words say "bko-rescue can't do yet" for the fetch from the backup
     (open question 15).  They change when that is built.  (Built in
     134286f: bko-holt's `no_layout` words stay; bko-rescue's say a newer
-    backup holds the layout when the snapshot was asked and holds none.)
+    backup holds the layout when the snapshot was asked and holds none.
+    `stick_write`'s words changed in the review fixes for open questions
+    18 and 19: the backup keeps the whole file, and bko-rescue reads the
+    layout from it at restore time.)
 - **Tested:** `stick.rs`'s `write_time_stick_write` (each answer and its
   words, `body` without `layout` and with `layout_left_out`, the backup's
   location kept, the edge where `body` just fits or doesn't, a new machine
@@ -3391,6 +3394,61 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
   layout though the whole file would fit, only to keep a
   system.prev.json nothing reads.  New: open question 24.
 
+### What the review of open questions 18 and 19 changed
+
+Fixed 2026-11-26, after two reviews of 547cec4 and 06f154f ("holt, rescue: review fixes for oq18-19"):
+
+- **bko-rescue, `system_too_big`:** the words no longer offer "another
+  stick that holds this machine's layout" and then say no stick can
+  hold it.  For that code, the Machine notice (from a bko-holt that
+  can't read a backup's own layout) and Disks' `no_layout` say: restore
+  with a stick that has a newer image, whose bko-holt reads the layout
+  from the backup.  With the backup asked and holding none: go back and
+  choose a newer backup.  (`strings.rs`'s `NOT_FROM_BACKUP_TOO_BIG`,
+  `NO_LAYOUT_ON_STICK_FIRST_TOO_BIG`, `NO_LAYOUT_IN_BACKUP_FIRST_TOO_BIG`;
+  `stick.rs`'s `Machine::layout_too_big`.)
+- **bko-rescue, Back from the notice** keeps the pick: Machine is drawn
+  again with the focus on the machine picked (`mod.rs`'s
+  `machine_focus`), not on the first row.  Shell does the same.
+- **bko-rescue, words:** a row `none` says "the file this stick keeps for
+  it (its system.json) carries none", not "its settings" (settings.toml
+  is).  `FROM_BACKUP` says a backup *can* hold its own copy of the
+  layout, not that each one does.
+- **bko-holt, `stick_write`'s words** for `WithoutLayout` no longer say
+  "which bko-rescue can't do yet": the backup keeps the whole file, and
+  bko-rescue reads the layout from it at restore time (true since open
+  question 15).  Only the words changed.
+- **holt_schema.py:** a `system_too_big` row's `bytes` must be over 64
+  MiB (`SYSTEM_MAX`), as bko-holt filters it; new bad case
+  `stick-invalid/06-stick-too-big-bytes`.  It also checks that holt's
+  `LAYOUT_LEFT_OUT_CODES` and rescue's `LEFT_OUT_CODES` are its own
+  list, when it runs from a whole tree.
+- **record-stick.py and scenarios/README.md** warn that `three()`'s
+  machines carry no layout: re-recorded with a current bko-holt, every
+  row becomes `none`, and the tests that pick from them meet the notice.
+- **Docs:** rescue-screens.md's "1. Machine" shows the notice and its
+  buttons.  stick-config.md names `layout_left_out` where "the member"
+  was unclear, and no longer says the stick can't restore the disks
+  until the layout comes from the backup.  Open question 24 now says
+  what keeping the older copies buys.
+- **Declined:** making the row's `layout` required in holt_schema.py.
+  Recordings from older bko-holt rightly lack it, and bko-rescue must
+  keep reading them; holt's own goldens catch a bko-holt that drops it.
+- **Tested:** bko-rescue's two open question 18 tests extended
+  (`system_too_big` never offers another stick, on Machine and on Disks;
+  Back keeps the focus on the machine picked), app-test.py's
+  `test_machine_no_layout` checks the focus after Esc, and the golden
+  `app-machine-no-layout.utf8-colour` re-blessed for `FROM_BACKUP`'s
+  sentence alone.  holt's `write_time_stick_write` checks the new words.
+  The holt gate on cinqcent: cargo test 985 passed, 0 failed, 4 ignored;
+  110 golden plans of 98 dumps, 0 differ; redact-corpus passed.
+  bko-rescue on czerny (Rust 1.85.1, a clean target): cargo build
+  without warnings, cargo test 304 + 15 passed, abi/check.sh ok (54
+  facts, 10 symbols), pty-test.py 117 ok, demo-test.py 383 ok,
+  app-test.py 348 ok, each 0 failed; holt_schema.py over the scenarios,
+  holt's fixtures and corpus 545 checked, 0 problems.  Not run: a real
+  stick.
+
 ## Decisions
 
 - **J1. How bko-rescue finds bko-holt's protocol.**  `bko-holt --version
@@ -3716,7 +3774,7 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     old reports off.  Or leave them, and say in the Report screen's words
     that reports take the stick's room until removed.
 18. **Why a stick holds no layout, as data** (from open question 16's
-    review; answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26, 547cec4 and "holt-json, stick-config, rescue-tui: open questions 18 and 19 built": "What why a stick holds no layout built").  bko-rescue sees only bko-holt's `no_layout` code, after
+    review; answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26, 547cec4 and "holt-json, stick-config, rescue-tui: open questions 18 and 19 built", then "holt, rescue: review fixes for oq18-19": "What why a stick holds no layout built" and "What the review of open questions 18 and 19 changed").  bko-rescue sees only bko-holt's `no_layout` code, after
     the password and the snapshot are chosen.  It can't tell
     `stick_full`, where room helps, from `system_too_big`, which no stick
     takes, or from a system.json with no `layout` at all.  So its
@@ -3728,7 +3786,7 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     screen, before the password, with advice for that code alone.  Or
     keep today's conditional words.
 19. **The whole file once the older copies go** (from open question 16's
-    review; answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26 as far as it can be before the backup tool, 547cec4 and "holt-json, stick-config, rescue-tui: open questions 18 and 19 built": "What the whole file first built").  When even `body` doesn't fit beside the machine's older
+    review; answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26 as far as it can be before the backup tool, 547cec4 and "holt-json, stick-config, rescue-tui: open questions 18 and 19 built", then "holt, rescue: review fixes for oq18-19": "What the whole file first built" and "What the review of open questions 18 and 19 changed").  When even `body` doesn't fit beside the machine's older
     copies, `stick_write` removes them and writes `body`.  If the whole
     file would fit once they are gone, writing it keeps the layout on the
     stick, and nothing more is lost: the copies go either way.
@@ -3805,9 +3863,16 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     Take free 1 MiB, an old system.json of 10 MiB and a new one of 10
     MiB: `body` fits beside the old copy, so the stick gets no layout,
     though the whole file fits once the old copy goes.  The old copy
-    becomes `system.prev.json`, which nothing reads at restore time, so
-    keeping it gains nothing.  The next backup then has `body` and that
-    prev to free, and it can take two backups to get the whole file back.
+    becomes `system.prev.json`, which nothing reads at restore time.  The
+    next backup then has `body` and that prev to free, and it can take
+    two backups to get the whole file back.  What keeping the copies
+    buys: `body` beside them is the only branch that leaves the old
+    system.json in place until the new file is written.  Removing them
+    first leaves a moment with no system.json for the machine on the
+    stick.  If the power goes or the stick is pulled then, the stick
+    can't find that machine's backup until the next backup writes one.
+    Open question 19's removal branches already take that risk; this
+    would take it in one more case.
     *Recommended:* once the whole file is refused beside the older
     copies, try it with them gone before `body` beside them (restore
     fidelity first); `body` beside them only when even that fails.  Or

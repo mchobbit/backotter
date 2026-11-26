@@ -88,7 +88,12 @@ def system(install_id, hostname, os_id, version_id, dmi, written, seq, url, extr
 
 
 def three():
-    """The Machine screen's mock-up: lovelace, babbage, hopper."""
+    """The Machine screen's mock-up: lovelace, babbage, hopper.  None
+    carries a layout, so a bko-holt whose rows say so (open question 18)
+    makes each row `none`, and bko-rescue then shows its no-layout notice
+    for each.  The scenarios built from these were recorded before that:
+    re-record them only knowing their tests' key presses and goldens
+    change (scenarios/README.md)."""
     return [
         (LOVELACE, system(LOVELACE, "lovelace", "debian", "13", LOVELACE_DMI.upper(), "2026-11-22T01:00:11Z", 42,
                           "sftp://nas.local/backotter/lovelace",

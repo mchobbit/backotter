@@ -330,8 +330,8 @@ chosen (restic or borg).
   the backup.  `stick --json` says the same in each machine's row
   (`layout`: present, left out with the code and size, or none;
   holt-json.md's open question 18), so bko-rescue says it on the Machine
-  screen, before the password.  The backup tool writes the member only as
-  `without_layout` makes it: CODE one of the two, N an integer.  Any other
+  screen, before the password.  The backup tool writes `layout_left_out`
+  only as `without_layout` makes it: CODE one of the two, N an integer.  Any other
   code is passed on as none named.  A dump that kept LUKS2 headers has them in the backup, not
   on the stick (below, "LUKS2 headers in the backup"; holt-json.md's open
   question 12, built 2026-11-26).
@@ -665,9 +665,9 @@ backup tool calls `stick_write` (below), which checks the room with
     `body` is system.json without `layout`, with `layout_left_out`
     saying why (a few KiB; `without_layout` makes it).  So the stick
     still finds the backup, and it never plans onto an older layout.
-    Say `text`: why, and that this stick can't restore the machine's
-    disks until the layout comes from the backup ("Which copy wins" step
-    2, open question 15); and what makes room, when room would help.
+    Say `text`: why, and that bko-rescue reads the layout from the
+    backup at restore time ("Which copy wins" step 2, open question 15);
+    and what makes room, when room would help.
     Say `body`'s own warnings too.  With `remove_old`, `body` fits only
     once the machine's older copies are gone, as they would be for
     `RemoveOld`, and the whole file doesn't fit even then: remove them first (the folder stays), fsync the

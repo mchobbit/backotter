@@ -2087,6 +2087,20 @@ out with the code and size, or none).
   `disks_gives_the_advice_for_the_reason_the_stick_said`, and app-test.py's
   `test_machine_no_layout` (golden `app-machine-no-layout.utf8-colour`), on
   the recorded `stick-left-out` scenario.
+- Review fixes ("holt, rescue: review fixes for oq18-19"; holt-json.md's
+  "What the review of open questions 18 and 19 changed"):
+  - For `system_too_big` the words never offer another stick: the
+    Machine notice without a backup's own layout says
+    `NOT_FROM_BACKUP_TOO_BIG` (a stick with a newer image), and Disks'
+    first sentence is `NO_LAYOUT_ON_STICK_FIRST_TOO_BIG` or
+    `NO_LAYOUT_IN_BACKUP_FIRST_TOO_BIG` (`Machine::layout_too_big`).
+  - Back or Shell from the notice keeps the pick: Machine's focus is on
+    the machine picked (`machine_focus`).
+  - A row `none` says "the file this stick keeps for it (its
+    system.json)", not "its settings"; `FROM_BACKUP` says a backup can
+    hold its own copy of the layout.  The golden
+    `app-machine-no-layout.utf8-colour` was re-blessed for that sentence
+    alone.
 
 ## The app on top (later)
 

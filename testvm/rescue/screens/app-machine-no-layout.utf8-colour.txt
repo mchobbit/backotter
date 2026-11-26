@@ -8,9 +8,9 @@
   │ out, as the stick had no room for it at the machine's last backup (with  │  
   │ it, the file was 20.0 MiB).                                              │  
   │                                                                          │  
-  │ Each backup the backup tool makes holds its own layout, and bko-rescue   │  
-  │ reads it from the backup you choose.  A backup made before backups kept  │  
-  │ one can't be restored with this stick.                                   │  
+  │ A backup can hold its own copy of the layout, and bko-rescue reads it    │  
+  │ from the backup you choose.  A backup that holds none (one made before   │  
+  │ backups kept it) can't be restored with this stick.                      │  
   │                                                                          │  
   │ To keep it on this stick: while the machine still runs, make room on the │  
   │ stick, or write a newer image to it, then back the machine up again.     │  

@@ -207,6 +207,9 @@ pub struct App {
     /// The first screen: Machine, or Type a location by itself.
     pub(crate) first: Step,
     pub(crate) machine: Option<usize>,
+    /// The row the no-layout notice was left from (Back or Shell): the
+    /// Machine screen's focus once, so the pick isn't lost.
+    pub(crate) machine_focus: Option<usize>,
     /// Why Type a location came up by itself.
     pub(crate) location_why: Option<&'static str>,
     pub(crate) typed: String,
@@ -312,6 +315,7 @@ impl App {
             history: Vec::new(),
             first: Step::Machine,
             machine: None,
+            machine_focus: None,
             location_why: None,
             typed: String::new(),
             typed_bad: false,
@@ -572,7 +576,7 @@ impl App {
             }
         }
         let here = ms.iter().position(|m| m.this_computer && m.ok());
-        let chosen = self.machine.or(here);
+        let chosen = self.machine_focus.take().or(self.machine).or(here);
         let text = match here {
             Some(h) => o(&s::machine_here(names[h].as_str(), &self.machine_when(&ms[h]))),
             None => o(s::MACHINE_NONE_HERE),
@@ -593,6 +597,7 @@ impl App {
         match ui.radio(&r) {
             Answer::Ok(i) if ms.get(i).is_some_and(stick::Machine::ok) => {
                 if let Some(g) = self.no_layout_notice(ui, &ms[i]) {
+                    self.machine_focus = Some(i);
                     return g;
                 }
                 if self.machine != Some(i) {
@@ -618,10 +623,11 @@ impl App {
     /// A machine whose system.json on the stick carries no layout: said
     /// before the password, with why and the advice for that reason alone
     /// (holt-json.md's open question 18).  None: on to the password (OK, or
-    /// nothing to say); else where to go (Back stays on Machine).
+    /// nothing to say); else where to go (Back stays on Machine, its focus
+    /// on M).
     fn no_layout_notice(&mut self, ui: &mut dyn Ui, m: &stick::Machine) -> Option<Go> {
         let (why, advice) = m.no_layout()?;
-        let text = s::no_layout_notice(m.name().as_str(), &why, self.snapshot_layouts, advice);
+        let text = s::no_layout_notice(m.name().as_str(), &why, self.snapshot_layouts, advice, m.layout_too_big());
         let mut d = Message::new(Chrome::ours(s::SCR_MACHINE, s::NO_LAYOUT_NOTICE_TITLE), Clean::text(&text, cap::PROBLEM));
         d.buttons = vec![Button::other(s::BTN_GO_ON, None, B_GO_ON_ANYWAY), Button::shell(), Button::back()];
         match ui.message(&d) {

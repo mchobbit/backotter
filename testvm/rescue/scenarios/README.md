@@ -64,7 +64,13 @@ booted from a stick whose config partition `stick/marker.py` made (256
 MiB FAT16, partition 3, as the Linux image's) with machines put on by
 mtools; each `recorded.txt` says from what and when.  Only `stick-left-out`
 is from a bko-holt whose rows carry `layout` (open question 18); the
-others are older, so bko-rescue says nothing of their layouts.  `stick-three` and
+others are older, so bko-rescue says nothing of their layouts.  Re-record
+only the scenarios you mean to (`record-stick.py BKO_HOLT OUT
+stick-left-out`): `three()`'s machines carry no layout, so a current
+bko-holt gives each of their rows `none`, and every test that picks
+lovelace or babbage from them would then meet the Machine screen's
+no-layout notice.  They can't simply get one either: stick-three's
+recorded `no_layout` refusal is what other tests use.  `stick-three` and
 `stick-this-computer` also hold `recovery-words * --json` calls, answered
 by the words on standard input (the call's `stdin`: BIP39's test vector,
 as bko-rescue sends it, each word completed; the fake takes a word's first
@@ -89,7 +95,7 @@ session).
 | `stick-reformatted` | another FAT serial: `damaged`, exit 1 |
 | `stick-layouts` | lovelace's system.json carrying holt/tests/corpus/debian13-stack's dump as its `layout`, babbage's none, hopper's a wrong checksum: `03-copy` writes lovelace's layout (the corpus dump, byte for byte), `04-copy-no-layout` `no_layout`, `05-copy-checksum-bad` `machine_not_ok`, `06-copy-no-machine` `no_such_machine` (each exit 1) |
 | `stick-left-out` | each row's `layout` (holt-json.md's open question 18): lovelace's present (the corpus dump), babbage's left out for the stick's room (`stick_full`, 20 MiB with it), hopper's too big for any stick (`system_too_big`, 70 MiB), turing's none; `03-copy-stick-full`, `04-copy-too-big` and `05-copy-none` are each one's `no_layout` (exit 1) |
-| `stick-invalid` | hand-written, wrong on purpose (`invalid`): a missing config with machines, a recovery verdict `ok` with a problem, two rows `this_computer`, a machine named `../../etc`, a layout `present` with a code |
+| `stick-invalid` | hand-written, wrong on purpose (`invalid`): a missing config with machines, a recovery verdict `ok` with a problem, two rows `this_computer`, a machine named `../../etc`, a layout `present` with a code, a `system_too_big` whose size isn't over 64 MiB |
 
 `luks-headers` is recorded by `../record-luks.py` from a real bko-holt and
 a real rustic-bko (holt-json.md's open question 12): a repository whose two

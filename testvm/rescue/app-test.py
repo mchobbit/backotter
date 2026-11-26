@@ -228,9 +228,11 @@ def test_machine_no_layout():
     check(r.says("bko-rescue reads it from the backup you choose") and r.says("make room on the stick, or write a newer image to it"),
           "no-layout: the backup's own layout, and room's advice")
     golden("app-machine-no-layout.utf8-colour", d.dump())
+    # Back keeps the pick: the focus is still on babbage.
     d.keys("Esc")
     d.wait("Which machine is this?")
-    d.keys("Down", "Down", "Enter")
+    check(r.says("(*) babbage"), "no-layout: Back keeps the focus on the machine picked")
+    d.keys("Enter")
     d.wait("No disk layout on this stick")
     d.keys("Enter")
     d.wait("The backup password")

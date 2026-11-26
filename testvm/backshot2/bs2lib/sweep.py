@@ -11,7 +11,9 @@
   "restore": I}, I counted from the oldest, 0) has the source backed up N
   times with content changed between, and load's option is "--snapshot @I",
   which the tier 1 runner turns into that snapshot's ID;
-- --reformat waits for claude/holt-reformat to merge into main (decision 4).
+- --reformat MOUNT=TYPE is on main since 2026-11-14, but the sweep doesn't
+  draw it yet (decision 4: the user decides on drawing it); a case file may
+  give it, and expected() carries it to the judges.
 
 A source's family and traits (bs2lib/families) may take options out
 (their `sweep`); those a known finding rules out are the generator's steer.
@@ -56,7 +58,8 @@ def draw(rng, source, drifted, targets, caps, hooks=None):
 def expected(case):
     """What the judges must allow, from the case's flags: a dict of
     {"new_uuids": bool, "no_nvram": bool, "removable": bool,
-     "fit": PCT or None, "snapshot": index or None}."""
+     "fit": PCT or None, "snapshot": index or None,
+     "reformat": [MOUNT=TYPE, ...]: each --reformat's value, in order}."""
     o = case.get("load_options") or []
     fit = None
     if "--fit-largest" in o:
@@ -65,5 +68,6 @@ def expected(case):
     if "--snapshot" in o:
         v = o[o.index("--snapshot") + 1]
         snap = int(v[1:]) if str(v).startswith("@") else v
+    reformat = [str(o[i + 1]) for i, x in enumerate(o[:-1]) if x == "--reformat"]
     return {"new_uuids": "--new-uuids" in o, "no_nvram": "--no-nvram" in o, "removable": "--removable" in o,
-            "fit": fit, "snapshot": snap}
+            "fit": fit, "snapshot": snap, "reformat": reformat}

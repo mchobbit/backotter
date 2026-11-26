@@ -12,7 +12,9 @@
 #            boot, with no --no-nvram unless the case has it, and each
 #            target behind the same PCIe root port in both (bs2_setup)
 #   verify   judge.py --expect against the drifted layout, with the flags
-#            the case's options call for (bs2-host apply works them out)
+#            the case's options call for (bs2-host apply works them out);
+#            a --reformat in them becomes HT_REFORMAT (BS2_REFORMAT), so
+#            load, both judges and ht1.sh's checks take it as HoltTest1's
 #
 # Env (bs2-host tier1 sets them): BS2_CASE (the case file), BS2_NAME (its
 # name: ht1's GV), BS2_TIER (1 or 2), BS2_HOST (bs2-host's path).
@@ -68,6 +70,7 @@ GV=$BS2_NAME
 # with no content (and the preparation) nothing is skipped.
 BS2_FSMETA=()
 BS2_SNAPS=1 BS2_RESTORE=0 BS2_CONTENT=0 BS2_FLAGS=() BS2_JUDGE=(--expect) BS2_FSJUDGE=() BS2_TARGETS=() BS2_VFW=()
+BS2_REFORMAT=()
 BS2_SHARE_BACKUP=0
 # The preparation this case's source phase took (bs2_source_reuse), its backup's
 # snapshot path when that serves too, and why not.
@@ -152,11 +155,28 @@ bs2_after_source() {
         # shellcheck disable=SC1091
         . "$R/bs2-info.sh"
         [[ $BS2_SNAPS =~ ^[1-9][0-9]*$ && $BS2_RESTORE =~ ^[0-9]+$ ]] || { bad "bs2-host apply: BS2_SNAPS '$BS2_SNAPS', BS2_RESTORE '$BS2_RESTORE' (logs/bs2-info.sh)"; return; }
+        bs2_reformat || return
         cp "$R/dumps/drifted.json" "$S/layout.json"
-        ok "the case's ${BS2_EDITS:-0} edits applied to the fresh dump (targets ${BS2_TARGETS[*]}, options ${BS2_FLAGS[*]:-none})"
+        ok "the case's ${BS2_EDITS:-0} edits applied to the fresh dump (targets ${BS2_TARGETS[*]}, options ${BS2_FLAGS[*]:-none}${BS2_REFORMAT[*]:+, --reformat ${BS2_REFORMAT[*]}})"
     else
         bad "bs2-host apply: $(tail -1 "$R/logs/bs2-apply.err")"
     fi
+}
+
+# The case's --reformat (BS2_REFORMAT, out of BS2_FLAGS) as HT_REFORMAT and
+# ht1.sh's REFORMAT, as if run with HT_REFORMAT: load and both judges take
+# REFORMAT, snaps_check and slack_root_check HT_REFORMAT.  An HT_REFORMAT of
+# the run's own must be the case's.  Exit 1 (bad said): not taken.
+bs2_reformat() {
+    ((${#BS2_REFORMAT[@]})) || return 0
+    local f
+    [[ -z ${HT_REFORMAT:-} || $HT_REFORMAT == "${BS2_REFORMAT[*]}" ]] ||
+        { bad "bs2: the case's --reformat ${BS2_REFORMAT[*]} isn't HT_REFORMAT=$HT_REFORMAT"; return 1; }
+    for f in "${BS2_REFORMAT[@]}"; do
+        [[ $f == /*=* && $f != *[[:space:]]* ]] || { bad "bs2: the case's --reformat: MOUNT=TYPE, not '$f' (logs/bs2-info.sh)"; return 1; }
+    done
+    HT_REFORMAT="${BS2_REFORMAT[*]}" REFORMAT=()
+    for f in "${BS2_REFORMAT[@]}"; do REFORMAT+=(--reformat "$f"); done
 }
 
 bs2_mount() {  # rw|ro

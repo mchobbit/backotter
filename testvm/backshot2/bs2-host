@@ -931,7 +931,8 @@ def cmd_apply(a):
     ex = sweep.expected(c)
     flags, o, i = [], list(c.get("load_options") or []), 0
     while i < len(o):
-        if o[i] == "--snapshot":
+        # (--reformat goes in BS2_REFORMAT: ht1.sh's REFORMAT gives it to load and both judges.)
+        if o[i] in ("--snapshot", "--reformat"):
             i += 2
             continue
         flags.append(o[i])
@@ -955,6 +956,7 @@ def cmd_apply(a):
     print(f"BS2_EDITS={len(c.get('edits') or [])}")
     print("BS2_TARGETS=(" + " ".join(q(targets[n]) for n in order) + ")")
     print("BS2_FLAGS=(" + " ".join(q(x) for x in flags) + ")")
+    print("BS2_REFORMAT=(" + " ".join(q(x) for x in ex["reformat"]) + ")")
     print(f"BS2_SNAPS={snaps.get('count', 1)} BS2_RESTORE={snaps.get('restore', 0) if snaps else 0}")
     print(f"BS2_CONTENT={1 if c.get('content') else 0}")
     # What fsmeta.py leaves out of both records: the content's deep trees (past PATH_MAX), where

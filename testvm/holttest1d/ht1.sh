@@ -834,9 +834,10 @@ solus_loader_check() {  # KEY: the restored guest booted through systemd-boot, u
 # host (LILO's first stage: "LILO" at offset 6, then its version), and
 # slack_root_check wants the restored boot's / on the source's device, as
 # the source has it (SLACK_ROOT: by the root's major:minor in /sys, as a
-# boot without an initrd shows / as /dev/root): a wrong numeric root panics
-# the kernel or mounts another.  slackware15-uefi boots ELILO from the
-# fallback path, on a fresh NVRAM (--uefi --no-secure-boot): elilo_check
+# boot without an initrd shows / as /dev/root; under HT_REFORMAT's /=TYPE,
+# of that TYPE): a wrong numeric root panics the kernel or mounts another.
+# slackware15-uefi boots ELILO from the fallback path, on a fresh NVRAM
+# (--uefi --no-secure-boot): elilo_check
 # wants ELILO in the restored ESP's EFI/Slackware (elilo.efi) and EFI/BOOT
 # (BOOTX64.EFI), each with its elilo.conf, a kernel with the bytes of one of
 # the restored /boot/vmlinuz-*, and an initrd with those of the restored
@@ -850,12 +851,18 @@ echo "cmdline $(cat /proc/cmdline)"'
 slack_root_check() {  # KEY: the restored boot's / as the source's
     ((slack)) || return 0
     sshk "$1" "$SLACK_ROOT" > "$R/logs/restored-root.txt" 2>&1
-    local want got
+    local want got f rf="" w
     want=$(grep '^root ' "$R/logs/source-root.txt" 2>/dev/null) got=$(grep '^root ' "$R/logs/restored-root.txt")
+    # (HT_REFORMAT's /=TYPE: the source's line with TYPE for its FSTYPE.)
+    for f in ${HT_REFORMAT:-}; do [[ $f != /=* ]] || rf=${f#/=}; done
+    if [[ -n $rf && -n $want ]]; then
+        read -ra w <<<"$want"
+        ((${#w[@]} < 3)) || { w[2]=$rf; want="${w[*]}"; }
+    fi
     if [[ -n $want && $got == "$want" ]]; then
-        ok "slackware: the restored boot's / is the source's: ${got#root } ($(sed -n 's/^cmdline //p' "$R/logs/restored-root.txt"))"
+        ok "slackware: the restored boot's / is the source's: ${got#root }${rf:+ (--reformat /=$rf)} ($(sed -n 's/^cmdline //p' "$R/logs/restored-root.txt"))"
     else
-        bad "slackware: the restored boot's /: ${got:-none} (the source's: ${want:-none}; logs/restored-root.txt)"
+        bad "slackware: the restored boot's /: ${got:-none} (the source's: ${want:-none}${rf:+ with --reformat /=$rf as its type}; logs/restored-root.txt)"
     fi
 }
 slack_mbr_check() {  # the restored disk's MBR holds LILO's first stage (slackware15)

@@ -723,7 +723,10 @@ class TestTier0Targets(unittest.TestCase):
 class TestSweep(unittest.TestCase):
     def test_expected(self):
         c = {"load_options": ["--new-uuids", "--fit-largest", "10", "--snapshot", "@1", "--removable"]}
-        self.assertEqual(sweep.expected(c), {"new_uuids": True, "no_nvram": False, "removable": True, "fit": 10, "snapshot": 1})
+        self.assertEqual(sweep.expected(c), {"new_uuids": True, "no_nvram": False, "removable": True, "fit": 10, "snapshot": 1,
+                                             "reformat": []})
+        c = {"load_options": ["--reformat", "/=ext4", "--removable", "--reformat", "/home=xfs"]}
+        self.assertEqual(sweep.expected(c)["reformat"], ["/=ext4", "/home=xfs"])
 
     def test_touches_esp(self):
         uefi = corpus("ubuntu26-uefi")
@@ -912,6 +915,40 @@ class TestJudgeExpect(unittest.TestCase):
                 r = subprocess.run([sys.executable, host, "apply", p, src, f"{t}/out.json", "--tier", str(tier)], capture_output=True, text=True)
                 self.assertEqual(r.returncode, 0, r.stderr)
                 self.assertIn(want, r.stdout.splitlines())
+
+    def test_apply_reformat_out_of_flags(self):
+        # --reformat goes to BS2_REFORMAT (ht1-bs2.sh makes it HT_REFORMAT), never BS2_FLAGS or a judge's flags.
+        host = os.path.join(BS2, "bs2-host")
+        with tempfile.TemporaryDirectory() as t:
+            src, p = f"{t}/src.json", f"{t}/c.case"
+            dump(ALPINE, src)
+            for opts, flags, reformat in ((["--reformat", "/=ext4", "--new-uuids"], "BS2_FLAGS=(--new-uuids)", "BS2_REFORMAT=(/=ext4)"),
+                                          (["--new-uuids"], "BS2_FLAGS=(--new-uuids)", "BS2_REFORMAT=()")):
+                C.write(p, {"source": "alpine324", "edits": [], "load_options": opts})
+                r = subprocess.run([sys.executable, host, "apply", p, src, f"{t}/out.json"], capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                lines = r.stdout.splitlines()
+                self.assertIn(flags, lines)
+                self.assertIn(reformat, lines)
+                self.assertNotIn("--reformat", r.stdout)
+
+    def test_bs2_reformat_sets_ht_reformat(self):
+        # ht1-bs2.sh's bs2_reformat, alone: the case's MOUNT=TYPE values become HT_REFORMAT and REFORMAT.
+        import re
+        with open(os.path.join(BS2, "ht1-bs2.sh")) as f:
+            fn = re.search(r"^bs2_reformat\(\) \{\n.*?^\}\n", f.read(), re.M | re.S).group(0)
+        def run(reformat, ht=None):
+            sh = (f"bad() {{ echo \"FAIL $*\"; }}\n{fn}BS2_REFORMAT=({reformat}) REFORMAT=()\n"
+                  + (f"HT_REFORMAT={ht!r}\n" if ht is not None else "")
+                  + 'bs2_reformat; echo "rc=$? HT=${HT_REFORMAT:-} R=${REFORMAT[*]}"\n')
+            return subprocess.run(["bash", "-c", sh], capture_output=True, text=True).stdout.strip().splitlines()
+        self.assertEqual(run(""), ["rc=0 HT= R="])
+        self.assertEqual(run("/=ext4 /home=xfs"), ["rc=0 HT=/=ext4 /home=xfs R=--reformat /=ext4 --reformat /home=xfs"])
+        self.assertEqual(run("/=ext4", "/=ext4"), ["rc=0 HT=/=ext4 R=--reformat /=ext4"])
+        out = run("/=ext4", "/=xfs")
+        self.assertTrue(out[0].startswith("FAIL") and out[-1] == "rc=1 HT=/=xfs R=", out)
+        out = run("ext4")
+        self.assertTrue(out[0].startswith("FAIL") and out[-1] == "rc=1 HT= R=", out)
 
 
 VM_MOUNT = os.path.join(BS2, "..", "vm-mount")

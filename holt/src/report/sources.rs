@@ -108,9 +108,7 @@ pub fn backup_sources(
                     (None, None) => subvol.as_deref().map(norm).as_deref() == Some(""),
                 }
             });
-            found
-                .map(|(e, _)| e.file.clone())
-                .unwrap_or_else(|| m.target.clone())
+            found.map_or_else(|| m.target.clone(), |(e, _)| e.file.clone())
         };
         let path = if path.len() > 1 {
             path.trim_end_matches('/').to_string()

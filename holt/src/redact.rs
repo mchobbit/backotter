@@ -40,33 +40,33 @@ pub enum Kind {
 impl Kind {
     /// Every kind, in the summary's order (report-bug's `--no-redact` line
     /// names them all from here, so it can't drift).
-    pub const ALL: [Kind; 10] = [
-        Kind::Hostname,
-        Kind::MachineId,
-        Kind::Uuid,
-        Kind::Serial,
-        Kind::Label,
-        Kind::User,
-        Kind::KeyFile,
-        Kind::Mac,
-        Kind::Id,
-        Kind::Secret,
+    pub const ALL: [Self; 10] = [
+        Self::Hostname,
+        Self::MachineId,
+        Self::Uuid,
+        Self::Serial,
+        Self::Label,
+        Self::User,
+        Self::KeyFile,
+        Self::Mac,
+        Self::Id,
+        Self::Secret,
     ];
 
     pub fn plural(self) -> &'static str {
         match self {
-            Kind::Hostname => "hostnames",
-            Kind::MachineId => "machine-ids",
-            Kind::Uuid => "UUIDs and GUIDs",
-            Kind::Serial => "serial numbers and WWIDs",
-            Kind::Label => "labels",
-            Kind::User => "user names",
-            Kind::KeyFile => "key-file paths",
-            Kind::Mac => "MAC addresses",
-            Kind::Id => {
+            Self::Hostname => "hostnames",
+            Self::MachineId => "machine-ids",
+            Self::Uuid => "UUIDs and GUIDs",
+            Self::Serial => "serial numbers and WWIDs",
+            Self::Label => "labels",
+            Self::User => "user names",
+            Self::KeyFile => "key-file paths",
+            Self::Mac => "MAC addresses",
+            Self::Id => {
                 "other identifiers (ZFS GUIDs, hostids, disk signatures, FAT/NTFS serials, DUIDs)"
             }
-            Kind::Secret => "repositories and password-file paths",
+            Self::Secret => "repositories and password-file paths",
         }
     }
 
@@ -74,7 +74,7 @@ impl Kind {
     pub fn shown(self) -> bool {
         matches!(
             self,
-            Kind::Hostname | Kind::Label | Kind::User | Kind::KeyFile | Kind::Serial | Kind::Secret
+            Self::Hostname | Self::Label | Self::User | Self::KeyFile | Self::Serial | Self::Secret
         )
     }
 }
@@ -107,12 +107,12 @@ enum Edge {
 impl Edge {
     fn fits(self, b: &[u8], i: usize, len: usize) -> bool {
         let edge = |c: u8| match self {
-            Edge::Any => false,
-            Edge::Word | Edge::Right | Edge::Left => is_alnum(c),
-            Edge::Hex => is_hex(c),
+            Self::Any => false,
+            Self::Word | Self::Right | Self::Left => is_alnum(c),
+            Self::Hex => is_hex(c),
         };
-        (self == Edge::Right || i == 0 || !edge(b[i - 1]))
-            && (self == Edge::Left || b.get(i + len).is_none_or(|&c| !edge(c)))
+        (self == Self::Right || i == 0 || !edge(b[i - 1]))
+            && (self == Self::Left || b.get(i + len).is_none_or(|&c| !edge(c)))
     }
 }
 
@@ -601,8 +601,8 @@ fn user_like(u: &str) -> bool {
 }
 
 impl Collector {
-    pub fn new() -> Collector {
-        Collector::default()
+    pub fn new() -> Self {
+        Self::default()
     }
 
     fn add(&mut self, id: Ident) {
@@ -1071,10 +1071,10 @@ struct Sealer {
 }
 
 impl Sealer {
-    fn new(c: Collector) -> Sealer {
+    fn new(c: Collector) -> Self {
         let corpus_lc = c.corpus.to_ascii_lowercase();
         let corpus_hex = corpus_lc.replace(['-', ':'], "");
-        Sealer {
+        Self {
             c,
             corpus_lc,
             corpus_hex,
@@ -2084,15 +2084,13 @@ impl Redactor {
                 self.nums
                     .iter()
                     .find(|(_, p)| p == n)
-                    .map(|(o, _)| *o)
-                    .unwrap_or(*n),
+                    .map_or(*n, |(o, _)| *o),
             ),
             Value::Int(n) if *n > 0 => Value::Int(
                 self.nums
                     .iter()
                     .find(|(_, p)| *p == *n as u64)
-                    .map(|(o, _)| *o as i64)
-                    .unwrap_or(*n),
+                    .map_or(*n, |(o, _)| *o as i64),
             ),
             Value::Arr(a) => Value::Arr(a.iter().map(|x| self.unval(x, key)).collect()),
             Value::Obj(kv) => Value::Obj(
@@ -2174,12 +2172,7 @@ impl Redactor {
         let mut out = b.to_vec();
         let mut i = 0;
         'outer: while i < out.len() {
-            for &k in self
-                .bin_first
-                .get(&out[i])
-                .map(Vec::as_slice)
-                .unwrap_or(&[])
-            {
+            for &k in self.bin_first.get(&out[i]).map_or(&[][..], Vec::as_slice) {
                 let (f, t, s) = &self.bin[k];
                 if (!*s || short) && out[i..].starts_with(f) {
                     out[i..i + f.len()].copy_from_slice(t);
@@ -2701,7 +2694,7 @@ mod tests {
                 Value::Obj(kv) => kv.iter().for_each(|(k, x)| {
                     let q = format!("{p}/{k}");
                     out.push(q.clone());
-                    go(x, &q, out)
+                    go(x, &q, out);
                 }),
                 Value::Arr(a) => a
                     .iter()

@@ -114,10 +114,16 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
     let block_size = 1024u64 << log_block;
     let (compat, incompat, ro) = (le32(&b, 92), le32(&b, 96), le32(&b, 100));
     let is64 = incompat & 0x0080 != 0;
-    let hi = |o: usize| if is64 { (le32(&b, o) as u64) << 32 } else { 0 };
-    let blocks = le32(&b, 4) as u64 | hi(336);
-    let reserved = le32(&b, 8) as u64 | hi(340);
-    let free = le32(&b, 12) as u64 | hi(344);
+    let hi = |o: usize| {
+        if is64 {
+            u64::from(le32(&b, o)) << 32
+        } else {
+            0
+        }
+    };
+    let blocks = u64::from(le32(&b, 4)) | hi(336);
+    let reserved = u64::from(le32(&b, 8)) | hi(340);
+    let free = u64::from(le32(&b, 12)) | hi(344);
     let kind = version(compat, incompat, ro);
     let state = le16(&b, 58);
     let errors = match le16(&b, 60) {

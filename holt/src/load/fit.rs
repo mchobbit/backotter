@@ -38,8 +38,8 @@ fn why(reason: &'static str, text: String) -> Why {
 }
 
 impl Why {
-    fn coded(code: ProblemCode, text: String) -> Why {
-        Why {
+    fn coded(code: ProblemCode, text: String) -> Self {
+        Self {
             code,
             reason: "",
             text,
@@ -47,7 +47,7 @@ impl Why {
         }
     }
 
-    fn with(mut self, k: &str, v: impl Into<Value>) -> Why {
+    fn with(mut self, k: &str, v: impl Into<Value>) -> Self {
         self.fields.push((k.to_string(), v.into()));
         self
     }
@@ -70,7 +70,7 @@ impl Why {
 
 /// A message with no reason of its own: `fit_refused`'s `other`.
 impl From<String> for Why {
-    fn from(text: String) -> Why {
+    fn from(text: String) -> Self {
         why("other", text)
     }
 }
@@ -356,12 +356,12 @@ fn u(v: &Value, k: &str) -> Option<u64> {
 }
 
 fn path(keys: &[&str]) -> Vec<String> {
-    keys.iter().map(|k| k.to_string()).collect()
+    keys.iter().map(ToString::to_string).collect()
 }
 
 fn under(p: &[String], keys: &[&str]) -> Vec<String> {
     let mut out = p.to_vec();
-    out.extend(keys.iter().map(|k| k.to_string()));
+    out.extend(keys.iter().map(ToString::to_string));
     out
 }
 
@@ -2342,10 +2342,7 @@ impl One<'_> {
                 .cloned()
                 .unwrap_or_default();
             // This volume's own shrink comes off its last logical extents.
-            let mut left = shrunk
-                .filter(|&(i, _)| i == lv.i)
-                .map(|(_, n)| n)
-                .unwrap_or(0);
+            let mut left = shrunk.filter(|&(i, _)| i == lv.i).map_or(0, |(_, n)| n);
             if left > 0 {
                 let mut order: Vec<usize> = (0..segs.len()).collect();
                 order.sort_by_key(|&j| std::cmp::Reverse(u(&segs[j], "start_extent").unwrap_or(0)));
@@ -2362,7 +2359,7 @@ impl One<'_> {
                 segs.retain(|x| u(x, "extent_count").unwrap_or(0) > 0);
             }
             // Compaction: an extent moves down by what was dropped below it.
-            for seg in segs.iter_mut() {
+            for seg in &mut segs {
                 let stripes = seg
                     .get("stripes")
                     .and_then(Value::as_array)
@@ -2472,8 +2469,8 @@ mod tests {
     }
 
     impl D {
-        fn new(table: &'static str, total: u64) -> D {
-            D {
+        fn new(table: &'static str, total: u64) -> Self {
+            Self {
                 table,
                 total,
                 parts: vec![],
@@ -2484,15 +2481,15 @@ mod tests {
                 short: 0,
             }
         }
-        fn gpt(total: u64) -> D {
-            D::new("gpt", total)
+        fn gpt(total: u64) -> Self {
+            Self::new("gpt", total)
         }
-        fn mbr(total: u64) -> D {
-            D::new("dos", total)
+        fn mbr(total: u64) -> Self {
+            Self::new("dos", total)
         }
         /// A partition: number, start, sectors, its content's JSON, and any
         /// more fields of its own ("\"logical\": true").
-        fn part(mut self, n: u32, start: u64, sectors: u64, content: &str, more: &str) -> D {
+        fn part(mut self, n: u32, start: u64, sectors: u64, content: &str, more: &str) -> Self {
             let comma = if more.is_empty() { "" } else { ", " };
             self.parts.push(format!(
                 r#"{{"name": "vda{n}", "number": {n}, "start_lba": {start}, "end_lba": {}, "sectors": {sectors},
@@ -2505,16 +2502,16 @@ mod tests {
             ));
             self
         }
-        fn dm(mut self, json: String) -> D {
+        fn dm(mut self, json: String) -> Self {
             self.dm.push(json);
             self
         }
-        fn vg(mut self, json: String) -> D {
+        fn vg(mut self, json: String) -> Self {
             self.vgs.push(json);
             self
         }
         /// What the dump says is mounted from DEV: its size and what's used.
-        fn mount(mut self, dev: &str, size: u64, used: u64) -> D {
+        fn mount(mut self, dev: &str, size: u64, used: u64) -> Self {
             self.mounts.push(format!(
                 r#"{{"target": "/m{}", "source": "/dev/{dev}", "device": "{dev}", "fstype": "x", "size_bytes": {size}, "used_bytes": {used}, "available_bytes": {}}}"#,
                 self.mounts.len(),
@@ -2522,13 +2519,13 @@ mod tests {
             ));
             self
         }
-        fn family(mut self, f: &'static str) -> D {
+        fn family(mut self, f: &'static str) -> Self {
             self.family = Some(f);
             self
         }
         /// The table ends SECTORS short of the disk's own end, as it does on
         /// a disk grown without moving its GPT.
-        fn short(mut self, sectors: u64) -> D {
+        fn short(mut self, sectors: u64) -> Self {
             self.short = sectors;
             self
         }
@@ -2754,7 +2751,7 @@ mod tests {
         assert!(!f.problems.is_empty(), "no problem said why");
         // Every refusal is coded, about the pair, its reason one the spec
         // lists.
-        for p in f.problems.iter() {
+        for p in &f.problems {
             assert!(
                 matches!(
                     p.code,
@@ -2795,7 +2792,7 @@ mod tests {
     impl Refused {
         /// Asserts the first problem is `fit_refused` for REASON, or has the
         /// code REASON.
-        fn is(self, reason: &str) -> Refused {
+        fn is(self, reason: &str) -> Self {
             let got = if self.first.code == ProblemCode::FitRefused {
                 self.first.str_field("reason").unwrap_or("").to_string()
             } else {

@@ -64,7 +64,7 @@ pub struct Volume<'a> {
 impl<'a> Volume<'a> {
     /// The volume on SRC, from its boot sector.  An error says why it isn't
     /// a FAT file system this can read.
-    pub fn open(src: &'a dyn ByteSource) -> Result<Volume<'a>, String> {
+    pub fn open(src: &'a dyn ByteSource) -> Result<Self, String> {
         let b = src
             .read_exact_at(0, 512)
             .ok_or("its first sector can't be read")?;
@@ -493,7 +493,7 @@ pub mod testimg {
     /// A file or directory to put in an image.
     pub enum Node {
         File(String, Vec<u8>),
-        Dir(String, Vec<Node>),
+        Dir(String, Vec<Self>),
     }
 
     pub fn file(name: &str, data: impl AsRef<[u8]>) -> Node {
@@ -647,7 +647,7 @@ pub mod testimg {
                     Kind::Fat16 => self.img[base + 2 * c..base + 2 * c + 2]
                         .copy_from_slice(&(v as u16).to_le_bytes()),
                     Kind::Fat32 => {
-                        self.img[base + 4 * c..base + 4 * c + 4].copy_from_slice(&v.to_le_bytes())
+                        self.img[base + 4 * c..base + 4 * c + 4].copy_from_slice(&v.to_le_bytes());
                     }
                 }
             }

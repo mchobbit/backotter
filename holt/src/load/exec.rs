@@ -127,10 +127,10 @@ pub(crate) struct StepFail {
 }
 
 impl StepFail {
-    fn of_text(text: String) -> StepFail {
-        StepFail {
+    fn of_text(text: String) -> Self {
+        Self {
             text,
-            ..StepFail::default()
+            ..Self::default()
         }
     }
 }
@@ -157,7 +157,7 @@ pub struct Events<'a> {
 
 impl<'a> Events<'a> {
     /// No events: STOP alone says when to stop.
-    pub fn none(stop: &'a dyn Fn() -> bool) -> Events<'a> {
+    pub fn none(stop: &'a dyn Fn() -> bool) -> Self {
         Events {
             sink: None,
             stop,
@@ -167,7 +167,7 @@ impl<'a> Events<'a> {
     }
 
     /// Events to SINK, a line each; STOP says when to stop.
-    pub fn to(sink: &'a mut dyn FnMut(&str), stop: &'a dyn Fn() -> bool) -> Events<'a> {
+    pub fn to(sink: &'a mut dyn FnMut(&str), stop: &'a dyn Fn() -> bool) -> Self {
         Events {
             sink: Some(sink),
             stop,
@@ -477,7 +477,7 @@ fn run_cmd_json(
     let facts = FailFacts {
         status: status.code(),
         signal: status.signal(),
-        tail: tail.iter().map(|l| l.to_string()).collect(),
+        tail: tail.iter().map(ToString::to_string).collect(),
     };
     if signalled {
         return Err(StepFail {
@@ -591,8 +591,7 @@ fn state_of(layout: &Layout, opts: &Options, sys: &Sys, s: Stage) -> (State, Str
     let (rows, _) = status::rows(layout, opts, sys);
     rows.into_iter()
         .find(|r| r.0 == s)
-        .map(|r| (r.1, r.2))
-        .unwrap_or((State::Unknown, String::new()))
+        .map_or((State::Unknown, String::new()), |r| (r.1, r.2))
 }
 
 /// What runs one step: `run_cmd`, or a test's stand-in.
@@ -1253,7 +1252,7 @@ impl Lock {
     /// too) from its second look at the old lock until its own is written,
     /// so two runs that both found the old one stale can't both hold the
     /// lock (the second removing the first's new one).
-    fn take(sys: &Sys) -> Result<Lock, LockErr> {
+    fn take(sys: &Sys) -> Result<Self, LockErr> {
         use std::os::unix::fs::OpenOptionsExt;
         let path = sys.p(&lock_path());
         let guard = sys.p(&format!("{}.takeover", lock_path()));
@@ -1266,7 +1265,7 @@ impl Lock {
             .compact()
             + "\n";
         for _ in 0..50 {
-            if let Some(l) = Lock::make(&path, &line)? {
+            if let Some(l) = Self::make(&path, &line)? {
                 return Ok(l);
             }
             if let Holder::Live(pid) = holder(&path) {
@@ -1285,7 +1284,7 @@ impl Lock {
                     if gone {
                         let _ = std::fs::remove_file(&path);
                     }
-                    let made = Lock::make(&path, &line);
+                    let made = Self::make(&path, &line);
                     let _ = std::fs::remove_file(&guard);
                     match made? {
                         Some(l) => return Ok(l),
@@ -1315,7 +1314,7 @@ impl Lock {
     /// The lock at PATH made anew with LINE (`O_EXCL`), or None when there is
     /// one.  A lock whose line can't be written is removed, not left to
     /// read as one being written.
-    fn make(path: &std::path::Path, line: &str) -> Result<Option<Lock>, LockErr> {
+    fn make(path: &std::path::Path, line: &str) -> Result<Option<Self>, LockErr> {
         use std::os::unix::fs::OpenOptionsExt;
         match std::fs::OpenOptions::new()
             .write(true)
@@ -1329,7 +1328,7 @@ impl Lock {
                     return Err(LockErr::Io(format!("{}: {e}", lock_path())));
                 }
                 hook::note(|h| h.lock = Some(path.to_path_buf()));
-                Ok(Some(Lock {
+                Ok(Some(Self {
                     path: path.to_path_buf(),
                 }))
             }
@@ -1436,7 +1435,7 @@ mod hook {
             let msg = info
                 .payload()
                 .downcast_ref::<&str>()
-                .map(|m| m.to_string())
+                .map(ToString::to_string)
                 .or_else(|| info.payload().downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "a panic".to_string());
             let at = info
@@ -1495,7 +1494,7 @@ mod hook {
                 log.as_deref(),
             );
             jsonout::write_stdout(&jsonout::event_line(failed.build()));
-            let secs = s.t0.map(|t| jsonout::secs(t.elapsed())).unwrap_or(0.0);
+            let secs = s.t0.map_or(0.0, |t| jsonout::secs(t.elapsed()));
             jsonout::write_stdout(&jsonout::event_line(jsonout::end_event(101, false, secs)));
             s.ended = true;
         }));
@@ -1916,7 +1915,7 @@ mod tests {
 
     fn opts_of(a: &[&str]) -> Options {
         let mut v = vec!["l.json".to_string()];
-        v.extend(a.iter().map(|s| s.to_string()));
+        v.extend(a.iter().map(ToString::to_string));
         match crate::load::parse_args(&v).unwrap() {
             crate::load::Parsed::Run(o) => o,
             _ => unreachable!(),
@@ -2470,7 +2469,7 @@ mod tests {
                     in_cmd = false;
                 }
                 "stage" | "skip" | "stage_done" | "failed" | "problems" => {
-                    assert!(!in_cmd, "{n:?}")
+                    assert!(!in_cmd, "{n:?}");
                 }
                 other => panic!("{other}: {n:?}"),
             }
@@ -2535,7 +2534,7 @@ mod tests {
             .iter()
             .filter_map(Value::as_str)
             .collect();
-        assert_eq!(stages, Stage::WRITING.map(|s| s.name()));
+        assert_eq!(stages, Stage::WRITING.map(Stage::name));
         let p = plan::check(&lay, &opts_of(&a), &s);
         for st in Stage::WRITING {
             assert_eq!(
@@ -2730,7 +2729,7 @@ mod tests {
         let mut sink = |l: &str| {
             lines
                 .borrow_mut()
-                .push((l.to_string(), t.p(&lock_path()).exists()))
+                .push((l.to_string(), t.p(&lock_path()).exists()));
         };
         first.set(true);
         let (code, _, err) = run_core(
@@ -2810,7 +2809,7 @@ mod tests {
             Some("rustic-bko failed (exit status: 1):\n    boom")
         );
         assert_eq!(f.get_u64("status"), Some(1));
-        assert_eq!(f.get_arr("tail").map(|t| t.len()), Some(1));
+        assert_eq!(f.get_arr("tail").map(Vec::len), Some(1));
         assert_eq!(
             f.get_u64("n"),
             of_kind(&evs, "cmd").last().unwrap().get_u64("n")

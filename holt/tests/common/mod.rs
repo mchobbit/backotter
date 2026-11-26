@@ -553,7 +553,7 @@ pub(crate) fn stage_header(line: &str) -> Option<&str> {
 pub(crate) fn sections(text: &str) -> Vec<(String, Vec<&str>)> {
     let lines: Vec<&str> = text.lines().collect();
     let last_stage = lines.iter().rposition(|l| stage_header(l).is_some());
-    let from = last_stage.map(|i| i + 1).unwrap_or(0);
+    let from = last_stage.map_or(0, |i| i + 1);
     let trailer = (from..lines.len()).find(|&i| {
         lines[i].starts_with("# Nothing was written") || lines[i].starts_with(GOLDEN_MARK)
     });
@@ -575,7 +575,7 @@ pub(crate) fn sections(text: &str) -> Vec<(String, Vec<&str>)> {
 pub(crate) fn stages_changed(old: &str, new: &str) -> Vec<String> {
     let (a, b) = (sections(old), sections(new));
     let mut names: Vec<String> = vec!["header".into()];
-    names.extend(STAGES.iter().map(|s| s.to_string()));
+    names.extend(STAGES.iter().map(ToString::to_string));
     for (n, _) in a.iter().chain(b.iter()) {
         if !names.contains(n) && n != "trailer" {
             names.push(n.clone());
@@ -584,7 +584,13 @@ pub(crate) fn stages_changed(old: &str, new: &str) -> Vec<String> {
     names.push("trailer".into());
     let get = |s: &[(String, Vec<&str>)], n: &str| -> Option<Vec<String>> {
         let parts: Vec<&Vec<&str>> = s.iter().filter(|(m, _)| m == n).map(|(_, l)| l).collect();
-        (!parts.is_empty()).then(|| parts.into_iter().flatten().map(|l| l.to_string()).collect())
+        (!parts.is_empty()).then(|| {
+            parts
+                .into_iter()
+                .flatten()
+                .map(ToString::to_string)
+                .collect()
+        })
     };
     names
         .into_iter()

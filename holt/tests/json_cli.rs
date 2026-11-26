@@ -171,7 +171,7 @@ fn version_json_is_the_api_document() {
         // What an image build copies into the stick's marker (open question 11).
         assert_eq!(
             v.get_arr("dump_schemas")
-                .map(|a| a.iter().filter_map(|x| x.as_u64()).collect::<Vec<_>>()),
+                .map(|a| a.iter().filter_map(Value::as_u64).collect::<Vec<_>>()),
             Some(bko_holt::load::layout::DUMP_SCHEMAS.to_vec())
         );
         assert!(
@@ -1339,8 +1339,8 @@ fn luks_headers_fetches_what_load_reads() {
         a.iter_mut()
             .filter(|x| **x == "PW")
             .for_each(|x| *x = pw.as_str());
-        let mut a: Vec<String> = a.iter().map(|x| x.to_string()).collect();
-        a.extend(extra.iter().map(|x| x.to_string()));
+        let mut a: Vec<String> = a.iter().map(ToString::to_string).collect();
+        a.extend(extra.iter().map(ToString::to_string));
         let a: Vec<&str> = a.iter().map(String::as_str).collect();
         run(&a, env, None)
     };

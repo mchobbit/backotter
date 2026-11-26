@@ -17,44 +17,44 @@ pub enum Value {
     UInt(u64),
     Float(f64),
     Str(String),
-    Arr(Vec<Value>),
-    Obj(Vec<(String, Value)>),
+    Arr(Vec<Self>),
+    Obj(Vec<(String, Self)>),
 }
 
 impl PartialEq for Value {
-    fn eq(&self, other: &Value) -> bool {
+    fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Value::Null, Value::Null) => true,
-            (Value::Bool(a), Value::Bool(b)) => a == b,
-            (Value::Int(a), Value::Int(b)) => a == b,
-            (Value::UInt(a), Value::UInt(b)) => a == b,
-            (Value::Int(a), Value::UInt(b)) | (Value::UInt(b), Value::Int(a)) => {
+            (Self::Null, Self::Null) => true,
+            (Self::Bool(a), Self::Bool(b)) => a == b,
+            (Self::Int(a), Self::Int(b)) => a == b,
+            (Self::UInt(a), Self::UInt(b)) => a == b,
+            (Self::Int(a), Self::UInt(b)) | (Self::UInt(b), Self::Int(a)) => {
                 u64::try_from(*a).is_ok_and(|a| a == *b)
             }
-            (Value::Float(a), Value::Float(b)) => a == b,
-            (Value::Str(a), Value::Str(b)) => a == b,
-            (Value::Arr(a), Value::Arr(b)) => a == b,
-            (Value::Obj(a), Value::Obj(b)) => a == b,
+            (Self::Float(a), Self::Float(b)) => a == b,
+            (Self::Str(a), Self::Str(b)) => a == b,
+            (Self::Arr(a), Self::Arr(b)) => a == b,
+            (Self::Obj(a), Self::Obj(b)) => a == b,
             _ => false,
         }
     }
 }
 
 impl Value {
-    pub fn get(&self, key: &str) -> Option<&Value> {
+    pub fn get(&self, key: &str) -> Option<&Self> {
         match self {
-            Value::Obj(kv) => kv.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+            Self::Obj(kv) => kv.iter().find(|(k, _)| k == key).map(|(_, v)| v),
             _ => None,
         }
     }
 
     /// `get` along a path of keys and array indexes ("partitions", "0", "uuid").
-    pub fn at(&self, path: &[&str]) -> Option<&Value> {
+    pub fn at(&self, path: &[&str]) -> Option<&Self> {
         let mut v = self;
         for p in path {
             v = match v {
-                Value::Arr(a) => a.get(p.parse::<usize>().ok()?)?,
-                Value::Obj(_) => v.get(p)?,
+                Self::Arr(a) => a.get(p.parse::<usize>().ok()?)?,
+                Self::Obj(_) => v.get(p)?,
                 _ => return None,
             };
         }
@@ -63,20 +63,20 @@ impl Value {
 
     /// `get`, for writing: the value of KEY (its first, as `get` reads)
     /// when this is an object that has it.
-    pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut Self> {
         match self {
-            Value::Obj(kv) => kv.iter_mut().find(|(k, _)| k == key).map(|(_, v)| v),
+            Self::Obj(kv) => kv.iter_mut().find(|(k, _)| k == key).map(|(_, v)| v),
             _ => None,
         }
     }
 
     /// `at`, for writing: the value along PATH (keys and array indexes).
-    pub fn at_mut(&mut self, path: &[&str]) -> Option<&mut Value> {
+    pub fn at_mut(&mut self, path: &[&str]) -> Option<&mut Self> {
         let mut v = self;
         for p in path {
             v = match v {
-                Value::Arr(a) => a.get_mut(p.parse::<usize>().ok()?)?,
-                Value::Obj(_) => v.get_mut(p)?,
+                Self::Arr(a) => a.get_mut(p.parse::<usize>().ok()?)?,
+                Self::Obj(_) => v.get_mut(p)?,
                 _ => return None,
             };
         }
@@ -86,8 +86,8 @@ impl Value {
     /// Sets KEY of an object as `Obj::put` does: an earlier value of KEY is
     /// replaced in place, else KEY is added at the end.  Nothing happens
     /// to a value that isn't an object.
-    pub fn put(&mut self, key: &str, v: impl Into<Value>) {
-        if let Value::Obj(kv) = self {
+    pub fn put(&mut self, key: &str, v: impl Into<Self>) {
+        if let Self::Obj(kv) = self {
             let v = v.into();
             match kv.iter_mut().find(|(k, _)| k == key) {
                 Some(slot) => slot.1 = v,
@@ -98,65 +98,65 @@ impl Value {
 
     pub fn as_str(&self) -> Option<&str> {
         match self {
-            Value::Str(s) => Some(s),
+            Self::Str(s) => Some(s),
             _ => None,
         }
     }
 
     pub fn as_u64(&self) -> Option<u64> {
         match *self {
-            Value::UInt(n) => Some(n),
-            Value::Int(n) if n >= 0 => Some(n as u64),
+            Self::UInt(n) => Some(n),
+            Self::Int(n) if n >= 0 => Some(n as u64),
             _ => None,
         }
     }
 
     pub fn as_i64(&self) -> Option<i64> {
         match *self {
-            Value::Int(n) => Some(n),
-            Value::UInt(n) if n <= i64::MAX as u64 => Some(n as i64),
+            Self::Int(n) => Some(n),
+            Self::UInt(n) if n <= i64::MAX as u64 => Some(n as i64),
             _ => None,
         }
     }
 
     pub fn as_bool(&self) -> Option<bool> {
         match *self {
-            Value::Bool(b) => Some(b),
+            Self::Bool(b) => Some(b),
             _ => None,
         }
     }
 
-    pub fn as_array(&self) -> Option<&Vec<Value>> {
+    pub fn as_array(&self) -> Option<&Vec<Self>> {
         match self {
-            Value::Arr(a) => Some(a),
+            Self::Arr(a) => Some(a),
             _ => None,
         }
     }
 
-    pub fn as_object(&self) -> Option<&Vec<(String, Value)>> {
+    pub fn as_object(&self) -> Option<&Vec<(String, Self)>> {
         match self {
-            Value::Obj(o) => Some(o),
+            Self::Obj(o) => Some(o),
             _ => None,
         }
     }
 
-    pub fn as_array_mut(&mut self) -> Option<&mut Vec<Value>> {
+    pub fn as_array_mut(&mut self) -> Option<&mut Vec<Self>> {
         match self {
-            Value::Arr(a) => Some(a),
+            Self::Arr(a) => Some(a),
             _ => None,
         }
     }
 
     pub fn is_null(&self) -> bool {
-        matches!(self, Value::Null)
+        matches!(self, Self::Null)
     }
 
     pub fn get_str(&self, key: &str) -> Option<&str> {
-        self.get(key).and_then(Value::as_str)
+        self.get(key).and_then(Self::as_str)
     }
 
     pub fn get_u64(&self, key: &str) -> Option<u64> {
-        self.get(key).and_then(Value::as_u64)
+        self.get(key).and_then(Self::as_u64)
     }
 
     /// KEY's number as load reads a dump's numbers (layout, fit, sizes,
@@ -169,7 +169,7 @@ impl Value {
     pub fn get_u64_lenient(&self, key: &str) -> Option<u64> {
         match self.get(key)? {
             // from_str_radix takes a '+' too: "0x+1f" isn't a spelling.
-            Value::Str(t) => t.strip_prefix("0x").map_or_else(
+            Self::Str(t) => t.strip_prefix("0x").map_or_else(
                 || t.parse().ok(),
                 |h| {
                     if h.bytes().all(|c| c.is_ascii_hexdigit()) {
@@ -184,30 +184,29 @@ impl Value {
     }
 
     pub fn get_bool(&self, key: &str) -> Option<bool> {
-        self.get(key).and_then(Value::as_bool)
+        self.get(key).and_then(Self::as_bool)
     }
 
-    pub fn get_arr(&self, key: &str) -> Option<&Vec<Value>> {
-        self.get(key).and_then(Value::as_array)
+    pub fn get_arr(&self, key: &str) -> Option<&Vec<Self>> {
+        self.get(key).and_then(Self::as_array)
     }
 
     pub fn str_at(&self, path: &[&str]) -> Option<&str> {
-        self.at(path).and_then(Value::as_str)
+        self.at(path).and_then(Self::as_str)
     }
 
     pub fn u64_at(&self, path: &[&str]) -> Option<u64> {
-        self.at(path).and_then(Value::as_u64)
+        self.at(path).and_then(Self::as_u64)
     }
 
     pub fn bool_at(&self, path: &[&str]) -> Option<bool> {
-        self.at(path).and_then(Value::as_bool)
+        self.at(path).and_then(Self::as_bool)
     }
 
-    pub fn arr_at(&self, path: &[&str]) -> &[Value] {
+    pub fn arr_at(&self, path: &[&str]) -> &[Self] {
         self.at(path)
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
+            .and_then(Self::as_array)
+            .map_or(&[], Vec::as_slice)
     }
 
     /// The report's layout: two-space indents, and arrays of scalars that fit
@@ -244,43 +243,43 @@ from_uint!(u8, u16, u32, u64, usize);
 from_int!(i8, i16, i32, i64);
 
 impl From<bool> for Value {
-    fn from(b: bool) -> Value {
-        Value::Bool(b)
+    fn from(b: bool) -> Self {
+        Self::Bool(b)
     }
 }
 impl From<f64> for Value {
-    fn from(f: f64) -> Value {
-        Value::Float(f)
+    fn from(f: f64) -> Self {
+        Self::Float(f)
     }
 }
 impl From<&str> for Value {
-    fn from(s: &str) -> Value {
-        Value::Str(s.to_string())
+    fn from(s: &str) -> Self {
+        Self::Str(s.to_string())
     }
 }
 impl From<String> for Value {
-    fn from(s: String) -> Value {
-        Value::Str(s)
+    fn from(s: String) -> Self {
+        Self::Str(s)
     }
 }
 impl From<&String> for Value {
-    fn from(s: &String) -> Value {
-        Value::Str(s.clone())
+    fn from(s: &String) -> Self {
+        Self::Str(s.clone())
     }
 }
-impl<T: Into<Value>> From<Option<T>> for Value {
-    fn from(o: Option<T>) -> Value {
-        o.map_or(Value::Null, Into::into)
+impl<T: Into<Self>> From<Option<T>> for Value {
+    fn from(o: Option<T>) -> Self {
+        o.map_or(Self::Null, Into::into)
     }
 }
-impl<T: Into<Value>> From<Vec<T>> for Value {
-    fn from(v: Vec<T>) -> Value {
-        Value::Arr(v.into_iter().map(Into::into).collect())
+impl<T: Into<Self>> From<Vec<T>> for Value {
+    fn from(v: Vec<T>) -> Self {
+        Self::Arr(v.into_iter().map(Into::into).collect())
     }
 }
 impl From<Obj> for Value {
-    fn from(o: Obj) -> Value {
-        Value::Obj(o.0)
+    fn from(o: Obj) -> Self {
+        Self::Obj(o.0)
     }
 }
 
@@ -289,11 +288,11 @@ impl From<Obj> for Value {
 pub struct Obj(pub Vec<(String, Value)>);
 
 impl Obj {
-    pub fn new() -> Obj {
-        Obj(Vec::new())
+    pub fn new() -> Self {
+        Self(Vec::new())
     }
     /// Adds `key`, replacing an earlier value of the same key in place.
-    pub fn set(mut self, key: &str, v: impl Into<Value>) -> Obj {
+    pub fn set(mut self, key: &str, v: impl Into<Value>) -> Self {
         self.put(key, v);
         self
     }
@@ -306,7 +305,7 @@ impl Obj {
         }
     }
     /// Adds `key` only when `v` is `Some`.
-    pub fn set_some<T: Into<Value>>(mut self, key: &str, v: Option<T>) -> Obj {
+    pub fn set_some<T: Into<Value>>(mut self, key: &str, v: Option<T>) -> Self {
         if let Some(v) = v {
             self.put(key, v);
         }

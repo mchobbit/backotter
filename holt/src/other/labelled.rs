@@ -313,12 +313,10 @@ pub fn report(
                     .parts
                     .iter()
                     .find(|p| p.number == n)
-                    .map(|p| p.first_lba)
-                    .unwrap_or(0);
+                    .map_or(0, |p| p.first_lba);
                 wd.iter()
                     .find(|(_, _, s)| *s == start)
-                    .map(|(dk, _, _)| dk.clone())
-                    .unwrap_or_else(|| format!("{nm}gpt{n}"))
+                    .map_or_else(|| format!("{nm}gpt{n}"), |(dk, _, _)| dk.clone())
             }
             Table::Mbr(_) => format!("{nm}mbr{n}"),
         });

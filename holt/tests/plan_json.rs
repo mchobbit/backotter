@@ -37,7 +37,7 @@ fn corpus() -> PathBuf {
 fn guests() -> Vec<String> {
     let mut out: Vec<String> = std::fs::read_dir(corpus())
         .unwrap()
-        .filter_map(|e| e.ok())
+        .filter_map(Result::ok)
         .filter(|e| e.path().join("src.json").is_file() && e.path().join("plan.txt").is_file())
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
@@ -185,7 +185,7 @@ fn fields(at: &str, v: &Value, fields: &[(&str, T)], errs: &mut Vec<String>) {
         match v.get(k) {
             None => errs.push(format!("{at}: no {k}")),
             Some(x) if !is(*t, x) => {
-                errs.push(format!("{at}.{k}: {} isn't of its type", x.compact()))
+                errs.push(format!("{at}.{k}: {} isn't of its type", x.compact()));
             }
             _ => {}
         }
@@ -579,7 +579,7 @@ fn corpus_size_verdicts_are_fits() {
                         }
                     }
                     ("smaller" | "smaller_slack", None) => {
-                        errs.push(format!("{at}: {} without a percentage", z.verdict))
+                        errs.push(format!("{at}: {} without a percentage", z.verdict));
                     }
                     ("bigger", Some(p)) => {
                         let f = fit(&v, std::slice::from_ref(&t), p);

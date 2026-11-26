@@ -71,10 +71,10 @@ fn named(v: &bko_holt::json::Value, out: &mut Vec<String>) {
             for (i, x) in a.iter().enumerate() {
                 match (x.as_str(), a.get(i + 1).and_then(Value::as_str)) {
                     (Some("--repo" | "--repository" | "--password-file"), Some(val)) => {
-                        out.push(val.to_string())
+                        out.push(val.to_string());
                     }
                     (Some("--key-file"), Some(val)) => {
-                        out.push(val.split_once('=').map_or(val, |(_, f)| f).to_string())
+                        out.push(val.split_once('=').map_or(val, |(_, f)| f).to_string());
                     }
                     (None, _) => named(x, out),
                     _ => {}

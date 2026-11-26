@@ -261,7 +261,7 @@ mod tests {
                 .details
                 .build()
                 .get("grub_env_block")
-                .map(|v| v.compact()),
+                .map(Value::compact),
             Some("{}".into())
         );
     }

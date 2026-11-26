@@ -171,8 +171,7 @@ pub fn zfs_tools_json(sys: &Sys, zfs_mounted: bool) -> Value {
                             Value::Null
                         } else {
                             v.parse::<u64>()
-                                .map(Value::UInt)
-                                .unwrap_or_else(|_| Value::from(v))
+                                .map_or_else(|_| Value::from(v), Value::UInt)
                         };
                         o.put(k, v);
                     }
@@ -220,8 +219,7 @@ pub fn zfs_tools_json(sys: &Sys, zfs_mounted: bool) -> Value {
                     "properties".into(),
                     props
                         .remove(&name)
-                        .map(Obj::build)
-                        .unwrap_or_else(|| Obj::new().build()),
+                        .map_or_else(|| Obj::new().build(), Obj::build),
                 ));
             }
             d
@@ -294,7 +292,7 @@ fn zpool_vdevs(sys: &Sys, name: &str) -> Value {
 /// the tree is indented two spaces more than its parent.
 pub fn parse_zpool_status_text(text: &str, pool: &str) -> Option<Value> {
     fn vtype(name: &str) -> &'static str {
-        let word = name.rsplit_once('-').map(|(w, _)| w).unwrap_or(name);
+        let word = name.rsplit_once('-').map_or(name, |(w, _)| w);
         match word {
             "mirror" => "mirror",
             "replacing" => "replacing",

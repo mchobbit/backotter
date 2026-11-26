@@ -210,7 +210,7 @@ fn assignments(text: &str, c: &Change, named: impl Fn(&str) -> bool) -> String {
             if !named(key.trim_end_matches('=').trim_end_matches('+')) {
                 return l.to_string();
             }
-            let (v, nl) = v.strip_suffix('\n').map(|x| (x, "\n")).unwrap_or((v, ""));
+            let (v, nl) = v.strip_suffix('\n').map_or((v, ""), |x| (x, "\n"));
             let q = v.chars().next().filter(|q| *q == '"' || *q == '\'');
             match q {
                 Some(q) if v.len() >= 2 && v.ends_with(q) => {
@@ -347,7 +347,7 @@ pub fn grub_stub(text: &str, uuid: &str, map: impl Fn(&str, bool) -> Option<Stri
     }
     let relative = text.lines().any(|l| {
         let t = l.trim();
-        let t = t.strip_prefix("set ").map(str::trim_start).unwrap_or(t);
+        let t = t.strip_prefix("set ").map_or(t, str::trim_start);
         t.strip_prefix("btrfs_relative_path=")
             .is_some_and(|v| matches!(v.trim().trim_matches(['"', '\'']), "y" | "yes" | "1"))
     });

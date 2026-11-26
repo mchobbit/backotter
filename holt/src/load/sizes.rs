@@ -127,16 +127,15 @@ pub fn problems(v: &Value) -> Vec<Problem> {
             // A GELI provider (FreeBSD's): its content against its provsize.
             let geli = |out: &mut Vec<Problem>, p: &Value| {
                 if let Some(g) = p.get("geli").filter(|g| !g.is_null()) {
-                    let prov = g
-                        .get("provider")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                        .unwrap_or_else(|| {
+                    let prov = g.get("provider").and_then(Value::as_str).map_or_else(
+                        || {
                             format!(
                                 "{}.eli",
                                 p.get("name").and_then(Value::as_str).unwrap_or("?")
                             )
-                        });
+                        },
+                        str::to_string,
+                    );
                     check(out, &prov, u(g, "provsize"), g.get("content"));
                 }
             };

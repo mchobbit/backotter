@@ -111,22 +111,22 @@ pub enum State {
 impl State {
     fn word(self) -> &'static str {
         match self {
-            State::Done => "done",
-            State::Partly => "partly",
-            State::NotDone => "not done",
-            State::Nothing => "nothing to do",
-            State::Unknown => "unknown",
+            Self::Done => "done",
+            Self::Partly => "partly",
+            Self::NotDone => "not done",
+            Self::Nothing => "nothing to do",
+            Self::Unknown => "unknown",
         }
     }
 
     /// The word the status document gives it: `State::word` in snake case.
     pub fn json_word(self) -> &'static str {
         match self {
-            State::Done => "done",
-            State::Partly => "partly",
-            State::NotDone => "not_done",
-            State::Nothing => "nothing",
-            State::Unknown => "unknown",
+            Self::Done => "done",
+            Self::Partly => "partly",
+            Self::NotDone => "not_done",
+            Self::Nothing => "nothing",
+            Self::Unknown => "unknown",
         }
     }
 }
@@ -609,7 +609,7 @@ pub(crate) fn remake_problems(
     for (src, tgt) in mapping.pairs.iter().filter(|(_, t)| begun.contains(t)) {
         let path = system
             .disk(tgt)
-            .map_or_else(|| format!("/dev/{tgt}"), |t| t.path());
+            .map_or_else(|| format!("/dev/{tgt}"), target::TargetDisk::path);
         for st in &would.remaking {
             let text = format!(
                 "{src} -> {path}: {} would make what it makes anew there, over the copy this session's restore began on it; to start again, run --only partition with --erase {path}, which wipes it first",
@@ -876,7 +876,7 @@ mod tests {
         let l = Layout::from_json(crate::json::parse(&sample::fittable()).unwrap()).unwrap();
         let o = |a: &[&str]| {
             let mut v: Vec<String> = vec!["l.json".into(), "--map".into(), "vda=vdb".into()];
-            v.extend(a.iter().map(|x| x.to_string()));
+            v.extend(a.iter().map(ToString::to_string));
             match parse_args(&v).unwrap() {
                 Parsed::Run(o) => o,
                 _ => unreachable!(),
@@ -924,7 +924,7 @@ mod tests {
 
     fn fit_opts(a: &[&str]) -> Options {
         let mut v: Vec<String> = vec!["l.json".into(), "--map".into(), "vda=vdb".into()];
-        v.extend(a.iter().map(|x| x.to_string()));
+        v.extend(a.iter().map(ToString::to_string));
         match parse_args(&v).unwrap() {
             Parsed::Run(o) => o,
             _ => unreachable!(),
@@ -1202,7 +1202,7 @@ mod tests {
 
     fn opts_j(a: &[&str]) -> Options {
         let mut v = vec!["l.json".to_string()];
-        v.extend(a.iter().map(|s| s.to_string()));
+        v.extend(a.iter().map(ToString::to_string));
         match parse_args(&v).unwrap() {
             Parsed::Run(o) => o,
             Parsed::Help => unreachable!(),

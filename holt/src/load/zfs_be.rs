@@ -312,8 +312,7 @@ impl Builder<'_> {
                 let who = bes
                     .iter()
                     .find(|o| o.holds(ds))
-                    .map(|o| format!("{}'s snapshots", o.name))
-                    .unwrap_or_else(|| origin.to_string());
+                    .map_or_else(|| origin.to_string(), |o| format!("{}'s snapshots", o.name));
                 if !from.contains(&who) {
                     from.push(who);
                 }

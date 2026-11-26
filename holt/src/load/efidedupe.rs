@@ -442,11 +442,10 @@ mod tests {
     fn alpine() {
         let out = format!(
             "BootCurrent: 0002\nBootOrder: 0002,0003\n\
-             Boot0002* alpine HD(1,GPT,{},0x800,0x80000)/\\EFI\\alpine\\grubx64.efi\n\
-             Boot0003* alpine\tHD(1,GPT,{},0x800,0x80000)/\\EFI\\alpine\\grubx64.efi\n\
+             Boot0002* alpine HD(1,GPT,{ESP},0x800,0x80000)/\\EFI\\alpine\\grubx64.efi\n\
+             Boot0003* alpine\tHD(1,GPT,{OTHER},0x800,0x80000)/\\EFI\\alpine\\grubx64.efi\n\
              Boot0004* old\tHD(1,MBR,0x1a2b3c4d,0x800,0x80000)/\\EFI\\alpine\\grubx64.efi\n\
-             Boot0005  Hidden\n",
-            ESP, OTHER
+             Boot0005  Hidden\n"
         );
         let v = parse_verbose(&out);
         assert_eq!(v.len(), 4, "{v:?}");

@@ -460,8 +460,8 @@ mod tests {
             kind,
             devno: format!("9:{name}"),
             parent: parent.map(str::to_string),
-            holders: holders.iter().map(|s| s.to_string()).collect(),
-            slaves: slaves.iter().map(|s| s.to_string()).collect(),
+            holders: holders.iter().map(ToString::to_string).collect(),
+            slaves: slaves.iter().map(ToString::to_string).collect(),
             ..BlockDev::default()
         }
     }
@@ -484,7 +484,7 @@ mod tests {
             uuid: "x".into(),
             vg: "vg0".into(),
             vg_uuid: "Yb3kFa-0Pz1-AbCd-EfGh-IjKl-MnOp-QrStUv".into(),
-            disks: disks.iter().map(|s| s.to_string()).collect(),
+            disks: disks.iter().map(ToString::to_string).collect(),
         }
     }
 

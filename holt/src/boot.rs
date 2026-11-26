@@ -2154,7 +2154,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             shim_variables: false,
             mbr_codes: vec![],
             packages: &p,
-            esp_files: files.iter().map(|f| f.to_string()).collect(),
+            esp_files: files.iter().map(ToString::to_string).collect(),
             fallback_copy_of: None,
             zbm_images: vec![],
         };
@@ -3132,7 +3132,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
                 shim_variables: false,
                 mbr_codes: vec![],
                 packages: p,
-                esp_files: esp.iter().map(|f| f.to_string()).collect(),
+                esp_files: esp.iter().map(ToString::to_string).collect(),
                 fallback_copy_of: None,
                 zbm_images: vec![],
             }

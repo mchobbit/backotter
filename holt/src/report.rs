@@ -1343,10 +1343,7 @@ pub fn build_with(
     let luks_headers = crate::luksheader::capture(
         sys,
         &[&disks, &md, &dm],
-        snapcore
-            .as_ref()
-            .map(|sc| sc.luks.as_slice())
-            .unwrap_or(&[]),
+        snapcore.as_ref().map_or(&[], |sc| sc.luks.as_slice()),
         luks,
     );
     if let Some(sc) = snapcore.as_mut() {
@@ -1413,10 +1410,7 @@ pub fn build_with(
     let btrfs = btrfs_json(
         sys,
         &ctx,
-        abroot
-            .as_ref()
-            .map(|a| a.btrfs_profiles.as_slice())
-            .unwrap_or(&[]),
+        abroot.as_ref().map_or(&[], |a| a.btrfs_profiles.as_slice()),
     );
     // transactional-update (crate::transactional): from fstab's / and the
     // btrfs it's on.
@@ -1921,7 +1915,7 @@ mod tests {
         t.file("/proc/self/mountinfo", "");
         let s = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), true);
         let names = |only: &[&str], sect: &str| -> Vec<String> {
-            let only: Vec<String> = only.iter().map(|n| n.to_string()).collect();
+            let only: Vec<String> = only.iter().map(ToString::to_string).collect();
             let v = build_only(&s, None, "2026-11-18T00:00:00Z", &only);
             v.at(&["storage", sect])
                 .and_then(Value::as_array)

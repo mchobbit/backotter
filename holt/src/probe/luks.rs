@@ -37,10 +37,10 @@ fn luks1(b: &[u8]) -> Content {
     for i in 0..8 {
         if be32(b, 208 + 48 * i) == 0x00ac_71f3 {
             active += 1;
-            first_iterations.get_or_insert(be32(b, 212 + 48 * i) as u64);
+            first_iterations.get_or_insert(u64::from(be32(b, 212 + 48 * i)));
         }
     }
-    let payload_sectors = be32(b, 104) as u64;
+    let payload_sectors = u64::from(be32(b, 104));
     let mut d = Obj::new()
         .set(
             "cipher",
@@ -51,7 +51,7 @@ fn luks1(b: &[u8]) -> Content {
             ),
         )
         .set("hash", crate::bytes::cstr(sub(b, 72, 32)))
-        .set("key_bits", be32(b, 108) as u64 * 8)
+        .set("key_bits", u64::from(be32(b, 108)) * 8)
         .set("data_offset_bytes", payload_sectors * 512)
         .set("keyslots_active", active)
         .set("mk_iterations", be32(b, 164));

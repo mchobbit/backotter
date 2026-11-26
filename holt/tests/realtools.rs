@@ -140,8 +140,7 @@ fn detail<'a>(c: &'a Content, k: &str) -> &'a Value {
         .0
         .iter()
         .find(|(key, _)| key == k)
-        .map(|(_, v)| v)
-        .unwrap_or_else(|| panic!("no {k}"))
+        .map_or_else(|| panic!("no {k}"), |(_, v)| v)
 }
 
 fn strs(v: &Value) -> Vec<String> {
@@ -315,8 +314,7 @@ fn xfs_matches_blkid_and_xfs_db() {
         let val = |k: &str| {
             db.lines()
                 .find_map(|l| l.strip_prefix(&format!("{k} = ")))
-                .map(str::trim)
-                .unwrap_or_else(|| panic!("{k} not in {db}"))
+                .map_or_else(|| panic!("{k} not in {db}"), str::trim)
         };
         assert_eq!(
             detail(&c, "block_size").as_u64().unwrap().to_string(),
@@ -447,7 +445,7 @@ fn btrfs_matches_blkid_and_dump_super() {
             after[..close]
                 .replace(['(', '|'], " ")
                 .split_whitespace()
-                .map(|w| w.to_lowercase())
+                .map(str::to_lowercase)
                 .collect()
         };
         assert_eq!(
@@ -611,7 +609,7 @@ fn swap_matches_blkid() {
         args.push(s(&img));
         run("mkswap", &args);
         let c = assert_matches_blkid(&img);
-        let ps: u64 = extra.get(1).map(|p| p.parse().unwrap()).unwrap_or(4096);
+        let ps: u64 = extra.get(1).map_or(4096, |p| p.parse().unwrap());
         assert_eq!(detail(&c, "page_size").as_u64(), Some(ps));
         assert_eq!(
             detail(&c, "size_bytes").as_u64(),
@@ -1362,10 +1360,10 @@ fn recorded_size(c: &Value) -> u64 {
 
 /// The one line of dumpe2fs or `xfs_db` that gives a field.
 fn field(text: &str, name: &str) -> String {
-    text.lines()
-        .find_map(|l| l.strip_prefix(name))
-        .map(|v| v.trim().trim_start_matches('=').trim().to_string())
-        .unwrap_or_else(|| panic!("no {name} in {text}"))
+    text.lines().find_map(|l| l.strip_prefix(name)).map_or_else(
+        || panic!("no {name} in {text}"),
+        |v| v.trim().trim_start_matches('=').trim().to_string(),
+    )
 }
 
 /// --fit-largest's own numbers, against the tools that make them: a 6 GiB
@@ -1654,7 +1652,7 @@ fn fit_largest_keeps_the_luks_payload_offset() {
     );
     let v = json::parse(
         &v.compact()
-            .replace(r#""dm_devices":[]"#, &format!(r#""dm_devices":[{}]"#, dm)),
+            .replace(r#""dm_devices":[]"#, &format!(r#""dm_devices":[{dm}]"#)),
     )
     .unwrap();
     let (out, d) = fit_disk(&v, (total - 2 * 1024 * 1024) * 512, 60);

@@ -147,7 +147,7 @@ pub struct Unknown {
 impl fmt::Display for Problem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Problem::Unknown { words, count } => {
+            Self::Unknown { words, count } => {
                 for (n, u) in words.iter().enumerate() {
                     if n > 0 {
                         writeln!(f)?;
@@ -171,10 +171,10 @@ impl fmt::Display for Problem {
                 }
                 Ok(())
             }
-            Problem::Count(0) => write!(f, "no words: a recovery key has {COUNT}"),
-            Problem::Count(1) => write!(f, "1 word: a recovery key has {COUNT}"),
-            Problem::Count(n) => write!(f, "{n} words: a recovery key has {COUNT}"),
-            Problem::Checksum => f.write_str(
+            Self::Count(0) => write!(f, "no words: a recovery key has {COUNT}"),
+            Self::Count(1) => write!(f, "1 word: a recovery key has {COUNT}"),
+            Self::Count(n) => write!(f, "{n} words: a recovery key has {COUNT}"),
+            Self::Checksum => f.write_str(
                 "the 12 words are all on the list, but they don't belong together (their checksum is wrong): one of the words is wrong or the order is swapped",
             ),
         }
@@ -185,13 +185,13 @@ impl fmt::Display for Problem {
 impl fmt::Debug for Problem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Problem::Unknown { words, count } => f
+            Self::Unknown { words, count } => f
                 .debug_struct("Unknown")
                 .field("words", words)
                 .field("count", count)
                 .finish(),
-            Problem::Count(n) => f.debug_tuple("Count").field(n).finish(),
-            Problem::Checksum => f.write_str("Checksum"),
+            Self::Count(n) => f.debug_tuple("Count").field(n).finish(),
+            Self::Checksum => f.write_str("Checksum"),
         }
     }
 }
@@ -1160,7 +1160,7 @@ mod tests {
         assert_eq!(u[0].typed, "grabbé");
         drop(u);
         assert_eq!(
-            LAST_UNKNOWN_DROP.with(|d| d.take()),
+            LAST_UNKNOWN_DROP.with(std::cell::Cell::take),
             Some(("grabbé".len(), true))
         );
     }

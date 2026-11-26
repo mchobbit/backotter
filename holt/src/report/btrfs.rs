@@ -98,10 +98,7 @@ pub(super) fn btrfs_json(sys: &Sys, ctx: &Ctx<'_>, known: &[(String, Value)]) ->
                             .map(|p| btrfs_properties(sys, &p));
                         if let Value::Obj(o) = &mut v {
                             o.push(("readonly".into(), Value::Bool(ro.contains(&id))));
-                            o.push((
-                                "properties".into(),
-                                props.map(Obj::build).unwrap_or(Value::Null),
-                            ));
+                            o.push(("properties".into(), props.map_or(Value::Null, Obj::build)));
                         }
                         v
                     })
@@ -219,8 +216,7 @@ pub fn parse_btrfs_qgroups(out: &str) -> Vec<Value> {
         "none" | "-" => Value::Null,
         _ => s
             .parse::<u64>()
-            .map(Value::UInt)
-            .unwrap_or_else(|_| Value::from(s)),
+            .map_or_else(|_| Value::from(s), Value::UInt),
     };
     out.lines()
         .skip_while(|l| !l.trim_start().starts_with("--"))

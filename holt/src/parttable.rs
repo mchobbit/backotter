@@ -88,11 +88,11 @@ impl GptBackup {
     /// The name the report writes.
     pub fn as_str(self) -> &'static str {
         match self {
-            GptBackup::Ok => "ok",
-            GptBackup::BadCrc => "bad-crc",
-            GptBackup::Absent => "absent",
-            GptBackup::Unreadable => "unreadable",
-            GptBackup::Mismatch => "mismatch",
+            Self::Ok => "ok",
+            Self::BadCrc => "bad-crc",
+            Self::Absent => "absent",
+            Self::Unreadable => "unreadable",
+            Self::Mismatch => "mismatch",
         }
     }
 }
@@ -152,8 +152,8 @@ pub fn parse_mbr(sector0: &[u8]) -> Option<Mbr> {
             number: i as u32 + 1,
             boot_flag: e.boot_flag,
             ptype: e.ptype,
-            start: e.start as u64,
-            sectors: e.sectors as u64,
+            start: u64::from(e.start),
+            sectors: u64::from(e.sectors),
             logical: false,
         });
     }
@@ -195,8 +195,8 @@ pub fn read_mbr(src: &dyn ByteSource, ss: u64) -> Option<Mbr> {
             }
             let e = raw_entries(&ebr);
             if e[0].ptype != 0 && e[0].sectors != 0 {
-                let start = cur + e[0].start as u64;
-                if start + e[0].sectors as u64 > ext.start + ext.sectors {
+                let start = cur + u64::from(e[0].start);
+                if start + u64::from(e[0].sectors) > ext.start + ext.sectors {
                     mbr.problems.push(format!(
                         "logical partition {next_number} ends past its extended partition"
                     ));
@@ -206,7 +206,7 @@ pub fn read_mbr(src: &dyn ByteSource, ss: u64) -> Option<Mbr> {
                     boot_flag: e[0].boot_flag,
                     ptype: e[0].ptype,
                     start,
-                    sectors: e[0].sectors as u64,
+                    sectors: u64::from(e[0].sectors),
                     logical: true,
                 });
                 next_number += 1;
@@ -214,7 +214,7 @@ pub fn read_mbr(src: &dyn ByteSource, ss: u64) -> Option<Mbr> {
             if !is_extended(e[1].ptype) || e[1].start == 0 {
                 break;
             }
-            let next = ext.start + e[1].start as u64;
+            let next = ext.start + u64::from(e[1].start);
             if next >= ext.start + ext.sectors {
                 mbr.problems.push(format!(
                     "EBR link at sector {cur} points outside its extended partition"
@@ -412,20 +412,20 @@ pub fn read_table(src: &dyn ByteSource, ss: u64) -> Option<Table> {
 impl Table {
     pub fn boot_code(&self) -> &[u8] {
         match self {
-            Table::Gpt { pmbr, .. } => &pmbr.boot_code,
-            Table::Mbr(m) => &m.boot_code,
+            Self::Gpt { pmbr, .. } => &pmbr.boot_code,
+            Self::Mbr(m) => &m.boot_code,
         }
     }
 
     /// (number, start LBA, sectors) of each partition, in order.
     pub fn extents(&self) -> Vec<(u32, u64, u64)> {
         match self {
-            Table::Gpt { gpt, .. } => gpt
+            Self::Gpt { gpt, .. } => gpt
                 .parts
                 .iter()
                 .map(|p| (p.number, p.first_lba, gpt_sectors(p)))
                 .collect(),
-            Table::Mbr(m) => m
+            Self::Mbr(m) => m
                 .parts
                 .iter()
                 .map(|p| (p.number, p.start, p.sectors))
@@ -437,7 +437,7 @@ impl Table {
     /// through `partition_json`, merged with what the kernel sees.
     pub fn header_json(&self, ss: u64, total_sectors: u64) -> Value {
         match self {
-            Table::Gpt { pmbr, gpt } => {
+            Self::Gpt { pmbr, gpt } => {
                 let hybrid: Vec<&MbrPart> = pmbr.parts.iter().filter(|p| p.ptype != 0xee).collect();
                 let mut problems = pmbr.problems.clone();
                 problems.extend(gpt.problems.iter().cloned());
@@ -477,7 +477,7 @@ impl Table {
                     .set("problems", problems)
                     .build()
             }
-            Table::Mbr(m) => Obj::new()
+            Self::Mbr(m) => Obj::new()
                 .set("type", "dos")
                 .set("sector_size", ss)
                 .set("disk_signature", format!("{:08x}", m.disk_signature))
@@ -489,12 +489,12 @@ impl Table {
     /// JSON for partition `number` as the table has it.
     pub fn partition_json(&self, number: u32, ss: u64) -> Option<Obj> {
         match self {
-            Table::Gpt { gpt, .. } => gpt
+            Self::Gpt { gpt, .. } => gpt
                 .parts
                 .iter()
                 .find(|p| p.number == number)
                 .map(|p| gpt_part_json(p, ss)),
-            Table::Mbr(m) => m
+            Self::Mbr(m) => m
                 .parts
                 .iter()
                 .find(|p| p.number == number)
@@ -778,7 +778,7 @@ pub mod build {
             0,
             0xee,
             1,
-            (total - 1).min(u32::MAX as u64) as u32,
+            (total - 1).min(u64::from(u32::MAX)) as u32,
         );
         img[..512].copy_from_slice(&pm);
         let entries_sectors = (128 * 128) / ss as u64;

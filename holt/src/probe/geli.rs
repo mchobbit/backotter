@@ -230,16 +230,12 @@ pub fn from_json(v: &Value) -> Option<Meta> {
                 .map(|(i, _)| *i)
         })
     });
-    let keys = v
-        .get("keys")
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(Value::as_u64)
-                .filter(|&i| i < 2)
-                .fold(0u8, |m, i| m | (1 << i))
-        })
-        .unwrap_or(1);
+    let keys = v.get("keys").and_then(Value::as_array).map_or(1, |a| {
+        a.iter()
+            .filter_map(Value::as_u64)
+            .filter(|&i| i < 2)
+            .fold(0u8, |m, i| m | (1 << i))
+    });
     Some(Meta {
         version,
         flags,
@@ -355,7 +351,7 @@ mod tests {
         let m = decode(&sample::sector(7, all | 0x4000, 22, 128, 18, 1 << 30, 512, 3, -1, 0)[..47])
             .unwrap();
         let names: Vec<&str> = FLAGS.iter().map(|(_, n)| *n).collect();
-        let mut want: Vec<String> = names.iter().map(|s| s.to_string()).collect();
+        let mut want: Vec<String> = names.iter().map(ToString::to_string).collect();
         want.push("0x4000".into());
         assert_eq!(m.flag_names(), want);
         assert_eq!(m.slots(), vec![0, 1]);

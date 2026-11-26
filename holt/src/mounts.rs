@@ -13,9 +13,9 @@ pub fn unescape(s: &str) -> String {
             && i + 4 <= b.len()
             && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c))
         {
-            let v = (b[i + 1] - b'0') as u32 * 64
-                + (b[i + 2] - b'0') as u32 * 8
-                + (b[i + 3] - b'0') as u32;
+            let v = u32::from(b[i + 1] - b'0') * 64
+                + u32::from(b[i + 2] - b'0') * 8
+                + u32::from(b[i + 3] - b'0');
             if v <= 0xff {
                 out.push(v as u8);
                 i += 4;
@@ -63,7 +63,7 @@ pub fn parse_mountinfo(text: &str) -> Vec<Mount> {
             options: f[5].to_string(),
             fstype: f[dash + 1].to_string(),
             source: unescape(f[dash + 2]),
-            super_options: f.get(dash + 3).map(|s| s.to_string()).unwrap_or_default(),
+            super_options: f.get(dash + 3).map(ToString::to_string).unwrap_or_default(),
         });
     }
     out

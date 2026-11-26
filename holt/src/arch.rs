@@ -140,18 +140,18 @@ pub(crate) const ALL: [&Names; 2] = [&X86_64, &AARCH64];
 impl Arch {
     /// From `uname -m`'s name (the BSDs' amd64 and arm64; illumos's i86pc,
     /// which is 64-bit only), or Debian's.
-    pub(crate) fn parse(name: &str) -> Option<Arch> {
+    pub(crate) fn parse(name: &str) -> Option<Self> {
         match name.trim() {
-            "x86_64" | "amd64" | "i86pc" => Some(Arch::X86_64),
-            "aarch64" | "arm64" => Some(Arch::Aarch64),
+            "x86_64" | "amd64" | "i86pc" => Some(Self::X86_64),
+            "aarch64" | "arm64" => Some(Self::Aarch64),
             _ => None,
         }
     }
 
     pub(crate) fn names(self) -> &'static Names {
         match self {
-            Arch::X86_64 => &X86_64,
-            Arch::Aarch64 => &AARCH64,
+            Self::X86_64 => &X86_64,
+            Self::Aarch64 => &AARCH64,
         }
     }
 }
@@ -356,7 +356,7 @@ mod tests {
             dump_machine(&parse(r#"{"os": {"id": "debian"}}"#).unwrap()),
             "x86_64"
         );
-        assert_eq!(dump_machine(&parse(r#"{}"#).unwrap()), "x86_64");
+        assert_eq!(dump_machine(&parse(r"{}").unwrap()), "x86_64");
         assert_eq!(
             dump_machine(
                 &parse(r#"{"os": {"architecture": "x86_64", "machine": "aarch64"}}"#).unwrap()
@@ -465,7 +465,7 @@ mod tests {
         let name: Vec<u8> = file
             .encode_utf16()
             .chain([0])
-            .flat_map(|c| c.to_le_bytes())
+            .flat_map(u16::to_le_bytes)
             .collect();
         let mut fp = vec![4u8, 4];
         fp.extend(((4 + name.len()) as u16).to_le_bytes());
@@ -473,7 +473,7 @@ mod tests {
         let mut v = vec![7u8, 0, 0, 0];
         v.extend(1u32.to_le_bytes());
         v.extend(((hd.len() + fp.len() + 4) as u16).to_le_bytes());
-        v.extend(desc.encode_utf16().chain([0]).flat_map(|c| c.to_le_bytes()));
+        v.extend(desc.encode_utf16().chain([0]).flat_map(u16::to_le_bytes));
         v.extend(hd);
         v.extend(fp);
         v.extend([0x7f, 0xff, 4, 0]);
@@ -482,7 +482,7 @@ mod tests {
 
     fn utf16_var(text: &str) -> Vec<u8> {
         let mut v = vec![6u8, 0, 0, 0];
-        v.extend(text.encode_utf16().chain([0]).flat_map(|c| c.to_le_bytes()));
+        v.extend(text.encode_utf16().chain([0]).flat_map(u16::to_le_bytes));
         v
     }
 
@@ -646,8 +646,7 @@ mod tests {
     /// target/x86_64-unknown-linux-gnu/, an x86 name that isn't the plan's.
     fn without_exe(script: &str) -> String {
         let exe = std::env::current_exe()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "bko-holt".into());
+            .map_or_else(|_| "bko-holt".into(), |p| p.to_string_lossy().into_owned());
         script
             .replace(&crate::load::shell_quote(&exe), "BKO-HOLT")
             .replace(&exe, "BKO-HOLT")
@@ -932,7 +931,7 @@ mod tests {
                 let args: Vec<String> = ["layout.json", "--map", "vda=vdb"]
                     .iter()
                     .chain(extra.iter())
-                    .map(|s| s.to_string())
+                    .map(ToString::to_string)
                     .collect();
                 let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&args) else {
                     panic!("{args:?}")

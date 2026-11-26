@@ -91,45 +91,45 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
-    pub const ALL: [ErrorCode; 17] = [
-        ErrorCode::BadArgs,
-        ErrorCode::NoCommit,
-        ErrorCode::LayoutUnreadable,
-        ErrorCode::LayoutNotJson,
-        ErrorCode::LayoutRefused,
-        ErrorCode::ArchMismatch,
-        ErrorCode::SchemaUnknown,
-        ErrorCode::JsonNotHere,
-        ErrorCode::OutUnsafe,
-        ErrorCode::ConfigNotOk,
-        ErrorCode::NoSuchMachine,
-        ErrorCode::TwoMachines,
-        ErrorCode::MachineNotOk,
-        ErrorCode::NoLayout,
-        ErrorCode::CopyFailed,
-        ErrorCode::HeaderFetchFailed,
-        ErrorCode::HeaderMismatch,
+    pub const ALL: [Self; 17] = [
+        Self::BadArgs,
+        Self::NoCommit,
+        Self::LayoutUnreadable,
+        Self::LayoutNotJson,
+        Self::LayoutRefused,
+        Self::ArchMismatch,
+        Self::SchemaUnknown,
+        Self::JsonNotHere,
+        Self::OutUnsafe,
+        Self::ConfigNotOk,
+        Self::NoSuchMachine,
+        Self::TwoMachines,
+        Self::MachineNotOk,
+        Self::NoLayout,
+        Self::CopyFailed,
+        Self::HeaderFetchFailed,
+        Self::HeaderMismatch,
     ];
 
     pub fn as_str(self) -> &'static str {
         match self {
-            ErrorCode::BadArgs => "bad_args",
-            ErrorCode::NoCommit => "no_commit",
-            ErrorCode::LayoutUnreadable => "layout_unreadable",
-            ErrorCode::LayoutNotJson => "layout_not_json",
-            ErrorCode::LayoutRefused => "layout_refused",
-            ErrorCode::ArchMismatch => "arch_mismatch",
-            ErrorCode::SchemaUnknown => "schema_unknown",
-            ErrorCode::JsonNotHere => "json_not_here",
-            ErrorCode::OutUnsafe => "out_unsafe",
-            ErrorCode::ConfigNotOk => "config_not_ok",
-            ErrorCode::NoSuchMachine => "no_such_machine",
-            ErrorCode::TwoMachines => "two_machines",
-            ErrorCode::MachineNotOk => "machine_not_ok",
-            ErrorCode::NoLayout => "no_layout",
-            ErrorCode::CopyFailed => "copy_failed",
-            ErrorCode::HeaderFetchFailed => "header_fetch_failed",
-            ErrorCode::HeaderMismatch => "header_mismatch",
+            Self::BadArgs => "bad_args",
+            Self::NoCommit => "no_commit",
+            Self::LayoutUnreadable => "layout_unreadable",
+            Self::LayoutNotJson => "layout_not_json",
+            Self::LayoutRefused => "layout_refused",
+            Self::ArchMismatch => "arch_mismatch",
+            Self::SchemaUnknown => "schema_unknown",
+            Self::JsonNotHere => "json_not_here",
+            Self::OutUnsafe => "out_unsafe",
+            Self::ConfigNotOk => "config_not_ok",
+            Self::NoSuchMachine => "no_such_machine",
+            Self::TwoMachines => "two_machines",
+            Self::MachineNotOk => "machine_not_ok",
+            Self::NoLayout => "no_layout",
+            Self::CopyFailed => "copy_failed",
+            Self::HeaderFetchFailed => "header_fetch_failed",
+            Self::HeaderMismatch => "header_mismatch",
         }
     }
 }
@@ -1444,7 +1444,7 @@ mod tests {
     use std::ffi::OsStr;
 
     fn s(a: &[&str]) -> Vec<String> {
-        a.iter().map(|x| x.to_string()).collect()
+        a.iter().map(ToString::to_string).collect()
     }
 
     #[test]
@@ -1621,9 +1621,7 @@ mod tests {
         // Only what this bko-holt writes is listed: a reader that needs a
         // plan stops before its first plan (J2).
         assert_eq!(
-            v.get("documents")
-                .and_then(Value::as_object)
-                .map(|o| o.len()),
+            v.get("documents").and_then(Value::as_object).map(Vec::len),
             Some(DOCUMENTS.len())
         );
         assert!(
@@ -1723,7 +1721,7 @@ mod tests {
 
     fn opts(a: &[&str]) -> Options {
         let mut v = vec!["l.json".to_string()];
-        v.extend(a.iter().map(|s| s.to_string()));
+        v.extend(a.iter().map(ToString::to_string));
         match parse_args(&v).unwrap() {
             Parsed::Run(o) => o,
             Parsed::Help => unreachable!(),
@@ -2198,8 +2196,7 @@ mod tests {
         let of = |t: &str| {
             w.iter()
                 .find(|(n, _)| n == t)
-                .map(|(_, w)| w.clone())
-                .unwrap_or_else(|| panic!("no {t}: {w:?}"))
+                .map_or_else(|| panic!("no {t}: {w:?}"), |(_, w)| w.clone())
         };
         let (vdb, vdc) = (of("vdb"), of("vdc"));
         assert!(
@@ -2217,7 +2214,7 @@ mod tests {
     /// format, so vdb's target gets no format.
     #[test]
     fn writes_only_where_made() {
-        let empty = r#"null"#;
+        let empty = r"null";
         let rest = r#""md_arrays": [], "dm_devices": [], "crypttab": null,
               "fstab": [{"spec": "UUID=0b0e2c6e-1111-4222-8333-444455556666", "file": "/", "type": "ext4", "options": "defaults", "freq": 0, "passno": 1, "resolves_to": "vda1"}]"#;
         let w = writes_of(
@@ -2227,8 +2224,7 @@ mod tests {
         let of = |t: &str| {
             w.iter()
                 .find(|(n, _)| n == t)
-                .map(|(_, w)| w.clone())
-                .unwrap_or_else(|| panic!("no {t}: {w:?}"))
+                .map_or_else(|| panic!("no {t}: {w:?}"), |(_, w)| w.clone())
         };
         assert!(of("vdb").iter().any(|s| s == "format"), "{w:?}");
         assert!(
@@ -2325,7 +2321,7 @@ mod tests {
         t.file("/sys/block/vdb/device/serial", "OTHER\n");
         assert_ne!(sha(&a), first);
         // A malformed one, or one without --json, is a bad argument.
-        let args = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let args = |a: &[&str]| a.iter().map(ToString::to_string).collect::<Vec<_>>();
         assert!(
             parse_args(&args(&["l", "--json", "--expect-plan", "abc"]))
                 .unwrap_err()
@@ -2588,7 +2584,7 @@ mod tests {
         let l = two_luks(r#"["luks"]"#);
         use std::os::unix::fs::PermissionsExt;
         let mode = |p: &str, m: u32| {
-            std::fs::set_permissions(t.p(p), std::fs::Permissions::from_mode(m)).unwrap()
+            std::fs::set_permissions(t.p(p), std::fs::Permissions::from_mode(m)).unwrap();
         };
         t.file("/k/0", "secret");
         mode("/k", 0o700);

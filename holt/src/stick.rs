@@ -165,7 +165,7 @@ pub fn main(args: &[String]) -> u8 {
             }
             "--copy" => match (it.next(), it.next()) {
                 (Some(id), Some(out)) if !out.starts_with('-') => {
-                    copy = Some((id.clone(), out.clone()))
+                    copy = Some((id.clone(), out.clone()));
                 }
                 _ => {
                     return refuse(
@@ -1541,8 +1541,7 @@ pub fn checksum_ok(sum: &[u8], body: &[u8]) -> Result<bool, String> {
     }
     let name = w
         .next()
-        .map(|n| n.trim_start().trim_start_matches('*').trim())
-        .unwrap_or("");
+        .map_or("", |n| n.trim_start().trim_start_matches('*').trim());
     if !name.is_empty() && name != "system.json" {
         return Err(format!("names {name}, not system.json"));
     }
@@ -3850,7 +3849,7 @@ mod tests {
 
     #[test]
     fn copy_values_are_never_flags() {
-        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let a = |v: &[&str]| v.iter().map(ToString::to_string).collect::<Vec<_>>();
         assert_eq!(
             without_copy_values(&a(&["--copy", "ID", "-h", "--json"])),
             a(&["--copy", "--json"])

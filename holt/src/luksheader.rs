@@ -72,8 +72,7 @@ fn luks_devices(sections: &[&[Value]]) -> Vec<(String, String, Vec<String>, Valu
             let node = x
                 .get("path")
                 .and_then(Value::as_str)
-                .map(str::to_string)
-                .unwrap_or_else(|| format!("/dev/{name}"));
+                .map_or_else(|| format!("/dev/{name}"), str::to_string);
             let mut aliases: Vec<String> = x
                 .get("links")
                 .and_then(Value::as_array)
@@ -99,7 +98,7 @@ fn luks_devices(sections: &[&[Value]]) -> Vec<(String, String, Vec<String>, Valu
         }
     };
     for sect in sections {
-        for d in sect.iter() {
+        for d in *sect {
             add(d);
             for p in d
                 .get("partitions")

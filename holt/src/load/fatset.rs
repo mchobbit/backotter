@@ -72,15 +72,19 @@ fn geometry(b: &[u8]) -> Result<Geometry, String> {
     if b.len() < 512 || b[510] != 0x55 || b[511] != 0xaa || !(b[0] == 0xeb || b[0] == 0xe9) {
         return Err("no FAT boot sector".into());
     }
-    let bps = le16(b, 11) as u64;
-    let reserved = le16(b, 14) as u64;
-    let fats = b[16] as u64;
-    let fatsz16 = le16(b, 22) as u64;
+    let bps = u64::from(le16(b, 11));
+    let reserved = u64::from(le16(b, 14));
+    let fats = u64::from(b[16]);
+    let fatsz16 = u64::from(le16(b, 22));
     if !matches!(bps, 512 | 1024 | 2048 | 4096) || reserved == 0 || fats == 0 || fats > 4 {
         return Err("no FAT boot sector (its BPB isn't a FAT's)".into());
     }
     let fat32 = fatsz16 == 0;
-    let fatsz = if fat32 { le32(b, 36) as u64 } else { fatsz16 };
+    let fatsz = if fat32 {
+        u64::from(le32(b, 36))
+    } else {
+        fatsz16
+    };
     let ebr = if fat32 { 64 } else { 36 };
     if fatsz == 0 {
         return Err("no FAT boot sector (no FAT size)".into());
@@ -88,7 +92,7 @@ fn geometry(b: &[u8]) -> Result<Geometry, String> {
     if b[ebr + 2] != 0x29 {
         return Err("the FAT has no extended boot record (signature 0x29), so no volume ID".into());
     }
-    let bk = if fat32 { le16(b, 50) as u64 } else { 0 };
+    let bk = if fat32 { u64::from(le16(b, 50)) } else { 0 };
     Ok(Geometry {
         bps,
         reserved,

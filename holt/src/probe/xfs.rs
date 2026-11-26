@@ -72,7 +72,7 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
     if sub(&b, 0, 4) != b"XFSB" {
         return None;
     }
-    let block_size = be32(&b, 4) as u64;
+    let block_size = u64::from(be32(&b, 4));
     let sect = be16(&b, 102);
     if !(512..=65536).contains(&block_size)
         || !block_size.is_power_of_two()

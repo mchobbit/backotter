@@ -38,8 +38,7 @@ fn bits(w: u64, lo: u32, hi: u32) -> u64 {
 fn name(table: &[&str], v: u64) -> String {
     table
         .get(v as usize)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| v.to_string())
+        .map_or_else(|| v.to_string(), ToString::to_string)
 }
 
 /// "1.13" from `BCH_VERSION(major`, minor) = major << 10 | minor.

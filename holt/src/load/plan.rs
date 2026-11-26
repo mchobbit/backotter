@@ -78,7 +78,7 @@ fn lvm_problem(sys: &Sys, layout: &Layout) -> Option<Problem> {
         .v
         .at(&["storage", "lvm", "volume_groups"])
         .and_then(crate::json::Value::as_array)
-        .is_none_or(|a| a.is_empty())
+        .is_none_or(Vec::is_empty)
     {
         return None;
     }
@@ -870,7 +870,7 @@ mod tests {
 
     fn opts(a: &[&str]) -> Options {
         let mut v = vec!["l.json".to_string()];
-        v.extend(a.iter().map(|s| s.to_string()));
+        v.extend(a.iter().map(ToString::to_string));
         match parse_args(&v).unwrap() {
             Parsed::Run(o) => o,
             Parsed::Help => unreachable!(),
@@ -1571,7 +1571,7 @@ mod tests {
         let mut seen = 0;
         let mut dirs: Vec<_> = std::fs::read_dir(&corpus)
             .unwrap()
-            .filter_map(|e| e.ok())
+            .filter_map(Result::ok)
             .map(|e| e.path())
             .filter(|p| p.join("src.json").is_file())
             .collect();
@@ -1652,7 +1652,7 @@ mod tests {
         }
         let a: Vec<String> = ["l", "--repo", "rest:https://me:pw@nas/r", "--json"]
             .iter()
-            .map(|x| x.to_string())
+            .map(ToString::to_string)
             .collect();
         assert_eq!(
             args_redacted(&a),

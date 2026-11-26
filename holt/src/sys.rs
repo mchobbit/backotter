@@ -142,7 +142,7 @@ impl RealRunner {
             match child.try_wait() {
                 Ok(Some(s)) => break Some(s),
                 Ok(None) if start.elapsed() < self.timeout => {
-                    std::thread::sleep(Duration::from_millis(20))
+                    std::thread::sleep(Duration::from_millis(20));
                 }
                 _ => {
                     // A process asleep in the kernel outlives SIGKILL until
@@ -252,13 +252,13 @@ pub struct FakeRunner {
 }
 
 impl FakeRunner {
-    pub fn with(mut self, cmd: &str, out: &str) -> FakeRunner {
+    pub fn with(mut self, cmd: &str, out: &str) -> Self {
         self.answers.insert(cmd.to_string(), out.to_string());
         self
     }
 
     /// PROG isn't installed: every run of it fails, and `installed` says so.
-    pub fn without(mut self, prog: &str) -> FakeRunner {
+    pub fn without(mut self, prog: &str) -> Self {
         self.missing.push(prog.to_string());
         self
     }
@@ -296,8 +296,8 @@ pub struct Sys {
 }
 
 impl Sys {
-    pub fn new(root: impl Into<PathBuf>, runner: Box<dyn Runner>, privileged: bool) -> Sys {
-        Sys {
+    pub fn new(root: impl Into<PathBuf>, runner: Box<dyn Runner>, privileged: bool) -> Self {
+        Self {
             root: root.into(),
             runner,
             privileged,
@@ -307,8 +307,8 @@ impl Sys {
     }
 
     /// The running system, as whoever we are.
-    pub fn host() -> Sys {
-        let mut s = Sys::new(
+    pub fn host() -> Self {
+        let mut s = Self::new(
             "/",
             Box::new(RealRunner {
                 timeout: TIME_LIMIT,
@@ -320,7 +320,7 @@ impl Sys {
     }
 
     /// As though the kernel's `sys_tz` were `minuteswest` (tests).
-    pub fn with_sys_tz(mut self, minuteswest: Option<i32>) -> Sys {
+    pub fn with_sys_tz(mut self, minuteswest: Option<i32>) -> Self {
         self.sys_tz = minuteswest;
         self
     }
@@ -398,7 +398,7 @@ impl Sys {
     pub fn list(&self, abs: &str) -> Vec<String> {
         let mut v: Vec<String> = std::fs::read_dir(self.p(abs))
             .map(|rd| {
-                rd.filter_map(|e| e.ok())
+                rd.filter_map(Result::ok)
                     .map(|e| e.file_name().to_string_lossy().into_owned())
                     .collect()
             })
@@ -428,7 +428,7 @@ impl Sys {
     pub fn file_size(&self, abs: &str) -> Option<u64> {
         std::fs::metadata(self.p(abs))
             .ok()
-            .filter(|m| m.is_file())
+            .filter(std::fs::Metadata::is_file)
             .map(|m| m.len())
     }
 
@@ -1041,7 +1041,7 @@ mod tests {
                 "/dev/sda1",
                 "/run/bko-holt/a",
                 &words("/run/bko-holt/a"),
-                |at| at.to_string()
+                ToString::to_string
             )
             .as_deref(),
             Some("/run/bko-holt/a")

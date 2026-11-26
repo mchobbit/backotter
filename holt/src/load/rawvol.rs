@@ -175,8 +175,7 @@ impl Builder<'_> {
     pub(crate) fn thin_restore(&mut self, prefix: &[String], out: &mut Vec<Cmd>) {
         let raw = self.raw_dms();
         let exe = std::env::current_exe()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "bko-holt".into());
+            .map_or_else(|_| "bko-holt".into(), |p| p.to_string_lossy().into_owned());
         let write = |dm: &Value, dev: &str, bytes: u64, chunk: u64| -> Cmd {
             let r = dm.get("raw_volume").cloned().unwrap_or(Value::Null);
             let image = s(&r, "image").unwrap_or_default();
@@ -283,7 +282,7 @@ impl Builder<'_> {
                             k,
                         ]
                         .iter()
-                        .map(|x| x.to_string())
+                        .map(ToString::to_string)
                         .collect();
                         for tag in &l.attrs.tags {
                             a.extend(["--addtag".into(), tag.clone()]);
@@ -298,8 +297,7 @@ impl Builder<'_> {
                             .thins
                             .iter()
                             .find(|x| &x.name == o)
-                            .map(|x| x.bytes)
-                            .unwrap_or(l.bytes);
+                            .map_or(l.bytes, |x| x.bytes);
                         if l.bytes != origin_bytes {
                             let size = lvm_size(l.bytes);
                             let get = lvm(lvm_argv(

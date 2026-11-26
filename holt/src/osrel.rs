@@ -406,8 +406,7 @@ pub fn check_supported(os: Option<&OsRelease>) -> Result<(), String> {
     }
     let name = os
         .get("PRETTY_NAME")
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("{id} {ver}"));
+        .map_or_else(|| format!("{id} {ver}"), str::to_string);
     Err(format!(
         "this is {} (ID={id}, VERSION_ID={ver}), and bko-holt dump supports only {} for now",
         name.trim(),

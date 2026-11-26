@@ -18,15 +18,14 @@ static COUNTER: AtomicUsize = AtomicUsize::new(0);
 pub struct TempDir(PathBuf);
 
 impl TempDir {
-    pub fn new(tag: &str) -> TempDir {
+    pub fn new(tag: &str) -> Self {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let base = std::env::var_os("BKO_HOLT_TEST_TMP")
-            .map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir);
+        let base =
+            std::env::var_os("BKO_HOLT_TEST_TMP").map_or_else(std::env::temp_dir, PathBuf::from);
         let p = base.join(format!("bko-holt-{tag}-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).expect("create temp dir");
-        TempDir(p)
+        Self(p)
     }
     pub fn path(&self) -> &Path {
         &self.0
@@ -80,8 +79,8 @@ pub struct Tree {
 }
 
 impl Tree {
-    pub fn new(tag: &str) -> Tree {
-        Tree {
+    pub fn new(tag: &str) -> Self {
+        Self {
             dir: TempDir::new(tag),
         }
     }
@@ -91,17 +90,17 @@ impl Tree {
     pub fn p(&self, abs: &str) -> PathBuf {
         self.dir.path().join(abs.trim_start_matches('/'))
     }
-    pub fn file(&self, abs: &str, content: impl AsRef<[u8]>) -> &Tree {
+    pub fn file(&self, abs: &str, content: impl AsRef<[u8]>) -> &Self {
         let p = self.p(abs);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         write_sparse(&p, content.as_ref());
         self
     }
-    pub fn dir(&self, abs: &str) -> &Tree {
+    pub fn dir(&self, abs: &str) -> &Self {
         std::fs::create_dir_all(self.p(abs)).unwrap();
         self
     }
-    pub fn symlink(&self, abs: &str, target: &str) -> &Tree {
+    pub fn symlink(&self, abs: &str, target: &str) -> &Self {
         let p = self.p(abs);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         let _ = std::fs::remove_file(&p);
@@ -110,7 +109,7 @@ impl Tree {
     }
 
     /// /etc/os-release of Debian 13.
-    pub fn debian13(&self) -> &Tree {
+    pub fn debian13(&self) -> &Self {
         self.file(
             "/etc/os-release",
             "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION=\"13 (trixie)\"\nVERSION_CODENAME=trixie\nDEBIAN_VERSION_FULL=13.1\nID=debian\nHOME_URL=\"https://www.debian.org/\"\n",
@@ -119,7 +118,7 @@ impl Tree {
     }
 
     /// A whole disk in /sys/block and /dev, `image` its contents.
-    pub fn disk(&self, name: &str, devno: &str, image: &[u8], sector: u32) -> &Tree {
+    pub fn disk(&self, name: &str, devno: &str, image: &[u8], sector: u32) -> &Self {
         let b = format!("/sys/block/{name}");
         self.file(&format!("{b}/dev"), format!("{devno}\n"))
             .file(&format!("{b}/size"), format!("{}\n", image.len() / 512))
@@ -151,7 +150,7 @@ impl Tree {
         start: u64,
         size: u64,
         image: &[u8],
-    ) -> &Tree {
+    ) -> &Self {
         let b = format!("/sys/block/{disk}/{name}");
         let s = (start * 512) as usize;
         let e = ((start + size) * 512) as usize;

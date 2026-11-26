@@ -85,7 +85,7 @@ pub fn set_logical_block_size(dev: &str, offset: u64, value: u32) -> Result<bool
     sb[CSUM..CSUM + 4].copy_from_slice(&c.to_le_bytes());
     f.seek(SeekFrom::Start(offset))
         .and_then(|_| f.write_all(&sb))
-        .and_then(|_| f.sync_all())
+        .and_then(|()| f.sync_all())
         .map_err(|e| format!("{dev}: writing the superblock: {e}"))?;
     Ok(true)
 }

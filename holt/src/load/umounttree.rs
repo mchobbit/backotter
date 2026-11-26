@@ -139,8 +139,8 @@ mod tests {
     }
 
     impl Fake {
-        fn new(text: &str) -> Fake {
-            Fake {
+        fn new(text: &str) -> Self {
+            Self {
                 lines: RefCell::new(text.lines().map(str::to_string).collect()),
                 busy: None,
                 calls: RefCell::new(vec![]),

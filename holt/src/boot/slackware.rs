@@ -115,8 +115,8 @@ pub(crate) struct LiloConf {
 }
 
 impl LiloConf {
-    pub(crate) fn parse(text: &str) -> LiloConf {
-        let mut c = LiloConf::default();
+    pub(crate) fn parse(text: &str) -> Self {
+        let mut c = Self::default();
         for (k, v) in lilo_items(text) {
             match (k.as_str(), v) {
                 ("image" | "other", Some(p)) => c.sections.push((k, p, Vec::new())),
@@ -723,11 +723,7 @@ fn geninitrd_json(sys: &Sys, why: &mut Vec<String>) -> Option<Value> {
                 .map(|(_, v)| v.clone())
         })
     };
-    let flag = |k: &str| {
-        key(k)
-            .map(|v| Value::from(v == "true"))
-            .unwrap_or(Value::from(true))
-    };
+    let flag = |k: &str| key(k).map_or(Value::from(true), |v| Value::from(v == "true"));
     let generator = key("GENERATOR")
         .filter(|g| !g.is_empty())
         .unwrap_or_else(|| "mkinitrd".into());

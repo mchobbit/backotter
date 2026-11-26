@@ -105,16 +105,17 @@ const IN_PROGRESS: [&str; 5] = ["Do", "Doing", "Undo", "Undoing", "Wait"];
 pub struct Env(pub Vec<(String, String)>);
 
 impl Env {
-    pub fn parse(text: &str) -> Env {
-        Env(text
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .filter_map(|l| {
-                l.split_once('=')
-                    .map(|(k, v)| (k.trim().to_string(), v.to_string()))
-            })
-            .collect())
+    pub fn parse(text: &str) -> Self {
+        Self(
+            text.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .filter_map(|l| {
+                    l.split_once('=')
+                        .map(|(k, v)| (k.trim().to_string(), v.to_string()))
+                })
+                .collect(),
+        )
     }
 
     pub fn get(&self, k: &str) -> Option<&str> {
@@ -492,8 +493,7 @@ fn boot_areas(sys: &Sys, disk: &Value) -> Value {
     let path = disk
         .get("path")
         .and_then(Value::as_str)
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("/dev/{name}"));
+        .map_or_else(|| format!("/dev/{name}"), str::to_string);
     let Some(src) = sys.open_dev(&path) else {
         sys.warn(format!("Ubuntu Core: {path} couldn't be read, so the dump has neither the MBR's boot code nor the BIOS Boot partition's core.img (BIOS boot of the restored disk needs them; UEFI doesn't)"));
         return Value::Null;
@@ -586,8 +586,7 @@ pub fn read(sys: &Sys, disks: &[Value], dm: &[Value]) -> Dump {
         if let Some(node) = f.node() {
             let hint_dev = uuid
                 .as_ref()
-                .map(|u| format!("/dev/disk/by-uuid/{u}"))
-                .unwrap_or_else(|| node.clone());
+                .map_or_else(|| node.clone(), |u| format!("/dev/disk/by-uuid/{u}"));
             sources.push(BackupSource {
                 path: r.at.to_string(),
                 from: there.then(|| r.at.to_string()),
@@ -735,13 +734,18 @@ pub fn read(sys: &Sys, disks: &[Value], dm: &[Value]) -> Dump {
         .and_then(|m| m.get("base"))
         .map(str::to_string);
     match &model {
-        None if boot.is_some() => refusals.push(format!("Ubuntu Core: ubuntu-boot has no {MODEL} (the model assertion)")),
+        None if boot.is_some() => refusals.push(format!(
+            "Ubuntu Core: ubuntu-boot has no {MODEL} (the model assertion)"
+        )),
         Some(_) if gadget.as_deref() != Some("pc") => {
-            refusals.push(format!("Ubuntu Core: the model's gadget is {}, not pc: version 1 restores the pc gadget's layout only", gadget.as_deref().unwrap_or("missing")))
+            refusals.push(format!("Ubuntu Core: the model's gadget is {}, not pc: version 1 restores the pc gadget's layout only", gadget.as_deref().unwrap_or("missing")));
         }
-        Some(_) if arch.as_deref() != Some("amd64") => refusals.push(format!("Ubuntu Core: the model is for {}, not amd64: version 1 restores amd64 only", arch.as_deref().unwrap_or("no architecture"))),
+        Some(_) if arch.as_deref() != Some("amd64") => refusals.push(format!(
+            "Ubuntu Core: the model is for {}, not amd64: version 1 restores amd64 only",
+            arch.as_deref().unwrap_or("no architecture")
+        )),
         Some(_) if model_base.as_deref() != Some("core24") => {
-            refusals.push(format!("Ubuntu Core: the model's base is {}, not core24: version 1 restores Ubuntu Core 24 only (UC20 and UC22 keep their keys otherwise)", model_base.as_deref().unwrap_or("missing")))
+            refusals.push(format!("Ubuntu Core: the model's base is {}, not core24: version 1 restores Ubuntu Core 24 only (UC20 and UC22 keep their keys otherwise)", model_base.as_deref().unwrap_or("missing")));
         }
         _ => {}
     }

@@ -139,23 +139,23 @@ pub enum RefusalCode {
 }
 
 impl RefusalCode {
-    pub const ALL: [RefusalCode; 6] = [
-        RefusalCode::BootDisk,
-        RefusalCode::RunningRoot,
-        RefusalCode::InUse,
-        RefusalCode::BackupDrive,
-        RefusalCode::ReadOnly,
-        RefusalCode::SectorSize,
+    pub const ALL: [Self; 6] = [
+        Self::BootDisk,
+        Self::RunningRoot,
+        Self::InUse,
+        Self::BackupDrive,
+        Self::ReadOnly,
+        Self::SectorSize,
     ];
 
     pub fn as_str(self) -> &'static str {
         match self {
-            RefusalCode::BootDisk => "boot_disk",
-            RefusalCode::RunningRoot => "running_root",
-            RefusalCode::InUse => "in_use",
-            RefusalCode::BackupDrive => "backup_drive",
-            RefusalCode::ReadOnly => "read_only",
-            RefusalCode::SectorSize => "sector_size",
+            Self::BootDisk => "boot_disk",
+            Self::RunningRoot => "running_root",
+            Self::InUse => "in_use",
+            Self::BackupDrive => "backup_drive",
+            Self::ReadOnly => "read_only",
+            Self::SectorSize => "sector_size",
         }
     }
 }
@@ -179,33 +179,33 @@ pub enum FailureCode {
 }
 
 impl FailureCode {
-    pub const ALL: [FailureCode; 11] = [
-        FailureCode::CmdFailed,
-        FailureCode::WrongPassphrase,
-        FailureCode::ArchiverFailed,
-        FailureCode::EfiVars,
-        FailureCode::ReadbackFailed,
-        FailureCode::NotDoneAfter,
-        FailureCode::NoRestoredTree,
-        FailureCode::CommitRefused,
-        FailureCode::WriteFailed,
-        FailureCode::LockHeld,
-        FailureCode::Internal,
+    pub const ALL: [Self; 11] = [
+        Self::CmdFailed,
+        Self::WrongPassphrase,
+        Self::ArchiverFailed,
+        Self::EfiVars,
+        Self::ReadbackFailed,
+        Self::NotDoneAfter,
+        Self::NoRestoredTree,
+        Self::CommitRefused,
+        Self::WriteFailed,
+        Self::LockHeld,
+        Self::Internal,
     ];
 
     pub fn as_str(self) -> &'static str {
         match self {
-            FailureCode::CmdFailed => "cmd_failed",
-            FailureCode::WrongPassphrase => "wrong_passphrase",
-            FailureCode::ArchiverFailed => "archiver_failed",
-            FailureCode::EfiVars => "efi_vars",
-            FailureCode::ReadbackFailed => "readback_failed",
-            FailureCode::NotDoneAfter => "not_done_after",
-            FailureCode::NoRestoredTree => "no_restored_tree",
-            FailureCode::CommitRefused => "commit_refused",
-            FailureCode::WriteFailed => "write_failed",
-            FailureCode::LockHeld => "lock_held",
-            FailureCode::Internal => "internal",
+            Self::CmdFailed => "cmd_failed",
+            Self::WrongPassphrase => "wrong_passphrase",
+            Self::ArchiverFailed => "archiver_failed",
+            Self::EfiVars => "efi_vars",
+            Self::ReadbackFailed => "readback_failed",
+            Self::NotDoneAfter => "not_done_after",
+            Self::NoRestoredTree => "no_restored_tree",
+            Self::CommitRefused => "commit_refused",
+            Self::WriteFailed => "write_failed",
+            Self::LockHeld => "lock_held",
+            Self::Internal => "internal",
         }
     }
 }
@@ -269,7 +269,7 @@ pub type Note = Coded<NoteCode>;
 
 impl<C: Code> Coded<C> {
     pub fn new(code: C, text: impl Into<String>) -> Self {
-        Coded {
+        Self {
             code,
             text: text.into(),
             fields: Vec::new(),
@@ -318,7 +318,7 @@ impl<C: Code> Coded<C> {
             .and_then(Value::as_str)
             .and_then(C::parse)
             .unwrap_or(C::OTHER);
-        let mut x = Coded::new(code, text);
+        let mut x = Self::new(code, text);
         for (k, f) in kv.iter().filter(|(k, _)| k != "code" && k != "text") {
             x = x.with(k, f.clone());
         }
@@ -355,19 +355,19 @@ impl<C: Code> std::borrow::Borrow<str> for Coded<C> {
 
 impl<C: Code> From<String> for Coded<C> {
     fn from(text: String) -> Self {
-        Coded::new(C::OTHER, text)
+        Self::new(C::OTHER, text)
     }
 }
 
 impl<C: Code> From<&str> for Coded<C> {
     fn from(text: &str) -> Self {
-        Coded::new(C::OTHER, text)
+        Self::new(C::OTHER, text)
     }
 }
 
 impl<C: Code> From<&String> for Coded<C> {
     fn from(text: &String) -> Self {
-        Coded::new(C::OTHER, text.as_str())
+        Self::new(C::OTHER, text.as_str())
     }
 }
 
@@ -399,13 +399,13 @@ pub type Notes = List<NoteCode>;
 
 impl<C: Code> Default for List<C> {
     fn default() -> Self {
-        List(Vec::new())
+        Self(Vec::new())
     }
 }
 
 impl<C: Code> List<C> {
     pub fn new() -> Self {
-        List(Vec::new())
+        Self(Vec::new())
     }
 
     pub fn push(&mut self, x: impl Into<Coded<C>>) {
@@ -472,7 +472,7 @@ impl<'a, C: Code> IntoIterator for &'a List<C> {
 
 impl<C: Code, T: Into<Coded<C>>> FromIterator<T> for List<C> {
     fn from_iter<I: IntoIterator<Item = T>>(it: I) -> Self {
-        List(it.into_iter().map(Into::into).collect())
+        Self(it.into_iter().map(Into::into).collect())
     }
 }
 

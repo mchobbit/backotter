@@ -39,7 +39,7 @@ pub fn swap(src: &dyn ByteSource) -> Option<Content> {
         } else {
             "0".to_string()
         };
-        let last_page = le32(&h, 4) as u64;
+        let last_page = u64::from(le32(&h, 4));
         let mut d = Obj::new()
             .set("page_size", ps)
             .set("last_page", last_page)
@@ -69,8 +69,8 @@ pub fn iso9660(src: &dyn ByteSource) -> Option<Content> {
     if sub(&b, 1, 5) != b"CD001" || b[0] != 1 {
         return None;
     }
-    let blocks = le32(&b, 80) as u64;
-    let block_size = crate::bytes::le16(&b, 128) as u64;
+    let blocks = u64::from(le32(&b, 80));
+    let block_size = u64::from(crate::bytes::le16(&b, 128));
     let d = Obj::new()
         .set("system_id", crate::bytes::label(sub(&b, 8, 32)))
         .set("publisher", crate::bytes::label(sub(&b, 318, 128)))
@@ -110,7 +110,7 @@ pub fn jfs(src: &dyn ByteSource) -> Option<Content> {
         return None;
     }
     let version = le32(&b, 4);
-    let bsize = le32(&b, 16) as u64;
+    let bsize = u64::from(le32(&b, 16));
     let label = if version == 1 {
         crate::bytes::label(sub(&b, 101, 11))
     } else {
@@ -118,7 +118,7 @@ pub fn jfs(src: &dyn ByteSource) -> Option<Content> {
     };
     let d = Obj::new()
         .set("block_size", bsize)
-        .set("size_bytes", le64(&b, 8) * le32(&b, 24) as u64)
+        .set("size_bytes", le64(&b, 8) * u64::from(le32(&b, 24)))
         .set(
             "external_log",
             le32(&b, 36) & 0x0000_0800 == 0 && le32(&b, 64) != 0,

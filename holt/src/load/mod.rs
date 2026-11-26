@@ -88,48 +88,48 @@ pub enum Stage {
 }
 
 impl Stage {
-    pub const ALL: [Stage; 9] = [
-        Stage::Plan,
-        Stage::Status,
-        Stage::Partition,
-        Stage::Assemble,
-        Stage::Format,
-        Stage::Mount,
-        Stage::Restore,
-        Stage::Boot,
-        Stage::Close,
+    pub const ALL: [Self; 9] = [
+        Self::Plan,
+        Self::Status,
+        Self::Partition,
+        Self::Assemble,
+        Self::Format,
+        Self::Mount,
+        Self::Restore,
+        Self::Boot,
+        Self::Close,
     ];
     /// The stages that change something, in the order they run.
-    pub const WRITING: [Stage; 7] = [
-        Stage::Partition,
-        Stage::Assemble,
-        Stage::Format,
-        Stage::Mount,
-        Stage::Restore,
-        Stage::Boot,
-        Stage::Close,
+    pub const WRITING: [Self; 7] = [
+        Self::Partition,
+        Self::Assemble,
+        Self::Format,
+        Self::Mount,
+        Self::Restore,
+        Self::Boot,
+        Self::Close,
     ];
 
     pub fn name(self) -> &'static str {
         match self {
-            Stage::Plan => "plan",
-            Stage::Status => "status",
-            Stage::Partition => "partition",
-            Stage::Assemble => "assemble",
-            Stage::Format => "format",
-            Stage::Mount => "mount",
-            Stage::Restore => "restore",
-            Stage::Boot => "boot",
-            Stage::Close => "close",
+            Self::Plan => "plan",
+            Self::Status => "status",
+            Self::Partition => "partition",
+            Self::Assemble => "assemble",
+            Self::Format => "format",
+            Self::Mount => "mount",
+            Self::Restore => "restore",
+            Self::Boot => "boot",
+            Self::Close => "close",
         }
     }
 
-    pub fn parse(s: &str) -> Option<Stage> {
-        Stage::ALL.into_iter().find(|st| st.name() == s)
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|st| st.name() == s)
     }
 
     pub fn writes(self) -> bool {
-        Stage::WRITING.contains(&self)
+        Self::WRITING.contains(&self)
     }
 }
 
@@ -191,8 +191,8 @@ pub struct Options {
 }
 
 impl Options {
-    pub fn new(layout: &str) -> Options {
-        Options {
+    pub fn new(layout: &str) -> Self {
+        Self {
             layout: layout.to_string(),
             through: None,
             only: None,
@@ -572,7 +572,7 @@ fn records_itself(args: &[String]) -> bool {
     match parse_args(args) {
         Ok(Parsed::Help) => false,
         Ok(Parsed::Run(o)) if o.json => {
-            !matches!(o.stages().as_slice(), [Stage::Plan] | [Stage::Status])
+            !matches!(o.stages().as_slice(), [Stage::Plan | Stage::Status])
         }
         _ => true,
     }
@@ -659,7 +659,7 @@ fn main_inner(args: &[String]) -> (u8, String) {
         // No core dumps (cryptsetup and the archiver hold keys), and for a
         // writing run, SIGTERM's stop and the panic hook (exec::arm).
         crate::sys::no_core_dumps();
-        if !matches!(opts.stages().as_slice(), [Stage::Plan] | [Stage::Status]) {
+        if !matches!(opts.stages().as_slice(), [Stage::Plan | Stage::Status]) {
             exec::arm();
         }
     }
@@ -738,7 +738,7 @@ fn run_raw(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String)
             [Stage::Status] => return status::json_run(&layout, opts, sys),
             _ => {
                 return exec::json_run(&layout, opts, sys, &stages, &mut |l| {
-                    jsonout::write_stdout(l)
+                    jsonout::write_stdout(l);
                 });
             }
         }
@@ -798,7 +798,7 @@ mod tests {
     use super::*;
 
     fn args(a: &[&str]) -> Vec<String> {
-        a.iter().map(|s| s.to_string()).collect()
+        a.iter().map(ToString::to_string).collect()
     }
 
     fn opts(a: &[&str]) -> Options {
@@ -837,7 +837,7 @@ mod tests {
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         let run_of = |a: &[&str]| {
             let mut v = vec!["layout.json".to_string(), "--map".into(), "vda=vdb".into()];
-            v.extend(a.iter().map(|x| x.to_string()));
+            v.extend(a.iter().map(ToString::to_string));
             let Ok(Parsed::Run(o)) = parse_args(&v) else {
                 panic!("{v:?}")
             };

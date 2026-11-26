@@ -437,7 +437,7 @@ pub fn plan(subs: &[Sub], mounts: &[Mount]) -> Plan {
     };
     for (_, mut a) in accepted {
         (a.new_id, a.placeholders) = assign(&a.path, a.id, &mut plan.notes);
-        for c in a.children.iter_mut() {
+        for c in &mut a.children {
             (c.new_id, c.placeholders) = assign(&c.path, c.id, &mut plan.notes);
         }
         plan.shared.push(a);

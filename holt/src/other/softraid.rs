@@ -88,7 +88,7 @@ pub fn parse_bioctl(text: &str) -> Vec<Volume> {
             status: w[i - 2].to_string(),
             size: w[i - 1].parse().ok(),
             device: w[i].to_string(),
-            level: w.get(i + 1).map(|l| l.to_string()).unwrap_or_default(),
+            level: w.get(i + 1).map(ToString::to_string).unwrap_or_default(),
             ..Volume::default()
         });
     }
@@ -507,7 +507,7 @@ impl Builder<'_> {
             }
             let mut a: Vec<String> = ["bioctl", "-C", "force", "-c", "C", "-l", &node]
                 .iter()
-                .map(|x| x.to_string())
+                .map(ToString::to_string)
                 .collect();
             let rounds = v.sr.get("kdf_rounds").and_then(Value::as_u64);
             let kdf = match (v.str("kdf").as_str(), rounds) {
@@ -1060,7 +1060,7 @@ mod tests {
         use crate::load::{Parsed, commands, target::Mapping};
         let l = Layout::from_json(v).unwrap();
         let mut a = vec!["l.json".to_string()];
-        a.extend(args.iter().map(|s| s.to_string()));
+        a.extend(args.iter().map(ToString::to_string));
         let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
             unreachable!()
         };

@@ -220,7 +220,7 @@ pub fn for_each_device_mut(v: &mut Value, mut f: impl FnMut(&mut Value)) {
 
 impl Layout {
     /// Checks the document is a dump `load` can read, and reads its disks.
-    pub fn from_json(v: Value) -> Result<Layout, String> {
+    pub fn from_json(v: Value) -> Result<Self, String> {
         let format = v.get("format").and_then(Value::as_str).unwrap_or("");
         if format == "backotter-system" {
             // A stick's system.json: the dump is inside it (open question 8).
@@ -323,7 +323,7 @@ impl Layout {
                 content,
             });
         }
-        Ok(Layout { v, disks })
+        Ok(Self { v, disks })
     }
 
     pub fn disk(&self, name: &str) -> Option<&Disk> {
@@ -334,8 +334,7 @@ impl Layout {
         self.v
             .at(path)
             .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
+            .map_or(&[], Vec::as_slice)
     }
 
     pub fn str_at(&self, path: &[&str]) -> Option<&str> {
@@ -767,7 +766,7 @@ impl Layout {
                 Value::Arr(all_paths.into_iter().map(Value::from).collect()),
             ));
         }
-        let layout = match Layout::from_json(v) {
+        let layout = match Self::from_json(v) {
             Ok(l) => l,
             Err(e) => {
                 problems.push(format!("--pools: the layout without the pools it leaves untouched isn't one load can read back ({e}), so --pools can't be honoured"));

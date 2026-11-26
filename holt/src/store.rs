@@ -139,29 +139,29 @@ pub(crate) enum Sx {
     Sym(String),
     Num(String),
     Bool(bool),
-    List(Vec<Sx>),
+    List(Vec<Self>),
     /// `#vu8(1 2 3)`: a bytevector (a UUID in boot parameters).
     Bytes(Vec<u8>),
 }
 
 impl Sx {
-    pub(crate) fn list(&self) -> Option<&[Sx]> {
+    pub(crate) fn list(&self) -> Option<&[Self]> {
         match self {
-            Sx::List(l) => Some(l),
+            Self::List(l) => Some(l),
             _ => None,
         }
     }
     pub(crate) fn sym(&self) -> Option<&str> {
         match self {
-            Sx::Sym(s) => Some(s),
+            Self::Sym(s) => Some(s),
             _ => None,
         }
     }
     /// In a list of `(KEY VALUE...)` fields, the first field named `key`'s
     /// values.
-    pub(crate) fn field(&self, key: &str) -> Option<&[Sx]> {
+    pub(crate) fn field(&self, key: &str) -> Option<&[Self]> {
         self.list()?.iter().find_map(|f| match f.list() {
-            Some([Sx::Sym(k), rest @ ..]) if k == key => Some(rest),
+            Some([Self::Sym(k), rest @ ..]) if k == key => Some(rest),
             _ => None,
         })
     }
@@ -169,9 +169,9 @@ impl Sx {
     /// `(string-append ...)` of such (older boot parameters).
     pub(crate) fn text(&self) -> Option<String> {
         match self {
-            Sx::Str(s) | Sx::Sym(s) | Sx::Num(s) => Some(s.clone()),
-            Sx::List(l) if l.first().and_then(Sx::sym) == Some("string-append") => {
-                l[1..].iter().map(Sx::text).collect()
+            Self::Str(s) | Self::Sym(s) | Self::Num(s) => Some(s.clone()),
+            Self::List(l) if l.first().and_then(Self::sym) == Some("string-append") => {
+                l[1..].iter().map(Self::text).collect()
             }
             _ => None,
         }

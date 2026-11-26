@@ -44,50 +44,50 @@ pub enum Family {
 
 impl Family {
     /// The system this binary was built for, unless it's Linux.
-    pub fn current() -> Option<Family> {
-        Family::from_name(std::env::consts::OS).filter(|f| !f.on_linux())
+    pub fn current() -> Option<Self> {
+        Self::from_name(std::env::consts::OS).filter(|f| !f.on_linux())
     }
 
     /// From Rust's name for the system (`std::env::consts::OS`), which is
     /// also what a report's os.family says.
-    pub fn from_name(os: &str) -> Option<Family> {
+    pub fn from_name(os: &str) -> Option<Self> {
         Some(match os {
-            "freebsd" => Family::FreeBsd,
-            "netbsd" => Family::NetBsd,
-            "openbsd" => Family::OpenBsd,
-            "dragonfly" => Family::DragonFly,
-            "illumos" | "solaris" => Family::Illumos,
-            "haiku" => Family::Haiku,
-            "redox" => Family::Redox,
-            "genode" => Family::Genode,
+            "freebsd" => Self::FreeBsd,
+            "netbsd" => Self::NetBsd,
+            "openbsd" => Self::OpenBsd,
+            "dragonfly" => Self::DragonFly,
+            "illumos" | "solaris" => Self::Illumos,
+            "haiku" => Self::Haiku,
+            "redox" => Self::Redox,
+            "genode" => Self::Genode,
             _ => return None,
         })
     }
 
     pub fn name(self) -> &'static str {
         match self {
-            Family::FreeBsd => "freebsd",
-            Family::NetBsd => "netbsd",
-            Family::OpenBsd => "openbsd",
-            Family::DragonFly => "dragonfly",
-            Family::Illumos => "illumos",
-            Family::Haiku => "haiku",
-            Family::Redox => "redox",
-            Family::Genode => "genode",
+            Self::FreeBsd => "freebsd",
+            Self::NetBsd => "netbsd",
+            Self::OpenBsd => "openbsd",
+            Self::DragonFly => "dragonfly",
+            Self::Illumos => "illumos",
+            Self::Haiku => "haiku",
+            Self::Redox => "redox",
+            Self::Genode => "genode",
         }
     }
 
     /// Whether load rebuilds it from Linux (its layout was read off the
     /// disks there): Linux's tools then, but this module's stages.
     pub fn on_linux(self) -> bool {
-        matches!(self, Family::Redox | Family::Genode)
+        matches!(self, Self::Redox | Self::Genode)
     }
 
     /// A report's family: os.family, absent from Linux's.
-    pub fn of_layout(v: &Value) -> Option<Family> {
+    pub fn of_layout(v: &Value) -> Option<Self> {
         v.at(&["os", "family"])
             .and_then(Value::as_str)
-            .and_then(Family::from_name)
+            .and_then(Self::from_name)
     }
 }
 
@@ -142,8 +142,9 @@ pub fn disk_obj(d: &RawDisk, kind: &str, after_kind: Obj) -> Obj {
 
 /// A disk report's `partition_table`: the table's header JSON, or null.
 pub fn table_json(t: Option<&Table>, d: &RawDisk) -> Value {
-    t.map(|t| t.header_json(d.sector, d.size / d.sector.max(1)))
-        .unwrap_or(Value::Null)
+    t.map_or(Value::Null, |t| {
+        t.header_json(d.sector, d.size / d.sector.max(1))
+    })
 }
 
 /// A disk report's `boot_code`: the MBR's boot code, named by `kind`.
@@ -419,8 +420,7 @@ pub fn image_b64(src: &dyn ByteSource) -> String {
     let end = b
         .chunks(512)
         .rposition(|c| !crate::bytes::is_zero(c))
-        .map(|i| (i + 1) * 512)
-        .unwrap_or(0);
+        .map_or(0, |i| (i + 1) * 512);
     crate::bytes::base64(&b[..end.min(b.len())])
 }
 
@@ -489,7 +489,7 @@ pub fn mounts_from_p(text: &str) -> Vec<mounts::FstabEntry> {
 /// The report's partition JSON: the table's view, the name, the contents.
 pub fn found_json(f: &Found, mounted_at: Vec<String>, extra: Obj) -> Value {
     let mut o = Obj::new().set("name", f.name.as_str());
-    for (k, v) in f.json.0.iter() {
+    for (k, v) in &f.json.0 {
         o.put(k, v.clone());
     }
     o.put("content", probe::content_json(&f.contents));

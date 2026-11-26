@@ -348,7 +348,7 @@ fn dump(args: &[String]) -> ExitCode {
     let mut out = std::io::stdout().lock();
     if out
         .write_all(text.as_bytes())
-        .and_then(|_| out.flush())
+        .and_then(|()| out.flush())
         .is_err()
     {
         return ExitCode::from(1);

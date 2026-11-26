@@ -240,8 +240,7 @@ fn s(v: &Value, k: &str) -> Option<String> {
 fn arr<'a>(v: &'a Value, path: &[&str]) -> &'a [Value] {
     v.at(path)
         .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or(&[])
+        .map_or(&[], Vec::as_slice)
 }
 
 /// "6.18.60-1-lts" -> (6, 18).
@@ -252,7 +251,7 @@ pub fn kernel_version(v: &str) -> Option<(u32, u32)> {
 
 /// "1.47.4-1" -> (1, 47).
 fn package_version(v: &str) -> Option<(u32, u32)> {
-    let v = v.split_once(':').map(|(_, r)| r).unwrap_or(v);
+    let v = v.split_once(':').map_or(v, |(_, r)| r);
     kernel_version(v)
 }
 
@@ -871,7 +870,7 @@ fn features_for(
     Ok(match to {
         "xfs" => match XFS_PROFILES.iter().rev().find(|(k, _)| *k <= kv) {
             Some(((a, b), f)) => (
-                f.iter().map(|x| x.to_string()).collect(),
+                f.iter().map(ToString::to_string).collect(),
                 format!(
                     "mkfs.xfs's lts_{a}.{b} profile (the oldest installed kernel is {}.{})",
                     kv.0, kv.1
@@ -885,7 +884,7 @@ fn features_for(
             }
         },
         "ext4" => {
-            let mut f: Vec<String> = EXT4_BASE.iter().map(|x| x.to_string()).collect();
+            let mut f: Vec<String> = EXT4_BASE.iter().map(ToString::to_string).collect();
             let new = tool_version.is_some_and(|t| t >= (1, 47)) && kv >= (5, 15);
             if new {
                 f.push("orphan_file".into());
@@ -1033,7 +1032,7 @@ fn one_change(
     let (features, features_from) = features_for(to, kv, tool_version, reads, &what)
         .map_err(|text| {
             r.problems
-                .push(refused("old_kernel", Some(mount), Some(to), text))
+                .push(refused("old_kernel", Some(mount), Some(to), text));
         })
         .ok()?;
     // free_space_tree is a compat_ro feature, as the dump records it.

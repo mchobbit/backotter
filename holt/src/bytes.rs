@@ -110,10 +110,10 @@ pub struct FileSource {
 impl FileSource {
     /// Opens a block device or image read-only.  Its size is where a seek to
     /// the end lands, which works for block devices as well as files.
-    pub fn open(path: &Path) -> std::io::Result<FileSource> {
+    pub fn open(path: &Path) -> std::io::Result<Self> {
         let mut file = File::open(path)?;
         let size = file.seek(SeekFrom::End(0))?;
-        Ok(FileSource {
+        Ok(Self {
             file,
             size,
             head: OnceCell::new(),
@@ -122,8 +122,8 @@ impl FileSource {
 
     /// Opens a disk device whose size the caller knows: a BSD's or illumos'
     /// character device may not seek to its end.
-    pub fn open_sized(path: &Path, size: u64) -> std::io::Result<FileSource> {
-        Ok(FileSource {
+    pub fn open_sized(path: &Path, size: u64) -> std::io::Result<Self> {
+        Ok(Self {
             file: File::open(path)?,
             size,
             head: OnceCell::new(),
@@ -133,8 +133,8 @@ impl FileSource {
     /// The same open file, with the size the caller knows.  Not a second
     /// open: NetBSD refuses to open a block device that is open already
     /// (EBUSY; its rescue image's /dev/ld1a, `HoltTest2`'s netbsd11+img).
-    pub fn with_size(self, size: u64) -> FileSource {
-        FileSource {
+    pub fn with_size(self, size: u64) -> Self {
+        Self {
             file: self.file,
             size,
             head: OnceCell::new(),
@@ -347,7 +347,7 @@ pub fn crc32(data: &[u8]) -> u32 {
 pub fn crc32_update(crc: u32, data: &[u8]) -> u32 {
     let mut c = !crc;
     for &b in data {
-        c = CRC_TABLE[((c ^ b as u32) & 0xff) as usize] ^ (c >> 8);
+        c = CRC_TABLE[((c ^ u32::from(b)) & 0xff) as usize] ^ (c >> 8);
     }
     !c
 }
@@ -453,7 +453,7 @@ mod tests {
         assert_eq!(label(b"a b \0junk"), Some("a b".into()));
         let w: Vec<u8> = "Linux ☃"
             .encode_utf16()
-            .flat_map(|u| u.to_le_bytes())
+            .flat_map(u16::to_le_bytes)
             .chain([0, 0, 0x41, 0])
             .collect();
         assert_eq!(utf16le(&w), "Linux ☃");

@@ -44,7 +44,7 @@ impl Step {
 pub(crate) struct Sections<'a>(pub Vec<(String, Vec<&'a str>)>);
 
 impl<'a> Sections<'a> {
-    pub(crate) fn of(text: &'a str) -> Sections<'a> {
+    pub(crate) fn of(text: &'a str) -> Self {
         Sections(super::sections(text))
     }
 
@@ -385,8 +385,7 @@ pub(crate) fn str_at<'a>(v: &'a Value, k: &str) -> Option<&'a str> {
 pub(crate) fn arr<'a>(v: &'a Value, path: &[&str]) -> &'a [Value] {
     v.at(path)
         .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or(&[])
+        .map_or(&[], Vec::as_slice)
 }
 
 // ---- the invariants ----

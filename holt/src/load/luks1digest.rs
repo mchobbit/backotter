@@ -128,7 +128,7 @@ fn one(dev: &str, key_file: &str, iterations: u32) -> Result<String, String> {
     };
     f.seek(SeekFrom::Start(0))
         .and_then(|_| f.write_all(&new))
-        .and_then(|_| f.sync_all())
+        .and_then(|()| f.sync_all())
         .map_err(|e| format!("{dev}: writing its header: {e}"))?;
     let mut back = vec![0u8; HEADER];
     f.seek(SeekFrom::Start(0))

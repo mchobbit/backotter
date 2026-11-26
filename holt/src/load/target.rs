@@ -213,8 +213,7 @@ pub fn imported_pools(sys: &Sys) -> Vec<ImportedPool> {
             altroot: roots
                 .iter()
                 .find(|(n, _)| *n == name)
-                .map(|(_, a)| a.clone())
-                .unwrap_or_else(|| "-".into()),
+                .map_or_else(|| "-".into(), |(_, a)| a.clone()),
             devices: paths.iter().map(|p| resolve_name(sys, p)).collect(),
             name,
         })
@@ -526,7 +525,7 @@ fn map_disks(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Map
         }
     }
     let ours = layout_uuids(layout);
-    for d in layout.disks.iter() {
+    for d in &layout.disks {
         if !d.used {
             m.notes.push(
                 Note::new(
@@ -1099,7 +1098,7 @@ pub fn by_id(t: &TargetDisk) -> Option<String> {
             return Some(l.to_string());
         }
     }
-    links.first().map(|l| l.to_string())
+    links.first().map(ToString::to_string)
 }
 
 /// What the probes find on T (holt-json.md, the plan's `contents`): per
@@ -1657,8 +1656,7 @@ fn fitted_already(
             .parts
             .iter()
             .find(|q| q.number == n)
-            .map(|q| q.name.clone())
-            .unwrap_or_else(|| format!("partition {n}"));
+            .map_or_else(|| format!("partition {n}"), |q| q.name.clone());
         let text = format!(
             "{name} -> {}: the table there is this layout's, fitted to the disk ({part} is {} {} there); run the stages with the --fit-largest PCT that wrote it, or --erase {} to start again",
             t.path(),
@@ -1695,7 +1693,7 @@ mod tests {
 
     fn opts(a: &[&str]) -> Options {
         let mut v = vec!["l.json".to_string()];
-        v.extend(a.iter().map(|s| s.to_string()));
+        v.extend(a.iter().map(ToString::to_string));
         match super::super::parse_args(&v).unwrap() {
             super::super::Parsed::Run(o) => o,
             _ => unreachable!(),
@@ -1915,7 +1913,7 @@ mod tests {
             name: n.into(),
             kind: Kind::Dm,
             dm_name: Some(dm.into()),
-            slaves: slaves.iter().map(|x| x.to_string()).collect(),
+            slaves: slaves.iter().map(ToString::to_string).collect(),
             ..BlockDev::default()
         };
         let devs = vec![
@@ -1936,7 +1934,7 @@ mod tests {
             let pools = vec![ImportedPool {
                 name: "rpool".into(),
                 altroot: "-".into(),
-                devices: devices.iter().map(|x| x.to_string()).collect(),
+                devices: devices.iter().map(ToString::to_string).collect(),
             }];
             let system = System {
                 disks: vec![disk("sda", "sda2"), disk("sdaa", "sdaa1")],
@@ -2606,7 +2604,7 @@ mod tests {
         let text: String = b
             .stage(Stage::Partition)
             .iter()
-            .map(|c| c.shell())
+            .map(super::super::commands::Cmd::shell)
             .collect();
         let at = |x: &str| {
             text.find(x)
@@ -2722,7 +2720,7 @@ mod tests {
             let text: String = b
                 .stage(Stage::Partition)
                 .iter()
-                .map(|c| c.shell())
+                .map(super::super::commands::Cmd::shell)
                 .collect();
             let at = |x: &str| {
                 text.find(x)
@@ -2893,7 +2891,7 @@ mod tests {
             let text: String = b
                 .stage(Stage::Partition)
                 .iter()
-                .map(|c| c.shell())
+                .map(super::super::commands::Cmd::shell)
                 .collect();
             let at = |x: &str| {
                 text.find(x)

@@ -192,7 +192,7 @@ pub struct Source {
 }
 
 impl Source {
-    pub fn read(sys: &Sys) -> Source {
+    pub fn read(sys: &Sys) -> Self {
         let mut rc = Vec::new();
         for f in ["/etc/rc.conf", "/etc/rc.conf.local"] {
             for (k, v) in parse_conf(&sys.read(f).unwrap_or_default()) {
@@ -200,7 +200,7 @@ impl Source {
                 rc.push((k, v));
             }
         }
-        Source {
+        Self {
             attached: parse_list(&sys.run("geli", &["list"]).unwrap_or_default()),
             loader: parse_conf(&sys.read("/boot/loader.conf").unwrap_or_default()),
             rc,
@@ -262,9 +262,7 @@ pub fn dump_partition(
     let att = src.attached.iter().find(|a| {
         freebsd::resolve(&format!("/dev/{}", a.consumer), seen).as_deref() == Some(f.name.as_str())
     });
-    let provider = att
-        .map(|a| a.name.clone())
-        .unwrap_or_else(|| format!("{}.eli", f.name));
+    let provider = att.map_or_else(|| format!("{}.eli", f.name), |a| a.name.clone());
     let mut names = names_of(f, glabel);
     if let Some(a) = att {
         if !names.contains(&a.consumer) {
@@ -387,27 +385,27 @@ impl KeyedBy {
     /// Its word in the dump's JSON.
     fn as_str(self) -> &'static str {
         match self {
-            KeyedBy::Passphrase => "passphrase",
-            KeyedBy::Keyfile => "keyfile",
-            KeyedBy::Both => "both",
-            KeyedBy::Unknown => "unknown",
+            Self::Passphrase => "passphrase",
+            Self::Keyfile => "keyfile",
+            Self::Both => "both",
+            Self::Unknown => "unknown",
         }
     }
 
     /// The dump's word; a layout without one (or not a string) is keyed by
     /// a passphrase, as a dump before `keyed_by` was.
-    fn of_json(v: Option<&Value>) -> KeyedBy {
+    fn of_json(v: Option<&Value>) -> Self {
         match v.and_then(Value::as_str).unwrap_or("passphrase") {
-            "passphrase" => KeyedBy::Passphrase,
-            "keyfile" => KeyedBy::Keyfile,
-            "both" => KeyedBy::Both,
-            _ => KeyedBy::Unknown,
+            "passphrase" => Self::Passphrase,
+            "keyfile" => Self::Keyfile,
+            "both" => Self::Both,
+            _ => Self::Unknown,
         }
     }
 
     /// Whether a passphrase unlocks it (alone or with key files).
     fn has_passphrase(self) -> bool {
-        matches!(self, KeyedBy::Passphrase | KeyedBy::Both)
+        matches!(self, Self::Passphrase | Self::Both)
     }
 }
 
@@ -469,8 +467,7 @@ fn providers(layout: &Layout) -> Vec<Prov> {
             let provider = rec
                 .get("provider")
                 .and_then(Value::as_str)
-                .map(str::to_string)
-                .unwrap_or_else(|| format!("{name}.eli"));
+                .map_or_else(|| format!("{name}.eli"), str::to_string);
             let mut names = vec![name.clone()];
             names.extend(label.map(|l| format!("gpt/{l}")));
             let base = provider.trim_end_matches(".eli").to_string();
@@ -1075,7 +1072,7 @@ mod tests {
 
     #[test]
     fn key_files_from_loader_and_rc_conf() {
-        let n = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let n = |v: &[&str]| v.iter().map(ToString::to_string).collect::<Vec<_>>();
         // The guest: neither has geli_ lines.
         let loader = parse_conf("aesni_load=\"YES\"\ngeom_eli_load=\"YES\"\n");
         assert_eq!(
@@ -1563,7 +1560,7 @@ mod tests {
         use crate::load::{Parsed, commands, target::Mapping};
         let l = Layout::from_json(v).unwrap();
         let mut a = vec!["l.json".to_string()];
-        a.extend(args.iter().map(|s| s.to_string()));
+        a.extend(args.iter().map(ToString::to_string));
         let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
             unreachable!()
         };
@@ -2114,7 +2111,7 @@ mod tests {
         assert_eq!(why, "vtbd0p3.eli: UFS as the source's (dumpfs -m)");
         // A size that isn't a whole number of the provider's sectors: down.
         let (cmd, why) = newfs(ufs_on_geli(|r| {
-            put(r, "newfs", Value::from("newfs -O 2 -U -s 28819455 DEVICE"))
+            put(r, "newfs", Value::from("newfs -O 2 -U -s 28819455 DEVICE"));
         }));
         assert_eq!(cmd, "newfs -O 2 -U -s 3602431 /dev/vtbd1p3.eli");
         assert!(why.ends_with("-s 3602431, rounded down (28819455 of them isn't a whole number of 4096-byte sectors, and newfs must not be given more than the device holds)"), "{why}");

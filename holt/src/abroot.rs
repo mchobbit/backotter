@@ -262,7 +262,7 @@ pub(crate) fn parse_abroot_cfg(text: &str, label: &str) -> RootCfg {
                     .then(|| {
                         w.last()
                             .filter(|x| !x.starts_with('-'))
-                            .map(|s| s.to_string())
+                            .map(ToString::to_string)
                     })
                     .flatten();
             }
@@ -272,7 +272,7 @@ pub(crate) fn parse_abroot_cfg(text: &str, label: &str) -> RootCfg {
                         .is_some_and(|k| strip_device(k).starts_with(&prefix)) =>
             {
                 c.linux = Some(line.trim().to_string());
-                c.kernel = w.get(1).map(|s| s.to_string());
+                c.kernel = w.get(1).map(ToString::to_string);
                 c.root = w
                     .iter()
                     .skip(2)
@@ -281,7 +281,7 @@ pub(crate) fn parse_abroot_cfg(text: &str, label: &str) -> RootCfg {
                 c.search_uuid = search.clone();
             }
             Some(&"initrd") if c.linux.is_some() && c.initrd.is_none() => {
-                c.initrd = w.get(1).map(|s| s.to_string())
+                c.initrd = w.get(1).map(ToString::to_string);
             }
             _ => {}
         }
@@ -531,22 +531,24 @@ pub(crate) fn read(sys: &Sys, cfg: &Config, fss: &[Fs]) -> Dump {
                     .build(),
             );
         }
-        let mut o = fs.map(Fs::json).unwrap_or_else(|| {
-            Obj::new()
-                .set("label", l.as_str())
-                .set("device", Value::Null)
-        });
+        let mut o = fs.map_or_else(
+            || {
+                Obj::new()
+                    .set("label", l.as_str())
+                    .set("device", Value::Null)
+            },
+            Fs::json,
+        );
         o.put("present", is_present);
         o.put("read", state.is_some());
         o.put(
             "abimage",
             state
                 .as_ref()
-                .map(|((a, _), _, _)| a.clone())
-                .unwrap_or(Value::Null),
+                .map_or(Value::Null, |((a, _), _, _)| a.clone()),
         );
         o.put("empty", state.as_ref().map(|((_, e), _, _)| *e));
-        o.put("init", dir.map(|d| d.1.clone()).unwrap_or(Value::Null));
+        o.put("init", dir.map_or(Value::Null, |d| d.1.clone()));
         roots.push(o.build());
     }
 

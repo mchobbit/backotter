@@ -90,7 +90,7 @@ enum Mode {
 
 fn mode_from_env() -> Mode {
     match std::env::var("BKO_HOLT_GOLDEN").as_deref() {
-        Err(_) | Ok("") | Ok("check") => Mode::Check,
+        Err(_) | Ok("" | "check") => Mode::Check,
         Ok("report") => Mode::Report,
         Ok("bless") => Mode::Bless,
         Ok(other) => panic!("BKO_HOLT_GOLDEN={other:?}: check, report or bless"),
@@ -1172,11 +1172,7 @@ fn golden_invariant_every_fstab_mount_planned() {
         .to_string();
     let bad = edit(&p, &format!("{line}\n"), "");
     let c = invariants(&v, &bad);
-    assert!(
-        has(&c, "every fstab mount planned: fstab's /boot"),
-        "{:?}",
-        c
-    );
+    assert!(has(&c, "every fstab mount planned: fstab's /boot"), "{c:?}");
     // A command that names the mount point without mounting it there.
     for near in [
         format!("chmod 0700 {TARGET}/boot"),
@@ -1186,8 +1182,7 @@ fn golden_invariant_every_fstab_mount_planned() {
         let c = invariants(&v, &edit(&p, &format!("{line}\n"), &format!("{near}\n")));
         assert!(
             has(&c, "every fstab mount planned: fstab's /boot"),
-            "{near}: {:?}",
-            c
+            "{near}: {c:?}"
         );
     }
     // Named in a Note instead: planned.
@@ -1234,11 +1229,7 @@ fn golden_invariant_every_fstab_mount_planned() {
         "{:?}",
         c.skipped
     );
-    assert!(
-        has(&c, "every fstab mount planned: fstab's /data"),
-        "{:?}",
-        c
-    );
+    assert!(has(&c, "every fstab mount planned: fstab's /data"), "{c:?}");
     assert_eq!(unescape("/srv/my\\040disk"), "/srv/my disk");
     // Ubuntu Core's / is the base snap: skipped there, and only there.
     let root = r#"{"spec": "/dev/root", "file": "/", "type": "rootfs", "options": "defaults", "resolves_to": null}"#;
@@ -1615,7 +1606,7 @@ fn planned_mount_points(dump: &Value, p: &Planned) -> Vec<String> {
         for c in commands(&s.cmd) {
             let pr = prog(&c[0]);
             if (pr == "mount" || pr.starts_with("mount_") || pr == "redoxfs") && c.len() >= 3 {
-                let last = c.last().map(String::as_str).unwrap_or("");
+                let last = c.last().map_or("", String::as_str);
                 if last == TARGET {
                     out.push("/".to_string());
                 } else if let Some(rest) = last.strip_prefix(TARGET).filter(|r| r.starts_with('/'))
@@ -1957,7 +1948,7 @@ fn golden_modes() {
     assert!(d.at(&["differ", "synth+bigger"]).is_none());
     assert!(d.at(&["invariants_skipped", "synth", "0"]).is_some());
     assert_eq!(
-        d.get("planned").map(|p| p.compact()),
+        d.get("planned").map(Value::compact),
         Some(r#"["synth","synth+bigger"]"#.to_string())
     );
     assert!(d.get("sources").is_some_and(Value::is_null));
@@ -2095,7 +2086,7 @@ fn golden_corpus_holds_together() {
     );
     assert_eq!(d.get("sources").and_then(Value::as_u64), Some(2));
     assert_eq!(
-        d.get("planned").map(|p| p.compact()),
+        d.get("planned").map(Value::compact),
         Some(r#"["synth","synth+bigger"]"#.to_string())
     );
     // A guest's dump without its +bigger plan listed: "not in variants.txt".

@@ -23,16 +23,16 @@ pub enum Kind {
 impl Kind {
     pub fn name(self) -> &'static str {
         match self {
-            Kind::Disk => "disk",
-            Kind::Partition => "partition",
-            Kind::Dm => "dm",
-            Kind::Md => "md",
-            Kind::Loop => "loop",
-            Kind::Zram => "zram",
-            Kind::Rom => "rom",
-            Kind::Floppy => "floppy",
-            Kind::Nbd => "nbd",
-            Kind::Ram => "ram",
+            Self::Disk => "disk",
+            Self::Partition => "partition",
+            Self::Dm => "dm",
+            Self::Md => "md",
+            Self::Loop => "loop",
+            Self::Zram => "zram",
+            Self::Rom => "rom",
+            Self::Floppy => "floppy",
+            Self::Nbd => "nbd",
+            Self::Ram => "ram",
         }
     }
 }

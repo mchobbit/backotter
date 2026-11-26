@@ -31,14 +31,14 @@ impl BootKind {
     /// The name the report writes.
     pub fn as_str(self) -> &'static str {
         match self {
-            BootKind::None => "none",
-            BootKind::Grub2 => "grub2",
-            BootKind::GrubLegacy => "grub-legacy",
-            BootKind::Syslinux => "syslinux",
-            BootKind::Lilo => "lilo",
-            BootKind::Isohybrid => "isohybrid",
-            BootKind::Windows => "windows",
-            BootKind::Unknown => "unknown",
+            Self::None => "none",
+            Self::Grub2 => "grub2",
+            Self::GrubLegacy => "grub-legacy",
+            Self::Syslinux => "syslinux",
+            Self::Lilo => "lilo",
+            Self::Isohybrid => "isohybrid",
+            Self::Windows => "windows",
+            Self::Unknown => "unknown",
         }
     }
 }
@@ -50,8 +50,8 @@ impl std::fmt::Display for BootKind {
 }
 
 impl From<BootKind> for Value {
-    fn from(k: BootKind) -> Value {
-        Value::from(k.as_str())
+    fn from(k: BootKind) -> Self {
+        Self::from(k.as_str())
     }
 }
 

@@ -713,8 +713,7 @@ impl Builder<'_> {
                         .is_some_and(|sl| sl.iter().any(|x| x.as_str() == Some(dev.as_str())))
                 })
                 .and_then(|m| m.at(&["dm", "dm_name"]).and_then(Value::as_str))
-                .map(str::to_string)
-                .unwrap_or_else(|| dev.clone());
+                .map_or_else(|| dev.clone(), str::to_string);
             if crate::luksheader::kept(&self.layout.v, &dev).is_some() {
                 let tpm_part = if tpm {
                     format!(
@@ -918,7 +917,7 @@ mod tests {
     fn plan(v: &Value, extra: &[&str]) -> crate::load::commands::Built {
         let l = Layout::from_json(v.clone()).unwrap();
         let mut a = vec!["l.json".to_string()];
-        a.extend(extra.iter().map(|s| s.to_string()));
+        a.extend(extra.iter().map(ToString::to_string));
         let o = match crate::load::parse_args(&a).unwrap() {
             crate::load::Parsed::Run(o) => o,
             _ => unreachable!(),

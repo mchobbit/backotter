@@ -766,7 +766,7 @@ pub(crate) mod sample {
 "#;
 
     /// Qubes 4.3's grub.cfg Xen entry (the Q0 guest's, shortened).
-    pub(crate) const GRUB_CFG: &str = r#"### BEGIN /etc/grub.d/20_linux_xen ###
+    pub(crate) const GRUB_CFG: &str = r"### BEGIN /etc/grub.d/20_linux_xen ###
 menuentry 'Qubes, with Xen hypervisor' --class qubes --class gnu-linux --class gnu --class os --class xen $menuentry_id_option 'xen-gnulinux-simple-ab' {
 	insmod part_gpt
 	echo	'Loading Xen 4.19.5 ...'
@@ -777,7 +777,7 @@ menuentry 'Qubes, with Xen hypervisor' --class qubes --class gnu-linux --class g
 	module2 --nounzip   /initramfs-6.18.51-1.qubes.fc41.x86_64.img
 }
 ### END /etc/grub.d/20_linux_xen ###
-"#;
+";
 
     pub(crate) const DEFAULT_GRUB: &str = r#"GRUB_TIMEOUT=5
 GRUB_DISTRIBUTOR="$(sed 's, release .*$,,g' /etc/system-release)"

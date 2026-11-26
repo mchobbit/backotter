@@ -98,8 +98,7 @@ pub fn newfs_of(dumpfs_m: &str, dev: &str) -> Option<String> {
     Some(
         l.trim()
             .strip_suffix(dev)
-            .map(|s| format!("{}DEVICE", s))
-            .unwrap_or_else(|| l.trim().to_string()),
+            .map_or_else(|| l.trim().to_string(), |s| format!("{s}DEVICE")),
     )
 }
 
@@ -123,14 +122,14 @@ pub fn bsdlabel_parts(slice: &dyn ByteSource) -> Vec<(char, u64, u64)> {
     // label on any disk gives nothing rather than wrapping.)
     let secsize = match crate::bytes::le32(&b, 40) {
         0 => 512,
-        n if (512..=65536).contains(&n) && n.is_power_of_two() => n as u64,
+        n if (512..=65536).contains(&n) && n.is_power_of_two() => u64::from(n),
         _ => return Vec::new(),
     };
     let n = (crate::bytes::le16(&b, 138) as usize).min(20);
     let entry = |i: usize| {
         (
-            crate::bytes::le32(&b, 148 + 16 * i) as u64,
-            crate::bytes::le32(&b, 148 + 16 * i + 4) as u64,
+            u64::from(crate::bytes::le32(&b, 148 + 16 * i)),
+            u64::from(crate::bytes::le32(&b, 148 + 16 * i + 4)),
         )
     };
     let base = if n > 2 { entry(2).1 } else { 0 };

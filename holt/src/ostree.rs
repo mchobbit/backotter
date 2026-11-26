@@ -438,7 +438,7 @@ mod tests {
                 g("readonly"),
                 v.at(&["prepare_root", "files"])
                     .and_then(Value::as_array)
-                    .map_or(0, |a| a.len()),
+                    .map_or(0, Vec::len),
             )
         };
         let o = |s: &str| Some(s.to_string());

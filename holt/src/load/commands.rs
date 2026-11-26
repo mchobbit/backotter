@@ -96,68 +96,68 @@ pub struct Cmd {
 }
 
 impl Cmd {
-    pub fn new<S: AsRef<str>>(argv: &[S]) -> Cmd {
-        Cmd {
+    pub fn new<S: AsRef<str>>(argv: &[S]) -> Self {
+        Self {
             argv: argv.iter().map(|s| s.as_ref().to_string()).collect(),
-            ..Cmd::default()
+            ..Self::default()
         }
     }
 
-    pub fn note(text: impl Into<String>) -> Cmd {
-        Cmd {
+    pub fn note(text: impl Into<String>) -> Self {
+        Self {
             why: Some(text.into()),
-            ..Cmd::default()
+            ..Self::default()
         }
     }
 
-    pub fn write_file(path: &str, contents: String) -> Cmd {
-        Cmd {
+    pub fn write_file(path: &str, contents: String) -> Self {
+        Self {
             write: Some(path.to_string()),
             stdin: Some(contents),
-            ..Cmd::default()
+            ..Self::default()
         }
     }
 
     /// The file it writes is 0600 (`write_file`): a copy of a file that can
     /// hold a password.
-    pub fn private(mut self) -> Cmd {
+    pub fn private(mut self) -> Self {
         self.private = true;
         self
     }
 
     /// The read-back of DEV, just made from the source's CONTENT.
-    pub fn read_back(dev: &str, content: &Value) -> Cmd {
-        Cmd {
+    pub fn read_back(dev: &str, content: &Value) -> Self {
+        Self {
             check: Some((dev.to_string(), content.clone())),
-            ..Cmd::default()
+            ..Self::default()
         }
     }
 
-    pub fn why(mut self, w: impl Into<String>) -> Cmd {
+    pub fn why(mut self, w: impl Into<String>) -> Self {
         self.why = Some(w.into());
         self
     }
 
     /// It makes something on the source disks DISKS (`Cmd::on`).
-    pub fn made_on(mut self, disks: Vec<String>) -> Cmd {
+    pub fn made_on(mut self, disks: Vec<String>) -> Self {
         self.on = disks;
         self
     }
 
     /// Its stderr's lines with `warning:` in them go to the terminal too,
     /// when it succeeds.
-    pub fn warns(mut self) -> Cmd {
+    pub fn warns(mut self) -> Self {
         self.warns = true;
         self
     }
 
-    pub fn input(mut self, s: String) -> Cmd {
+    pub fn input(mut self, s: String) -> Self {
         self.stdin = Some(s);
         self
     }
 
     /// It runs the archiver (`archiver`).
-    pub fn archiver(mut self) -> Cmd {
+    pub fn archiver(mut self) -> Self {
         self.archiver = true;
         self
     }
@@ -168,7 +168,7 @@ impl Cmd {
     /// `shell()`'s.
     pub fn shell_elided(&self) -> String {
         match (&self.write, &self.stdin) {
-            (Some(_), Some(text)) if self.private => Cmd {
+            (Some(_), Some(text)) if self.private => Self {
                 stdin: Some(format!("# ({} bytes, private: not shown)\n", text.len())),
                 ..self.clone()
             }
@@ -220,7 +220,7 @@ impl Cmd {
             // An empty standard input (not the terminal's: mkfs -F pcfs
             // then asks nothing) for a command, not a file to write.
             Some(s) if s.is_empty() && self.write.is_none() => {
-                out += &format!("{line} </dev/null\n")
+                out += &format!("{line} </dev/null\n");
             }
             Some(s) => {
                 let mut eof = String::from("EOF");
@@ -347,8 +347,7 @@ impl Built {
         self.stages
             .iter()
             .find(|(st, _)| *st == s)
-            .map(|(_, c)| c.as_slice())
-            .unwrap_or(&[])
+            .map_or(&[], |(_, c)| c.as_slice())
     }
 
     /// The problems in their order, each with its code (`other` where its
@@ -663,8 +662,8 @@ pub(crate) struct OnMark {
 
 impl OnMark {
     /// For the steps pushed after the FROM already there.
-    pub(crate) fn at(from: usize) -> OnMark {
-        OnMark {
+    pub(crate) fn at(from: usize) -> Self {
+        Self {
             from,
             disks: Vec::new(),
         }
@@ -1398,7 +1397,7 @@ fn lvm_scalar(v: &Value) -> String {
         ),
         Value::UInt(n) => n.to_string(),
         Value::Int(n) => n.to_string(),
-        Value::Bool(b) => (*b as u8).to_string(),
+        Value::Bool(b) => u8::from(*b).to_string(),
         Value::Float(f) => f.to_string(),
         _ => "\"\"".into(),
     }
@@ -1457,7 +1456,7 @@ pub struct LvAttrs {
 }
 
 impl LvAttrs {
-    fn of(lv: &Value) -> LvAttrs {
+    fn of(lv: &Value) -> Self {
         let list = |k: &str| {
             lv.get(k)
                 .and_then(Value::as_array)
@@ -1470,7 +1469,7 @@ impl LvAttrs {
                 .chain(list("flags").iter())
                 .any(|x| x.as_str() == Some(f))
         };
-        LvAttrs {
+        Self {
             tags: list("tags")
                 .iter()
                 .filter_map(|x| x.as_str().map(str::to_string))
@@ -2282,7 +2281,7 @@ impl Builder<'_> {
         // for SHA-256 headers.  (path, key bytes, iterations.)
         let mut vk: Option<(String, u64, u64)> = None;
         if version == "1" {
-            let mk = num(&c, "mk_iterations").filter(|&m| m >= 1000 && m <= u32::MAX as u64);
+            let mk = num(&c, "mk_iterations").filter(|&m| m >= 1000 && m <= u64::from(u32::MAX));
             let bytes = num(&c, "key_bits")
                 .filter(|&k| k > 0 && k % 8 == 0 && k <= 4096)
                 .map(|k| k / 8);
@@ -2498,8 +2497,7 @@ impl Builder<'_> {
         });
         if let Some((path, _, m)) = &vk {
             let exe = std::env::current_exe()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| "bko-holt".into());
+                .map_or_else(|_| "bko-holt".into(), |p| p.to_string_lossy().into_owned());
             out.push(Cmd::new(&[exe.as_str(), "luks1-digest", dev.as_str(), path.as_str(), m.to_string().as_str()]).why(format!("LUKS1 on {dev}: the volume key digest with the source's {m} iterations (luksFormat's own count is 1000)")));
             out.push(Cmd::new(&["rm", "-f", path]));
         }
@@ -2764,7 +2762,7 @@ impl Builder<'_> {
                 &meta,
             ]
             .iter()
-            .map(|x| x.to_string())
+            .map(ToString::to_string)
             .collect();
             if let Some((n, size)) = p.data_stripes {
                 a.extend(["-i".into(), n.to_string(), "-I".into(), lvm_size(size)]);
@@ -2842,7 +2840,7 @@ impl Builder<'_> {
                     &p.name,
                 ]
                 .iter()
-                .map(|x| x.to_string())
+                .map(ToString::to_string)
                 .collect();
                 attrs(&l.name, &l.attrs, &mut a, &mut later);
                 a.push(name.clone());
@@ -3064,12 +3062,13 @@ impl Builder<'_> {
         // (On Linux, udev and its workers' mount namespaces can keep the
         // pool busy for a moment after the last unmount.)
         let export = ["zpool", "export", here.as_str()];
-        self.closers
-            .push(if self.fam.map_or(true, |f| f.on_linux()) {
+        self.closers.push(
+            if self.fam.map_or(true, super::super::other::Family::on_linux) {
                 settled(&export)
             } else {
                 Cmd::new(&export)
-            });
+            },
+        );
         // Under another name here, the pool's own dataset would mount at
         // /<that name>: at the source's default place while load works,
         // inherited again before the export (closers run last first).
@@ -4134,7 +4133,7 @@ impl Builder<'_> {
                     self.btrfs_inside(&uuid, &devs[0], &fs, &mut out);
                 }
                 "vfat" | "msdos"
-                    if self.fam.is_none_or(|f| f.on_linux())
+                    if self.fam.is_none_or(super::super::other::Family::on_linux)
                         && self
                             .layout
                             .device(&src)
@@ -4217,7 +4216,7 @@ impl Builder<'_> {
                     out.push(Cmd::read_back(&dev, &c));
                 }
                 "swap" if self.fam.is_some_and(|f| !f.on_linux()) => {
-                    self.notes.push(format!("{src}: swap needs no format here"))
+                    self.notes.push(format!("{src}: swap needs no format here"));
                 }
                 "swap" => {
                     if c.get("hibernation_image").is_some_and(|h| !h.is_null()) {
@@ -5049,7 +5048,7 @@ impl Builder<'_> {
             });
             if s(&ds, "type").as_deref() == Some("volume")
                 && node
-                && self.fam.map_or(true, |f| f.on_linux())
+                && self.fam.map_or(true, super::super::other::Family::on_linux)
             {
                 out.push(zvol_wait(&here));
             }
@@ -5515,7 +5514,11 @@ impl Builder<'_> {
         // Aliases and shared snapshots left out of the main restore, the
         // pools --pools leaves untouched, and with --reformat, a reformatted
         // btrfs's aliases and snapshots.
-        let mut globs: Vec<String> = self.btrfs.values().flat_map(|p| p.globs()).collect();
+        let mut globs: Vec<String> = self
+            .btrfs
+            .values()
+            .flat_map(super::shared::Plan::globs)
+            .collect();
         let pool_globs = self.left_out_pool_globs();
         let reformat_globs: Vec<String> = self
             .layout
@@ -5796,8 +5799,7 @@ impl Builder<'_> {
                 )),
             );
             let exe = std::env::current_exe()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| "bko-holt".into());
+                .map_or_else(|_| "bko-holt".into(), |p| p.to_string_lossy().into_owned());
             let mut placeholders = Vec::new();
             for x in &plan.shared {
                 for n in &x.placeholders {
@@ -6875,8 +6877,7 @@ impl Builder<'_> {
             return None;
         }
         let exe = std::env::current_exe()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "bko-holt".into());
+            .map_or_else(|_| "bko-holt".into(), |p| p.to_string_lossy().into_owned());
         let mut a = vec![
             exe,
             "rewrite".into(),
@@ -7051,8 +7052,7 @@ impl Builder<'_> {
             .iter()
             .find(|m| s(m, "target").as_deref() == Some("/boot"))
             .and_then(|m| s(m, "options"))
-            .map(|o| mount_options(&o))
-            .unwrap_or_else(|| "defaults".into());
+            .map_or_else(|| "defaults".into(), |o| mount_options(&o));
         self.notes.push(format!("Solus: its ESP {src} is mounted at /boot for the restore, though fstab has no line for it (clr-boot-manager mounts it when it needs it)"));
         vec![(
             "/boot".into(),
@@ -7790,8 +7790,7 @@ impl Builder<'_> {
                 .trim_end_matches('/')
         );
         let exe = std::env::current_exe()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "bko-holt".into());
+            .map_or_else(|_| "bko-holt".into(), |p| p.to_string_lossy().into_owned());
         let n = self.boot_names();
         let at = format!("{kind}{}", part.number);
         let mut argv = vec![
@@ -8110,7 +8109,7 @@ impl Builder<'_> {
                 &file,
             ]
             .iter()
-            .map(|x| x.to_string())
+            .map(ToString::to_string)
             .collect();
             // The entry's optional data (the loader's arguments), as the
             // source had it: UCS-2 text as efibootmgr's --unicode argument,
@@ -8337,8 +8336,7 @@ impl Builder<'_> {
         }
         let t = &self.opts.target;
         let exe = std::env::current_exe()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "bko-holt".into());
+            .map_or_else(|_| "bko-holt".into(), |p| p.to_string_lossy().into_owned());
         // Where the mount stage mounts nothing at the target itself (Ubuntu
         // Core: the four partitions under run/mnt), `umount --recursive`
         // of it fails, "not mounted": umount-tree (umounttree.rs) takes
@@ -8465,8 +8463,7 @@ impl Builder<'_> {
 /// deleted, so that each restore doesn't add another copy.
 pub(crate) fn efi_dedupe(dev: &str, part: u32, loader: &str) -> Cmd {
     let exe = std::env::current_exe()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "bko-holt".into());
+        .map_or_else(|_| "bko-holt".into(), |p| p.to_string_lossy().into_owned());
     Cmd::new(&[exe.as_str(), "efi-dedupe", dev, &part.to_string(), loader])
         .why("NVRAM's entries for this partition and loader, from an earlier restore here, deleted")
         .warns()
@@ -8614,7 +8611,7 @@ fn place_word(place: u32) -> String {
         "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth",
     ];
     W.get(place as usize)
-        .map_or_else(|| format!("{}th", place + 1), |w| w.to_string())
+        .map_or_else(|| format!("{}th", place + 1), ToString::to_string)
 }
 
 /// Whether the kernel names a class's disks by where they are attached
@@ -8887,7 +8884,7 @@ fn lilo_root_copy(
                 *v = Some(new);
             }
         };
-    for (kind, path, its) in sections.iter_mut() {
+    for (kind, path, its) in &mut sections {
         let label = lilo_get(its, "label").unwrap_or(path.as_str()).to_string();
         rename(
             &format!("{label}'s "),
@@ -10703,7 +10700,7 @@ mod tests {
     fn built_from(json: &str, extra: &[&str]) -> Built {
         let l = Layout::from_json(crate::json::parse(json).unwrap()).unwrap();
         let mut a = vec!["l.json".to_string()];
-        a.extend(extra.iter().map(|s| s.to_string()));
+        a.extend(extra.iter().map(ToString::to_string));
         let o = match crate::load::parse_args(&a).unwrap() {
             crate::load::Parsed::Run(o) => o,
             _ => unreachable!(),
@@ -11922,8 +11919,7 @@ mod tests {
             let after = |l: &str, from: usize| {
                 f[from..]
                     .find(&format!("{l}\n"))
-                    .map(|i| i + from)
-                    .unwrap_or_else(|| panic!("{l} not after {from} in\n{f}"))
+                    .map_or_else(|| panic!("{l} not after {from} in\n{f}"), |i| i + from)
             };
             if let Some((parent, _)) = p.rsplit_once('/') {
                 prev = after(&format!("mkdir -p {top}/{parent}"), prev);
@@ -13640,7 +13636,7 @@ mod tests {
         let plan = |json: &str, extra: &[&str]| {
             let l = Layout::from_json(crate::json::parse(json).unwrap()).unwrap();
             let mut a = vec!["l.json".to_string()];
-            a.extend(extra.iter().map(|s| s.to_string()));
+            a.extend(extra.iter().map(ToString::to_string));
             let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&a) else {
                 unreachable!()
             };

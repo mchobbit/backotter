@@ -292,7 +292,7 @@ fn dumps_in(dir: &Path) -> Result<Vec<String>, String> {
         Err(e) => return Err(format!("{}: {e}", dir.display())),
     };
     let mut v: Vec<String> = rd
-        .filter_map(|e| e.ok())
+        .filter_map(Result::ok)
         .filter(|e| e.path().join("src.json").is_file())
         .filter_map(|e| e.file_name().to_str().map(str::to_string))
         .collect();
@@ -636,9 +636,7 @@ fn corpus_build() {
     );
     assert!(
         hard.is_empty() && soft.is_empty(),
-        "not made: {:?}; made, but check_plan failed on the raw dump: {:?}",
-        hard,
-        soft
+        "not made: {hard:?}; made, but check_plan failed on the raw dump: {soft:?}"
     );
 }
 
@@ -843,7 +841,7 @@ fn raw_dumps_come_from_provenance_tsv() {
             raw.join("provenance.tsv"),
             format!("guest\thost\trun\n{rows}"),
         )
-        .unwrap()
+        .unwrap();
     };
     assert!(
         provenance(&raw).unwrap_err().contains("provenance.tsv"),

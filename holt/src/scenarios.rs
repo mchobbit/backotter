@@ -55,8 +55,7 @@ fn run_tz(t: &Tree, privileged: bool, runner: FakeRunner, sys_tz: Option<i32>) -
 fn unflag_exe() -> String {
     crate::load::shell_quote(
         &std::env::current_exe()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "bko-holt".into()),
+            .map_or_else(|_| "bko-holt".into(), |p| p.to_string_lossy().into_owned()),
     )
 }
 
@@ -1791,7 +1790,7 @@ fn vanilla_plan(v: &Value, extra: &[&str]) -> crate::load::commands::Built {
     use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let l = Layout::from_json(v.clone()).unwrap();
     let mut a = vec!["l.json".to_string()];
-    a.extend(extra.iter().map(|s| s.to_string()));
+    a.extend(extra.iter().map(ToString::to_string));
     let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
         unreachable!()
     };
@@ -2707,7 +2706,7 @@ fn chimera_uefi_zfs_thinkpad() {
     let l = Layout::from_json(v).unwrap();
     let plan = |extra: &[&str]| {
         let mut a = vec!["l.json".to_string()];
-        a.extend(extra.iter().map(|s| s.to_string()));
+        a.extend(extra.iter().map(ToString::to_string));
         let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
             unreachable!()
         };
@@ -6723,7 +6722,7 @@ fn luks_restored_key_file_with_and_without_key_file() {
         let args: Vec<String> = ["l.json"]
             .iter()
             .chain(extra)
-            .map(|a| a.to_string())
+            .map(ToString::to_string)
             .collect();
         let Ok(Parsed::Run(o)) = crate::load::parse_args(&args) else {
             unreachable!()
@@ -6842,7 +6841,7 @@ fn luks_name_without_a_temporary_key_is_refused() {
         let args: Vec<String> = ["l.json"]
             .iter()
             .chain(extra)
-            .map(|a| a.to_string())
+            .map(ToString::to_string)
             .collect();
         let Ok(Parsed::Run(o)) = crate::load::parse_args(&args) else {
             unreachable!()
@@ -6918,7 +6917,7 @@ fn luks_key_not_restored_needs_key_file() {
         let args: Vec<String> = ["l.json"]
             .iter()
             .chain(extra)
-            .map(|a| a.to_string())
+            .map(ToString::to_string)
             .collect();
         let Ok(Parsed::Run(o)) = crate::load::parse_args(&args) else {
             unreachable!()
@@ -7291,7 +7290,7 @@ fn proxmox_plan(
     let v = run(t, true, runner);
     let l = Layout::from_json(v.clone()).unwrap();
     let mut a = vec!["l.json".to_string()];
-    a.extend(extra.iter().map(|s| s.to_string()));
+    a.extend(extra.iter().map(ToString::to_string));
     let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
         unreachable!()
     };
@@ -7909,7 +7908,7 @@ fn guix_plan(v: &Value, args: &[&str]) -> crate::load::commands::Built {
     use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let l = Layout::from_json(v.clone()).unwrap();
     let mut a = vec!["l.json".to_string()];
-    a.extend(args.iter().map(|x| x.to_string()));
+    a.extend(args.iter().map(ToString::to_string));
     let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
         unreachable!()
     };
@@ -8079,7 +8078,7 @@ fn guix_uefi_guest() {
         panic!()
     };
     let mut disks = disks;
-    for d in disks.iter_mut() {
+    for d in &mut disks {
         let Some(Value::Arr(ps)) = d.get("partitions").cloned() else {
             continue;
         };
@@ -8356,7 +8355,7 @@ fn guix_bios_guest() {
         panic!()
     };
     let mut disks = disks;
-    for d in disks.iter_mut() {
+    for d in &mut disks {
         let Some(Value::Arr(ps)) = d.get("partitions").cloned() else {
             continue;
         };
@@ -8620,7 +8619,7 @@ fn slackware_plan_map(
     let v = run(t, true, FakeRunner::default());
     let l = Layout::from_json(v.clone()).unwrap();
     let mut a = vec!["l.json".to_string()];
-    a.extend(args.iter().map(|x| x.to_string()));
+    a.extend(args.iter().map(ToString::to_string));
     let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
         unreachable!()
     };
@@ -9727,7 +9726,7 @@ fn slackware_plan_of(
     use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let l = Layout::from_json(v).unwrap();
     let mut a = vec!["l.json".to_string()];
-    a.extend(args.iter().map(|x| x.to_string()));
+    a.extend(args.iter().map(ToString::to_string));
     let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
         unreachable!()
     };
@@ -11198,7 +11197,7 @@ fn truenas_plan(
     let v = run(&t, true, runner);
     let l = Layout::from_json(v.clone()).unwrap();
     let mut a = vec!["l.json".to_string()];
-    a.extend(extra.iter().map(|s| s.to_string()));
+    a.extend(extra.iter().map(ToString::to_string));
     let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
         unreachable!()
     };
@@ -11984,7 +11983,7 @@ fn zbm_plan(
     change(&mut v);
     let l = Layout::from_json(v.clone()).unwrap();
     let mut a = vec!["l.json".to_string()];
-    a.extend(extra.iter().map(|s| s.to_string()));
+    a.extend(extra.iter().map(ToString::to_string));
     let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
         unreachable!()
     };
@@ -12263,7 +12262,7 @@ fn zfsbootmenu_guest() {
                             "{}{}",
                             x.as_str().unwrap(),
                             extra.iter().map(|b| format!("{b:02x}")).collect::<String>()
-                        ))
+                        ));
                     }
                     "optional_data_bytes" => *x = Value::from(extra.len() as u64),
                     _ => {}
@@ -12286,7 +12285,7 @@ fn zfsbootmenu_guest() {
     );
     let (_, b) = zbm_plan(false, &[], with_data(&[1, 2, 0xff]));
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    let f = format!("{}/efi-optional-data-0000", RUN_DIR);
+    let f = format!("{RUN_DIR}/efi-optional-data-0000");
     assert!(
         bt.contains(&format!("sh -c 'printf '\\''\\001\\002\\377'\\'' > {f}'\n")),
         "{bt}"
@@ -12308,7 +12307,7 @@ fn zfsbootmenu_refusals() {
             v,
             &["boot", "zfsbootmenu", "pools"],
             crate::json::parse(r#"[{"name": "tank", "bootfs": null}]"#).unwrap(),
-        )
+        );
     });
     assert!(b.problems.iter().any(|p| p == "ZFSBootMenu: its boot environments' pool tank isn't in the layout, so nothing it boots would be restored"), "{:?}", b.problems);
     let (_, b) = zbm_plan(false, &[], |v| {
@@ -12316,11 +12315,11 @@ fn zfsbootmenu_refusals() {
             v,
             &["boot", "zfsbootmenu", "pools"],
             crate::json::parse(r#"[{"name": "zroot", "bootfs": "zroot/ROOT/gone"}]"#).unwrap(),
-        )
+        );
     });
     assert!(b.problems.iter().any(|p| p == "ZFSBootMenu: pool zroot's bootfs zroot/ROOT/gone isn't among the layout's datasets, so ZFSBootMenu would have no default boot environment"), "{:?}", b.problems);
     let (_, b) = zbm_plan(false, &[], |v| {
-        set_at(v, &["storage", "fstab"], Value::Arr(vec![]))
+        set_at(v, &["storage", "fstab"], Value::Arr(vec![]));
     });
     assert!(
         b.problems.iter().any(|p| p == "ZFSBootMenu: no image of it is on an ESP that fstab mounts and this layout makes (EFI/ZBM/VMLINUZ-BACKUP.EFI on /boot/efi, EFI/ZBM/VMLINUZ.EFI on /boot/efi), so the restore wouldn't bring it back"),
@@ -13566,7 +13565,7 @@ fn snapcore_plan(v: &Value, extra: &[&str]) -> crate::load::commands::Built {
     use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
     let l = Layout::from_json(v.clone()).unwrap();
     let mut a = vec!["/run/x/l.json".to_string()];
-    a.extend(extra.iter().map(|s| s.to_string()));
+    a.extend(extra.iter().map(ToString::to_string));
     let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
         unreachable!()
     };
@@ -14639,7 +14638,7 @@ fn qubes_plan(v: &Value) -> crate::load::commands::Built {
     let l = Layout::from_json(v.clone()).unwrap();
     let a: Vec<String> = ["l.json", "--repo", "/srv/bko-repo"]
         .iter()
-        .map(|s| s.to_string())
+        .map(ToString::to_string)
         .collect();
     let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
         unreachable!()

@@ -79,9 +79,9 @@ pub(crate) fn pe_sections(head: &[u8]) -> Option<Vec<Section>> {
         let name = String::from_utf8_lossy(&e[..8])
             .trim_end_matches('\0')
             .to_string();
-        let vsize = le32(e, 8)? as u64;
-        let raw_size = le32(e, 16)? as u64;
-        let raw_at = le32(e, 20)? as u64;
+        let vsize = u64::from(le32(e, 8)?);
+        let raw_size = u64::from(le32(e, 16)?);
+        let raw_at = u64::from(le32(e, 20)?);
         let size = if vsize == 0 {
             raw_size
         } else {
@@ -163,13 +163,13 @@ fn text(b: &[u8]) -> String {
 pub(crate) fn read_uki(sys: &Sys, abs: &str) -> Option<Uki> {
     let mut f = std::fs::File::open(sys.p(abs)).ok()?;
     let mut head = read_at(&mut f, 0, 4096)?;
-    let pe = le32(&head, 0x3c)? as u64;
+    let pe = u64::from(le32(&head, 0x3c)?);
     if pe > 1 << 20 {
         return None;
     }
     // The section table can lie beyond the first 4 KiB.
-    let n = le16(&read_at(&mut f, pe, 24)?, 6)? as u64;
-    let opt = le16(&read_at(&mut f, pe, 24)?, 20)? as u64;
+    let n = u64::from(le16(&read_at(&mut f, pe, 24)?, 6)?);
+    let opt = u64::from(le16(&read_at(&mut f, pe, 24)?, 20)?);
     let end = pe + 24 + opt + 40 * n.min(96);
     if end > head.len() as u64 {
         head = read_at(&mut f, 0, end)?;
@@ -199,7 +199,7 @@ pub(crate) fn read_uki(sys: &Sys, abs: &str) -> Option<Uki> {
     // offset (less 0x200) of its version string.
     let hdr = read_at(&mut f, linux.offset, 0x210)?;
     let kernel = if hdr.get(0x202..0x206) == Some(b"HdrS") {
-        let at = le16(&hdr, 0x20e)? as u64 + 0x200;
+        let at = u64::from(le16(&hdr, 0x20e)?) + 0x200;
         (at < linux.size)
             .then(|| read_at(&mut f, linux.offset + at, 256))
             .flatten()

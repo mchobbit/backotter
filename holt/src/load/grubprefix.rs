@@ -355,7 +355,7 @@ fn one(path: &str, part: &str) -> Result<String, String> {
                 .map_err(|e| format!("{path}: {e}"))?;
             w.seek(SeekFrom::Start(at as u64))
                 .and_then(|_| w.write_all(&bytes))
-                .and_then(|_| w.sync_all())
+                .and_then(|()| w.sync_all())
                 .map_err(|e| format!("{path}: writing its prefix: {e}"))?;
             w.set_times(FileTimes::new().set_accessed(atime).set_modified(mtime))
                 .map_err(|e| format!("{path}: putting its times back: {e}"))?;

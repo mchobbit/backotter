@@ -125,7 +125,7 @@ struct Len {
 
 impl Len {
     fn new() -> Self {
-        Len {
+        Self {
             choice: PROB_INIT,
             choice2: PROB_INIT,
             low: vec![[PROB_INIT; 8]; 1 << POS_BITS_MAX],

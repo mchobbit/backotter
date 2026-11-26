@@ -79,29 +79,29 @@ pub(crate) enum Node {
 impl Node {
     pub(crate) fn text(&self) -> String {
         match self {
-            Node::Pci { device, function } => format!("Pci(0x{device:x},0x{function:x})"),
-            Node::Acpi {
+            Self::Pci { device, function } => format!("Pci(0x{device:x},0x{function:x})"),
+            Self::Acpi {
                 hid: 0x0a03_41d0,
                 uid,
             } => format!("PciRoot(0x{uid:x})"),
-            Node::Acpi {
+            Self::Acpi {
                 hid: 0x0a08_41d0,
                 uid,
             } => format!("PcieRoot(0x{uid:x})"),
-            Node::Acpi { hid, uid } => format!("Acpi(0x{hid:08x},0x{uid:x})"),
-            Node::Scsi { target, lun } => format!("Scsi(0x{target:x},0x{lun:x})"),
-            Node::Usb { port, interface } => format!("USB(0x{port:x},0x{interface:x})"),
-            Node::Sata {
+            Self::Acpi { hid, uid } => format!("Acpi(0x{hid:08x},0x{uid:x})"),
+            Self::Scsi { target, lun } => format!("Scsi(0x{target:x},0x{lun:x})"),
+            Self::Usb { port, interface } => format!("USB(0x{port:x},0x{interface:x})"),
+            Self::Sata {
                 port,
                 multiplier,
                 lun,
             } => format!("Sata(0x{port:x},0x{multiplier:x},0x{lun:x})"),
-            Node::Nvme { namespace } => format!("NVMe(0x{namespace:x})"),
-            Node::Mac => "MAC()".into(),
-            Node::Ipv4 => "IPv4()".into(),
-            Node::Ipv6 => "IPv6()".into(),
-            Node::Uri(u) => format!("Uri({u})"),
-            Node::HardDrive {
+            Self::Nvme { namespace } => format!("NVMe(0x{namespace:x})"),
+            Self::Mac => "MAC()".into(),
+            Self::Ipv4 => "IPv4()".into(),
+            Self::Ipv6 => "IPv6()".into(),
+            Self::Uri(u) => format!("Uri({u})"),
+            Self::HardDrive {
                 partition,
                 start,
                 size,
@@ -115,11 +115,11 @@ impl Node {
                 };
                 format!("HD({partition},{f},{signature},0x{start:x},0x{size:x})")
             }
-            Node::CdRom { entry } => format!("CDROM(0x{entry:x})"),
-            Node::File(p) => format!("File({p})"),
-            Node::FvFile(g) => format!("FvFile({g})"),
-            Node::Fv(g) => format!("Fv({g})"),
-            Node::Vendor { kind, guid } => format!(
+            Self::CdRom { entry } => format!("CDROM(0x{entry:x})"),
+            Self::File(p) => format!("File({p})"),
+            Self::FvFile(g) => format!("FvFile({g})"),
+            Self::Fv(g) => format!("Fv({g})"),
+            Self::Vendor { kind, guid } => format!(
                 "Ven{}({guid})",
                 match kind {
                     1 => "Hw",
@@ -128,11 +128,11 @@ impl Node {
                     _ => "",
                 }
             ),
-            Node::Bbs {
+            Self::Bbs {
                 device_type,
                 description,
             } => format!("BBS(0x{device_type:x},{description})"),
-            Node::Other { kind, subtype } => format!("Path({kind},{subtype})"),
+            Self::Other { kind, subtype } => format!("Path({kind},{subtype})"),
         }
     }
 }
@@ -464,7 +464,7 @@ pub(crate) mod real {
     /// Chopin's actual variables (Debian 13, `MoreFine` S500+ firmware), with
     /// the 4-byte attribute prefix as efivarfs shows it.
     pub(crate) fn unhex(s: &str) -> Vec<u8> {
-        let h: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+        let h: String = s.chars().filter(char::is_ascii_hexdigit).collect();
         (0..h.len() / 2)
             .map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap())
             .collect()

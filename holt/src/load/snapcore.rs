@@ -344,7 +344,7 @@ impl Builder<'_> {
             let disk = s(a, "disk").unwrap_or_default();
             match self.names.mapping.target_of(&disk) {
                 Some(tgt) => {
-                    let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
+                    let exe = std::env::current_exe().map_or_else(|_| "bko-holt".into(), |p| p.to_string_lossy().into_owned());
                     out.push(Cmd::new(&["sh", "-c", &boot_areas_script(&exe, &self.opts.layout, &disk, &format!("/dev/{tgt}"))]).why(format!(
                         "{disk} -> /dev/{tgt}: the gadget's MBR code, and BIOS Boot's core.img when it has one, byte for byte (UEFI boots shim from the seed)"
                     )));

@@ -57,7 +57,7 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
     // then metadata areas.
     let mut o = 40;
     let mut lists: [Vec<(u64, u64)>; 2] = [vec![], vec![]];
-    for list in lists.iter_mut() {
+    for list in &mut lists {
         while o + 16 <= ph.len() {
             let (off, size) = (le64(ph, o), le64(ph, o + 8));
             o += 16;

@@ -21,8 +21,8 @@ impl Package {
         name: impl Into<String>,
         version: impl Into<String>,
         arch: impl Into<String>,
-    ) -> Package {
-        Package {
+    ) -> Self {
+        Self {
             name: name.into(),
             version: version.into(),
             arch: arch.into(),

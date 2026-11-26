@@ -383,7 +383,7 @@ pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
                         }
                         // DragonFly's: / is part-by-label/NAME.a, NAME slice 2's disklabel64's.
                         (Family::DragonFly, Some("0x6c")) => {
-                            labels.extend(label64_name(&part(p)).map(|l| (p.name.clone(), l)))
+                            labels.extend(label64_name(&part(p)).map(|l| (p.name.clone(), l)));
                         }
                         _ => {}
                     }
@@ -438,7 +438,7 @@ pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
             .map(|f| (f.name.clone(), &f.contents))
             .chain(std::iter::once((d.name.clone(), &whole[i])));
         for (n, cs) in named {
-            for c in cs.iter() {
+            for c in cs {
                 signatures.push(format!(
                     "{n}: {}{}{}",
                     c.kind,
@@ -480,7 +480,7 @@ pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
         };
         let mut in_use = Vec::new();
         let mut holds_root = false;
-        for m in mount_list
+        for m in &mount_list
             .iter()
             .map(|m| {
                 // DragonFly's HAMMER2 PFS (vbd0s1d@ROOT) is its device's; Haiku
@@ -495,7 +495,6 @@ pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
                 m
             })
             .collect::<Vec<_>>()
-            .iter()
         {
             let haiku = (fam == Family::Haiku)
                 .then(|| {
@@ -700,8 +699,7 @@ impl Builder<'_> {
     /// boot partitions held; then GEOM labels.
     pub(crate) fn other_partition(&mut self, fam: Family) -> Vec<Cmd> {
         let exe = std::env::current_exe()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "bko-holt".into());
+            .map_or_else(|_| "bko-holt".into(), |p| p.to_string_lossy().into_owned());
         let mut out = Vec::new();
         for (src, tgt) in self.names.mapping.pairs.clone() {
             let Some(d) = self.layout.disk(&src).cloned() else {
@@ -962,8 +960,7 @@ impl Builder<'_> {
         let mut out = vec![fat.mkfs.why(why)];
         if let Some(args) = fat_set_args(&fat.set) {
             let exe = std::env::current_exe()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| "bko-holt".into());
+                .map_or_else(|_| "bko-holt".into(), |p| p.to_string_lossy().into_owned());
             let mut a = vec![exe, "fat-set".to_string(), fat.node.clone()];
             a.extend(args);
             out.push(Cmd {
@@ -1452,7 +1449,7 @@ fn mkfs_pcfs(dev: &str, c: &Value, part: &Value) -> Result<FatMake, String> {
     }
     match num(c, "reserved_sectors") {
         Some(r) if (if bits == Some(32) { 32 } else { 1 }..=0xffff).contains(&r) => {
-            o.push(format!("reserve={r}"))
+            o.push(format!("reserve={r}"));
         }
         Some(r) => lost.push(format!("reserved sectors ({r})")),
         None => {}

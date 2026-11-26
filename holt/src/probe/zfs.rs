@@ -235,9 +235,9 @@ impl Native<'_> {
             let scalar = |w: usize, signed: bool| -> Result<Value, String> {
                 check_end(v, w)?;
                 let raw = match w {
-                    1 => self.n::<1>(v)?[0] as u64,
-                    2 => self.u16(v)? as u64,
-                    4 => self.u32(v)? as u64,
+                    1 => u64::from(self.n::<1>(v)?[0]),
+                    2 => u64::from(self.u16(v)?),
+                    4 => u64::from(self.u32(v)?),
                     _ => self.u64(v)?,
                 };
                 Ok(if signed {
@@ -253,9 +253,9 @@ impl Native<'_> {
                     .ok_or("bad offset")?;
                 check_end(p, w)?;
                 let raw = match w {
-                    1 => self.n::<1>(p)?[0] as u64,
-                    2 => self.u16(p)? as u64,
-                    4 => self.u32(p)? as u64,
+                    1 => u64::from(self.n::<1>(p)?[0]),
+                    2 => u64::from(self.u16(p)?),
+                    4 => u64::from(self.u32(p)?),
                     _ => self.u64(p)?,
                 };
                 Ok(if signed {
@@ -368,8 +368,8 @@ fn nvlist(x: &mut Xdr<'_>, depth: usize) -> Result<Value, String> {
         }
         let v = match typ {
             1 => Value::Bool(true), // DATA_TYPE_BOOLEAN: present means true
-            2 | 3 | 4 | 5 | 22 | 23 => Value::Int(x.i32()? as i64), // byte, int16, uint16, int32, int8, uint8
-            6 => Value::UInt(x.u32()? as u64),
+            2 | 3 | 4 | 5 | 22 | 23 => Value::Int(i64::from(x.i32()?)), // byte, int16, uint16, int32, int8, uint8
+            6 => Value::UInt(u64::from(x.u32()?)),
             7 => Value::Int(x.u64()? as i64),
             8 | 18 => Value::UInt(x.u64()?), // uint64, hrtime
             21 => Value::Bool(x.u32()? != 0),
@@ -392,9 +392,9 @@ fn nvlist(x: &mut Xdr<'_>, depth: usize) -> Result<Value, String> {
                     } else if typ == 24 {
                         Value::Bool(x.u32()? != 0)
                     } else if typ == 14 {
-                        Value::UInt(x.u32()? as u64)
+                        Value::UInt(u64::from(x.u32()?))
                     } else {
-                        Value::Int(x.i32()? as i64)
+                        Value::Int(i64::from(x.i32()?))
                     });
                 }
                 Value::Arr(a)
@@ -641,7 +641,7 @@ mod tests {
         let v = unpack(&out).unwrap();
         assert_eq!(v.get("b"), Some(&Value::Int(7)));
         assert_eq!(v.get("i32"), Some(&Value::Int(-5)));
-        assert_eq!(v.get("u32"), Some(&Value::UInt(u32::MAX as u64)));
+        assert_eq!(v.get("u32"), Some(&Value::UInt(u64::from(u32::MAX))));
         assert_eq!(v.get("i64"), Some(&Value::Int(-9)));
         assert_eq!(v.get("hr"), Some(&Value::UInt(77)));
         assert_eq!(v.get("bv"), Some(&Value::Bool(true)));
@@ -762,7 +762,7 @@ mod tests {
                     v.to_be_bytes()
                 }
             };
-            let mut b = vec![0u8, little as u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            let mut b = vec![0u8, u8::from(little), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
             let mut pair = |name: &str, typ: u32, nelem: u32, val: &[u8]| {
                 let name_len = name.len() + 1;
                 let voff = (16 + name_len + 7) & !7;

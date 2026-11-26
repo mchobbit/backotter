@@ -216,7 +216,7 @@ pub fn verdict(text: &str, out: &std::path::Path) -> (Value, u8) {
                             u.suggestions
                                 .iter()
                                 .take(SUGGEST_MAX)
-                                .map(|s| s.to_string())
+                                .map(ToString::to_string)
                                 .collect::<Vec<_>>(),
                         )
                         .build()
@@ -255,7 +255,7 @@ pub(crate) fn write_new(out: &std::path::Path, bytes: &[u8]) -> std::io::Result<
         .create_new(true)
         .mode(0o600)
         .open(out)?;
-    let r = f.write_all(bytes).and_then(|_| f.sync_all());
+    let r = f.write_all(bytes).and_then(|()| f.sync_all());
     if r.is_err() {
         let _ = f.write_all_at(&vec![0u8; bytes.len()], 0);
         let _ = f.sync_all();

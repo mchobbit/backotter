@@ -30,15 +30,15 @@ fn vfat(src: &dyn ByteSource, b: &[u8]) -> Option<Content> {
     if !(b[0] == 0xeb || b[0] == 0xe9) {
         return None;
     }
-    let bps = le16(b, 11) as u64;
-    let spc = u8_at(b, 13) as u64;
-    let reserved = le16(b, 14) as u64;
-    let fats = u8_at(b, 16) as u64;
-    let root_entries = le16(b, 17) as u64;
-    let total16 = le16(b, 19) as u64;
+    let bps = u64::from(le16(b, 11));
+    let spc = u64::from(u8_at(b, 13));
+    let reserved = u64::from(le16(b, 14));
+    let fats = u64::from(u8_at(b, 16));
+    let root_entries = u64::from(le16(b, 17));
+    let total16 = u64::from(le16(b, 19));
     let media = u8_at(b, 21);
-    let fatsz16 = le16(b, 22) as u64;
-    let total32 = le32(b, 32) as u64;
+    let fatsz16 = u64::from(le16(b, 22));
+    let total32 = u64::from(le32(b, 32));
     if !matches!(bps, 512 | 1024 | 2048 | 4096)
         || spc == 0
         || !spc.is_power_of_two()
@@ -54,7 +54,7 @@ fn vfat(src: &dyn ByteSource, b: &[u8]) -> Option<Content> {
     let fatsz = if fatsz16 != 0 {
         fatsz16
     } else {
-        le32(b, 36) as u64
+        u64::from(le32(b, 36))
     };
     let total = if total16 != 0 { total16 } else { total32 };
     if fatsz == 0 || total == 0 {
@@ -86,7 +86,7 @@ fn vfat(src: &dyn ByteSource, b: &[u8]) -> Option<Content> {
     // cluster chain: read only its first cluster, where mkfs.fat and fatlabel
     // put the label.
     let root_dir_offset = if bits == 32 {
-        let root_cluster = le32(b, 44) as u64;
+        let root_cluster = u64::from(le32(b, 44));
         (reserved + fats * fatsz + root_cluster.saturating_sub(2) * spc) * bps
     } else {
         (reserved + fats * fatsz) * bps
@@ -174,16 +174,16 @@ fn exfat(b: &[u8]) -> Option<Content> {
 }
 
 fn ntfs(b: &[u8]) -> Option<Content> {
-    let bps = le16(b, 11) as u64;
+    let bps = u64::from(le16(b, 11));
     let spc_raw = u8_at(b, 13);
     if !matches!(bps, 256..=4096) || !bps.is_power_of_two() {
         return None;
     }
     // Values above 0x80 encode a cluster size of 2^(256 - n) bytes.
     let cluster = if spc_raw > 0x80 {
-        1u64 << (256 - spc_raw as u32).min(31)
+        1u64 << (256 - u32::from(spc_raw)).min(31)
     } else {
-        spc_raw as u64 * bps
+        u64::from(spc_raw) * bps
     };
     if cluster == 0 {
         return None;

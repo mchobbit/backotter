@@ -474,10 +474,10 @@ fn versions(sys: &Sys) -> (String, Vec<String>) {
     let mut notes = Vec::new();
     for (prog, arg) in [("restic-bko", "version"), ("rustic-bko", "--version")] {
         let v = match load::plan::find(sys, prog) {
-            Some(exe) => sys
-                .run_file(&exe, &[arg])
-                .map(|o| format!("{} ({exe})", o.trim()))
-                .unwrap_or_else(|| format!("{exe} {arg} failed")),
+            Some(exe) => sys.run_file(&exe, &[arg]).map_or_else(
+                || format!("{exe} {arg} failed"),
+                |o| format!("{} ({exe})", o.trim()),
+            ),
             None => "not installed here".to_string(),
         };
         s += &format!("{prog:<13} {v}\n");
@@ -503,7 +503,7 @@ fn versions(sys: &Sys) -> (String, Vec<String>) {
             Err(_) => s += &format!("image         {p} isn't JSON\n"),
         },
         None => {
-            s += "image         none: not running from a BackOtter rescue image (no .disk/backotter.json)\n"
+            s += "image         none: not running from a BackOtter rescue image (no .disk/backotter.json)\n";
         }
     }
     // As dump reads it: NetBSD, OpenBSD and Haiku have no os-release.
@@ -1038,21 +1038,18 @@ impl CheckPlanFailure {
     /// The words each message of this kind starts with.
     pub fn class(self) -> &'static str {
         match self {
-            CheckPlanFailure::NotJson => "not JSON",
-            CheckPlanFailure::MapBack => "the redacted dump doesn't map back to the original",
-            CheckPlanFailure::LeftInDump => "left in the redacted dump",
-            CheckPlanFailure::LoadArgs => "load's arguments",
-            CheckPlanFailure::PlanDiffers => "the plan of the redacted dump differs",
-            CheckPlanFailure::LeftInPlan => "left in the redacted dump's plan",
+            Self::NotJson => "not JSON",
+            Self::MapBack => "the redacted dump doesn't map back to the original",
+            Self::LeftInDump => "left in the redacted dump",
+            Self::LoadArgs => "load's arguments",
+            Self::PlanDiffers => "the plan of the redacted dump differs",
+            Self::LeftInPlan => "left in the redacted dump's plan",
         }
     }
 
     /// Whether an identifier got past the redaction.
     pub fn is_leak(self) -> bool {
-        matches!(
-            self,
-            CheckPlanFailure::LeftInDump | CheckPlanFailure::LeftInPlan
-        )
+        matches!(self, Self::LeftInDump | Self::LeftInPlan)
     }
 }
 
@@ -1068,13 +1065,13 @@ pub struct CheckPlanError {
 }
 
 impl CheckPlanError {
-    fn new(kind: CheckPlanFailure, message: String) -> CheckPlanError {
+    fn new(kind: CheckPlanFailure, message: String) -> Self {
         debug_assert!(
             message.starts_with(kind.class()),
             "{message:?} doesn't start with {:?}",
             kind.class()
         );
-        CheckPlanError { kind, message }
+        Self { kind, message }
     }
 }
 
@@ -1300,7 +1297,7 @@ mod tests {
     use crate::testutil::Tree;
 
     fn s(a: &[&str]) -> Vec<String> {
-        a.iter().map(|x| x.to_string()).collect()
+        a.iter().map(ToString::to_string).collect()
     }
 
     #[test]

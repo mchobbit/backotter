@@ -53,7 +53,12 @@
       "repository_id": "a3f9",
       "keyboard": null,
       "time": null,
-      "password_hint": null
+      "password_hint": null,
+      "layout": {
+        "state": "none",
+        "code": null,
+        "bytes": null
+      }
     },
     {
       "install_id": "1c2d3e4f-5a6b-4c7d-8e9f-a0b1c2d3e4f5",
@@ -78,7 +83,12 @@
       "repository_id": "a3f9",
       "keyboard": null,
       "time": null,
-      "password_hint": null
+      "password_hint": null,
+      "layout": {
+        "state": "none",
+        "code": null,
+        "bytes": null
+      }
     },
     {
       "install_id": "c0000000-0000-0000-0000-000000000000",
@@ -103,7 +113,12 @@
       "repository_id": "a3f9",
       "keyboard": null,
       "time": null,
-      "password_hint": null
+      "password_hint": null,
+      "layout": {
+        "state": "none",
+        "code": null,
+        "bytes": null
+      }
     },
     {
       "install_id": "d0000000-0000-0000-0000-000000000000",
@@ -125,7 +140,8 @@
       "repository_id": null,
       "keyboard": null,
       "time": null,
-      "password_hint": null
+      "password_hint": null,
+      "layout": null
     },
     {
       "install_id": "e0000000-0000-0000-0000-000000000000",
@@ -147,7 +163,8 @@
       "repository_id": null,
       "keyboard": null,
       "time": null,
-      "password_hint": null
+      "password_hint": null,
+      "layout": null
     },
     {
       "install_id": "f0000000-0000-0000-0000-000000000000",
@@ -172,7 +189,12 @@
       "repository_id": "a3f9",
       "keyboard": null,
       "time": null,
-      "password_hint": null
+      "password_hint": null,
+      "layout": {
+        "state": "none",
+        "code": null,
+        "bytes": null
+      }
     }
   ],
   "notes": [

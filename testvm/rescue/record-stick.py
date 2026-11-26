@@ -6,11 +6,11 @@ INSTALL_ID OUT --json` (holt-json.md's open question 8), each run as
 bko-rescue runs it, its standard output and exit kept as a fake-bko-holt
 call.
 
-    record-stick.py BKO_HOLT OUT_DIR
+    record-stick.py BKO_HOLT OUT_DIR [SCENARIO...]
 
 BKO_HOLT is a bko-holt built for this host (Linux); OUT_DIR gets one
 scenario directory per stick (scenarios/ beside this file is where they
-live).  Needs python3 3.11 or later, mkfs.vfat and mtools: each stick's
+live), or only the SCENARIOs named.  Needs python3 3.11 or later, mkfs.vfat and mtools: each stick's
 config partition is made by stick/marker.py (as make-img.sh makes the Linux
 image's, 256 MiB, partition 3), its machines put on it with mmd and mcopy,
 and bko-holt reads it through a Linux tree booted from that stick (`stick
@@ -24,6 +24,10 @@ A `stick --copy` call's argv is `stick --copy ID * --json`, and what it
 wrote to OUT is the call's `out`: stick-layouts' lovelace carries a real
 dump as its system.json's `layout` (holt/tests/corpus/debian13-stack's
 src.json), so that copy is the layout bko-rescue's scenarios load.
+stick-left-out's machines carry a layout, one left out for the stick's
+room (`stick_full`), one too big for any stick (`system_too_big`) and none
+(holt-json.md's open questions 16 and 18): each row's `layout` says which,
+and `stick --copy` of each is its `no_layout`.
 
 Each scenario's recorded.txt says what and when.  Python's stdlib only.
 """
@@ -110,6 +114,34 @@ def layouts():
 
 TURING = "3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7"
 
+
+def without_layout(body, code, size):
+    """BODY (a system.json) as the backup tool writes it when the stick
+    can't take the whole file (bko-holt's stick::without_layout): no
+    `layout`, and `layout_left_out` saying CODE and the whole file's SIZE."""
+    d = json.loads(body)
+    d.pop("layout", None)
+    d["layout_left_out"] = {"code": code, "bytes": size}
+    return json.dumps(d, indent=2) + "\n"
+
+
+def left_out():
+    """lovelace carrying its layout; babbage's left out for the stick's
+    room (20 MiB with it), hopper's too big for any stick (70 MiB with it),
+    turing's none, saying no reason."""
+    with open(DUMP) as f:
+        dump = json.load(f)
+    lv = system(LOVELACE, "lovelace", "debian", "13", LOVELACE_DMI.upper(), "2026-11-22T01:00:11Z", 42,
+                "sftp://nas.local/backotter/lovelace", {"layout": dump})
+    bb = without_layout(system(BABBAGE, "babbage", "fedora", "45", "11111111-2222-3333-4444-555555555555",
+                               "2026-11-21T08:00:00Z", 17, "rest:http://10.0.0.5:8000/babbage", {"layout": dump}),
+                        "stick_full", 20 << 20)
+    hp = without_layout(system(HOPPER, "hopper", "freebsd", "15.0", "", "2026-11-18T01:00:00Z", 5,
+                               "sftp://nas.local/backotter/hopper"), "system_too_big", 70 << 20)
+    tu = system(TURING, "turing", "debian", "12", "", "2026-11-01T00:00:00Z", 3, "sftp://nas.local/backotter/turing")
+    return [(LOVELACE, lv, "ok"), (BABBAGE, bb, "ok"), (HOPPER, hp, "ok"), (TURING, tu, "ok")]
+
+
 # Each stick: (scenario, machines [(id, system.json, how its .sha256 is)],
 # this computer's DMI UUID, what's done to the stick, recovery calls, why,
 # stick --copy calls [(name, install ID)]).
@@ -121,6 +153,10 @@ STICKS = [
      "lovelace's system.json carrying a real dump as its layout, babbage's none, hopper's a wrong checksum: "
      "stick --copy of each, and of a machine not there",
      [("copy", LOVELACE), ("copy-no-layout", BABBAGE), ("copy-checksum-bad", HOPPER), ("copy-no-machine", TURING)]),
+    ("stick-left-out", left_out(), "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", None, False,
+     "lovelace's system.json carrying its layout, babbage's left out for the stick's room (stick_full), "
+     "hopper's too big for any stick (system_too_big), turing's none: each row's layout, and stick --copy of the three",
+     [("copy-stick-full", BABBAGE), ("copy-too-big", HOPPER), ("copy-none", TURING)]),
     ("stick-this-computer", three(), LOVELACE_DMI, None, True,
      "the same three, lovelace backed up from this computer"),
     ("stick-one", three()[:1], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", None, False,
@@ -228,14 +264,18 @@ def call(out, name, argv, stdout, code, stdin=None, outfile=None):
 
 
 def main(argv):
-    if len(argv) != 2 or not os.access(argv[0], os.X_OK):
+    names = [x[0] for x in STICKS]
+    if len(argv) < 2 or not os.access(argv[0], os.X_OK) or any(a not in names for a in argv[2:]):
         print(__doc__.strip().split("\n\n")[1], file=sys.stderr)
         return 2
     holt, out_dir = os.path.abspath(argv[0]), os.path.abspath(argv[1])
+    only = set(argv[2:])
     version = subprocess.run([holt, "--version", "--json"], stdout=subprocess.PIPE, check=True).stdout
     ver = json.loads(version)["version"]
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     for scen, machines, here, damage, with_recovery, why, *more in STICKS:
+        if only and scen not in only:
+            continue
         copies = more[0] if more else []
         dest = os.path.join(out_dir, scen)
         if os.path.exists(dest):

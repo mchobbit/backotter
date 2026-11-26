@@ -285,11 +285,19 @@ STATUS = header(
 UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 CONFIG_STATES = ("ok", "missing", "damaged", "two_sticks", "unreadable")
 MACHINE_STATES = ("ok", "checksum_bad", "checksum_missing", "schema_unknown", "unreadable")
+# A machine's layout (holt-json.md's open question 18), and the codes of
+# layout_left_out that bko-holt passes on (stick.rs's LAYOUT_LEFT_OUT_CODES).
+LAYOUT_STATES = ("present", "left_out", "none")
+LEFT_OUT_CODES = ("system_too_big", "stick_full")
 MACHINE = Obj({"install_id": STR, "path": STR, "state": Enum(*MACHINE_STATES), "why": S_, "schema": I_,
                "known_schema": BOOL, "hostname": S_, "os": Obj({"id": S_, "version_id": S_}), "written": S_,
                "sequence": I_, "dmi_uuid": S_, "this_computer": BOOL,
                "repository": Or(NULL, Obj({"kind": S_, "url": S_})), "repository_id": S_,
-               "keyboard": Or(NULL, Obj()), "time": Or(NULL, Obj()), "password_hint": S_})
+               "keyboard": Or(NULL, Obj()), "time": Or(NULL, Obj()), "password_hint": S_,
+               # layout: Opt, as recordings from before open question 18
+               # don't carry it; null when the file couldn't be judged.
+               "layout": Opt(Or(NULL, Obj({"state": Enum(*LAYOUT_STATES),
+                                           "code": Or(NULL, Enum(*LEFT_OUT_CODES)), "bytes": I_})))})
 STICK = header(
     "bko-holt-stick",
     boot_disk=Or(NULL, Obj({"node": STR, "found_by": Enum("cdrom_mount", "root_mount", "boot_mount", "marker_scan")})),
@@ -393,6 +401,13 @@ def check_document(v, where):
             # A machine's directory is its install ID, a UUID (never ../..).
             if not UUID.fullmatch(m["install_id"]) or m["path"] != "backotter/machines/%s/system.json" % m["install_id"]:
                 errs.append("%s: machines[%d]: install_id %s, path %s" % (where, i, json.dumps(m["install_id"]), json.dumps(m["path"])))
+            # Only a layout left out has a code, and only a code its bytes.
+            lay = m.get("layout")
+            if lay is not None and ((lay["state"] != "left_out" and lay["code"] is not None)
+                                    or (lay["code"] is None and lay["bytes"] is not None)):
+                errs.append("%s: machines[%d]: layout %s" % (where, i, json.dumps(lay, sort_keys=True)))
+            if lay is None and "layout" in m and m["state"] == "ok":
+                errs.append("%s: machines[%d]: state ok, yet layout null" % (where, i))
         if sum(1 for m in v["machines"] if m["this_computer"]) > 1:
             errs.append("%s: more than one machine is this computer" % where)
     if fmt == "bko-holt-stick-copy" and not errs:

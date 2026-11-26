@@ -1,0 +1,5 @@
+Recorded by testvm/rescue/record-stick.py from bko-holt 0.2.6 at 2026-11-26T14:59:42Z: lovelace's system.json carrying its layout, babbage's left out for the stick's room (stick_full), hopper's too big for any stick (system_too_big), turing's none: each row's layout, and stick --copy of the three.
+The config partition made by stick/marker.py (image 4944cbcb-dec5-44c8-8fa6-79e3a31b3d69, serial 7B0D-ADB4, 256 MiB, partition 3),
+machines put on it by mtools, read by `bko-holt stick --json --sysroot TREE` (argv kept as bko-rescue's).
+The stick --copy calls (argv `stick --copy ID * --json`) were run with --sysroot TREE too;
+what one wrote to OUT is its `out`.

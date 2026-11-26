@@ -62,14 +62,17 @@ internal error).  RT12's tests get the `--commit` runs recorded in a guest
 (RT10k, RT10p): `--version --json`, then `stick --json` on a Linux tree
 booted from a stick whose config partition `stick/marker.py` made (256
 MiB FAT16, partition 3, as the Linux image's) with machines put on by
-mtools; each `recorded.txt` says from what and when.  `stick-three` and
+mtools; each `recorded.txt` says from what and when.  Only `stick-left-out`
+is from a bko-holt whose rows carry `layout` (open question 18); the
+others are older, so bko-rescue says nothing of their layouts.  `stick-three` and
 `stick-this-computer` also hold `recovery-words * --json` calls, answered
 by the words on standard input (the call's `stdin`: BIP39's test vector,
 as bko-rescue sends it, each word completed; the fake takes a word's first
 4 letters or more for it, as bko-holt does) and, for the good words,
 writing the password to OUT (its `out`); the fake watches that OUT is
 removed as it watches key files.  `stick-three` and `stick-layouts` hold
-`stick --copy ID * --json` calls (holt-json.md's open question 8), run
+`stick --copy ID * --json` calls (holt-json.md's open question 8), as
+does `stick-left-out`, run
 on the same tree: what one wrote to OUT is its `out` (the fake writes it
 to argv[3] and doesn't watch it: bko-rescue keeps the layout for the
 session).
@@ -85,7 +88,8 @@ session).
 | `stick-missing` | no partition 3 (a file-copying writer): `missing`, exit 1 |
 | `stick-reformatted` | another FAT serial: `damaged`, exit 1 |
 | `stick-layouts` | lovelace's system.json carrying holt/tests/corpus/debian13-stack's dump as its `layout`, babbage's none, hopper's a wrong checksum: `03-copy` writes lovelace's layout (the corpus dump, byte for byte), `04-copy-no-layout` `no_layout`, `05-copy-checksum-bad` `machine_not_ok`, `06-copy-no-machine` `no_such_machine` (each exit 1) |
-| `stick-invalid` | hand-written, wrong on purpose (`invalid`): a missing config with machines, a recovery verdict `ok` with a problem, two rows `this_computer`, a machine named `../../etc` |
+| `stick-left-out` | each row's `layout` (holt-json.md's open question 18): lovelace's present (the corpus dump), babbage's left out for the stick's room (`stick_full`, 20 MiB with it), hopper's too big for any stick (`system_too_big`, 70 MiB), turing's none; `03-copy-stick-full`, `04-copy-too-big` and `05-copy-none` are each one's `no_layout` (exit 1) |
+| `stick-invalid` | hand-written, wrong on purpose (`invalid`): a missing config with machines, a recovery verdict `ok` with a problem, two rows `this_computer`, a machine named `../../etc`, a layout `present` with a code |
 
 `luks-headers` is recorded by `../record-luks.py` from a real bko-holt and
 a real rustic-bko (holt-json.md's open question 12): a repository whose two

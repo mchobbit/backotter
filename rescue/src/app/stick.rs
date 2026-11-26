@@ -59,6 +59,41 @@ pub const OS_NAMES: &[(&str, &str)] = &[
     ("haiku", "Haiku"),
 ];
 
+/// The codes of `layout_left_out` bko-holt passes on (its stick.rs's
+/// `LAYOUT_LEFT_OUT_CODES`); any other is taken as none named.
+pub const LEFT_OUT_CODES: &[&str] = &["system_too_big", "stick_full"];
+
+/// Whether the machine's system.json on the stick carries its disk layout
+/// (the row's `layout`, holt-json.md's open question 18).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OnStick {
+    Present,
+    /// The backup tool left it out for the stick's room: CODE
+    /// (`system_too_big`, `stick_full`, or None when it named another),
+    /// BYTES the whole file's size, when bko-holt gave it.
+    LeftOut { code: Option<&'static str>, bytes: Option<u64> },
+    /// It carries none, and doesn't say why.
+    None,
+    /// Not said: a bko-holt from before the member, or one this doesn't
+    /// read.  Nothing is said of it then.
+    Unknown,
+}
+
+impl OnStick {
+    fn read(v: Option<&Value>) -> OnStick {
+        let Some(v) = v.filter(|v| v.as_object().is_some()) else { return OnStick::Unknown };
+        match v.get_str("state") {
+            Some("present") => OnStick::Present,
+            Some("none") => OnStick::None,
+            Some("left_out") => {
+                let code = v.get_str("code").and_then(|c| LEFT_OUT_CODES.iter().copied().find(|&k| k == c));
+                OnStick::LeftOut { code, bytes: code.and(v.get_u64("bytes")) }
+            }
+            _ => OnStick::Unknown,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Machine {
     pub install_id: String,
@@ -81,6 +116,8 @@ pub struct Machine {
     /// The password hint: shown after two wrong passwords, never logged,
     /// stripped from bug reports.
     pub hint: Option<String>,
+    /// Whether its system.json carries the disk layout.
+    pub layout: OnStick,
 }
 
 impl Machine {
@@ -88,6 +125,24 @@ impl Machine {
     /// is one this stick can open (`repo::place`).
     pub fn ok(&self) -> bool {
         self.state == "ok" && self.hostname.is_some() && self.repo_url.as_deref().and_then(super::repo::place).is_some()
+    }
+
+    /// What to say of its layout before the password (holt-json.md's open
+    /// question 18): None when it carries one, or when nothing is known;
+    /// else why the stick holds none, and the advice for that reason alone.
+    pub fn no_layout(&self) -> Option<(String, &'static str)> {
+        match &self.layout {
+            OnStick::Present | OnStick::Unknown => None,
+            OnStick::None => Some((s::left_out_why(None, None, true), s::ADVICE_NONE)),
+            OnStick::LeftOut { code, bytes } => Some((
+                s::left_out_why(*code, *bytes, false),
+                match code {
+                    Some("stick_full") => s::ADVICE_ROOM,
+                    Some("system_too_big") => s::ADVICE_TOO_BIG,
+                    _ => "",
+                },
+            )),
+        }
     }
 
     /// The hostname, cleaned, or `(no name)`.
@@ -165,6 +220,7 @@ pub fn read(v: &Value, version: Option<&str>) -> Result<Stick, String> {
                 keyboard: m.get("keyboard").filter(|k| !k.is_null()).cloned(),
                 time: m.get("time").filter(|t| !t.is_null()).cloned(),
                 hint: opt_str(m, "password_hint"),
+                layout: OnStick::read(m.get("layout")),
             });
         }
     }

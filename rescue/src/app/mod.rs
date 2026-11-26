@@ -182,6 +182,7 @@ const B_REPORT: usize = 7;
 const B_RAW: usize = 8;
 const B_KEPT: usize = 9;
 const B_FIX: usize = 20;
+const B_GO_ON_ANYWAY: usize = 10;
 
 /// The repository a machine (or a typed address) names.
 #[derive(Clone, Debug)]
@@ -591,6 +592,9 @@ impl App {
         r.buttons.push(Button::shell());
         match ui.radio(&r) {
             Answer::Ok(i) if ms.get(i).is_some_and(stick::Machine::ok) => {
+                if let Some(g) = self.no_layout_notice(ui, &ms[i]) {
+                    return g;
+                }
                 if self.machine != Some(i) {
                     self.forget_repository();
                 }
@@ -608,6 +612,22 @@ impl App {
             // No Back: this is the first screen.
             Answer::Back | Answer::Button(_) => Go::Stay,
             a => Go::of(a),
+        }
+    }
+
+    /// A machine whose system.json on the stick carries no layout: said
+    /// before the password, with why and the advice for that reason alone
+    /// (holt-json.md's open question 18).  None: on to the password (OK, or
+    /// nothing to say); else where to go (Back stays on Machine).
+    fn no_layout_notice(&mut self, ui: &mut dyn Ui, m: &stick::Machine) -> Option<Go> {
+        let (why, advice) = m.no_layout()?;
+        let text = s::no_layout_notice(m.name().as_str(), &why, self.snapshot_layouts, advice);
+        let mut d = Message::new(Chrome::ours(s::SCR_MACHINE, s::NO_LAYOUT_NOTICE_TITLE), Clean::text(&text, cap::PROBLEM));
+        d.buttons = vec![Button::other(s::BTN_GO_ON, None, B_GO_ON_ANYWAY), Button::shell(), Button::back()];
+        match ui.message(&d) {
+            Answer::Ok(()) | Answer::Button(B_GO_ON_ANYWAY) => None,
+            Answer::Back => Some(Go::Stay),
+            a => Some(Go::of(a)),
         }
     }
 

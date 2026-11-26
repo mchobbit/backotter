@@ -1,0 +1,1 @@
+{"format":"bko-holt-error","schema":1,"version":"0.2.6","generated":"2026-11-26T14:59:42Z","dry_run":false,"exit":1,"code":"no_layout","text":"bko-holt stick --copy: backotter/machines/3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7/system.json carries no disk layout: it has no \"layout\", where the backup tool puts the bko-holt dump"}

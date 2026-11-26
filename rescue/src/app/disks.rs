@@ -220,10 +220,16 @@ impl App {
     fn no_layout(&mut self, ui: &mut dyn Ui, n: &super::layout::NoLayout) -> Go {
         // The backup asked first holds none of its own either (open
         // question 15): a newer backup does.
-        let (why, todo) = match (n.none_on_stick, n.none_in_backup) {
-            (true, true) => (s::NO_LAYOUT_IN_BACKUP_WHY, s::NO_LAYOUT_IN_BACKUP_TODO),
-            (true, false) => (s::NO_LAYOUT_ON_STICK_WHY, s::NO_LAYOUT_ON_STICK_TODO),
-            _ => (s::NO_LAYOUT_WHY, s::NO_LAYOUT_TODO),
+        // The stick's row says why it holds none (open question 18): the
+        // advice for that reason alone.  Not said (an older bko-holt): the
+        // words that offer room only if bko-holt's say so.
+        let advice = self.chosen().and_then(super::stick::Machine::no_layout).map(|(_, a)| a);
+        let (why, todo) = match (n.none_on_stick, n.none_in_backup, advice) {
+            (true, true, Some(a)) => (s::NO_LAYOUT_IN_BACKUP_WHY, s::no_layout_todo(s::NO_LAYOUT_IN_BACKUP_FIRST, a)),
+            (true, true, None) => (s::NO_LAYOUT_IN_BACKUP_WHY, s::NO_LAYOUT_IN_BACKUP_TODO.to_string()),
+            (true, false, Some(a)) => (s::NO_LAYOUT_ON_STICK_WHY, s::no_layout_todo(s::NO_LAYOUT_ON_STICK_FIRST, a)),
+            (true, false, None) => (s::NO_LAYOUT_ON_STICK_WHY, s::NO_LAYOUT_ON_STICK_TODO.to_string()),
+            _ => (s::NO_LAYOUT_WHY, s::NO_LAYOUT_TODO.to_string()),
         };
         let p = super::Problem {
             code: "no_layout",
@@ -231,7 +237,7 @@ impl App {
             title: s::NO_LAYOUT_TITLE.to_string(),
             what: Clean::line(&n.what, cap::PROBLEM).as_str().to_string(),
             why: why.to_string(),
-            todo: todo.to_string(),
+            todo,
             fixes: Vec::new(),
             again: true,
             back: Some(Go::Back),

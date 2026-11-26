@@ -2547,3 +2547,128 @@ fn a_snapshot_layout_that_cant_be_had_stops_on_disks() {
         assert!(!t.app.session.path("layout.json").exists() && t.app.layout.is_none(), "nothing left");
     }
 }
+
+// ---- Why a stick holds no layout (holt-json.md's open question 18) ----
+
+/// stick-left-out's recorded stick document (a bko-holt that writes each
+/// row's `layout`).
+fn left_out_doc() -> String {
+    String::from_utf8(fixture("scenarios/stick-left-out/02-stick/stdout")).unwrap()
+}
+
+/// stick-left-out's recorded row I's `layout`, as compact JSON.
+fn left_out_layout(i: usize) -> String {
+    let v = crate::json::parse(&left_out_doc()).unwrap();
+    v.arr_at(&["machines"])[i].get("layout").unwrap().compact()
+}
+
+/// stick-three's stick document, its lovelace carrying LAYOUT as its
+/// row's `layout`.
+fn stick_three_with(layout: &str) -> String {
+    let doc = String::from_utf8(fixture("scenarios/stick-three/02-stick/stdout")).unwrap();
+    let hint = "\"password_hint\":\"the boat's name, then the year we moved\"}";
+    assert!(doc.contains(hint) && !doc.contains("\"layout\""), "{doc}");
+    doc.replacen(hint, &format!("\"password_hint\":\"the boat's name, then the year we moved\",\"layout\":{layout}}}"), 1)
+}
+
+#[test]
+fn a_machine_whose_stick_holds_no_layout_is_said_before_the_password() {
+    use super::stick::OnStick;
+    use super::strings as st;
+    // The rows as bko-holt recorded them: present, left out (each code,
+    // its size), none.
+    let doc = crate::json::parse(&left_out_doc()).unwrap();
+    let sticks = super::stick::read(&doc, None).unwrap();
+    let got: Vec<OnStick> = sticks.machines.iter().map(|m| m.layout.clone()).collect();
+    assert_eq!(
+        got,
+        [
+            OnStick::Present,
+            OnStick::LeftOut { code: Some("stick_full"), bytes: Some(20 << 20) },
+            OnStick::LeftOut { code: Some("system_too_big"), bytes: Some(70 << 20) },
+            OnStick::None
+        ]
+    );
+    assert!(sticks.machines.iter().all(super::stick::Machine::ok), "each can be chosen: the backup may hold its layout");
+    // A machine whose stick holds its layout: straight on to the password.
+    let mut t = tt("stick-left-out", "lovelace");
+    let mut ui = Shots::new(script(&[&start(), &[Pick(0), Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    assert_eq!(ui.titles(), ["Which machine is this?", "The backup password"]);
+    // Each other reason: the notice, with the advice for it alone.  Back
+    // stays on Machine; Go on goes to the password.
+    for (i, says, advice, never) in [
+        (1, "as the stick had no room for it at the machine's last backup (with it, the file was 20.0 MiB)", "make room on the stick, or write a newer image to it", "No stick can hold it"),
+        (2, "as with it the file was 70.0 MiB, more than a stick's bko-holt reads", "No stick can hold it, so room on this one won't help", "make room"),
+        (3, "its settings on this stick carry none, and don't say why", "back it up again with this stick plugged in", "make room"),
+    ] {
+        let mut t = tt("stick-left-out", "lovelace");
+        let mut ui = Shots::new(script(&[&start(), &[Pick(i), Back, Pick(i), P, Reply::Quit]]));
+        assert_eq!(t.app.run(&mut ui), Exit::Quit);
+        ui.done();
+        assert_eq!(ui.titles(), ["Which machine is this?", st::NO_LAYOUT_NOTICE_TITLE, "Which machine is this?", st::NO_LAYOUT_NOTICE_TITLE, "The backup password"]);
+        let p = ui.flat(st::NO_LAYOUT_NOTICE_TITLE, 0);
+        let name = ["lovelace", "babbage", "hopper", "turing"][i];
+        assert!(p.contains(&format!("This stick holds no disk layout for {name}: the")) || p.contains(&format!("This stick holds no disk layout for {name}: its")), "{p}");
+        assert!(p.contains(says) && p.contains(advice) && !p.contains(never), "{i}: {p}");
+        // This bko-holt reads a backup's own layout (open question 15).
+        assert!(p.contains("bko-rescue reads it from the backup you choose"), "{p}");
+        assert_eq!(t.app.machine, Some(i), "chosen once Go on is pressed");
+        assert!(!ran(&t).iter().any(|l| l.contains("stick --copy") || l.contains("rustic")), "nothing more is asked before the password: {:?}", ran(&t));
+    }
+    // A bko-holt that can't read a backup's own layout: this stick can't
+    // restore the machine's disks, and the words say so.
+    let mut t = t_with("stick-left-out", "lovelace", LINUX, false, |f| {
+        f.version = Some(String::from_utf8(fixture("scenarios/stick-three/01-version/stdout")).unwrap());
+    });
+    let mut ui = Shots::new(script(&[&start(), &[Pick(1), Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    let p = ui.flat(st::NO_LAYOUT_NOTICE_TITLE, 0);
+    assert!(p.contains("can't read a backup's own layout, so this stick can't restore this machine's disks") && !p.contains("reads it from the backup you choose"), "{p}");
+    // An older bko-holt's rows say nothing of it: no notice (stick-three).
+    let mut t = tt("stick-three", "lovelace");
+    let mut ui = Shots::new(script(&[&start(), &[Pick(1), Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    assert_eq!(ui.titles(), ["Which machine is this?", "The backup password"]);
+}
+
+#[test]
+fn disks_gives_the_advice_for_the_reason_the_stick_said() {
+    use super::strings as st;
+    // The stick's row says why (open question 18), so Disks' what-to-do
+    // gives that reason's advice, not "if bko-holt's words say".
+    let copy = |n: &str| String::from_utf8(fixture(&format!("scenarios/stick-left-out/{n}/stdout"))).unwrap();
+    let notice_to_disks = script(&[&start(), &[Pick(0), P, Sec(PASSWORD.to_vec()), P, P, Pick(0), P]]);
+    for (row, call, advice, never) in [
+        (1, "03-copy-stick-full", st::ADVICE_ROOM, st::ADVICE_TOO_BIG),
+        (2, "04-copy-too-big", st::ADVICE_TOO_BIG, "make room"),
+        (3, "05-copy-none", st::ADVICE_NONE, "make room"),
+    ] {
+        let (stick, refusal) = (stick_three_with(&left_out_layout(row)), copy(call));
+        let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| {
+            f.disks = "app-lovelace".into();
+            f.stick = Some(stick.clone());
+            f.copy = Some((1, refusal.clone()));
+        });
+        let mut ui = Shots::new(script(&[&notice_to_disks, &[Reply::Quit]]));
+        assert_eq!(t.app.run(&mut ui), Exit::Quit);
+        let p = ui.flat("Problem: the old disks' layout isn't here", 0);
+        let flat = |x: &str| x.replace("  ", " ");
+        assert!(p.contains(&flat(st::NO_LAYOUT_ON_STICK_FIRST)) && p.contains(&flat(advice)), "{row}: {p}");
+        assert!(!p.contains("If bko-holt's words say") && !p.contains(never), "{row}: {p}");
+        assert!(t.app.layout.is_none() && !ran(&t).iter().any(|l| l.contains("bko-holt load")), "no plan without a layout");
+        // The backup asked, and holding none of its own: its own first words.
+        let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| {
+            f.disks = "app-lovelace".into();
+            f.stick = Some(stick.clone());
+            f.copy = Some((1, refusal.clone()));
+            f.version = Some(version_with_snapshot_layouts());
+            f.snaplayout = Some(SnapAns::Says(1, NO_SYSTEM_JSON.into()));
+        });
+        let mut ui = Shots::new(script(&[&notice_to_disks, &[Reply::Quit]]));
+        assert_eq!(t.app.run(&mut ui), Exit::Quit);
+        let p = ui.flat("Problem: the old disks' layout isn't here", 0);
+        assert!(p.contains("This backup holds none of its own") && p.contains(&flat(st::NO_LAYOUT_IN_BACKUP_FIRST)) && p.contains(&flat(advice)), "{row}: {p}");
+        assert!(!p.contains("If bko-holt's words say") && !p.contains(never), "{row}: {p}");
+    }
+}

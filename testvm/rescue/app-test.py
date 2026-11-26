@@ -7,7 +7,9 @@ in full screen (UTF-8 colour, ASCII on vt220) and plain mode.
     testvm/rescue/app-test.py PATH/TO/bko-rescue [ONLY ...]
 
 What it checks: Machine to Snapshot with two wrong passwords and the
-hint; the recovery key's words on a pipe and its password as a file; the
+hint; a machine whose stick holds no layout, said before the password
+(stick-left-out); the recovery key's words on a pipe and its password as
+a file; the
 password file handed to rustic-bko (0600, in a new 0700 directory, no
 newline, not in argv or the environment: the fake's checks) and wiped,
 with its directory, once bko-rescue ends, SIGTERM included; a repository
@@ -209,6 +211,34 @@ def test_full_utf8_colour():
     calls = r.secrets_checked(4)
     pw_calls = [c["call"] for c in calls if "--password-file" in c["argv"]]
     check(pw_calls == ["09-wrong-config", "09-wrong-config", "01-config", "02-snapshots"], "full: two wrong passwords, then the right one (%s)" % pw_calls)
+
+
+def test_machine_no_layout():
+    # holt-json.md's open question 18: babbage's system.json on the stick
+    # was written without its layout, for the stick's room (stick-left-out,
+    # recorded): said on Machine, before the password, with its advice.
+    r = Run("no-layout", holt="stick-left-out")
+    d = r.d
+    d.wait("Which machine is this?")
+    # Nothing is chosen at first: the first Down is lovelace, the second babbage.
+    d.keys("Down", "Down", "Enter")
+    d.wait("No disk layout on this stick")
+    check(r.says("This stick holds no disk layout for babbage: the backup tool left it out, as the stick had no room for it at the "
+                 "machine's last backup (with it, the file was 20.0 MiB)."), "no-layout: why, from the stick's row")
+    check(r.says("bko-rescue reads it from the backup you choose") and r.says("make room on the stick, or write a newer image to it"),
+          "no-layout: the backup's own layout, and room's advice")
+    golden("app-machine-no-layout.utf8-colour", d.dump())
+    d.keys("Esc")
+    d.wait("Which machine is this?")
+    d.keys("Down", "Down", "Enter")
+    d.wait("No disk layout on this stick")
+    d.keys("Enter")
+    d.wait("The backup password")
+    check(not [c for c in r.calls() if c.get("argv", [])[:1] != ["--version"] and c.get("argv", [])[:1] != ["stick"]],
+          "no-layout: nothing but --version and stick asked before the password (%s)" % [c.get("argv") for c in r.calls()])
+    d.signal(signal.SIGTERM)
+    r.finish(143)
+    r.secrets_checked(0)
 
 
 def test_full_ascii_vt220():
@@ -765,7 +795,7 @@ def test_restore_plain():
     r.secrets_checked(None, commit_ok=True)
 
 
-TESTS = [test_shell_and_back, test_full_utf8_colour, test_full_ascii_vt220, test_recovery_key, test_plain, test_plain_signals,
+TESTS = [test_shell_and_back, test_full_utf8_colour, test_machine_no_layout, test_full_ascii_vt220, test_recovery_key, test_plain, test_plain_signals,
          test_mismatch_and_report, test_location_with_no_stick, test_dry_run, test_network, test_disks_to_review, test_disks_dry_run, test_disks_kept_headers, test_disks_older_backup,
          test_restore_to_done, test_restore_dry_run, test_restore_fail_help_try_again, test_restore_stop, test_restore_plain]
 

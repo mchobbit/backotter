@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # img-xcopy.sh DEST P...: push images/P (top level and test/, not prev-*) to
-# DEST's images/P; DEST's old contents go to prev-xSTAMP, its copy of the new
-# image is compressed there, under a reservation.  DEST's done.exit is copied
-# last, so that until then DEST's pin refuses the platform as a build under way.
+# DEST's images/P; DEST's old contents go to prev-xSTAMP.  DEST's done.exit is
+# copied last, so that until then DEST's pin refuses the platform as a build
+# under way.  The images stay raw there (img-speed.md §7; BKO_IMG_COMPRESS=1
+# compresses DEST's copy, under a reservation, as before).  Once a platform
+# whose done.exit is 0 is in, DEST's images/P keeps its last two prev-* sets
+# (stick/img-retain.sh, D6, from DEST's stick/: BKO_DEST_STICK, default
+# /home/m/backotter-work/stick); BKO_IMG_RETAIN=0 skips it.
 #
 # DEST is an ssh target (m@cinqcent.local) or a farm host's name (cinqcent, or
 # cinqcent.local), which testvm/hosts.json's "ssh" turns into its target.  DEST
@@ -42,6 +46,7 @@ I=${BKO_IMG_DIR:-$W/images}
 H=${BKO_HOLT_BIN:-$W/holt-bin}
 DI=${BKO_DEST_IMAGES:-backotter-work/images}
 DH=${BKO_DEST_HOLT_BIN:-$(dirname "$DI")/holt-bin}
+DS=${BKO_DEST_STICK:-/home/m/backotter-work/stick}
 same_dir() { local a b; a=$(stat -Lc %d:%i -- "$1" 2>/dev/null) && b=$(stat -Lc %d:%i -- "$2" 2>/dev/null) && [[ $a == "$b" ]]; }
 if [[ -z ${BKO_DEST_IMAGES:-} ]] &&
    { [[ ${T2_HOST_ROOT:-/bkoscratch/test2} != /bkoscratch/test2 ]] || ! same_dir "$I" /home/m/backotter-work/images; }; then
@@ -130,10 +135,17 @@ for p in "$@"; do
         fi
         if rsync -a --rsync-path="flock -n $DI/.lock-$p rsync" "$I/$p/done.exit" "$D:$DI/$p/done.exit"; then
             echo "$p copied"
-            if ssh_d "d=\$(cd $DI && pwd) && /home/m/backotter-work/cmp-run.sh --reserve 2 6 /home/m/backotter-work/stick/compress-images.sh -p $p \"\$d\"" >/dev/null; then
-                echo "$p compressed there"
-            else
-                echo "$p: not compressed there" >&2; f=1
+            if [[ ${BKO_IMG_COMPRESS:-0} == 1 ]]; then
+                if ssh_d "d=\$(cd $DI && pwd) && /home/m/backotter-work/cmp-run.sh --reserve 2 6 $DS/compress-images.sh -p $p \"\$d\"" >/dev/null; then
+                    echo "$p compressed there"
+                else
+                    echo "$p: not compressed there" >&2; f=1
+                fi
+            fi
+            # (A failed retention is said, and doesn't fail the copy: the image is in.)
+            if [[ ${BKO_IMG_RETAIN:-1} != 0 && $(cat "$I/$p/done.exit" 2>/dev/null) == 0 ]]; then
+                out=$(ssh_d "d=\$(cd $DI && pwd) && $DS/img-retain.sh -p $p \"\$d\"" 2>&1) || echo "$p: retention there FAILED: ${out##*$'\n'}" >&2
+                [[ -z $out ]] || echo "$p: there, ${out##*$'\n'}"
             fi
         else
             echo "$p: not copied (its done.exit)" >&2; f=1

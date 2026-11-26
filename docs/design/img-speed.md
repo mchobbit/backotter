@@ -3,7 +3,7 @@
 Status: **approved.** The seven speedups were approved in principle by the user
 (2026-11-26, "Yes to all 1-7"), and every recommendation of §13 (D1-D17,
 FD1-FD6) on 2026-11-26 ("Approve all"), D6 as the standing rule (each round
-deletes `images/P/prev-*` and `prev-x*` sets older than the last two). I1 is built (2026-11-26); nothing else is. Reviewed against the scripts on
+deletes `images/P/prev-*` and `prev-x*` sets older than the last two). I1, I2 and I5 are built (2026-11-26); no other I step is. Reviewed against the scripts on
 2026-11-26 (§16 lists what the review changed). Hosts: chopin, cinqcent (big), copland,
 cage, czerny (small, build role), choubox (small, no build role), all amd64.
 Bigfoot (arm64) is out of scope except where noted. est. marks an estimate;
@@ -734,6 +734,32 @@ due by the harness digest.
   `images/.lock-P`), and a deleted image that an ImgTest2 pin still
   hard-links frees its space only when the pin moves. Published sets stay
   as `.xz`.
+- **As built (I5).** `img-one.sh` writes `SHA256SUMS` once the build is
+  checked, before the boot tests, whatever their verdict (compress-images.sh
+  wrote it only after a pass); `BKO_IMG_COMPRESS=1` still compresses after a
+  pass, adding the `.xz` lines; img-lanes.sh passes the variable through.
+  The D6 rule is `stick/img-retain.sh [-n] [-p P] [IMAGES]`: per platform,
+  under `images/.lock-P` (a held lock skips the platform and says so), it keeps
+  the two newest `prev-*` sets by the stamp in their names (`prev-STAMP` and
+  `prev-xSTAMP` alike; older hand-made names such as `prev-20261106-pass1`
+  by their date), removes empty ones (img-xcopy makes one when DEST had
+  nothing), and leaves any other name alone. It runs after every passing
+  `img-one.sh` (inside the build's own lock), and on DEST after `img-xcopy.sh`
+  copied a platform whose `done.exit` is 0 (from `BKO_DEST_STICK`);
+  `BKO_IMG_RETAIN=0` skips it. A failed build runs no retention, so a run of
+  failures cannot push the last good set out. `stick/img-publish.sh` runs on
+  the Mac (`img_publish.py`: the ledger is there): it gathers img-round's
+  facts from the build hosts other than the fleet host, and refuses `--host
+  chopin`. The default host is the least loaded one (load a core) that holds
+  a publishable image of every platform asked for (`--only P,P`); a platform
+  publishable nowhere refuses the set by name. `stick/img-publish-host.sh`
+  does the host's part: it hard-links (or copies) each release image into
+  `publish/.SET.part/P/` under a shared `.lock-P`, checks its SHA-256 against
+  the proven one, runs `xz -9 -T0` under `cmp-run.sh --reserve 0 8` (xz's
+  memory limit a GiB under it, which caps its threads), checks the
+  decompressed SHA-256 (C8), writes `P/SHA256SUMS` with both lines and drops
+  the raw copy, then renames the whole to `publish/SET` with the Mac's
+  `PUBLISHED.json` (what was proved, where). A set name is published once.
 
 ## 8. Speedup 5: cross-compiled bko-holt (and bko-rescue)
 

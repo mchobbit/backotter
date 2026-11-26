@@ -67,3 +67,7 @@ all	stick/*/build-rustic.sh	none	builds rustic-bko, which the bins digest covers
 -	stick/img-round.sh	none	the round's dealer, on the Mac: plans, builds nothing itself
 -	stick/img_round.py	none	the round's planner, on the Mac
 -	stick/img_round_facts.py	none	the planner's facts on a host: reads digests and images, writes nothing
+-	stick/img-retain.sh	none	deletes old prev-* sets (D6) after a build; never the current image
+-	stick/img-publish.sh	none	publishes a tested set for download, on the Mac
+-	stick/img_publish.py	none	the publisher's rules, on the Mac
+-	stick/img-publish-host.sh	none	compresses copies of tested images; reads images/P, never writes it

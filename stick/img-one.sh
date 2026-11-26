@@ -37,6 +37,15 @@
 # vms/freebsd15-builder/fingerprint and must not change during the build.
 # Each image's OS file systems are listed in os-tree.txt beside it (test/ for
 # the test copy), and provenance.json is written last, before done.exit.
+#
+# No compression on the farm (img-speed.md §7): images/P/SHA256SUMS (the raw
+# release image's line, "SHA256  NAME" as compress-images.sh writes it) and
+# images/P/test/SHA256SUMS (the test image's) are written once the build is
+# checked, and the images stay raw; stick/img-publish.sh compresses a set for
+# download.  BKO_IMG_COMPRESS=1 runs compress-images.sh after a pass, as
+# before (it adds the .xz lines).  After a pass the D6 retention rule runs
+# (stick/img-retain.sh: images/P keeps the last two prev-* sets, under this
+# build's own lock); BKO_IMG_RETAIN=0 skips it.
 set -u
 # The boot modes each image is tested in (img_inputs.py's tests digest reads these two lines).
 MODES_linux="bios uefi uefi-secureboot cdrom"
@@ -184,6 +193,17 @@ bins | cmp -s - bko-bin.sha256 || fail "bko-bin/$P or holt-bin/$P changed during
 why=$(dig moved .inputs-start.json 2>&1); case $? in
     0) ;; 3) fail "the build's inputs moved: ${why#img_inputs: }" ;; *) fail "couldn't check the inputs: $why" ;;
 esac
+# sums DIR: DIR/SHA256SUMS, each raw image's line (as compress-images.sh records it).
+sums() {
+    local f h
+    ( set -o pipefail
+      for f in "$1"/*.img; do
+          [[ -f $f ]] || continue
+          h=$(sha256sum <"$f" | cut -d' ' -f1) && [[ $h =~ ^[0-9a-f]{64}$ ]] || exit 1
+          printf '%s  %s\n' "$h" "${f##*/}"
+      done | LC_ALL=C sort -k2 >"$1/SHA256SUMS.part" ) && mv -f "$1/SHA256SUMS.part" "$1/SHA256SUMS"
+}
+sums "$D" && sums "$D/test" || fail "couldn't write SHA256SUMS"
 echo "release: $(tail -n 1 build.log)" >>"$r"
 echo "test:    $(tail -n 1 test/build.log)" >>"$r"
 img=$(ls test/*.img) || fail "no test image"
@@ -194,11 +214,18 @@ for m in $modes; do
     rc=$?; [[ $rc -eq 0 ]] || fails=$((fails + 1)); boots+=(--boot "$m=$rc")
     echo "boot $m rc=$rc ($(grep -c '^  ok' "test/boot-$m.out") ok, $(grep -c '^  FAIL' "test/boot-$m.out") FAIL) $(grep -E '^  FAIL|^  ok +(binaries|restic-bko|rustic-bko|bko-holt) ' "test/boot-$m.out" | tr -s ' ' | tr '\n' ' ')" >>"$r"
 done
-# A build that passed: its .xz for download, and this platform's old images
-# compressed.  The boot tests' verdict in done.exit doesn't depend on this.
+# A build that passed: with BKO_IMG_COMPRESS=1, its .xz for download and this
+# platform's old images compressed; then the old sets past the last two
+# deleted (D6).  The boot tests' verdict in done.exit doesn't depend on this.
 if [[ $fails -eq 0 ]]; then
-    if "$S/compress-images.sh" -p "$P" "${D%/*}" >compress.log 2>&1; then c=ok; else c="FAILED (compress.log)"; fi
-    echo "compress: $c" >>"$r"
+    if [[ ${BKO_IMG_COMPRESS:-0} == 1 ]]; then
+        if "$S/compress-images.sh" -p "$P" "${D%/*}" >compress.log 2>&1; then c=ok; else c="FAILED (compress.log)"; fi
+        echo "compress: $c" >>"$r"
+    fi
+    if [[ ${BKO_IMG_RETAIN:-1} != 0 ]]; then
+        if BKO_RETAIN_HELD=$P "$S/img-retain.sh" -p "$P" "${D%/*}" >retain.log 2>&1; then c=$(tail -n 1 retain.log); else c="FAILED (retain.log)"; fi
+        echo "retain: $c" >>"$r"
+    fi
 fi
 # The provenance, last before done.exit: a failure to write it leaves the
 # image as built (a plan treats an image without one as due a full build).

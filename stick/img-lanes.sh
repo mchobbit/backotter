@@ -10,7 +10,7 @@
 # sudo -E drops one given to cmp-run.sh), so a BUILD_VM_MODE=snapshot build's
 # QEMU file is inside what's reserved; the directory's peak, with what a QEMU
 # holds open there unlinked, is sampled every 5 s, as build-holt.sh --reserved
-# does.  S, ISO, SL, BKO_WORK, BKO_IMG_DIR, BKO_HOLT_BIN and BKO_BIN pass
+# does.  S, ISO, SL, BKO_WORK, BKO_IMG_DIR, BKO_HOLT_BIN, BKO_BIN, BKO_IMG_COMPRESS and BKO_IMG_RETAIN pass
 # through to img-one.sh; RUN defaults to the time.  CMP_RUN names cmp-run.sh
 # (default: the shared ledger's, in /home/m/backotter-work, whatever BKO_WORK
 # says).  A lane that is stopped (TERM, HUP) removes its RAM directory and
@@ -54,7 +54,7 @@ one() {  # P
     # (No -p, and no rm first: another start of this RUN's directory is never this lane's.)
     mkdir "$t" || { echo "img-lanes: can't make $t: this RUN's $p is running, or was cut short" >&2; return 1; }
     tmp=$t pf=$I/.peak-$p.$$
-    for v in S ISO SL BKO_WORK BKO_IMG_DIR BKO_HOLT_BIN BKO_BIN; do [[ -z ${!v:-} ]] || env+=("$v=${!v}"); done
+    for v in S ISO SL BKO_WORK BKO_IMG_DIR BKO_HOLT_BIN BKO_BIN BKO_IMG_COMPRESS BKO_IMG_RETAIN; do [[ -z ${!v:-} ]] || env+=("$v=${!v}"); done
     ( set +e; m=0
       while [[ ! -e $pf.done ]] && kill -0 "$me" 2>/dev/null; do
           k=$(du -sxk "$tmp" 2>/dev/null | cut -f1); k=${k:-0}

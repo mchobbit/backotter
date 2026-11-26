@@ -496,7 +496,8 @@ class ImgOne(EnvCase):
         for n in ("x.img", "bko-bin.sha256", "bko-holt.commit", "build.log", "result.txt", "done.exit", "test"):
             self.assertIn(n, names)
         self.assertEqual(names - {"x.img", "bko-bin.sha256", "bko-holt.commit", "build.log", "result.txt",
-                                  "done.exit", "test", "compress.log", "provenance.json", "os-tree.txt", "inputs.log"}, set())
+                                  "done.exit", "test", "compress.log", "provenance.json", "os-tree.txt", "inputs.log",
+                                  "SHA256SUMS", "retain.log"}, set())
         self.assertEqual(rd(os.path.join(d, "x.img")), "image\n")
 
 

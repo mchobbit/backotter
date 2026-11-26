@@ -141,7 +141,9 @@ class Skipped(unittest.TestCase):
         self.assertIn("then the corpus: ", t)
         self.assertIn("/bkoscratch (bs2lib/space.py", t)
         self.assertRegex(t, r"(?m)^  chopin: peak \+\d+ GiB \(once prepared .*: (OK|REFUSED)")
-        self.assertIn("then the leftovers set: 9 steps on one disk on chopin", t)
+        # (Both leads hold its sources: a tie, which goes to cinqcent, the cooler big host,
+        # by hosts.tie_key since img-speed.md F13.)
+        self.assertIn("then the leftovers set: 9 steps on one disk on cinqcent", t)
         self.assertRegex(t, r"in all: ~[\d.]+ h est\.")
         self.assertRegex(t, r"(?m)^verdict: PARTIAL PASS at best \(\d+ sources SKIPPED")
 
@@ -315,7 +317,8 @@ class Start(unittest.TestCase):
         self.assertEqual(m["planned"]["alpine324-luks"], [1000, 200, 10])
         self.assertEqual(m["planned"]["kali"], [1000, 20, 5 if S.uefi("kali") else 0])
         self.assertEqual(set(m["planned"]), set(B.SOURCES))
-        self.assertEqual(m["leftovers"], {"set": "leftovers", "steps": 9, "host": "chopin"})
+        # (The tie between the leads goes to cinqcent: hosts.tie_key, img-speed.md F13.)
+        self.assertEqual(m["leftovers"], {"set": "leftovers", "steps": 9, "host": "cinqcent"})
         self.assertEqual(sorted(m["corpus"]), sorted(c[1] for c in B.corpus_cases()))
         self.assertIn("tier 3", [x["name"] for x in m["skipped"]])
         self.assertIn(f"bs2 BackShot2All corpus {got['run']}", out.getvalue())

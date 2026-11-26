@@ -296,6 +296,75 @@ fn layout_refusal(v: &Value) -> Option<Problem> {
     other.map(|o| refused("own_tools", None, None, format!("--reformat isn't built for {o}: its fstab and boot configuration come from its own tools, which load's boot stage doesn't rewrite")))
 }
 
+/// Why / can't be made another type on layout V for what boots it (WHAT,
+/// the --reformat): a LILO or ELILO append= that gives the kernel the
+/// root's type or options (rootfstype=, Slackware's init's rootfs=,
+/// rootflags=), which load doesn't rewrite in lilo.conf or elilo.conf; or
+/// a Slackware initrd that load can't make again for the new type
+/// (docs/design/slackware.md): 15.0's mkinitrd is replayed from the
+/// source's /boot/initrd-tree/command_line with -f and -m for the new type
+/// (commands.rs mkinitrd_cmd), and /etc/mkinitrd.conf's ROOTFS and
+/// MODULE_LIST, which `mkinitrd -F` reads, aren't rewritten; -current's
+/// geninitrd is run as its mkinitrd_command_generator.sh, which probes the
+/// new filesystem itself, and not by mkinitrd.conf or an override script.
+fn root_boot_refusal(v: &Value, what: &str) -> Option<String> {
+    let mut appends: Vec<(String, String)> = Vec::new();
+    let mut take = |conf: String, x: &Value| {
+        for k in ["append", "addappend"] {
+            if let Some(a) = s(x, k) {
+                appends.push((conf.clone(), a));
+            }
+        }
+    };
+    if let Some(l) = v.at(&["boot", "lilo"]).filter(|l| !l.is_null()) {
+        let conf = s(l, "conf").unwrap_or_else(|| "lilo.conf".into());
+        take(conf.clone(), l);
+        for i in arr(l, &["images"]) {
+            take(conf.clone(), i);
+        }
+    }
+    for c in arr(v, &["boot", "elilo", "configs"]) {
+        let conf = s(c, "conf").unwrap_or_else(|| "elilo.conf".into());
+        take(conf.clone(), c);
+        for i in arr(c, &["images"]) {
+            take(conf.clone(), i);
+        }
+    }
+    for (conf, a) in &appends {
+        if let Some(w) = a.split_whitespace().find(|w| ["rootfstype=", "rootfs=", "rootflags="].iter().any(|p| w.starts_with(p))) {
+            return Some(format!("{what}: {conf}'s append= gives the kernel {w}, for the old type, and bko-holt load doesn't rewrite lilo.conf or elilo.conf; take it out there and back up again"));
+        }
+    }
+    let conf_note = "/etc/mkinitrd.conf, whose ROOTFS and MODULE_LIST name the old type and which bko-holt load doesn't rewrite";
+    match v.at(&["boot", "initramfs", "generator"]).and_then(Value::as_str) {
+        Some("mkinitrd") => {
+            let m = v.at(&["boot", "initramfs", "mkinitrd"]).cloned().unwrap_or(Value::Null);
+            let words: Vec<String> = s(&m, "command_line").map(|c| c.split_whitespace().map(str::to_string).collect()).unwrap_or_default();
+            let kernels = m.get("kernels").and_then(Value::as_array).is_some_and(|k| !k.is_empty());
+            if words.is_empty() {
+                return Some(format!("{what}: Slackware's initrd has to be made again for the new type, and there's no /boot/initrd-tree/command_line to make it by: mkinitrd -F would read {conf_note}"));
+            }
+            if words.first().and_then(|p| p.rsplit('/').next()) != Some("mkinitrd") {
+                return Some(format!("{what}: Slackware's initrd has to be made again for the new type, and /boot/initrd-tree/command_line isn't a mkinitrd command"));
+            }
+            if words.iter().any(|w| w == "-F") {
+                return Some(format!("{what}: Slackware's initrd has to be made again for the new type, and its command (mkinitrd -F) reads {conf_note}"));
+            }
+            if !kernels {
+                return Some(format!("{what}: Slackware's initrd has to be made again for the new type, and no kernel has /lib/modules to make it for"));
+            }
+        }
+        Some("geninitrd") => match v.at(&["boot", "initramfs", "geninitrd", "runs"]).and_then(Value::as_str) {
+            Some("mkinitrd_command_generator.sh") => {}
+            Some("mkinitrd") => return Some(format!("{what}: geninitrd's initrd images have to be made again for the new type, and its GENERATOR=mkinitrd reads {conf_note}")),
+            Some("override") => return Some(format!("{what}: geninitrd's initrd images have to be made again for the new type, and it runs a GENINITRD_OVERRIDE_SCRIPT, which bko-holt load doesn't run")),
+            other => return Some(format!("{what}: geninitrd's initrd images have to be made again for the new type, and its generator ({}) isn't one bko-holt load runs", other.unwrap_or("unknown"))),
+        },
+        _ => {}
+    }
+    None
+}
+
 /// The filesystem a --reformat names, as the layout has it.
 #[derive(Debug)]
 struct Named<'a> {
@@ -493,6 +562,12 @@ fn one_change(v: &Value, r: &mut Reformat, packages: Option<&Value>, kernel: Opt
     if reads && to != "ext4" {
         r.problems.push(refused("grub_reads", Some(mount), Some(to), format!("{what}: GRUB reads /boot from it; under GRUB, --reformat makes ext4 only")));
         return None;
+    }
+    if mount == "/" {
+        if let Some(text) = root_boot_refusal(v, &what) {
+            r.problems.push(refused("other", Some(mount), Some(to), text));
+            return None;
+        }
     }
     // The new type's tools on the restored system (its fsck, repair).
     let tool = match to {
@@ -961,5 +1036,36 @@ mod tests {
         assert_eq!(generic_options("subvol=@").0, "defaults");
         assert_eq!(kernel_version("6.18.60-1-lts"), Some((6, 18)));
         assert_eq!(package_version("1:1.47.2-3"), Some((1, 47)));
+    }
+
+    /// What boots / on Slackware (and any LILO or ELILO) under --reformat
+    /// of /: the initrd load can make again for the new type, and loader
+    /// command lines it doesn't rewrite (root_boot_refusal).
+    #[test]
+    fn slackware_root_refusals() {
+        let j = |t: &str| crate::json::parse(t).unwrap();
+        let w = "--reformat /=ext4";
+        let mk = |m: &str| j(&format!(r#"{{"boot":{{"initramfs":{{"generator":"mkinitrd","mkinitrd":{m}}}}}}}"#));
+        // 15.0's mkinitrd by its command line: made again (commands.rs).
+        assert_eq!(root_boot_refusal(&mk(r#"{"command_line":"/sbin/mkinitrd -c -k 5.15.19 -f xfs -m xfs","kernels":["5.15.19"]}"#), w), None);
+        let r = |v: &Value| root_boot_refusal(v, w).unwrap_or_default();
+        assert!(r(&mk(r#"{"command_line":"/sbin/mkinitrd -F -k 5.15.19","kernels":["5.15.19"]}"#)).contains("its command (mkinitrd -F) reads /etc/mkinitrd.conf"));
+        assert!(r(&mk(r#"{"command_line":null,"conf":"/etc/mkinitrd.conf","kernels":["5.15.19"]}"#)).contains("there's no /boot/initrd-tree/command_line"));
+        assert!(r(&mk(r#"{"command_line":"dracut -f","kernels":["5.15.19"]}"#)).contains("isn't a mkinitrd command"));
+        assert!(r(&mk(r#"{"command_line":"mkinitrd -c -f xfs","kernels":[]}"#)).contains("no kernel has /lib/modules"));
+        // -current's geninitrd: only by its command generator, which
+        // probes the new filesystem.
+        let geninitrd = |runs: &str| j(&format!(r#"{{"boot":{{"initramfs":{{"generator":"geninitrd","geninitrd":{{"runs":"{runs}"}}}}}}}}"#));
+        assert_eq!(root_boot_refusal(&geninitrd("mkinitrd_command_generator.sh"), w), None);
+        assert!(r(&geninitrd("mkinitrd")).contains("GENERATOR=mkinitrd reads /etc/mkinitrd.conf"));
+        assert!(r(&geninitrd("override")).contains("GENINITRD_OVERRIDE_SCRIPT"));
+        // The huge kernel, no initrd: nothing to make; LILO's and ELILO's
+        // append= (global or an image's, addappend= too) with the root's
+        // type or options: refused.
+        let none = r#""initramfs":{"generator":"none"}"#;
+        assert_eq!(root_boot_refusal(&j(&format!(r#"{{"boot":{{{none},"lilo":{{"conf":"/etc/lilo.conf","append":" vt.default_utf8=0","images":[{{"append":null}}]}}}}}}"#)), w), None);
+        assert!(r(&j(&format!(r#"{{"boot":{{{none},"lilo":{{"conf":"/etc/lilo.conf","append":" rootflags=noatime","images":[]}}}}}}"#))).contains("/etc/lilo.conf's append= gives the kernel rootflags=noatime"));
+        assert!(r(&j(&format!(r#"{{"boot":{{{none},"lilo":{{"conf":"/etc/lilo.conf","images":[{{"addappend":"rootfs=ext4"}}]}}}}}}"#))).contains("gives the kernel rootfs=ext4"));
+        assert!(r(&j(&format!(r#"{{"boot":{{{none},"elilo":{{"configs":[{{"conf":"EFI/BOOT/elilo.conf","images":[{{"append":"root=/dev/vda3 rootfstype=xfs"}}]}}]}}}}}}"#))).contains("EFI/BOOT/elilo.conf's append= gives the kernel rootfstype=xfs"));
     }
 }

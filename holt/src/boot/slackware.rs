@@ -608,7 +608,23 @@ fn geninitrd_json(sys: &Sys, why: &mut Vec<String>) -> Option<Value> {
 /// relative one would be against the chroot's cwd, /).  mkinitrd writes
 /// the words it ran with to command_line again, so only these two change.
 /// None when it isn't mkinitrd's or there's no kernel.
-pub fn mkinitrd_replay(command_line: &str, kernels: &[String], output: &str) -> Option<Vec<String>> {
+///
+/// With ROOT, (old type, new type) of a / that `--reformat` makes again
+/// (docs/design/slackware.md), the two words that name the root's type
+/// change too, and nothing else: -f (the type the initrd's init mounts /
+/// as, its /rootfs) becomes the new type, or `-f NEW` is added at the end
+/// when there was none (mkinitrd would take the type from the restored
+/// tree's /rootfs, the old one, or from what / is mounted as); in -m, each
+/// entry that is the old type's module becomes the new type's, in its
+/// place, or the new type's is added at the end when the old one wasn't
+/// listed (`-m NEW` when there was no -m).  mkinitrd adds a module's
+/// dependencies itself (modprobe --show-depends: ext4's jbd2 and mbcache),
+/// and a module the kernel has built in puts nothing in the image (no
+/// insmod line), so the added one is needed on Slackware's generic kernel
+/// (ext4, xfs and btrfs are modules there) and changes nothing on the huge
+/// one.  The source's other modules (jbd2, mbcache, libcrc32c the old type
+/// needed) stay, as the source listed them.
+pub fn mkinitrd_replay(command_line: &str, kernels: &[String], output: &str, root: Option<(&str, &str)>) -> Option<Vec<String>> {
     let mut w = command_line.split_whitespace();
     let prog = w.next()?;
     if prog.rsplit('/').next() != Some("mkinitrd") || kernels.is_empty() {
@@ -616,7 +632,7 @@ pub fn mkinitrd_replay(command_line: &str, kernels: &[String], output: &str) -> 
     }
     let rest: Vec<&str> = w.collect();
     let mut out = vec!["mkinitrd".to_string()];
-    let mut k = false;
+    let (mut k, mut f, mut m) = (false, false, false);
     let mut i = 0;
     while i < rest.len() {
         if rest[i] == "-k" {
@@ -632,13 +648,64 @@ pub fn mkinitrd_replay(command_line: &str, kernels: &[String], output: &str) -> 
             i += 2;
             continue;
         }
+        if let (Some((from, to)), "-f" | "-m", Some(v)) = (root, rest[i], rest.get(i + 1)) {
+            if rest[i] == "-f" {
+                out.extend(["-f".to_string(), to.to_string()]);
+                f = true;
+            } else {
+                out.extend(["-m".to_string(), mkinitrd_modules(v, from, to)]);
+                m = true;
+            }
+            i += 2;
+            continue;
+        }
         out.push(rest[i].to_string());
         i += 1;
     }
     if !k {
         out.extend(["-k".to_string(), kernels.join(":")]);
     }
+    if let Some((_, to)) = root {
+        if !f {
+            out.extend(["-f".to_string(), to.to_string()]);
+        }
+        if !m {
+            out.extend(["-m".to_string(), to.to_string()]);
+        }
+    }
     Some(out)
+}
+
+/// mkinitrd's -m list (LIST, colon-separated) with the module FROM made
+/// TO where it is (each entry whose module, its first word, is FROM), the
+/// rest in its order; TO added at the end when FROM isn't in it, and kept
+/// once when it was there already.
+fn mkinitrd_modules(list: &str, from: &str, to: &str) -> String {
+    let name = |e: &str| e.split_whitespace().next().unwrap_or("").replace('-', "_");
+    let (from_n, to_n) = (from.replace('-', "_"), to.replace('-', "_"));
+    let mut out: Vec<String> = Vec::new();
+    let mut had = false;
+    for e in list.split(':') {
+        let n = name(e);
+        if n == from_n {
+            had = true;
+            if !out.iter().any(|x| name(x) == to_n) {
+                out.push(to.to_string());
+            }
+        } else if n == to_n && out.iter().any(|x| name(x) == to_n) {
+            continue;
+        } else {
+            out.push(e.to_string());
+        }
+    }
+    if !had && !out.iter().any(|x| name(x) == to_n) {
+        // An empty list (`-m ""`, or a trailing ':') keeps its shape.
+        if out.last().is_some_and(String::is_empty) {
+            out.pop();
+        }
+        out.push(to.to_string());
+    }
+    out.join(":")
 }
 
 #[cfg(test)]
@@ -725,21 +792,62 @@ mod tests {
     fn mkinitrd_replays() {
         let k = vec!["5.15.161".to_string()];
         assert_eq!(
-            mkinitrd_replay("/sbin/mkinitrd -c -k 5.15.19 -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz", &k, "/boot/initrd.gz").unwrap(),
+            mkinitrd_replay("/sbin/mkinitrd -c -k 5.15.19 -f xfs -r /dev/vda3 -m xfs -u -o /boot/initrd.gz", &k, "/boot/initrd.gz", None).unwrap(),
             ["mkinitrd", "-c", "-k", "5.15.161", "-f", "xfs", "-r", "/dev/vda3", "-m", "xfs", "-u", "-o", "/boot/initrd.gz"]
         );
         // The source's order, word for word, when the kernel is the same
         // (slackware15-uefi's command_line); a second -k dropped.
         let line = "/sbin/mkinitrd -c -k 5.15.19 -f xfs -r /dev/vda3 -m virtio_blk:xfs -u -o /boot/initrd.gz";
-        assert_eq!(mkinitrd_replay(line, &["5.15.19".into()], "/boot/initrd.gz").unwrap().join(" "), line.replacen("/sbin/", "", 1));
-        assert_eq!(mkinitrd_replay("mkinitrd -k 1 -c -k 2", &k, "/boot/initrd.gz").unwrap(), ["mkinitrd", "-k", "5.15.161", "-c"]);
-        assert_eq!(mkinitrd_replay("mkinitrd -F", &k, "/boot/initrd.gz").unwrap(), ["mkinitrd", "-F", "-k", "5.15.161"]);
-        assert_eq!(mkinitrd_replay("mkinitrd -c", &["6.1".into(), "6.2".into()], "/boot/initrd.gz").unwrap(), ["mkinitrd", "-c", "-k", "6.1:6.2"]);
-        assert!(mkinitrd_replay("dracut -f", &k, "/boot/initrd.gz").is_none());
-        assert!(mkinitrd_replay("mkinitrd -c", &[], "/boot/initrd.gz").is_none());
-        assert!(mkinitrd_replay("", &k, "/boot/initrd.gz").is_none());
+        assert_eq!(mkinitrd_replay(line, &["5.15.19".into()], "/boot/initrd.gz", None).unwrap().join(" "), line.replacen("/sbin/", "", 1));
+        assert_eq!(mkinitrd_replay("mkinitrd -k 1 -c -k 2", &k, "/boot/initrd.gz", None).unwrap(), ["mkinitrd", "-k", "5.15.161", "-c"]);
+        assert_eq!(mkinitrd_replay("mkinitrd -F", &k, "/boot/initrd.gz", None).unwrap(), ["mkinitrd", "-F", "-k", "5.15.161"]);
+        assert_eq!(mkinitrd_replay("mkinitrd -c", &["6.1".into(), "6.2".into()], "/boot/initrd.gz", None).unwrap(), ["mkinitrd", "-c", "-k", "6.1:6.2"]);
+        assert!(mkinitrd_replay("dracut -f", &k, "/boot/initrd.gz", None).is_none());
+        assert!(mkinitrd_replay("mkinitrd -c", &[], "/boot/initrd.gz", None).is_none());
+        assert!(mkinitrd_replay("", &k, "/boot/initrd.gz", None).is_none());
         // A relative -o is given absolute: in the chroot it would be from /.
-        assert_eq!(mkinitrd_replay("./mkinitrd -c -o initrd-custom.gz", &k, "/boot/initrd-custom.gz").unwrap(), ["mkinitrd", "-c", "-o", "/boot/initrd-custom.gz", "-k", "5.15.161"]);
+        assert_eq!(mkinitrd_replay("./mkinitrd -c -o initrd-custom.gz", &k, "/boot/initrd-custom.gz", None).unwrap(), ["mkinitrd", "-c", "-o", "/boot/initrd-custom.gz", "-k", "5.15.161"]);
+    }
+
+    /// Under --reformat of /, the replay changes only -f and the old
+    /// type's module in -m (docs/design/slackware.md); everything else is
+    /// the source's, word for word.
+    #[test]
+    fn mkinitrd_replays_a_reformatted_root() {
+        let k = vec!["5.15.19".to_string()];
+        let r = |line: &str, from: &str, to: &str| mkinitrd_replay(line, &k, "/boot/initrd.gz", Some((from, to))).unwrap().join(" ");
+        // slackware15-uefi's command line, onto ext4 and btrfs: xfs's
+        // place in -m is the new type's, the virtio modules as they were.
+        let uefi = "/sbin/mkinitrd -c -k 5.15.19 -f xfs -r /dev/vda3 -m virtio_blk:virtio_pci_modern_dev:virtio_pci:virtio:virtio_balloon:virtio_ring:virtio_net:xfs -u -o /boot/initrd.gz";
+        assert_eq!(r(uefi, "xfs", "ext4"), "mkinitrd -c -k 5.15.19 -f ext4 -r /dev/vda3 -m virtio_blk:virtio_pci_modern_dev:virtio_pci:virtio:virtio_balloon:virtio_ring:virtio_net:ext4 -u -o /boot/initrd.gz");
+        assert_eq!(r(uefi, "xfs", "btrfs"), "mkinitrd -c -k 5.15.19 -f btrfs -r /dev/vda3 -m virtio_blk:virtio_pci_modern_dev:virtio_pci:virtio:virtio_balloon:virtio_ring:virtio_net:btrfs -u -o /boot/initrd.gz");
+        // Not reformatted: as before.
+        assert_eq!(mkinitrd_replay(uefi, &k, "/boot/initrd.gz", None).unwrap().join(" "), uefi.replacen("/sbin/", "", 1));
+        // An ext4 root as mkinitrd_command_generator.sh writes it (the
+        // module's dependencies listed before it), onto xfs and btrfs: the
+        // dependencies stay, ext4's place is the new type's.
+        let generated = "mkinitrd -c -k 5.15.19 -f ext4 -r /dev/sda2 -m mbcache:jbd2:ext4 -u -o /boot/initrd.gz";
+        assert_eq!(r(generated, "ext4", "xfs"), "mkinitrd -c -k 5.15.19 -f xfs -r /dev/sda2 -m mbcache:jbd2:xfs -u -o /boot/initrd.gz");
+        assert_eq!(r(generated, "ext4", "btrfs"), "mkinitrd -c -k 5.15.19 -f btrfs -r /dev/sda2 -m mbcache:jbd2:btrfs -u -o /boot/initrd.gz");
+        // The old type first in -m: replaced where it is.
+        assert_eq!(r("mkinitrd -c -k 5.15.19 -f ext4 -m ext4:ahci -r /dev/sda2", "ext4", "xfs"), "mkinitrd -c -k 5.15.19 -f xfs -m xfs:ahci -r /dev/sda2");
+        // The old type not in -m (a kernel with it built in): the new
+        // one's added at the end of -m (a built-in one puts nothing in the
+        // image; a module, on the generic kernel, is needed).
+        assert_eq!(r("mkinitrd -c -k 5.15.19 -f ext4 -m ahci -r /dev/sda2", "ext4", "xfs"), "mkinitrd -c -k 5.15.19 -f xfs -m ahci:xfs -r /dev/sda2");
+        // No -m and no -f: both added at the end (mkinitrd would take the
+        // type from the restored tree's /rootfs, the old one).
+        assert_eq!(r("mkinitrd -k 5.15.19 -r /dev/sda2 -o /boot/initrd.gz", "ext4", "xfs"), "mkinitrd -k 5.15.19 -r /dev/sda2 -o /boot/initrd.gz -f xfs -m xfs");
+        // The new type listed already: kept once.
+        assert_eq!(r("mkinitrd -k 5.15.19 -f xfs -m xfs:ext4:ahci", "xfs", "ext4"), "mkinitrd -k 5.15.19 -f ext4 -m ext4:ahci");
+        assert_eq!(r("mkinitrd -k 5.15.19 -f xfs -m ext4:ahci", "xfs", "ext4"), "mkinitrd -k 5.15.19 -f ext4 -m ext4:ahci");
+        // An empty -m, and one with a trailing ':'.
+        assert_eq!(mkinitrd_modules("", "xfs", "ext4"), "ext4");
+        assert_eq!(mkinitrd_modules("ahci:", "xfs", "ext4"), "ahci:ext4");
+        assert_eq!(mkinitrd_modules("ahci::xfs", "xfs", "ext4"), "ahci::ext4");
+        // A word for word -f naming another type than the dump's still
+        // becomes the new one: the initrd mounts / as -f says.
+        assert_eq!(r("mkinitrd -k 5.15.19 -f auto -m xfs", "xfs", "ext4"), "mkinitrd -k 5.15.19 -f ext4 -m ext4");
     }
 
     /// -current's kernels are /boot/vmlinuz-VERSION, their flavor the

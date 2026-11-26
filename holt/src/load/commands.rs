@@ -6251,6 +6251,20 @@ impl Builder<'_> {
         }
     }
 
+    /// The source's / when --reformat makes it again: (its old type, its
+    /// new type), from the edited layout (fstab's / and the device it
+    /// resolves to, whose content reformat::apply marked).
+    fn root_reformat(&self) -> Option<(String, String)> {
+        if !self.opts.reformats.iter().any(|(m, _)| m == "/") {
+            return None;
+        }
+        let e = self.layout.arr(&["storage", "fstab"]).iter().find(|e| s(e, "file").as_deref() == Some("/"))?;
+        let d = crate::load::layout::find_device(&self.layout.v, &s(e, "resolves_to")?)?;
+        let from = d.at(&["content", "reformatted_from"]).and_then(Value::as_str)?;
+        let to = d.at(&["content", "type"]).and_then(Value::as_str)?;
+        Some((from.to_string(), to.to_string()))
+    }
+
     /// Slackware's mkinitrd step, as the dump read it
     /// (boot.initramfs.mkinitrd): the source's own command
     /// (/boot/initrd-tree/command_line) with -k for its kernels, else
@@ -6264,9 +6278,11 @@ impl Builder<'_> {
         }
         let k = kernels.join(", ");
         let mut argv = vec!["chroot".to_string(), t.to_string()];
-        if let Some(r) = s(&m, "command_line").and_then(|c| crate::boot::mkinitrd_replay(&c, &kernels, &output)) {
+        let root = self.root_reformat();
+        if let Some(r) = s(&m, "command_line").and_then(|c| crate::boot::mkinitrd_replay(&c, &kernels, &output, root.as_ref().map(|(f, t)| (f.as_str(), t.as_str())))) {
             argv.extend(r);
-            return Ok(Cmd { argv, ..Cmd::default() }.why(format!("the initrd, by the source's own mkinitrd command ({}), for kernel {k}", crate::boot::MKINITRD_COMMAND_LINE)));
+            let fs = root.map(|(f, t)| format!(", with --reformat's / as {t}: -f {t}, and {t} for {f} in -m")).unwrap_or_default();
+            return Ok(Cmd { argv, ..Cmd::default() }.why(format!("the initrd, by the source's own mkinitrd command ({}), for kernel {k}{fs}", crate::boot::MKINITRD_COMMAND_LINE)));
         }
         if s(&m, "conf").is_some() {
             argv.extend(["mkinitrd".to_string(), "-F".into(), "-k".into(), kernels.join(":")]);
@@ -6419,8 +6435,13 @@ impl Builder<'_> {
     fn mkinitrd_kept(&self) -> Result<String, String> {
         let m = |k: &str| self.layout.str_at(&["boot", "initramfs", "mkinitrd", k]).map(str::to_string);
         let output = m("output").unwrap_or_else(|| crate::boot::MKINITRD_OUTPUT.into());
-        if !self.opts.reformats.is_empty() {
-            return Err("--reformat makes a filesystem of another type, which the initrd may mount (its -f)".into());
+        // Only / is the initrd's (its init mounts nothing else): another
+        // mount --reformat makes again leaves it as it was.
+        if self.opts.reformats.iter().any(|(m, _)| m == "/") {
+            return Err(match self.root_reformat() {
+                Some((from, to)) => format!("--reformat makes / {to}, and the initrd mounts it as {from} (its -f) with {from}'s module"),
+                None => "--reformat makes / again, of another type than the initrd mounts".into(),
+            });
         }
         let Some(cmd) = m("command_line") else {
             return Err(format!("the dump has no {} to say what it was made with", crate::boot::MKINITRD_COMMAND_LINE));
@@ -6521,6 +6542,7 @@ impl Builder<'_> {
     fn slackware_initramfs(&mut self, t: &str) -> Vec<Cmd> {
         let generator = self.layout.str_at(&["boot", "initramfs", "generator"]).unwrap_or("unknown").to_string();
         let root_crypt = self.slackware_root_crypt();
+        let root_new = self.opts.reformats.iter().find(|(m, _)| m == "/").map(|(_, t)| t.clone());
         match generator.as_str() {
             "none" => self.notes.push("Slackware: no initrd (no loader configuration names one, and there is no /boot/initrd.gz): nothing is made, and the kernel boots without one, as on the source".into()),
             // LUKS (mkinitrd -C, or a root on /dev/mapper) is out of
@@ -6533,6 +6555,14 @@ impl Builder<'_> {
                     _ => root_crypt.clone().unwrap_or_default(),
                 };
                 self.problems.push(format!("Slackware: mkinitrd's initrd unlocks LUKS ({why}); bko-holt load doesn't support Slackware on LUKS in this release"));
+            }
+            // --reformat of /: the restored initrd mounts the old type, so
+            // it must be made again for the new one, or load stops here
+            // (reformat.rs refuses what it knows can't be: this is for
+            // what it didn't see).
+            "mkinitrd" if root_new.is_some() && (self.mkinitrd_cmd(t).is_err() || self.root_reformat().is_none()) => {
+                let why = self.mkinitrd_cmd(t).err().unwrap_or_else(|| "the reformatted root's old and new types aren't in the layout".into());
+                self.problems.push(format!("Slackware: --reformat makes / {}, but mkinitrd's initrd, which mounts it as the source's type, can't be made again: {why}", root_new.unwrap_or_default()));
             }
             "mkinitrd" => match (self.mkinitrd_cmd(t), self.mkinitrd_kept()) {
                 (Ok(_), Ok(why)) => self.notes.push(format!("Slackware: {why}")),
@@ -6553,6 +6583,13 @@ impl Builder<'_> {
                 self.problems.push(format!("Slackware: geninitrd's initrd unlocks LUKS ({luks}); bko-holt load doesn't support Slackware on LUKS in this release"));
             }
             "geninitrd" => match self.geninitrd_steps(t) {
+                // --reformat of /: an image that stays mounts the old type
+                // (one for a kernel /boot no longer has can't be booted).
+                Ok((_, notes)) if root_new.is_some() && notes.iter().any(|n| !n.contains(", which has no /boot/vmlinuz-")) => {
+                    let stay: Vec<&str> = notes.iter().map(String::as_str).filter(|n| !n.contains(", which has no /boot/vmlinuz-")).collect();
+                    self.problems.push(format!("Slackware: --reformat makes / {}, but geninitrd's restored images that stay mount it as the source's type: {}", root_new.unwrap_or_default(), stay.join("; ")));
+                }
+                Err(why) if root_new.is_some() => self.problems.push(format!("Slackware: --reformat makes / {}, but geninitrd's images, which mount it as the source's type, can't be made again: {why}", root_new.unwrap_or_default())),
                 Ok((steps, notes)) => {
                     self.notes.extend(notes.into_iter().map(|n| format!("Slackware: {n}")));
                     let cmds: Vec<Cmd> = steps.into_iter().flat_map(|(_, c)| c).collect();

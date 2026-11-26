@@ -5066,6 +5066,8 @@ fn slackware_plan_map(t: &Tree, pairs: &[(&str, &str)], args: &[&str]) -> (Value
     let mut a = vec!["l.json".to_string()];
     a.extend(args.iter().map(|x| x.to_string()));
     let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
+    // --reformat: the layout every stage works from, as load::run edits it.
+    let l = crate::load::reformat::edited(&l, &o.reformats).unwrap_or(l);
     (v, commands::build(&l, &o, &Mapping { pairs: pairs.iter().map(|(s, t)| (s.to_string(), t.to_string())).collect(), ..Mapping::default() }))
 }
 
@@ -5362,6 +5364,85 @@ fn slackware15_grub() {
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
     assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vda\n") && bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{bt}");
     assert!(!bt.contains("lilo") && !bt.contains("update-grub"), "{bt}");
+}
+
+/// --reformat /=TYPE of slackware15-uefi (docs/design/slackware.md): the
+/// restored initrd mounts / as xfs, so it is made again by the source's own
+/// command with -f and xfs's place in -m the new type's, and nothing else
+/// changed; rewrite runs before it (fstab), the ESP's copies are the new
+/// image, and rewrite --check reads the images back last.  What load can't
+/// make again for the new type is refused at plan time.
+#[test]
+fn slackware15_uefi_reformat() {
+    use crate::load::{commands::Cmd, Stage};
+    let k = SLACK_KV;
+    for to in ["ext4", "btrfs"] {
+        let t = slackware15_uefi();
+        t.file("/var/lib/pkgtools/packages/btrfs-progs-5.16-x86_64-1", "PACKAGE NAME:     btrfs-progs-5.16-x86_64-1\n");
+        let arg = format!("/={to}");
+        let (_, b) = slackware_plan(&t, "vda", &["--reformat", &arg]);
+        assert!(b.problems.is_empty(), "{to}: {:?}", b.problems);
+        let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+        let rw = bt.find(&format!(" rewrite l.json /mnt/bko-target --reformat /={to}\n")).expect(&bt);
+        let mk = bt.find(&format!("chroot /mnt/bko-target mkinitrd -c -k {k} -f {to} -r /dev/vda3 -m {to} -u -o /boot/initrd.gz\n")).expect(&bt);
+        assert!(bt.contains(&format!("for kernel {k}, with --reformat's / as {to}: -f {to}, and {to} for xfs in -m; made again because --reformat makes / {to}, and the initrd mounts it as xfs (its -f) with xfs's module\n")), "{bt}");
+        let esp = bt.find("cp /mnt/bko-target/boot/initrd.gz /mnt/bko-target/boot/efi/EFI/Slackware/initrd.gz\n").expect(&bt);
+        let check = bt.find(&format!(" rewrite l.json /mnt/bko-target --check --reformat /={to}\n")).expect(&bt);
+        assert!(rw < mk && mk < esp && esp < check, "{bt}");
+        assert_eq!(bt.matches("mkinitrd -c").count(), 1, "{bt}");
+    }
+    // The source's other modules and options stay as they were.
+    let t = slackware15_uefi();
+    t.file("/boot/initrd-tree/command_line", format!("/sbin/mkinitrd -c -k {k} -f xfs -r /dev/vda3 -m virtio_blk:virtio_pci:xfs -u -w 2 -o /boot/initrd.gz\n"));
+    let bt: String = slackware_plan(&t, "vda", &["--reformat", "/=ext4"]).1.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains(&format!("chroot /mnt/bko-target mkinitrd -c -k {k} -f ext4 -r /dev/vda3 -m virtio_blk:virtio_pci:ext4 -u -w 2 -o /boot/initrd.gz\n")), "{bt}");
+    // Refused: mkinitrd -F (its /etc/mkinitrd.conf names the old type), and
+    // an elilo.conf append= with rootfstype= (not rewritten).
+    let t = slackware15_uefi();
+    t.file("/boot/initrd-tree/command_line", format!("/sbin/mkinitrd -F -k {k}\n")).file("/etc/mkinitrd.conf", "ROOTFS=\"xfs\"\nMODULE_LIST=\"xfs\"\n");
+    let b = slackware_plan(&t, "vda", &["--reformat", "/=ext4"]).1;
+    assert!(b.problems.iter().any(|p| p.contains("--reformat /=ext4: Slackware's initrd has to be made again for the new type, and its command (mkinitrd -F) reads /etc/mkinitrd.conf")), "{:?}", b.problems);
+    let t = slackware15_uefi();
+    let conf = "image=vmlinuz\n        label=vmlinuz\n        initrd=initrd.gz\n        read-only\n        append=\"root=/dev/vda3 rootfstype=xfs ro\"\n";
+    t.file("/boot/efi/EFI/Slackware/elilo.conf", conf);
+    let b = slackware_plan(&t, "vda", &["--reformat", "/=ext4"]).1;
+    assert!(b.problems.iter().any(|p| p.contains("--reformat /=ext4: EFI/Slackware/elilo.conf's append= gives the kernel rootfstype=xfs")), "{:?}", b.problems);
+    // Without --reformat, as before: the restored initrd stays.
+    let bt: String = slackware_plan(&slackware15_uefi(), "vda", &[]).1.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(!bt.contains("mkinitrd") && !bt.contains(" rewrite "), "{bt}");
+}
+
+/// --reformat of slackware15 (BIOS, LILO, an ext4 /): with the huge
+/// kernel and no initrd nothing is made (the huge kernel has ext4, xfs and
+/// btrfs built in); with a mkinitrd initrd, its command as
+/// mkinitrd_command_generator.sh writes one for ext4 (ext4's dependencies
+/// first in -m), made again for xfs and btrfs: -f and ext4's place in -m
+/// change, jbd2 and mbcache stay, and lilo maps the new image after it.
+#[test]
+fn slackware15_reformat() {
+    use crate::load::{commands::Cmd, Stage};
+    let k = SLACK_KV;
+    let t = slackware15();
+    let (_, b) = slackware_plan(&t, "vda", &["--reformat", "/=xfs"]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(!bt.contains("mkinitrd") && bt.contains(" rewrite l.json /mnt/bko-target --reformat /=xfs\n") && bt.contains("lilo -C /etc/lilo.conf.bko-holt -S /dev/null -v\n"), "{bt}");
+    for to in ["xfs", "btrfs"] {
+        let t = slackware15();
+        let lilo = std::fs::read_to_string(t.p("/etc/lilo.conf")).unwrap().replace("  label = Linux\n", "  label = Linux\n  initrd = /boot/initrd.gz\n");
+        t.file("/etc/lilo.conf", lilo)
+            .file("/boot/initrd.gz", "mkinitrd's initrd")
+            .file("/boot/initrd-tree/command_line", format!("mkinitrd -c -k {k} -f ext4 -r /dev/vda2 -m mbcache:jbd2:ext4 -u -o /boot/initrd.gz\n"))
+            .file("/var/lib/pkgtools/packages/btrfs-progs-5.16-x86_64-1", "PACKAGE NAME:     btrfs-progs-5.16-x86_64-1\n");
+        let arg = format!("/={to}");
+        let (v, b) = slackware_plan(&t, "vda", &["--reformat", &arg]);
+        assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "mkinitrd");
+        assert!(b.problems.is_empty(), "{to}: {:?}", b.problems);
+        let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+        let mk = bt.find(&format!("chroot /mnt/bko-target mkinitrd -c -k {k} -f {to} -r /dev/vda2 -m mbcache:jbd2:{to} -u -o /boot/initrd.gz\n")).expect(&bt);
+        let lilo = bt.find("lilo -C /etc/lilo.conf.bko-holt -S /dev/null -v\n").expect(&bt);
+        assert!(mk < lilo, "{bt}");
+    }
 }
 
 /// slackware15-uefi read back and planned: ELILO from the ESP's files (the

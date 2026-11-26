@@ -168,10 +168,39 @@ yet. Code references are to local `main` at 1edb4b5.
   `ldconfig` rewrote the system's `/etc/ld.so.cache` and
   `/var/cache/ldconfig/aux-cache` (BackShot2 tier 1, slackware15-uefi).
   When it is remade, the replay keeps the source's words in their order
-  (only `-k` and `-o` are given), those two files and their directories'
+  (only `-k` and `-o` are given; `-f` and `-m` too for a reformatted /,
+  below), those two files and their directories'
   times are put back afterwards, and the tree's `/dev` is put back as the
   source's tree had it and the image packed from the tree again, as
   mkinitrd packs it (not with `-P`, a microcode image in front).
+- **`--reformat /=TYPE` (2026-11-26):** the initrd's init mounts / only,
+  as the type in its `/rootfs` (mkinitrd's `-f`), with the modules of `-m`
+  (mkinitrd 1.4.11 adds their dependencies itself, by `modprobe
+  --show-depends`: ext4's jbd2 and mbcache; a built-in module adds
+  nothing). So a reformat of another mount keeps the image, and one of /
+  remakes it by the source's command with two words changed and nothing
+  else: `-f` becomes the new type (added at the end if there was none: the
+  restored tree's `/rootfs` says the old one), and in `-m` each entry that
+  is the old type's module becomes the new type's, in its place; the new
+  one is added at the end when the old wasn't listed (`-m NEW` when there
+  was no `-m`), which on 15.0's generic kernel (ext4, xfs and btrfs are
+  modules) is needed and on the huge one (all built in) changes nothing.
+  The old type's other modules the source listed (jbd2, mbcache) stay. So
+  slackware15-uefi's `-f xfs ... -m virtio_...:xfs` is made as
+  `-f ext4 ... -m virtio_...:ext4`. The huge kernel with no initrd
+  (slackware15) needs nothing. Refused at plan time (reformat.rs, reason
+  `other`), because load can't make the initrd right for the new type: a
+  `mkinitrd -F` command, or no `command_line` (mkinitrd would read
+  `/etc/mkinitrd.conf`'s ROOTFS and MODULE_LIST, which aren't rewritten);
+  no kernel with modules; geninitrd with GENERATOR=mkinitrd or an override
+  script (its command generator is fine: it probes the new filesystem);
+  and a LILO or ELILO `append=`/`addappend=` with `rootfstype=`, `rootfs=`
+  or `rootflags=` (lilo.conf and elilo.conf aren't rewritten). fstab is
+  rewritten as on every reformat (rewrite.rs); `root=` by name stays.
+  `bko-holt rewrite --check` reads each image back (`/boot/initrd.gz`,
+  the ESP's `EFI/*/initrd.gz`, geninitrd's `initrd-VERSION.img`) with the
+  restored system's gzip and cpio: its `/rootfs` must say the new type and
+  it must hold the new type's module, or its kernel have it built in.
 - **LILO (BIOS), a new arm:** `chroot /mnt/bko-target lilo -v`, after the
   initrd step. It needs `/dev`, `/proc` and `/sys` in the chroot (the boot
   stage binds them already) and `boot=` naming the target disk. `lilo -t`

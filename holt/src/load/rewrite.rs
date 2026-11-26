@@ -490,6 +490,18 @@ fn boot_dirs(layout: &Value) -> Vec<String> {
     v
 }
 
+/// What a Slackware initrd's /rootfs (ROOTFS, trimmed) says of change C's
+/// /: its init mounts / as that type (`mount -t $ROOTFS`).
+fn slackware_rootfs_verdict(rootfs: &str, c: &Change) -> Result<String, String> {
+    if rootfs == c.to {
+        Ok(format!("its init mounts / as {} (/rootfs)", c.to))
+    } else if rootfs.is_empty() {
+        Err(format!("it has no /rootfs, so its init wouldn't know / is {}", c.to))
+    } else {
+        Err(format!("its /rootfs says {rootfs}, so its init would mount / as {rootfs}, not {}", c.to))
+    }
+}
+
 struct Run<'a> {
     t: &'a str,
     log: String,
@@ -658,6 +670,7 @@ impl Run<'_> {
                 self.log += "bko-holt rewrite: the initramfs came with its kernel; not checked\n";
                 return;
             }
+            Some(g @ ("mkinitrd" | "geninitrd")) => return self.check_slackware_initrd(c, layout, g),
             // mkinitfs (Alpine), booster (PikaOS), tiny-initramfs: no lister.
             g => {
                 self.log += &format!("bko-holt rewrite: {}'s images aren't listed here; not checked\n", g.unwrap_or("an unknown generator"));
@@ -686,7 +699,6 @@ impl Run<'_> {
             self.errors.push("no initramfs image found under /boot or the ESP to check".into());
             return;
         }
-        let module = format!("/kernel/fs/{0}/{0}.ko", c.to);
         for img in images {
             let inside = img.to_string_lossy().trim_start_matches(self.t).to_string();
             let out = std::process::Command::new("chroot").args([self.t, lister, &inside]).output();
@@ -701,19 +713,104 @@ impl Run<'_> {
                     continue;
                 }
             };
-            if text.lines().any(|l| l.contains(&module)) {
-                self.log += &format!("bko-holt rewrite: {inside} has {}\n", module.trim_start_matches('/'));
-                continue;
+            self.module_in(&inside, &text, c);
+        }
+    }
+
+    /// Whether the image INSIDE (its file list, TEXT) has the new type's
+    /// module, or its kernel (the first lib/modules/K it lists) has it
+    /// built in; logged, or an error.
+    fn module_in(&mut self, inside: &str, text: &str, c: &Change) {
+        let module = format!("/kernel/fs/{0}/{0}.ko", c.to);
+        if text.lines().any(|l| l.contains(&module)) {
+            self.log += &format!("bko-holt rewrite: {inside} has {}\n", module.trim_start_matches('/'));
+            return;
+        }
+        let kver = text.lines().find_map(|l| l.split_once("lib/modules/").and_then(|(_, r)| r.split('/').next()).filter(|k| !k.is_empty()).map(str::to_string));
+        let builtin = kver.as_ref().is_some_and(|k| {
+            ["/usr/lib/modules", "/lib/modules"].iter().any(|m| self.read_confined(&self.at(&format!("{m}/{k}/modules.builtin"))).is_some_and(|b| b.lines().any(|l| format!("/{l}").starts_with(&module))))
+        });
+        if builtin {
+            self.log += &format!("bko-holt rewrite: {inside}: {} is built into {}\n", c.to, kver.unwrap_or_default());
+        } else {
+            self.errors.push(format!("{inside} has no {} module, and its kernel{} doesn't have it built in", c.to, kver.map(|k| format!(" ({k})")).unwrap_or_default()));
+        }
+    }
+
+    /// Slackware's initrd images (docs/design/slackware.md): 15.0's
+    /// mkinitrd's (its -o, /boot/initrd.gz) and the ESPs' copies of it
+    /// (ELILO's), -current's geninitrd's /boot/initrd-VERSION.img.  Its
+    /// init mounts / only, as the type in its /rootfs: for a reformatted /,
+    /// each image's /rootfs must say the new type and the image hold the
+    /// new type's module (or the kernel have it built in).  Read with the
+    /// restored system's own gzip and cpio (mkinitrd packs `cpio -o -H
+    /// newc | gzip`); one with a microcode archive in front (-P) isn't.
+    fn check_slackware_initrd(&mut self, c: &Change, layout: &Value, generator: &str) {
+        if c.mount != "/" {
+            self.log += &format!("bko-holt rewrite: {generator}'s initrd mounts / only; not checked for {}\n", c.mount);
+            return;
+        }
+        let mk = |k: &str| layout.at(&["boot", "initramfs", "mkinitrd", k]).and_then(Value::as_str);
+        if generator == "mkinitrd" && mk("command_line").is_some_and(|l| l.split_whitespace().any(|w| w == "-P")) {
+            self.log += "bko-holt rewrite: mkinitrd's initrd has a microcode archive in front (-P); not checked\n";
+            return;
+        }
+        let mut images: Vec<PathBuf> = Vec::new();
+        if generator == "mkinitrd" {
+            let out = mk("output").unwrap_or(crate::boot::MKINITRD_OUTPUT);
+            if crate::load::commands::safe_target_subpath(out) {
+                images.push(self.at(out));
             }
-            let kver = text.lines().find_map(|l| l.split_once("lib/modules/").and_then(|(_, r)| r.split('/').next()).filter(|k| !k.is_empty()).map(str::to_string));
-            let builtin = kver.as_ref().is_some_and(|k| {
-                ["/usr/lib/modules", "/lib/modules"].iter().any(|m| self.read_confined(&self.at(&format!("{m}/{k}/modules.builtin"))).is_some_and(|b| b.lines().any(|l| format!("/{l}").starts_with(&module))))
-            });
-            if builtin {
-                self.log += &format!("bko-holt rewrite: {inside}: {} is built into {}\n", c.to, kver.unwrap_or_default());
-            } else {
-                self.errors.push(format!("{inside} has no {} module, and its kernel{} doesn't have it built in", c.to, kver.map(|k| format!(" ({k})")).unwrap_or_default()));
+        }
+        for d in boot_dirs(layout) {
+            let dir = self.at(&d);
+            for p in read_dir(&dir) {
+                let n = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                if is_file(&p) && ((n.starts_with("initrd-") && n.ends_with(".img")) || n == "initrd.gz") {
+                    images.push(p);
+                }
             }
+            // ELILO's copies, EFI/DIR/initrd.gz (eliloconfig's).
+            for e in read_dir(&self.at(&format!("{d}/EFI"))).into_iter().filter(|e| is_dir(e)) {
+                images.extend(read_dir(&e).into_iter().filter(|f| is_file(f) && f.file_name().is_some_and(|n| n == "initrd.gz")));
+            }
+        }
+        images.sort();
+        images.dedup();
+        if images.is_empty() {
+            self.errors.push(format!("no {generator} initrd image found under /boot or the ESP to check"));
+            return;
+        }
+        for img in images {
+            let inside = img.to_string_lossy().trim_start_matches(self.t).to_string();
+            let run = |what: &str| std::process::Command::new("chroot").args([self.t, "/bin/sh", "-c", what, "sh", &inside]).output();
+            let list = match run("gzip -dc -- \"$1\" | cpio -it --quiet") {
+                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+                Ok(o) => {
+                    self.errors.push(format!("{inside}: gzip -dc | cpio -it: {}", String::from_utf8_lossy(&o.stderr).trim()));
+                    continue;
+                }
+                Err(e) => {
+                    self.errors.push(format!("chroot {} /bin/sh: {e}", self.t));
+                    continue;
+                }
+            };
+            let rootfs = match run("gzip -dc -- \"$1\" | cpio -i --quiet --to-stdout rootfs") {
+                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+                Ok(o) => {
+                    self.errors.push(format!("{inside}: its /rootfs: {}", String::from_utf8_lossy(&o.stderr).trim()));
+                    continue;
+                }
+                Err(e) => {
+                    self.errors.push(format!("chroot {} /bin/sh: {e}", self.t));
+                    continue;
+                }
+            };
+            match slackware_rootfs_verdict(&rootfs, c) {
+                Ok(l) => self.log += &format!("bko-holt rewrite: {inside}: {l}\n"),
+                Err(e) => self.errors.push(format!("{inside}: {e}")),
+            }
+            self.module_in(&inside, &list, c);
         }
     }
 
@@ -952,6 +1049,17 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         let out3 = fstab("UUID=x /mnt/trailing\\040 btrfs subvol=@ 0 0\n", &c3).unwrap();
         assert_eq!(out3, "UUID=x\t/mnt/trailing\\040\txfs\tnoatime\t0\t0\n");
         assert_eq!(fstab(&out3, &c3).unwrap(), out3);
+    }
+
+    /// A Slackware initrd's /rootfs, read back by rewrite --check: the new
+    /// type, or an error naming what its init would mount / as.
+    #[test]
+    fn slackware_rootfs() {
+        let mut c = change();
+        c.to = "ext4".into();
+        assert_eq!(slackware_rootfs_verdict("ext4", &c), Ok("its init mounts / as ext4 (/rootfs)".into()));
+        assert_eq!(slackware_rootfs_verdict("btrfs", &c), Err("its /rootfs says btrfs, so its init would mount / as btrfs, not ext4".into()));
+        assert!(slackware_rootfs_verdict("", &c).unwrap_err().contains("no /rootfs"));
     }
 
     #[test]

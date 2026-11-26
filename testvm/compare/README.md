@@ -127,6 +127,20 @@ RAM disk (cmp-run.sh's ceiling, which `cmp-run.sh --ceiling` prints, is
 at a time there (`JOBS_CAP` 1): two fs_roundtrip.py peak at 12.2 GiB in RAM,
 one at about 6.1.  Choubox's 4G RAM disk (ceiling 3.0 6.0) is smaller than
 one fs_roundtrip.py's peak.
+
+`SPLIT=all` (or `SPLIT=H,H`) deals one round over the hosts instead, each
+step to one host, by capability and never by name or class
+(docs/design/img-speed.md F6, 2026-11-26): ZFS's steps to hosts with OpenZFS,
+bcachefs to one with its tools, a guest platform to one with its guests'
+images (netbsd to one with `vms-bko-build/netbsd11-rust.qcow2` first), a
+linux step only where one fs_roundtrip.py fits the ceiling (6.5 GiB: not
+Choubox).  The capabilities come from the hosts' facts, the same string on
+every host:
+
+    SPLIT_CAPS="$(testvm/test2/split-caps.py --hosts all)"   # on the Mac
+    ssh m@HOST.local "... SPLIT=all SPLIT_CAPS='$SPLIT_CAPS' run-all.sh ..."   # on each host
+
+The profiles above stay each host's default (GateTest2's loop cells run them).
 A file system or step that can't run is a FAIL unless `ALLOW_SKIP` names it.  A fix round runs only what its
 fixes touch, on each round host (each skips the others' platforms); affected.sh
 runs on the Mac, where the forks' histories are:

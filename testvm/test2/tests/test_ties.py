@@ -158,27 +158,30 @@ def split_script():
     return m.group(1)
 
 
+FULL = "zfs,bcachefs,netbsd-build," + ",".join("vm:" + g for g in (
+    "netbsd11", "alpinebsd", "freebsd15", "freebsd15-ufs", "openbsd8", "omnios58", "dragonfly6", "ubuntu24",
+    "ubuntu26-zfsmirror"))
+
+
 class RunAllSplit(unittest.TestCase):
     def deal(self, split, me, env=None):
-        e = dict(os.environ, **(env or {}))
+        e = dict(os.environ, SPLIT_CAPS=f"chopin={FULL},ceil:29 cinqcent={FULL},ceil:29", **(env or {}))
         r = subprocess.run([sys.executable, "-I", "-B", "-", HOSTS_PY, split, me], input=split_script(),
                            capture_output=True, text=True, env=e, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         return {ln.split()[0]: ln.split()[1:] for ln in r.stdout.splitlines() if ln.strip()}
 
     def test_the_tie_goes_to_cinqcent(self):
-        """SPLIT chopin,cinqcent: bcachefs stays at chopin and netbsd at cinqcent (HOME); the
-        first unit both may take, sparse's zfs, is a tie, and goes to cinqcent now."""
+        """SPLIT chopin,cinqcent with the same capabilities (F6: no unit is kept to a host by
+        name): the first unit dealt, freebsd (the heaviest), is a tie, and goes to cinqcent now."""
         c, q = self.deal("chopin,cinqcent", "chopin"), self.deal("chopin,cinqcent", "cinqcent")
         self.assertEqual(c["hosts"], ["chopin", "cinqcent"], "the table's order, as listed")
-        self.assertIn("bcachefs", c["linux"])
-        self.assertIn("netbsd", q["plats"])
-        self.assertIn("zfs", q["sparse"])
-        self.assertNotIn("zfs", c["sparse"])
+        self.assertIn("freebsd", q["plats"])
+        self.assertNotIn("freebsd", c["plats"])
         p = changed_table(cool_chopin)
         self.addCleanup(os.unlink, p)
         old = self.deal("chopin,cinqcent", "chopin", {H.ENV: p})
-        self.assertIn("zfs", old["sparse"], "with chopin cool: the table's order, as before F13")
+        self.assertIn("freebsd", old["plats"], "with chopin cool: the table's order, as before F13")
 
 
 if __name__ == "__main__":

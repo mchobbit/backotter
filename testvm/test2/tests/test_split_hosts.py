@@ -42,6 +42,24 @@ GUEST_PLATS = {"zfsguests": ("ubuntu24", "ubuntu26-zfsmirror"), "dragonfly": ("d
                "netbsd": ("netbsd11", "alpinebsd")}
 
 
+VMS = ",".join("vm:" + g for gs in GUEST_PLATS.values() for g in gs)
+FULL = "zfs,bcachefs,netbsd-build," + VMS
+
+
+def caps(**over):
+    """SPLIT_CAPS as split-caps.py printed it on 2026-11-26 (every amd64 host with zfs and
+    bcachefs, netbsd-build but on choubox; ceilings 29, 9 and choubox's 3), OVER replacing a
+    host's words."""
+    c = {"chopin": FULL + ",ceil:29", "cinqcent": FULL + ",ceil:29", "copland": FULL + ",ceil:9",
+         "cage": FULL + ",ceil:9", "czerny": FULL + ",ceil:9", "choubox": "zfs,bcachefs," + VMS + ",ceil:3"}
+    c.update(over)
+    return " ".join(f"{h}={w}" for h, w in c.items())
+
+
+# The capabilities of before F6's farm: host ZFS and bcachefs tools on the big hosts only.
+OLD = {h: VMS + ",ceil:9" for h in ("copland", "cage", "czerny")}
+
+
 def load(name, path, env=None):
     with mock.patch.dict(os.environ, env or {}):
         loader = importlib.machinery.SourceFileLoader(name, path)
@@ -97,7 +115,8 @@ class RunAllSplit(unittest.TestCase):
         e = {k: v for k, v in os.environ.items()
              if k not in ("LINUX_FS", "SPARSE_FS", "PORT_BASE", "MAX_GUESTS", "COUNT_OTHERS", "GUEST_PORTS", "SPLIT",
                           "ANY_HOST", "STEP_TIMEOUT", "HOST_JOBS", "SPARSE_JOBS", "JOBS_CAP", "ALLOW_SKIP", H.ENV)}
-        e.update(BKO_WORK=os.path.join(self.d, "work"), OLD_BIN="none", UNCHECKED_BINARIES="1", **(env or {}))
+        e.update(BKO_WORK=os.path.join(self.d, "work"), OLD_BIN="none", UNCHECKED_BINARIES="1", SPLIT_CAPS=caps())
+        e.update(env or {})
         return subprocess.run(["bash", RUN_ALL, "--host", host, "--dry-run", *args, os.path.join(self.d, "bin"),
                                os.path.join(self.d, "log")], capture_output=True, text=True, env=e, timeout=120)
 
@@ -114,26 +133,26 @@ class RunAllSplit(unittest.TestCase):
         return r.returncode, lfs, sfs, plats, lost, r.stdout + r.stderr
 
     def test_four_hosts_share_every_step_once(self):
+        """With the capabilities of before F6 (no ZFS or bcachefs tools on the small hosts), the
+        deal is what the names gave: ZFS's steps and bcachefs on the big hosts."""
         self.guests(*[g for gs in GUEST_PLATS.values() for g in gs])
         hosts = ("chopin", "cinqcent", "copland", "cage")
         seen = {"linux": [], "sparse": [], "plats": []}
         for h in hosts:
             rc, lfs, sfs, plats, lost, out = self.share(h, {"SPLIT": "chopin,cinqcent,copland,cage",
-                                                            "ALLOW_SKIP": "sparse-netbsd11"})
+                                                            "ALLOW_SKIP": "sparse-netbsd11",
+                                                            "SPLIT_CAPS": caps(**OLD)})
             self.assertEqual(rc, 0, out)
             self.assertEqual(lost, [], out)
             self.assertIn("== SPLIT chopin cinqcent copland cage: " + h + "'s share:", out)
             seen["linux"] += sorted(lfs)
             seen["sparse"] += sorted(sfs)
             seen["plats"] += sorted(plats & set(GUEST_PLATS))
-            if H.host_class(h) == "small":   # no host ZFS: none of ZFS's steps
+            if H.host_class(h) == "small":   # no zfs or bcachefs in its caps: none of their steps
                 self.assertFalse(lfs & {"zfs", "zfs-onto-ext4", "nonroot", "bcachefs"}, (h, lfs))
                 self.assertFalse(sfs & {"zfs", "zfs-nocomp"}, (h, sfs))
+                self.assertFalse(plats & {"netbsd"}, (h, plats))   # no netbsd-build: the big hosts first
                 self.assertIn("1 host jobs, 1 sparse jobs", out)   # JOBS_CAP as before
-            if h == "chopin":
-                self.assertIn("bcachefs", lfs)
-            if h == "cinqcent":
-                self.assertIn("netbsd", plats)
         for k, want in (("linux", ALL_LFS), ("sparse", ALL_SFS), ("plats", set(GUEST_PLATS))):
             self.assertEqual(sorted(seen[k]), sorted(want), k)   # each once, none left out
 
@@ -160,13 +179,18 @@ class RunAllSplit(unittest.TestCase):
             self.assertFalse({"freebsd", "dragonfly"} <= got[h][2], got)
 
     def test_small_hosts_alone_lose_zfs_on_the_first_only(self):
-        rc, lfs, sfs, plats, lost, out = self.share("copland", {"SPLIT": "copland,cage"})
+        """Without zfs or bcachefs in their caps (before F6's farm) two small hosts lose those
+        steps, as FAIL rows on the first; netbsd goes to one without netbsd-build all the same."""
+        e = {"SPLIT": "copland,cage", "SPLIT_CAPS": caps(**OLD)}
+        rc, lfs, sfs, plats, lost, out = self.share("copland", e)
         self.assertEqual(rc, 0, out)
         want = {("linux", n) for n in ("zfs", "zfs-onto-ext4", "nonroot", "bcachefs")} | \
-            {("sparse", "sparse-zfs"), ("sparse", "sparse-zfs-nocomp"), ("netbsd", "all")}
+            {("sparse", "sparse-zfs"), ("sparse", "sparse-zfs-nocomp")}
         self.assertTrue(want <= set(lost), lost)
-        self.assertIn("it needs a big host", out)
-        rc, lfs2, sfs2, _, lost2, out = self.share("cage", {"SPLIT": "copland,cage"})
+        self.assertNotIn(("netbsd", "all"), lost)
+        self.assertIn("no host of SPLIT can run it: none has zfs (SPLIT_CAPS)", out)
+        self.assertIn("none has bcachefs (SPLIT_CAPS)", out)
+        rc, lfs2, sfs2, _, lost2, out = self.share("cage", e)
         self.assertEqual(rc, 0, out)
         self.assertFalse({x for x in lost2 if x[1] in ("zfs", "all") or "zfs" in x[1]}, lost2)
         self.assertEqual(lfs | lfs2, ALL_LFS - {"zfs", "zfs-onto-ext4", "nonroot", "bcachefs"})
@@ -193,25 +217,28 @@ class RunAllSplit(unittest.TestCase):
 
     def test_overrides_and_platforms_still_choose(self):
         mine = {h: self.share(h, {"SPLIT": "all"})[1] for h in ("copland", "cage")}
-        self.assertIn("ext4", mine["copland"])
-        self.assertNotIn("ext4", mine["cage"])
+        y = sorted(mine["copland"])[0]   # one of copland's
+        self.assertNotIn(y, mine["cage"])
         x = sorted(mine["cage"])[0]   # one of cage's own
-        rc, lfs, sfs, plats, lost, out = self.share("cage", {"SPLIT": "all", "LINUX_FS": f"ext4 {x}"},
+        rc, lfs, sfs, plats, lost, out = self.share("cage", {"SPLIT": "all", "LINUX_FS": f"{y} {x}"},
                                                      ("--platforms", "linux,freebsd"))
         self.assertEqual(rc, 0, out)
-        self.assertEqual(lfs, {x})   # among the share: copland's ext4 is not cage's to run
-        self.assertIn("LINUX_FS ext4 is another host's share of SPLIT", out)
+        self.assertEqual(lfs, {x})   # among the share: copland's step is not cage's to run
+        self.assertIn(f"LINUX_FS {y} is another host's share of SPLIT", out)
         self.assertIn("is another host's share of SPLIT", out)
 
     def test_overrides_never_reach_past_the_share(self):
-        rc, lfs, sfs, plats, lost, out = self.share("cage", {"SPLIT": "all", "LINUX_FS": "ext4"})
-        self.assertEqual(rc, 0, out)   # ext4 is copland's: no linux steps on cage
+        theirs = self.share("copland", {"SPLIT": "all"})[1]
+        y = sorted(theirs - self.share("cage", {"SPLIT": "all"})[1])[0]
+        rc, lfs, sfs, plats, lost, out = self.share("cage", {"SPLIT": "all", "LINUX_FS": y})
+        self.assertEqual(rc, 0, out)   # y is copland's: no linux steps on cage
         self.assertFalse(lfs, out)
         self.assertNotIn("linux", plats)
-        # ZFS's steps stay the big hosts', whatever LINUX_FS and SPARSE_FS say
+        # ZFS's steps stay the hosts' with zfs, whatever LINUX_FS and SPARSE_FS say
         for h in ("copland", "cage"):
             rc, lfs, sfs, plats, lost, out = self.share(h, {"SPLIT": "all", "LINUX_FS": "zfs zfs-onto-ext4 nonroot",
-                                                            "SPARSE_FS": "zfs zfs-nocomp"})
+                                                            "SPARSE_FS": "zfs zfs-nocomp",
+                                                            "SPLIT_CAPS": caps(**OLD)})
             self.assertEqual(rc, 0, out)
             self.assertFalse(lfs, (h, out))
             self.assertFalse(sfs, (h, out))
@@ -242,8 +269,72 @@ class RunAllSplit(unittest.TestCase):
         for h in ("chopin", "cinqcent", "copland", "cage", "czerny", "choubox"):
             out[h] = self.share(h, {"SPLIT": "all"})
             self.assertEqual(out[h][0], 0, out[h][5])
-        self.assertEqual(sorted(x for h in out for x in out[h][1]), sorted(ALL_LFS))
+        self.assertEqual(sorted(x for h in out for x in out[h][1] or ()), sorted(ALL_LFS))
         self.assertTrue(out["czerny"][1], "czerny gets a share")
+
+    # --- F6: by capability, never by name (img-speed.md F6) --------------------------------
+
+    def shares(self, env, hosts=("chopin", "cinqcent", "copland", "cage", "czerny", "choubox")):
+        out = {}
+        for h in hosts:
+            rc, lfs, sfs, plats, lost, o = self.share(h, dict({"SPLIT": "all", "ALLOW_SKIP": "sparse-netbsd11"}, **env))
+            self.assertEqual(rc, 0, o)
+            out[h] = (lfs or set(), sfs or set(), plats & set(GUEST_PLATS), lost, o)   # None: nothing to run
+        return out
+
+    def test_the_farm_of_2026_11_26_deals_to_the_five_build_hosts(self):
+        """F6's proof deal: every step once, on chopin, cinqcent, copland, cage and czerny; ZFS's
+        steps no longer big-only, no linux step on choubox (its ceiling, 3.0, is under one
+        fs_roundtrip.py's 6.5)."""
+        self.guests(*[g for gs in GUEST_PLATS.values() for g in gs])
+        out = self.shares({})
+        for k, i, want in (("linux", 0, ALL_LFS), ("sparse", 1, ALL_SFS), ("plats", 2, set(GUEST_PLATS))):
+            self.assertEqual(sorted(x for h in out for x in out[h][i]), sorted(want), k)
+        busy = {h for h in out if out[h][0] or out[h][1] or out[h][2]}
+        self.assertEqual(busy, {"chopin", "cinqcent", "copland", "cage", "czerny"})
+        self.assertFalse(out["choubox"][0])
+        small_zfs = {x for h in ("copland", "cage", "czerny") for x in out[h][0] | out[h][1]} & \
+            {"zfs", "zfs-onto-ext4", "nonroot", "zfs-nocomp"}
+        self.assertTrue(small_zfs, "a ZFS step on a small host")
+        self.assertEqual([x for h in out for x in out[h][3]], [])
+        self.assertIn("run-all: SPLIT_CAPS chopin=", out["chopin"][4])
+
+    def test_bcachefs_goes_where_the_tool_is(self):
+        no = "zfs,netbsd-build," + VMS
+        out = self.shares({"SPLIT_CAPS": caps(chopin=no + ",ceil:29", cinqcent=no + ",ceil:29", copland=no + ",ceil:9",
+                                              czerny=no + ",ceil:9")})
+        self.assertEqual([h for h in out if "bcachefs" in out[h][0]], ["cage"])
+
+    def test_zfs_follows_zfs_and_netbsd_its_build_image(self):
+        self.guests(*[g for gs in GUEST_PLATS.values() for g in gs])
+        bare = VMS + ",ceil:9"
+        out = self.shares({"SPLIT_CAPS": caps(chopin=VMS + ",ceil:29", cinqcent=VMS + ",ceil:29", copland=bare,
+                                              cage="zfs," + bare, czerny="netbsd-build," + bare, choubox=VMS)})
+        zfs = {"zfs", "zfs-onto-ext4", "nonroot"}
+        self.assertEqual({h for h in out if out[h][0] & zfs or out[h][1] & {"zfs", "zfs-nocomp"}}, {"cage"})
+        self.assertTrue(zfs <= out["cage"][0])
+        self.assertEqual([h for h in out if "netbsd" in out[h][2]], ["czerny"])
+
+    def test_a_guest_image_missing_from_the_caps_keeps_its_platform_off(self):
+        self.guests(*[g for gs in GUEST_PLATS.values() for g in gs])
+        nofb = FULL.replace("vm:freebsd15-ufs,", "")
+        out = self.shares({"SPLIT_CAPS": caps(chopin=nofb + ",ceil:29", copland=nofb + ",ceil:9", cage=nofb + ",ceil:9",
+                                              czerny=nofb + ",ceil:9", choubox="zfs")})
+        self.assertEqual([h for h in out if "freebsd" in out[h][2]], ["cinqcent"])
+        out = self.shares({"SPLIT_CAPS": caps(chopin="zfs", cinqcent="zfs", copland="zfs", cage="zfs", czerny="zfs",
+                                              choubox="zfs")}, ("chopin",))
+        self.assertIn(("freebsd", "all"), out["chopin"][3])
+        self.assertIn("none has vm:freebsd15 vm:freebsd15-ufs (SPLIT_CAPS)", out["chopin"][4])
+
+    def test_the_caps_are_required(self):
+        r = self.run_all("copland", {"SPLIT": "all", "SPLIT_CAPS": ""})
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("SPLIT_CAPS unset", r.stderr)
+        r = self.run_all("copland", {"SPLIT": "all", "SPLIT_CAPS": "copland=zfs cage=zfs"})
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("SPLIT_CAPS has no entry for chopin cinqcent czerny choubox", r.stderr)
+        r = self.run_all("copland")   # no SPLIT: the profiles, no caps needed
+        self.assertEqual(r.returncode, 0, r.stderr)
 
 
 # --- cmp-pop.sh nodisk, cmp-run.sh DISKS_DIR (P18) -----------------------------------------

@@ -7,6 +7,7 @@ that lacks it, or holds it at another generation than the fleet's (tests/test_id
 neither vouches for nor condemns it.  Old facts (no caps) check nothing of it, and a fleet host
 that lacks a guest keeps the cell as before.  No host needed."""
 
+import importlib.util
 import json
 import os
 import shutil
@@ -86,6 +87,44 @@ class ProbeCaps(unittest.TestCase):
         shutil.rmtree(hd)                                      # cage: no /bkoscratch/holttest1d at all
         c = self.probe()
         self.assertEqual((c["holt_rescuer"], c["holt_debs"]), (False, False))
+
+    def test_bcachefs_and_netbsd_build(self):
+        """F6: run-all.sh's SPLIT deal goes by these (split-caps.py)."""
+        c = self.probe()
+        self.assertEqual((c["bcachefs"], c["netbsd_build"]), (False, False))
+        tool = os.path.join(self.root, "usr", "sbin", "mkfs.bcachefs")
+        os.makedirs(os.path.dirname(tool), exist_ok=True)
+        with open(tool, "w") as f:
+            f.write("#!/bin/sh\n")
+        os.chmod(tool, 0o755)
+        self.assertFalse(self.probe()["bcachefs"])            # a tool, but no kernel file system
+        with open(os.path.join(self.root, "proc", "filesystems"), "w") as f:
+            f.write("nodev\tsysfs\n\text4\n\tbcachefs\n")
+        self.assertTrue(self.probe()["bcachefs"])
+        os.remove(tool)                                        # the arch-root's tool instead
+        arch = os.path.join(self.root, "bkoscratch", "tools", "arch-root", "usr", "bin", "bcachefs")
+        os.makedirs(os.path.dirname(arch))
+        with open(arch, "w") as f:
+            f.write("#!/bin/sh\n")
+        os.chmod(arch, 0o755)
+        self.assertTrue(self.probe()["bcachefs"])
+        img = os.path.join(self.work, "vms-bko-build", "netbsd11-rust.qcow2")
+        os.makedirs(os.path.dirname(img), exist_ok=True)
+        open(img, "w").close()
+        self.assertTrue(self.probe()["netbsd_build"])
+
+    def test_split_caps_words(self):
+        """split-caps.py's words from facts: run-all.sh's SPLIT_CAPS."""
+        spec = importlib.util.spec_from_file_location("split_caps", os.path.join(TEST2, "split-caps.py"))
+        sc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sc)
+        f = {"caps": {"zfs": True, "bcachefs": False, "netbsd_build": True},
+             "guests": {"netbsd11": {}, "dragonfly6": {}}, "preflight": {"ram": {"ceiling": [9.0, 10.1]}}}
+        self.assertEqual(sc.words(f, ["netbsd11", "alpinebsd", "dragonfly6"]),
+                         ["zfs", "netbsd-build", "vm:netbsd11", "vm:dragonfly6", "ceil:9"])
+        self.assertEqual(sc.words({}, ["netbsd11"]), [])   # old facts: no caps, no ceiling
+        self.assertEqual(sc.line({"a": f, "b": {}}, ["b", "a"], ["netbsd11"]),
+                         "b= a=zfs,netbsd-build,vm:netbsd11,ceil:9")
 
 
 class Placement(unittest.TestCase):

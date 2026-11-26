@@ -12,7 +12,8 @@
 #                  cinqcent: linux sparse freebsd netbsd openbsd_illumos
 #                  a small host (copland, cage, czerny; the class in
 #                            testvm/hosts.json):
-#                            linux sparse (no host ZFS); SPLIT: a share
+#                            linux sparse (the file systems below); SPLIT:
+#                            a share by capability
 #                linux and sparse are every host's, each with its share of
 #                the file systems (LINUX_FS, SPARSE_FS)
 #                linux      fs_roundtrip.py on zfs ext4 xfs btrfs f2fs bcachefs
@@ -62,11 +63,13 @@
 #                too, and every QEMU of ours there without one
 #   LINUX_FS     the linux steps run here, of zfs zfs-onto-ext4 bcachefs f2fs
 #                ext4 xfs btrfs tmpfs jfs nonroot (default chopin: zfs
-#                zfs-onto-ext4 bcachefs xfs btrfs nonroot, the only bcachefs
-#                tools are Chopin's; cinqcent: ext4 f2fs tmpfs jfs; copland,
-#                cage and czerny: ext4 xfs btrfs f2fs tmpfs jfs, what they
-#                have mkfs for, without ZFS (zfs, zfs-onto-ext4 and nonroot's pool) or
-#                bcachefs tools); all: every one
+#                zfs-onto-ext4 bcachefs xfs btrfs nonroot; cinqcent: ext4
+#                f2fs tmpfs jfs; copland, cage and czerny: ext4 xfs btrfs
+#                f2fs tmpfs jfs; all: every one).  These profiles are the
+#                hosts' shares GateTest2's loop cells run, kept as they
+#                were: every amd64 host has had host ZFS and bcachefs-tools
+#                since it joined (2026-11-14 backports), and SPLIT deals by
+#                those capabilities instead
 #   SPARSE_FS    the sparse steps run here, of ext4 xfs btrfs zfs zfs-nocomp
 #                (default chopin: xfs btrfs; cinqcent: zfs zfs-nocomp ext4;
 #                copland, cage and czerny: ext4 xfs btrfs); all: every one.
@@ -114,20 +117,29 @@
 #                round those hosts share, each step run by one of
 #                them only, in place of the profiles' shares (which overlap
 #                once a small host joins chopin and cinqcent).  Every host
-#                deals the same: bcachefs stays on chopin and netbsd on
-#                cinqcent when they take part; ZFS's steps (zfs,
-#                zfs-onto-ext4, nonroot, sparse zfs and zfs-nocomp) go to big
-#                hosts; the other file systems and guest platforms to the
-#                host with the fewest of their kind so far (two guest
-#                platforms on one PORT_BASE offset never share a host).  The
-#                share and every step's command: --dry-run.  On a host
+#                deals the same, by capability, never by name or class
+#                (img-speed.md F6): ZFS's steps (zfs, zfs-onto-ext4,
+#                nonroot, sparse zfs and zfs-nocomp) go to hosts with zfs,
+#                bcachefs to one with bcachefs, a guest platform to one with
+#                its guests' images (netbsd to one with netbsd-build first),
+#                and a linux step only where one fs_roundtrip.py fits the
+#                ceiling (6.5 GiB); among those, to the host with the fewest
+#                of their kind so far (two guest platforms on one PORT_BASE
+#                offset never share a host).  The share and every step's
+#                command: --dry-run.  On a host
 #                without a guest's image (vms/GUEST: a cache host's may be
 #                evicted) that step is a FAIL row, as is, on the first host
 #                of the split, a step no host of it can run.  LINUX_FS,
 #                SPARSE_FS and --platforms still choose among the share,
 #                never past it (another host's steps are skipped, so ZFS's
-#                stay the big hosts' and no step runs twice); MAX_GUESTS, JOBS_CAP and the rest stay the host's.  Unset:
-#                the profiles, as before.  Not with ANY_HOST
+#                stay their hosts' and no step runs twice); MAX_GUESTS,
+#                JOBS_CAP and the rest stay the host's.  Unset: the
+#                profiles, as before.  Not with ANY_HOST
+#   SPLIT_CAPS   with SPLIT, required: every SPLIT host's capabilities,
+#                HOST=WORD,WORD ... (zfs bcachefs netbsd-build vm:GUEST
+#                ceil:DISK), the same on every host:
+#                SPLIT_CAPS="$(testvm/test2/split-caps.py --hosts all)" on
+#                the Mac prints it from the hosts' facts
 #   RT_RAM, PYTHONDONTWRITEBYTECODE
 #                passed on to the root steps when set (RT_RAM=0: their work
 #                on disk; unset, the scripts' default, RAM where
@@ -224,7 +236,7 @@ esac
 ALL_LFS="zfs zfs-onto-ext4 bcachefs f2fs ext4 xfs btrfs tmpfs jfs nonroot" ALL_SFS="ext4 xfs btrfs zfs zfs-nocomp"
 # SPLIT: the round's steps dealt out over the hosts that share it, each one
 # to a single host (split_share; every host computes the same deal from the
-# same SPLIT and the table, whatever order SPLIT names them in).
+# same SPLIT, SPLIT_CAPS and the table, whatever order SPLIT names them in).
 split="" split_lost=""
 split_share() {  # SPLIT HOST -> "hosts H...", "linux FS...", "sparse FS...", "plats P...", "lost KIND NAME WHY"...
     python3 -I -B - "$BKO_HOSTS_PY" "$1" "$2" <<'EOF'
@@ -244,39 +256,89 @@ try:
     if bad or not ns:
         sys.exit(f"SPLIT: no such host: {' '.join(bad) or '(none named)'} (of {H.phrase(known)}, or all)")
     hs = [n for n in known if n in ns]   # the table's order: the same deal on every host
-    cls = {h: H.host_class(h) for h in hs}
 except H.HostsError as e:
     sys.exit(f"SPLIT: {e}")
 if me not in hs:
     sys.exit(f"SPLIT: {me} is not one of its hosts ({' '.join(hs)})")
-# KIND NAME WEIGHT NEEDS HOME PORTS: NEEDS big, a big host (host ZFS: zfs, its
-# --onto, nonroot's pool, sparse's pools); HOME, the host it stays on when that
-# host shares the round (bcachefs: the only tools are Chopin's; netbsd:
-# vms-bko-build's netbsd11-rust.qcow2 is Cinqcent's), else any big host;
-# PORTS, the PORT_BASE offsets a guest platform takes (no two on one host).
-# WEIGHT is a rough size (a guest platform: its steps).
-UNITS = [("linux", "bcachefs", 1, "big", "chopin", ())] + \
-    [("linux", n, 1, "big", None, ()) for n in ("zfs", "zfs-onto-ext4", "nonroot")] + \
-    [("linux", n, 1, None, None, ()) for n in ("ext4", "xfs", "btrfs", "f2fs", "tmpfs", "jfs")] + \
-    [("sparse", n, 1, "big", None, ()) for n in ("zfs", "zfs-nocomp")] + \
-    [("sparse", n, 1, None, None, ()) for n in ("ext4", "xfs", "btrfs")] + \
-    [("plats", "netbsd", 5, "big", "cinqcent", (15, 16)), ("plats", "freebsd", 6, None, None, (10, 11)),
-     ("plats", "openbsd_illumos", 5, None, None, (12, 13)), ("plats", "dragonfly", 3, None, None, (10, 11)),
-     ("plats", "zfsguests", 2, None, None, (17, 18, 19))]
-# Pinned ones first, then those only some hosts can run, the heavier first;
-# each to the host with the least of its kind so far (a tie by the table's
-# tie_key: class, heat, then its order; img-speed.md F13).
-first = sorted(range(len(UNITS)), key=lambda i: (UNITS[i][4] not in hs, UNITS[i][3] is None, -UNITS[i][2], i))
+# Each host's capabilities, from its facts (SPLIT_CAPS: HOST=WORD,WORD ..., which
+# testvm/test2/split-caps.py prints from the hosts' facts_host.py; img-speed.md F6): zfs,
+# OpenZFS's zpool; bcachefs, a format tool and the kernel's file system; netbsd-build,
+# vms-bko-build's netbsd11-rust.qcow2; vm:GUEST, vms/GUEST; ceil:DISK, the most GiB one
+# cmp-run.sh --reserve gets there.  Every host of SPLIT is given the same, so deals the same.
+import os
+raw = os.environ.get("SPLIT_CAPS", "").split()
+if not raw:
+    sys.exit("SPLIT_CAPS unset: each SPLIT host's capabilities, from its facts "
+             "(SPLIT_CAPS=\"$(testvm/test2/split-caps.py --hosts H,H)\" on the Mac)")
+caps = {}
+for w in raw:
+    h, eq, cs = w.partition("=")
+    if not eq:
+        sys.exit(f"SPLIT_CAPS: {w}: not HOST=WORD,WORD")
+    caps[H.short(h)] = {c for c in cs.split(",") if c}
+miss = [h for h in hs if h not in caps]
+if miss:
+    sys.exit(f"SPLIT_CAPS has no entry for {' '.join(miss)} (testvm/test2/split-caps.py prints it from the facts)")
+
+
+def ceil_of(h):
+    for c in caps[h]:
+        if c.startswith("ceil:"):
+            try:
+                return float(c[5:])
+            except ValueError:
+                pass
+    return None
+
+
+zg = os.environ.get("ZFS_GUESTS", "ubuntu24 ubuntu26-zfsmirror").split()
+vm = lambda *gs: {"vm:" + g for g in gs}
+# KIND NAME WEIGHT NEEDS PREFER RAM PORTS: NEEDS, the capability words a host must have;
+# PREFER, those a host with them is chosen for first (netbsd-build: without it, sparse-rt.sh
+# in NetBSD is a lost step); RAM, the GiB of the host's ceiling (ceil:) the step needs: one
+# fs_roundtrip.py in the RAM disk, 6.5 at its peak (GateTest2's loop:linux, 2026-11-24), so no
+# linux step on a host whose ceiling is lower (choubox's 3.0); sparse-rt.sh and the guests'
+# overlays go to disk when the RAM disk is short; PORTS, the PORT_BASE offsets a guest
+# platform takes (no two on one host).  WEIGHT is a rough size (a guest platform: its steps).
+UNITS = [("linux", n, 1, {"zfs"}, set(), 6.5, ()) for n in ("zfs", "zfs-onto-ext4", "nonroot")] + \
+    [("linux", "bcachefs", 1, {"bcachefs"}, set(), 6.5, ())] + \
+    [("linux", n, 1, set(), set(), 6.5, ()) for n in ("ext4", "xfs", "btrfs", "f2fs", "tmpfs", "jfs")] + \
+    [("sparse", n, 1, {"zfs"}, set(), 0, ()) for n in ("zfs", "zfs-nocomp")] + \
+    [("sparse", n, 1, set(), set(), 0, ()) for n in ("ext4", "xfs", "btrfs")] + \
+    [("plats", "netbsd", 5, vm("netbsd11", "alpinebsd"), {"netbsd-build"}, 0, (15, 16)),
+     ("plats", "freebsd", 6, vm("freebsd15", "freebsd15-ufs"), set(), 0, (10, 11)),
+     ("plats", "openbsd_illumos", 5, vm("openbsd8", "omnios58"), set(), 0, (12, 13)),
+     ("plats", "dragonfly", 3, vm("dragonfly6"), set(), 0, (10, 11)),
+     ("plats", "zfsguests", 2, vm(*zg), set(), 0, (17, 18, 19))]
+
+
+def able(h, need, ram):
+    c = ceil_of(h)
+    return need <= caps[h] and (not ram or c is None or c + 1e-9 >= ram)
+
+
+# Those fewest hosts can run first, the heavier first; each to a host with what it prefers,
+# if any can, else any that can, the one with the least of its kind so far (a tie by the
+# table's tie_key: class, heat, then its order; img-speed.md F13).
+ncan = [sum(able(h, u[3], u[5]) for h in hs) for u in UNITS]
+first = sorted(range(len(UNITS)), key=lambda i: (ncan[i], -UNITS[i][2], i))
 load, ports, got, lost = {}, {h: set() for h in hs}, {}, []
 for i in first:
-    kind, name, w, need, home, pp = UNITS[i]
-    can = [home] if home in hs else [h for h in hs if need is None or cls[h] == need]
+    kind, name, w, need, pref, ram, pp = UNITS[i]
+    can = [h for h in hs if able(h, need, ram)]
     ok = [h for h in can if not ports[h] & set(pp)]
     if not ok:
-        why = ("no host of SPLIT can run it" + (": it needs a big host (host ZFS or its tools)" if not can else
-                                                 ": its ports go to another guest platform on " + " ".join(can)))
-        lost.append(f"lost {kind} {name} {why}")
+        if can:
+            why = "its ports go to another guest platform on " + " ".join(can)
+        else:
+            lack = sorted(need - set.union(*(caps[h] for h in hs)))
+            if lack:
+                why = "none has " + " ".join(lack) + " (SPLIT_CAPS)"
+            else:
+                why = "none has all of " + " ".join(sorted(need) + ([f"ceil:{ram:g}"] if ram else [])) + " (SPLIT_CAPS)"
+        lost.append(f"lost {kind} {name} no host of SPLIT can run it: {why}")
         continue
+    ok = [h for h in ok if pref <= caps[h]] or ok
     h = min(ok, key=lambda x: (load.get((kind, x), 0), H.tie_key(x)))
     load[(kind, h)] = load.get((kind, h), 0) + w
     ports[h] |= set(pp)
@@ -292,6 +354,7 @@ if [[ -n ${SPLIT:-} ]]; then
     [[ -z ${ANY_HOST:-} ]] || die "SPLIT and ANY_HOST: one or the other"
     share=$(split_share "$SPLIT" "$host") || die "can't split the round (SPLIT=$SPLIT)"
     split=$(sed -n 's/^hosts //p' <<<"$share")
+    echo "run-all: SPLIT_CAPS $SPLIT_CAPS"
     lfs=$(sed -n 's/^linux *//p' <<<"$share") sfs=$(sed -n 's/^sparse *//p' <<<"$share")
     # LINUX_FS and SPARSE_FS choose among the share, never past it: another
     # host's steps (or a big host's, ZFS's on a small one) are skipped here.
@@ -593,7 +656,8 @@ fi
 : "${BKO_MKFS_BCACHEFS:=}"
 A=${BKO_ARCH_ROOT:-/bkoscratch/tools/arch-root}
 if [[ -z $BKO_MKFS_BCACHEFS && -x $A/usr/bin/bcachefs ]]; then
-    # Chopin has no mkfs.bcachefs: the Arch ISO's, with its own libraries.
+    # The Arch ISO's, with its own libraries, where it is (chopin, cinqcent: from
+    # before the backports brought bcachefs-tools), as before; else mkfs.bcachefs.
     BKO_MKFS_BCACHEFS="env GLIBC_TUNABLES=glibc.malloc.tcache_count=0 $A/usr/lib/ld-linux-x86-64.so.2 --library-path $A/usr/lib $A/usr/bin/bcachefs format"
 fi
 export BKO_MKFS_BCACHEFS

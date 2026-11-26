@@ -424,8 +424,11 @@ each of these is decided per cell, from the host's facts, not from its name:
   Cinqcent, Copland and Cage have it, checked 2026-11-14; placement still goes
   by the host's facts, Choubox's too);
 - the fork gates (`fork:*` pinned in `gate/layers.json`);
-- run-all.sh's guest platforms. On a small host run-all.sh runs only linux and
-  sparse.
+- run-all.sh's guest platforms in its profiles: on a small host its own
+  profile runs only linux and sparse. A `SPLIT` round deals every step,
+  guest platforms and ZFS's included, by the hosts' capabilities from their
+  facts (`SPLIT_CAPS`, testvm/test2/split-caps.py; img-speed.md F6), so the
+  small hosts take their share.
 - vm-update's fleet, the store mirror and the Bigfoot link (all Chopin).
 
 **Ties** (docs/design/img-speed.md F13, 2026-11-26). Where a planner rates two

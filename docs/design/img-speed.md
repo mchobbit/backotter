@@ -947,6 +947,34 @@ this spec's speedups 2 and 7.
   hosts. Replace the profiles with capabilities from facts. *Proof:* a
   SPLIT=all round deals units to all 5 hosts, with the same verdicts as the
   last round. *Gain:* est. 10-15 min off a SPLIT=all round.
+  *As built (2026-11-26):* the SPLIT deal goes by capability only. Its
+  units name the capability words they need (`zfs`, `bcachefs`,
+  `vm:GUEST` for a guest platform, a 6.5 GiB `ceil:` for a linux step,
+  one fs_roundtrip.py's RAM peak) and netbsd prefers `netbsd-build`; no
+  HOME, no class. The words come from the facts: `facts_host.py` caps gained
+  `bcachefs` (a format tool and the kernel's file system) and
+  `netbsd_build`, and `testvm/test2/split-caps.py` prints `SPLIT_CAPS`
+  from a live probe, which every SPLIT host must be given alike (run-all.sh
+  refuses SPLIT without it). The audit's premise on bcachefs was stale:
+  every amd64 host has bcachefs-tools 1.39.7 and the DKMS module from the
+  backports, so nothing was copied; the arch-root tool is still used where
+  it is (chopin, cinqcent). The profiles were **not** replaced: they are
+  each host's default share, the one GateTest2's `loop:linux` and
+  `loop:sparse` cells run, and changing them would change those cells; only
+  their stale comments were corrected. Choubox (ceiling 3.0) gets no linux
+  step and, with five guest platforms and five sparse steps over six hosts,
+  nothing at all, so the round uses the five build hosts. *Proof run
+  2026-11-26* (bko-bin, OLD_BIN none, each host's share under one
+  cmp-run.sh reservation, RT_RAM=1): chopin zfs-onto-ext4, btrfs,
+  sparse zfs-nocomp, netbsd; cinqcent zfs, xfs, sparse zfs, freebsd;
+  copland nonroot (its ZFS pool), f2fs, sparse ext4, openbsd_illumos; cage
+  bcachefs, tmpfs, sparse xfs, dragonfly; czerny ext4, jfs, sparse btrfs,
+  zfsguests. All 154 rows PASS, as every host's last GateTest2 loop rows
+  (2026-11-24); the longest share took 637 s. RAM-disk peaks 12.4 GiB on
+  the big hosts (two linux steps at once), 6.1 on the small ones. ZFS on a
+  small host, checked apart on cage under JOBS_CAP 1 (zfs, zfs-onto-ext4,
+  nonroot, sparse zfs and zfs-nocomp): 22 rows PASS, peak 7.4 GiB, under
+  its 9.0 ceiling.
 - **F7. GateTest2 fast layers pinned by name (partly) (user: FD6).**
   `gate/layers.json` pins gate:holt and gate:fork:restic (and fork-root) to
   chopin, and the rustic forks to cinqcent, because the stock baselines live

@@ -24,7 +24,8 @@ here (WORK/cmp-run.sh's ceiling(), run as it is), or null: placement leaves a ce
 host whose ceiling its reservation exceeds (facts.ceiling reads it).  caps is what else
 placement checks (plan.Planner.fit_capabilities): zfs, OpenZFS's zpool is installed
 (vm-mount mounts a ZFS source with it); holt_rescuer, HoltTest's rescuer/rescuer.qcow2 is
-there; holt_debs, its bin/ has the debs ht1.sh copies into the rescuer.  Old facts have no
+there; holt_debs, its bin/ has the debs ht1.sh copies into the rescuer; bcachefs and
+netbsd_build, what run-all.sh's SPLIT deal needs (split-caps.py).  Old facts have no
 caps: nothing of it is checked.  machine is uname -m's (x86_64, aarch64; /proc/sys/kernel/arch
 under a fake root): placement keeps a cell off a host whose machine isn't the arch hosts.json
 gives it (plan.Planner.arch_why); versions.qemu is that machine's qemu-system-MACHINE's.
@@ -53,6 +54,8 @@ PKGS = ("e2fsprogs", "xfsprogs", "btrfs-progs", "f2fs-tools", "jfsutils", "nilfs
 DEFAULT_PLUMBING = ("shared:cmp-run.sh", "shared:testvm/compare/iolog.sh")
 HOLT_DIR = "/bkoscratch/holttest1d"
 ZPOOL = ("/usr/sbin/zpool", "/sbin/zpool", "/usr/local/sbin/zpool", "/usr/bin/zpool", "/bin/zpool")
+MKFS_BCACHEFS = ("/usr/sbin/mkfs.bcachefs", "/sbin/mkfs.bcachefs", "/usr/bin/mkfs.bcachefs",
+                 "/bkoscratch/tools/arch-root/usr/bin/bcachefs")   # run-all.sh's BKO_ARCH_ROOT default
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 
@@ -686,7 +689,26 @@ def rescuers(host_root):
     return {"images": images, "bin": binf}
 
 
-def caps():
+def bcachefs_ok():
+    """A bcachefs format tool here, and a kernel with the file system (loaded, or a module)."""
+    tool = any(os.path.isfile(R(p)) and os.access(R(p), os.X_OK) for p in MKFS_BCACHEFS)
+    try:
+        with open(R("/proc/filesystems"), encoding="utf-8") as f:
+            kern = "bcachefs" in f.read().split()
+    except OSError:
+        kern = False
+    if not kern:
+        kern = os.path.isdir(R("/sys/module/bcachefs"))
+    if not kern:
+        try:
+            with open(R(f"/lib/modules/{os.uname().release}/modules.dep"), encoding="utf-8") as f:
+                kern = "/bcachefs.ko" in f.read()
+        except OSError:
+            pass
+    return tool and kern
+
+
+def caps(work=None):
     """What this host can do that a cell may need (plan.Planner.fit_capabilities reads it):
     zfs, an OpenZFS zpool where root's PATH has it (vm-mount: "this host has no OpenZFS"
     without one), zpool its path, zfs_module whether the module is loaded; holt_rescuer,
@@ -694,13 +716,19 @@ def caps():
     without it, ht1-offline.sh fails); holt_debs, HOLT_DIR/bin has a .deb (ht1.sh copies
     them into the rescuer).  On an aarch64 host only, holt_rescuer_arm64: HOLT_DIR/rescuer/
     rescuer-arm64.qcow2 is a file (make-rescuer.sh --arch arm64: the arm64 sources' rescuer,
-    docs/design/arm64.md A6); an amd64 host's caps are as they were."""
+    docs/design/arm64.md A6); an amd64 host's caps are as they were.
+    For run-all.sh's SPLIT deal (testvm/test2/split-caps.py; img-speed.md F6): bcachefs, a
+    bcachefs format tool (mkfs.bcachefs, or run-all.sh's arch-root bcachefs) and a kernel that
+    has or can load the file system; netbsd_build, WORK/vms-bko-build/netbsd11-rust.qcow2 is a
+    file (run-all.sh's sparse-rt.sh in NetBSD's build image)."""
     zp = next((p for p in ZPOOL if os.path.isfile(R(p)) and os.access(R(p), os.X_OK)), None)
     if zp is None and not ROOT:
         zp = shutil.which("zpool")
     out = {"zfs": zp is not None, "zpool": zp, "zfs_module": os.path.isdir(R("/sys/module/zfs")),
            "holt_rescuer": os.path.isfile(R(HOLT_DIR + "/rescuer/rescuer.qcow2")),
-           "holt_debs": bool(glob.glob(os.path.join(R(HOLT_DIR + "/bin"), "*.deb")))}
+           "holt_debs": bool(glob.glob(os.path.join(R(HOLT_DIR + "/bin"), "*.deb"))),
+           "bcachefs": bcachefs_ok(),
+           "netbsd_build": bool(work) and os.path.isfile(os.path.join(work, "vms-bko-build", "netbsd11-rust.qcow2"))}
     if platform.machine() == "aarch64" and not ROOT:
         out["holt_rescuer_arm64"] = os.path.isfile(R(HOLT_DIR + "/rescuer/rescuer-arm64.qcow2"))
     return out
@@ -811,7 +839,7 @@ def collect(want=None, work=None, host_root=None, copy_root=None, user=None, hom
     part("holt_bins", holt_bins, host_root, want.get("holt_bin_dirs"), home)
     part("guests", guests, work, host_root, set(want["guests"]) if want.get("guests") is not None else None)
     part("rescuers", rescuers, host_root)
-    part("caps", caps)
+    part("caps", caps, work)
     if want.get("images"):
         part("images", images_part, images, host_root, f["errors"])
     part("plumbing", lambda: {n: sha_file(os.path.join(work, n[len("shared:"):]))

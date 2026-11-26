@@ -33,8 +33,9 @@ Haiku; Redox and Sculpt OS from Linux):
   question 13; stick-config.md, "Room on the partition").
   `stick::stick_write` is what the backup tool calls: the whole file; else
   one without its layout (`layout_left_out` says why), so the stick still
-  finds the backup; else nothing, the machine's older copies removed
-  (open question 16).
+  finds the backup, with the machine's older copies removed first when
+  only that makes room; else nothing, the older copies removed (open
+  question 16).
 - `bko-holt recovery-words OUT --json` checks a BackOtter recovery key, its
   words on standard input, and writes the repository password it stands
   for to a new private file OUT, for bko-rescue (`src/recoverycmd.rs`;

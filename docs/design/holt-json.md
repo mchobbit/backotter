@@ -2544,7 +2544,9 @@ recommendation):
     `.sha256` as one.  A `cluster` of 0 counts bytes.
   - A refusal leaves the stick as it was and the backup still succeeds
     (its own system.json is written first); a warning is written through,
-    as the schema warnings are.
+    as the schema warnings are.  (Open question 16 changed what the stick
+    holds after a refusal: "What the stick holds after a refused write
+    built".)
   - A system.json the partition can't take is refused (`stick_full`),
     where the approved text said "warns": that write would fail anyway,
     and refusing first keeps the old copy whole.  This changes the
@@ -2639,9 +2641,9 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
   `no_layout` (`layout::NoLayout`).  Then the Disks screen's problem says
   why (each backup records the layout; this stick holds no copy, and this
   bko-rescue can't take it from the backup yet) and what to do: restore
-  with another stick that holds the layout, or, while the machine still
-  runs, make room on this stick or write a newer image, then back up
-  again.  Every other reason (a typed address, a bad checksum) keeps the
+  with another stick that holds the layout; and, if bko-holt's words say
+  the stick had no room, make room on this stick or write a newer image
+  while the machine still runs, then back up again.  Every other reason (a typed address, a bad checksum) keeps the
   general words.  The title is as it was, so no golden screen changed.
 - **Defaults chosen** (each in one place):
   - The member is `layout_left_out`, `{"code", "bytes"}` (`stick.rs`'s
@@ -2674,9 +2676,44 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
   facts, 9 symbols), pty-test.py 0 failed, demo-test.py 383 ok, app-test.py
   0 failed, holt_schema.py 411 checked, 0 problems.  demo-test.py's first
   run had 1 failure, not captured; three runs after it had none.
+- **Review fixes** ("holt, rescue: review fixes for oq16"):
+  - `stick_write` checked `body` only beside the older copies, then
+    removed them anyway.  Now, when `body` doesn't fit beside them, it
+    checks again with them gone (their files and the old prev's
+    `.sha256` freed, in clusters; the old system.json's `.sha256` isn't
+    in `Room`, so it isn't counted).  If `body` fits then, the answer is
+    `WithoutLayout` with `remove_old`: remove them first, then write
+    `body`.  `RemoveOld` is only left when even that fails.  Whether the
+    whole file should be tried there first is open question 19.
+  - The words name only the copies that are there (system.json,
+    system.prev.json, or both).
+  - `stick --copy` doesn't say a size for a `system_too_big` at or under
+    `SYSTEM_MAX` (only a hand-made file has one).
+  - bko-rescue's what-to-do offers room only "if bko-holt's words say
+    the stick had no room": `no_layout` also covers `system_too_big` and
+    a system.json with no `layout` at all, and bko-rescue sees only the
+    code.  Giving the reason as data is open question 18.
+  - stick-config.md: "Room on the partition" opens with `stick_write`;
+    the schema check takes `body` after `WithoutLayout` and nothing after
+    `RemoveOld`; the removals end "fsync the directory as step 2 does,
+    then unmount"; getting back to the whole file can take two backups.
+  - Tested: `write_time_stick_write` (the removal first, its words and
+    warnings, the edge where only the removal makes room, a lone
+    system.prev.json named alone, `RemoveOld` naming a lone system.json,
+    `schema_warnings` of `body` with no dump warning),
+    `copy_refuses_what_it_cant_take` (a `system_too_big` under the
+    limit), and bko-rescue's two no-layout tests (the conditional room
+    words, a 70 MiB file left out).  The holt gate on cinqcent: cargo test
+    976 passed, 0 failed, 4 ignored; 110 golden plans, 0 differ;
+    redact-corpus passed.  bko-rescue on czerny (Rust 1.85.1): cargo build
+    without warnings, cargo test 287 + 15 passed, abi/check.sh ok (49
+    facts, 9 symbols), pty-test.py and app-test.py 0 failed, demo-test.py
+    three runs of 383 ok, 0 failed (logs kept; the first build's one
+    failure isn't reproduced), holt_schema.py 411 checked, 0 problems.
 - **Waits on the backup tool:** calling `stick_write`, writing `body` and
-  its `.sha256`, and the removals of `RemoveOld`.  bko-rescue's fetch of
-  the layout from the backup is open question 15's.
+  its `.sha256`, the removals of `RemoveOld` and of `remove_old`, and the
+  schema check of what it writes.  bko-rescue's fetch of the layout from
+  the backup is open question 15's.
 - **Spec problems:**
   - `stick --json` doesn't say a machine has no layout, so bko-rescue says
     it only on Disks, after the password and the snapshot.  A `layout`
@@ -2974,7 +3011,7 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     the same snapshot.  Or keep the refusal (today's): its help says to
     choose the newest backup.
 16. **What the stick holds after a refused write** (from open question
-    13's review; answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26 as far as it can be before the backup tool, b121dbb and "holt-json, stick-config, rescue-tui: open question 16 built": "What the stick holds after a refused write built").  `room_check` refuses a system.json over
+    13's review; answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26 as far as it can be before the backup tool, b121dbb, "holt-json, stick-config, rescue-tui: open question 16 built" and "holt, rescue: review fixes for oq16": "What the stick holds after a refused write built").  `room_check` refuses a system.json over
     `SYSTEM_MAX` (`system_too_big`) or one the partition can't take
     (`stick_full`; the approved text said "warns", see "What room on the
     partition built"), and the tool then writes nothing to the stick.  A
@@ -3006,3 +3043,23 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     save would leave the partition less than 22 MiB free, saying to copy
     old reports off.  Or leave them, and say in the Report screen's words
     that reports take the stick's room until removed.
+18. **Why a stick holds no layout, as data** (from open question 16's
+    review).  bko-rescue sees only bko-holt's `no_layout` code, after
+    the password and the snapshot are chosen.  It can't tell
+    `stick_full`, where room helps, from `system_too_big`, which no stick
+    takes, or from a system.json with no `layout` at all.  So its
+    what-to-do offers room only "if bko-holt's words say the stick had no
+    room".  *Recommended:* each machine row of `stick --json` gets a
+    `layout` member: `"present"`, `"left_out"` (with
+    `layout_left_out`'s `code` and `bytes`, the codes checked as `stick
+    --copy` does), or `"none"`.  bko-rescue then says it on the Machine
+    screen, before the password, with advice for that code alone.  Or
+    keep today's conditional words.
+19. **The whole file once the older copies go** (from open question 16's
+    review).  When even `body` doesn't fit beside the machine's older
+    copies, `stick_write` removes them and writes `body`.  If the whole
+    file would fit once they are gone, writing it keeps the layout on the
+    stick, and nothing more is lost: the copies go either way.
+    *Recommended:* try the whole file first there, then `body`, then
+    `RemoveOld` (restore fidelity first).  Or keep `body` there, as the
+    approved text says.

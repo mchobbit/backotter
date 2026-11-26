@@ -1667,7 +1667,10 @@ fn a_layout_bko_holt_wont_copy_is_said_in_its_words() {
     assert!(p.contains("bko-holt couldn't copy the layout off the BACKOTTER partition:") && p.contains("carries no disk layout"), "{p}");
     assert!(!p.contains("bko-holt stick --copy:"), "bko-holt named once: {p}");
     // no_layout: the stick holds none, the backup does (open question 16).
-    assert!(p.contains("This stick holds no copy of it") && p.contains("Restore with another stick") && p.contains("back the machine up again"), "{p}");
+    // Room is offered only where bko-holt's words say room was short:
+    // this one has no layout_left_out, and no stick takes a system_too_big.
+    assert!(p.contains("This stick holds no copy of it") && p.contains("Restore with another stick"), "{p}");
+    assert!(p.contains("If bko-holt's words say the stick had no room for it, then") && !p.contains("Or, while the machine still runs"), "{p}");
     assert!(!p.contains("Choose the machine on the first screen"), "{p}");
     assert!(!t.app.session.path("layout.json").exists(), "nothing left for load");
     assert!(t.app.layout.is_none());
@@ -1694,6 +1697,17 @@ fn a_layout_the_backup_tool_left_out_is_said_plainly() {
     assert!(p.contains("This stick holds no copy of it") && p.contains("can't take it from the backup yet"), "{p}");
     assert!(p.contains("Restore with another stick") && p.contains("write a newer image to it"), "{p}");
     assert!(t.app.layout.is_none() && !ran(&t).iter().any(|l| l.contains("bko-holt load")), "no plan without a layout");
+    // Left out as too big for any stick: the same words, which offer room
+    // only where bko-holt's say the stick had none.
+    let huge = doc.replace(old, "carries no disk layout: the backup tool left it out, as with it the file was 70.0 MiB, over the 64.0 MiB a stick's bko-holt reads. The backup holds the layout; this stick can't restore the machine's disks until it comes from the backup");
+    let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| {
+        f.disks = "app-lovelace".into();
+        f.copy = Some((1, huge.clone()));
+    });
+    let mut ui = Shots::new(script(&[&to_disks(), &[Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    let p = ui.flat("Problem: the old disks' layout isn't here", 0);
+    assert!(p.contains("over the 64.0 MiB") && p.contains("If bko-holt's words say the stick had no room for it, then"), "{p}");
     // Another refusal (a checksum gone bad since) keeps the general words.
     let bad = doc.replace("\"code\":\"no_layout\"", "\"code\":\"machine_not_ok\"");
     assert!(bad != doc);

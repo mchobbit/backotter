@@ -1904,9 +1904,13 @@ The stick still finds the backup; it can't restore the disks.
   has its own why (`NO_LAYOUT_ON_STICK_WHY`: each backup records the
   layout, this stick holds no copy, this bko-rescue can't take it from
   the backup yet) and what to do (`NO_LAYOUT_ON_STICK_TODO`: another stick
-  that holds it, or make room or write a newer image and back up again,
-  while the machine still runs).  bko-holt's own line says why the layout
-  was left out.  A typed address and every other refusal keep
+  that holds it; and, if bko-holt's words say the stick had no room, make
+  room or write a newer image and back up again, while the machine still
+  runs).  bko-holt's own line says why the layout was left out.  The
+  room advice is conditional because bko-rescue sees only the code:
+  `no_layout` also covers `system_too_big`, which no stick takes, and a
+  system.json with no `layout` at all (open question 18 would give the
+  reason as data).  A typed address and every other refusal keep
   `NO_LAYOUT_WHY` and `NO_LAYOUT_TODO`.
 - The title is as it was, so app-plain's golden didn't change.
 - Not done: the first screen doesn't say it (`stick --json` has no field

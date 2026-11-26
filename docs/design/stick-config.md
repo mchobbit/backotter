@@ -449,8 +449,9 @@ that's there but different means "repartitioned or reformatted since writing".
 A system.json is read up to 64 MiB (bko-holt's `SYSTEM_MAX`), and each
 machine's restore logs may take 22 MiB: the 10 newest of 2 MiB, and the
 one being written.  So before step 2, with the partition mounted, the
-backup tool calls `room_check(marker, len, room)` in bko-holt's
-`src/stick.rs` (holt-json.md's open question 13, approved 2026-11-26):
+backup tool calls `stick_write` (below), which checks the room with
+`room_check(marker, len, room)` in bko-holt's `src/stick.rs`
+(holt-json.md's open question 13, approved 2026-11-26):
 
 - `len` is the new system.json's size in bytes.
 - `room` is what the mounted partition says: `free` (statvfs `f_bavail`
@@ -483,16 +484,27 @@ backup tool calls `room_check(marker, len, room)` in bko-holt's
     Say `text`: why, and that this stick can't restore the machine's
     disks until the layout comes from the backup ("Which copy wins" step
     2, open question 15); and what makes room, when room would help.
-    Say `body`'s own warnings too.
-  - `RemoveOld`: even `body` doesn't fit.  Write nothing.  Remove the
-    machine's `system.json`, `system.prev.json`, their `.sha256` files
-    and a `system.json.new`, then its folder if nothing else is in it
-    (its `restore-logs/` stay).  Say `text`: what was removed and why, and
-    that this stick can no longer find the machine's backup.  Unmount,
-    then fsync as step 3 does.
+    Say `body`'s own warnings too.  With `remove_old`, `body` fits only
+    once the machine's older copies are gone, as they would be for
+    `RemoveOld`: remove them first (the folder stays), fsync the
+    directory, then write `body` as above.  With no system.json there,
+    nothing becomes `system.prev.json`.
+  - `RemoveOld`: even `body` doesn't fit, even once the older copies are
+    gone.  Write nothing.  Remove the machine's `system.json`,
+    `system.prev.json`, their `.sha256` files and a `system.json.new`,
+    then its folder if nothing else is in it (its `restore-logs/` stay).
+    Say `text`: what was removed and why, and that this stick can no
+    longer find the machine's backup.  fsync the directory as step 2
+    does, then unmount.
   On any answer the backup itself succeeds: its own system.json, layout
-  and all, was written first.  `system.prev.json` may still hold an older
-  layout after `WithoutLayout`; nothing reads it at restore time.
+  and all, was written first.  The schema check of "Is this stick good
+  enough?" takes what is written: `system` for `Whole`, `body` for
+  `WithoutLayout` (it has no dump, so only its own schema is checked),
+  nothing for `RemoveOld`.  `system.prev.json` may still hold an older
+  layout after `WithoutLayout`; nothing reads it at restore time.  It
+  stands at the next write too, so a whole file may be refused once
+  more, until `body` has become `system.prev.json`: getting back to the
+  whole file can take two backups.
 - It warns `stick_room_short` when, once written, the partition can't
   also hold the machine's 22 MiB of logs (less what its logs take now,
   plus a cluster for `restore-logs/` when it isn't there).  The tool
@@ -577,7 +589,9 @@ compares `system.json`'s `requirements` with the marker:
   question 11, built 2026-11-26).  A marker with no `dump_schemas` counts as
   `[1]`.  The check is `schema_warnings(marker, system)` in bko-holt's
   `src/stick.rs` (codes `system_schema_unread` and `dump_schema_unread`,
-  each with its words): the backup tool calls it before each write.  A
+  each with its words): the backup tool calls it before each write, on
+  the document it writes (`body` when "Room on the partition" leaves the
+  layout out).  A
   `layout` that isn't an object gets no dump warning, and the dump's
   `format` isn't checked here (the restore refuses a foreign one);
 - for kernel modules, the backup tool can't check the stick's module list from
@@ -637,7 +651,8 @@ feature means the stick can't import the pool at all.
   use are older: their next build gets it.
 - What the stick holds after a refused write is built as far as it can be
   before the backup tool: `stick.rs`'s `stick_write` and `without_layout`
-  (the decision and the layout-less copy, with their words), `stick
+  (the decision and the layout-less copy, with their words, and the
+  older copies removed first when only that makes room), `stick
   --copy`'s words for a `layout_left_out`, and bko-rescue's Disks words
   for a system.json with no layout (holt-json.md's open question 16).
 - The restore side of "LUKS2 headers in the backup": `bko-holt

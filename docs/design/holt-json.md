@@ -3092,6 +3092,92 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     whose restore had no glob before (debian13 ext4, a FreeBSD ZFS guest),
     which the review asks for before the next CarpetBeater.
 
+### What the staging root built
+
+Built 2026-11-26 as far as it can be before the backup tool (open question
+14, approved that day by the user, the recommendation; 289e231).  It is
+the backup tool's part, and the backup tool isn't built.  So what is
+built is a reference script and its proof; stick-config.md's "LUKS2
+headers in the backup", step 2, says exactly what the tool must do, with
+its defaults (the staging path, the tmpfs's size and modes), for both
+archivers.  Nothing in bko-holt or bko-rescue changed: they read what the
+staging makes, as built for open questions 12 and 15.
+
+- **stage-backup.sh** (`testvm/rescue/`): `stage-backup.sh [--fs PATH]...
+  [--bind SRC DEST]... [--headers DIR] [--system-json FILE] [--stage DIR]
+  [--as-path P] -- ARCHIVER ARGS... backup [OPTIONS]`, as root, on Linux.
+  It enters a mount namespace of its own (and checks it is in one: the
+  child is told the parent's), mounts the tmpfs, binds each file system
+  read-only at its path, the root's top entries one by one, the headers
+  and system.json under `/.bko-holt`, then runs the archiver with `exec`,
+  so the namespace and its mounts end with it.  It tells the archiver by
+  what it says it is (rustic-bko's `--version`, restic-bko's `version`)
+  and refuses `-x`, `--one-file-system` and the archiver's own
+  `--as-path`.
+- **restic-bko:** no `--as-path` in restic or our fork, so it backs up
+  `.` from inside S: restic puts S's entries at the tree's top.  The
+  snapshot's `paths` is S's (`/run/bko-holt/stage/root`), fixed, so the
+  parent is found.  A chroot into S was rejected: the archiver and all it
+  needs to reach the repository would be in the snapshot.
+- **stage-test.py** (`testvm/rescue/`, root, in RAM, its own namespace):
+  a small system (a root whose top holds directories, a file hard-linked
+  into usr/bin, a relative and a dangling symbolic link, a FIFO, a sparse
+  file, a hidden file; set modes, owners, times and a user xattr; /home
+  and /boot/efi mounted on it and backed up, /scratch mounted and not; a
+  read-only view of the root) and two test headers (random bytes of
+  uc24-fde's names) with a system.json whose layout has their sizes and
+  SHA-256.  Run 2026-11-26 on cinqcent (kernel 7.2.12, util-linux 2.41.5,
+  rustic 0.12.0+backotter.4, restic 0.20.0+backotter.1, bko-holt 0.2.6
+  from 11cedac's tree), PASS, `stage-recorded.txt`.  For each archiver:
+  - four backups (writable root, again, read-only root, `--as-path
+    /sub`): each time the source's 29 paths kept type, mode, owner, size,
+    mtime, ctime, inode and contents, the root's own included; no
+    `/.bko-holt` was made in it; no mount was left in the caller's
+    namespace.  The second found the first as its parent.
+  - restored whole (rustic-bko's by rustic-bko, restic-bko's by
+    restic-bko): the system's 27 paths (type, mode, owner, size, mtime,
+    contents, link targets, user xattrs, the hard link) and `/.bko-holt`'s
+    5, the two headers and system.json byte for byte.  /scratch came back
+    empty, and the file under the /home mount point didn't come back.
+  - restored by rustic-bko with load's four `--glob` arguments: the 27
+    paths alone.
+  - `bko-holt snapshot-layout` and `luks-headers` of the writable, the
+    read-only and the `ID:/sub` snapshots: exit 0, the layout's JSON and
+    both headers byte for byte (0600).  For restic-bko's repository they
+    ran rustic-bko, as bko-rescue does, and restic-bko's own `dump` of
+    the three files matched, by hand.
+  - refused: `-x` (exit 2); a stage whose parent is on disk (exit 1,
+    nothing made); a bind under the read-only root with no mount point
+    there (exit 1).
+- **Spec problems:**
+  - The approved text binds every file system "at its own path".  The
+    root's own path is S itself, and a bind there hides S's tmpfs, so
+    `/.bko-holt` has nowhere to go.  The root is bound inside the tmpfs
+    instead, and its top entries one by one.  A top-level symbolic link
+    can't be bound, so it is copied: its ctime and inode number aren't
+    the system's (no archiver restores a ctime; a hard-linked symbolic
+    link at the top would lose its link, which no system known has).
+  - restic-bko's snapshot `paths` isn't `/` but S's path, and its
+    `--exclude` patterns that start with `/` see S's path.  The backup
+    tool must write its excludes so.
+  - Neither archiver may get `--one-file-system`: the binds are what
+    choose the file systems.
+  - The read-backs can't run restic-bko: bko-holt's restic-bko argv is
+    wrong (pre-existing, "What the snapshot's own layout built").  They
+    run rustic-bko on a restic-bko backup too (stick-config.md, step 3).
+  - Mount namespaces are Linux only, and open question 15 puts
+    system.json in every machine's snapshot: open question 23.
+- **Waits on the backup tool:** its staging (the script's steps, in the
+  tool), its choice of the file systems to bind (from the dump), its
+  excludes under restic-bko, its read-backs, and everything after them.
+- **Not run:** a real system's root (a small tree in RAM only); a real
+  root file system of ext4, XFS, btrfs (subvolumes) or ZFS (datasets)
+  behind the binds; ACLs, SELinux labels and file flags through a bind
+  (a bind shows the same inode, so they should be the source's; not
+  checked) or on a copied symbolic link; Ubuntu Core's read-only base
+  snap; the default `/run/bko-holt/stage`; a second host.  holt's gate
+  and bko-rescue's tests: no code of theirs changed.
+
 ## Decisions
 
 - **J1. How bko-rescue finds bko-holt's protocol.**  `bko-holt --version
@@ -3347,7 +3433,7 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     is.  Or a smaller cap for `layout`, with ESP images left out of the
     stick's copy.
 14. **How the backup tool puts the headers in the snapshot** (from open
-    question 12's review; answered: approved 2026-11-26 by the user, the recommendation; not built yet).  stick-config.md's step 2 needs
+    question 12's review; answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26 as far as it can be before the backup tool, 289e231 and "holt-json, stick-config, rescue-tui: open question 14 built": "What the staging root built").  stick-config.md's step 2 needs
     `/.bko-holt/luks-headers` in the tree the backup reads.  A mount point
     made on the system's root stays on the live system (and in every
     later backup) unless it is removed again, and can't be made on a
@@ -3482,3 +3568,17 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     `no_system_json` is a problem screen, never the stick's copy.  Or
     forget the snapshot (its files are lost too).  Or nothing: the
     failure is said at backup time, and Disks says which copy it used.
+23. **The staging root off Linux** (from open question 14's build).  The
+    staging root needs a private mount namespace (`unshare -m`), and only
+    Linux has one.  Open question 15 puts system.json in every machine's
+    snapshot, so the BSDs, illumos and Haiku need a way too (their disks
+    keep no LUKS2 headers).  FreeBSD, NetBSD and DragonFly have nullfs and
+    illumos lofs, but a mount there is seen by the whole system and must
+    be undone by the tool, even after a crash; OpenBSD (*Check*: its
+    nullfs was removed) and Haiku have no bind mount at all.  *Recommended:* our rustic-bko gets an option that
+    adds a file from outside the tree at a path in the snapshot
+    (`--add-file PATH=FILE`, read-only, no mount), used everywhere off
+    Linux; restic-bko isn't used there for this.  Or nullfs and lofs
+    mounts in a 0700 directory in RAM where they exist, undone at the end
+    and at the next start, and no system.json in the snapshot on OpenBSD
+    and Haiku (their restores use the stick's copy).

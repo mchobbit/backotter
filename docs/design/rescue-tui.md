@@ -2038,6 +2038,25 @@ and Disks plans from the chosen snapshot's own layout.
     `test_disks_older_backup` now allows the one `stick --copy` to
     compare, after the backup's, into its own file, wiped.
 
+## What the staging root changed
+
+2026-11-26, holt-json.md's open question 14 (approved that day with its
+recommendation; built for reference, 289e231): how the backup tool puts
+the headers and system.json in the snapshot.  Nothing in bko-rescue
+changed.
+
+- The snapshots bko-rescue reads are made from a staging root in RAM
+  (stick-config.md, "LUKS2 headers in the backup", step 2): the system's
+  paths at the tree's top, `/.bko-holt/luks-headers/FILE` and
+  `/.bko-holt/system.json` beside them, by both archivers.
+  `testvm/rescue/stage-test.py` proved that `snapshot-layout` and
+  `luks-headers`, as bko-rescue runs them (rustic-bko), read both kinds
+  back, and that load's globs leave `/.bko-holt` out of the restore.
+- A restic-bko backup's snapshot `paths` is the staging path
+  (`/run/bko-holt/stage/root`), not `/`.  bko-rescue reads no `paths`
+  (`repo.rs`'s `snap`: ID, time, hostname, tags, size), so Snapshot shows
+  the same.
+
 ## The app on top (later)
 
 Scoped here so the order is clear; each gets its design when it starts.

@@ -370,20 +370,79 @@ What the backup tool must do (not built: it comes with the backup tool):
    `/.bko-holt/luks-headers/FILE` (`luksfetch::REPO_DIR` in bko-holt).
    Same snapshot: the headers and the layout are from one moment.  With a
    `SNAPSHOT:SUBPATH` backup they go under SUBPATH, where `luks-headers`
-   reads them.  However it stages them, the backup tool writes nothing to
-   the system's disks: no mount point is made, or left, on the backed-up
-   root, and a read-only root (Ubuntu Core's base snap) works.  How it
-   stages them is holt-json.md's open question 14 (approved 2026-11-26: a
-   staging root in RAM in a private mount namespace, D bind-mounted at
-   `S/.bko-holt/luks-headers`, S backed up with `--as-path /`).  load's
-   restore leaves `/.bko-holt/luks-headers`, its files, and `/.bko-holt`
-   when no raw volume is under it out of every tree, whatever the layout
-   kept, so not even a bare mount point comes back.
+   reads them.  The backup tool writes nothing to the system's disks: no
+   mount point is made, or left, on the backed-up root, and a read-only
+   root (Ubuntu Core's base snap) works.  It stages them in a staging root
+   in RAM, every backup's since open question 15 (holt-json.md's open
+   question 14, approved 2026-11-26; built for reference as
+   `testvm/rescue/stage-backup.sh`, 289e231, and proven with both
+   archivers by `stage-test.py`, "What the staging root built"):
+   1. Enter a private mount namespace (`unshare -m`, then `mount
+      --make-rprivate /`).  No mount made in it is seen outside it, and
+      all of them go when the archiver exits, however it exits: there is
+      nothing to unmount.  Linux only: off Linux, open question 23.
+   2. Mount a tmpfs (64 MiB, mode 0700) at `/run/bko-holt/stage`, after
+      checking its parent is in RAM (tmpfs or ramfs; else refuse, and make
+      nothing).  S is `/run/bko-holt/stage/root`, mode 0755.  The path is
+      fixed, so restic-bko finds the parent (below).  The empty
+      `/run/bko-holt/stage` stays after (in RAM): removing it could detach
+      another backup's staging, in its own namespace.
+   3. Bind each file system backed up read-only at its own path under S,
+      parents first: `mount --bind SRC S/PATH`, then `mount -o
+      remount,bind,ro S/PATH`.  The bind is not recursive: that file
+      system alone.  SRC is the file system's mount point, or a snapshot of
+      it mounted elsewhere.  A child's mount point is a directory of its
+      parent already (it is mounted there); one that isn't, under a
+      read-only parent, is refused.  No symbolic link may be on S/PATH's
+      way (a bind follows it, out of S).
+   4. The root file system can't be bound at S itself: S would then have
+      no room of its own for `/.bko-holt`.  So it is bound read-only once
+      inside the tmpfs (`/run/bko-holt/stage/rootfs`), and each entry of
+      its top directory is: a directory, or any other file but a symbolic
+      link, bound read-only at S/NAME (on an empty directory or file of
+      S's tmpfs); a symbolic link, which can't be bound, copied with `cp
+      -a` (its target, owner, mode, times and extended attributes; not its
+      ctime or inode number).  S gets the root's owner, mode and times
+      (neither archiver keeps the root directory's own).  A `/.bko-holt`
+      of the root file system's own (a mount point an older backup left?)
+      is left out, with a note: the name is the backup tool's.
+   5. Make S/.bko-holt, mode 0700, in S's tmpfs; bind D read-only at
+      `S/.bko-holt/luks-headers` and the machine's system.json ("Which
+      copy wins", step 1) read-only at `S/.bko-holt/system.json`.
+   6. Back S up.  rustic-bko: `rustic-bko ... backup [OPTIONS] --as-path /
+      S`; the snapshot's `paths` is `["/"]`.  restic-bko has no
+      `--as-path` (stock restic hasn't, nor our fork, 0.20.0+backotter.1):
+      `cd S && restic-bko ... backup [OPTIONS] .`.  restic replaces `.`
+      with S's entries, each at the tree's top (its
+      `resolveRelativeTargets`), so the tree's paths are the system's.
+      The snapshot's `paths` is S's own, `/run/bko-holt/stage/root`; it is
+      the same every backup, so restic finds the parent.  Since restic
+      runs in S, every path given to it (the repository, the password
+      file) is absolute, and an `--exclude` pattern that starts with `/`
+      matches against S's path (`/run/bko-holt/stage/root/...`).  A
+      chroot into S was rejected: the archiver, its cache, its password
+      file and what it reaches the repository with (ssh, DNS,
+      certificates) would all have to be in S, so in the snapshot.
+   7. Neither archiver gets `--one-file-system` (`-x`): S is a file system
+      of its own, so it would leave out everything.  The binds choose the
+      file systems.  A mount not bound (`/proc`, `/run`, a scratch disk)
+      shows as the root file system's own empty directory, as `-x` shows
+      it.  The archiver's cache and the repository are its own, outside S.
+   8. With a `SNAPSHOT:SUBPATH` backup P, rustic-bko gets `--as-path P`,
+      and restic-bko's tree is built at S/P.
+
+   load's restore leaves `/.bko-holt/luks-headers`, its files, and
+   `/.bko-holt` when no raw volume is under it out of every tree, whatever
+   the layout kept, so not even a bare mount point comes back.
 3. Read them back from the new snapshot with `bko-holt luks-headers
    LAYOUT DIR --repo REPO --password-file FILE --snapshot ID` (DIR a new
    private directory; LAYOUT the snapshot's own, read back by
    `snapshot-layout`, "Which copy wins" step 3): exit 0 means the snapshot
    holds every header the layout names, each its size and SHA-256.
+   Both read-backs run rustic-bko (the default `--archiver`), a restic-bko
+   backup's too: bko-holt's restic-bko argv can't run yet (holt-json.md,
+   "What the snapshot's own layout built"), and rustic-bko reads
+   restic-bko's repository (stage-test.py).
    Anything else is a failed backup of that machine: the restore couldn't
    keep the disks' keys.  What becomes of that snapshot (it stays in the
    repository, and bko-rescue lists it) is holt-json.md's open question
@@ -427,10 +486,10 @@ same document as the stick's copy, always with its `layout` (never
 What the backup tool must do (not built: it comes with the backup tool):
 
 1. Write the machine's system.json, with this backup's `sequence` and the
-   dump it just made as `layout`, into the backup's staging root, at
-   `S/.bko-holt/system.json` (open question 14's staging root in RAM, for
-   every machine now, not only one that kept headers).  Nothing is written
-   to the system's disks.
+   dump it just made as `layout`, to a private file in RAM, and stage it
+   at `S/.bko-holt/system.json` ("LUKS2 headers in the backup", step 2's
+   staging root, for every machine now, not only one that kept headers).
+   Nothing is written to the system's disks.
 2. Back up S, so the file is in the same snapshot as the system's files
    and the headers: the layout, the headers and the files are from one
    moment.
@@ -750,6 +809,10 @@ feature means the stick can't import the pool at all.
   luks-headers` (`src/luksfetch.rs`, also the backup tool's read-back),
   `stick --copy`'s `luks_headers` count, load's restore leaving the
   headers out of the tree, and bko-rescue's fetch before the first plan.
+- The staging root ("LUKS2 headers in the backup", step 2; holt-json.md's
+  open question 14), for reference: `testvm/rescue/stage-backup.sh` does
+  it for both archivers, and `stage-test.py` proves it (289e231,
+  `stage-recorded.txt`).  The backup tool's own staging waits for it.
 - "Which copy wins" step 2 on the restore side (holt-json.md's open
   question 15): `bko-holt snapshot-layout` (`src/snaplayout.rs`, also the
   backup tool's read-back), load's restore leaving `/.bko-holt/system.json`
@@ -758,7 +821,8 @@ feature means the stick can't import the pool at all.
   for a snapshot without one.
 - Not built: the backup tool's stick module (and so no system.json carries a
   `layout` yet), its keeping of the LUKS2 headers in the snapshot (steps
-  1 to 4 above), its staging and read-back of each snapshot's
+  1 to 4 above, step 2's staging as stage-backup.sh does it), its
+  staging and read-back of each snapshot's
   system.json ("Which copy wins", steps 1 to 4), its call of `stick_write` (with `Room.reports` filled
   from `backotter/reports`) and the write or removal it answers, the rest of the write-time check (ZFS features, kernel,
   bcachefs), and `backotter stick repair`.  They come with the backup

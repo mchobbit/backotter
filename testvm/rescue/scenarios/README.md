@@ -125,6 +125,15 @@ words for the same two missing paths, its dump run by hand
 (recorded.txt).  `luks-headers`' recorded.txt is from before open
 question 15, with three globs; record-luks.py now writes load's four.
 
+The record scripts' staging roots are plain directories.  The backup
+tool's staging (holt-json.md's open question 14) is `../stage-backup.sh`:
+a tmpfs in a private mount namespace, the file systems bound read-only
+at their paths, the headers and system.json under `/.bko-holt`, for
+rustic-bko and restic-bko.  `../stage-test.py` proves it (root, in RAM)
+against both archivers and bko-holt's `snapshot-layout` and
+`luks-headers`; `../stage-recorded.txt` is its passing run.  It records
+no scenario.
+
 The recovery calls (`stick-three`, `stick-this-computer`): `good` (exit 0,
 OUT written), `unknown` (word 9 `ribbx`, suggest ribbon), `checksum` (two
 words swapped), `count` (11 words), `short` (word 11 `tha`: thank,

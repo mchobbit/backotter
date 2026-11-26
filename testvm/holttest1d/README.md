@@ -1088,6 +1088,24 @@ both), `freebsd15-geli`, `openbsd8-crypt` (softraid CRYPTO), `omnios58`
 (ZFS) and `haiku6`, reserved 9, 6, 8, 7 and 7 GiB of RAM disk (peaks 5.6,
 1.6, 5.6, 3.9 and 5.8) and 4-5 GiB of memory (peaks 2.5-3.1 anon).
 
+## An ESP made by format: HT_VARIANT=espfmt
+
+`HT_VARIANT=espfmt` (ht1-bsd.sh only; H7-09b's end-to-end proof, built
+2026-11-26) is an `+img` run, in `RUN/GUEST-espfmt`, whose load reads the
+source's dump with each imaged ESP left out (no `esp_image`,
+`esp_image_too_big` set, as holt's `golden_plans.rs` `espfmt()` makes the
+`GUEST+espfmt` golden plans), so load's format stage makes the FAT with
+the rescue image's own mkfs (illumos `mkfs -F pcfs`, Haiku `mkfs -t fat`)
+and `bko-holt fat-set`, and the restored system has to boot from it
+(oi2610's UEFI loader comes from installboot).  The dump judge.py reads is
+the source's own.  No Test2 cell: its lines are `# t2-only: espfmt`
+blocks.  It needs the image pinned on the host (`t2-host tool img pin
+PLAT`, as ImgTest2 leaves it) and the RAM disk, as `+img` does:
+
+    cd ~/backotter-work && WEAR_TAG=ht1:RUN:GUEST-espfmt HT_PORT=2692 HT_VARIANT=espfmt \
+      setsid -f ./cmp-run.sh --reserve D M \
+        sudo -E testvm/holttest1d/ht1.sh GUEST RUN >/bkoscratch/holttest1d/RUN-GUEST-espfmt.log 2>&1 </dev/null
+
 ## Where a run works, and what it keeps
 
 All three drivers write the same way, through `ht1-lib.sh`:

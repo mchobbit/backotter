@@ -52,10 +52,22 @@ VARIANT=${HT_VARIANT:-}
 JSON_RUN=""
 [[ $VARIANT != json ]] || JSON_RUN=1 VARIANT=""
 # t2-only-end
+# t2-only: espfmt
+# "espfmt" (H7-09b's proof, 833e96b; testvm/audit/rust/findings.tsv): an
+# +img run whose load reads the dump with each imaged ESP left out (no
+# esp_image, esp_image_too_big set, as holt's golden_plans.rs espfmt()
+# writes GUEST+espfmt), so load's format stage makes the FAT with the rescue
+# image's own mkfs (illumos mkfs -F pcfs, Haiku mkfs -t fat) and fat-set, in
+# GUEST-espfmt.  The source's dump itself, which judge.py reads, is
+# untouched.  (No Test2 cell's: by hand only.)
+ESPFMT=""
+[[ $VARIANT != espfmt ]] || ESPFMT=1 VARIANT=img
+# t2-only-end
 case $VARIANT in ""|bigger|oneshot|img) ;; *) echo "HT_VARIANT: bigger, oneshot or img" >&2; exit 2 ;; esac
 GV=$G${VARIANT:+-$VARIANT}
 # t2-only: json
 [[ -z $JSON_RUN ]] || GV=$G-json
+[[ -z $ESPFMT ]] || GV=$G-espfmt
 # t2-only-end
 PORT=${HT_PORT:-2690}
 export SSH_PORT=$PORT
@@ -526,6 +538,30 @@ put() { local key=$1 file=$2 dest=$3 i rc
     done
     return $rc
 }
+# t2-only: espfmt
+# (espfmt: the load's layout.json is src.json less its ESP images, made once.)
+if [[ -n $ESPFMT ]]; then
+    eval "put_plain() $(declare -f put | tail -n +2)"
+    put() {
+        local f=$2
+        if [[ $f == "$R/dumps/src.json" && $3 == */layout.json ]]; then
+            f=$R/dumps/src-espfmt.json
+            [[ -s $f ]] || python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1])); n = 0
+for disk in d["storage"]["disks"]:
+    for p in disk.get("partitions") or []:
+        if "esp_image" in p:
+            del p["esp_image"]; p["esp_image_too_big"] = True; n += 1
+if not n:
+    sys.exit("espfmt: the dump has no ESP image (esp_image) to leave out")
+json.dump(d, open(sys.argv[2], "w")); print("espfmt: %d ESP image(s) left out of the load\x27s layout.json" % n)
+' "$2" "$f" >> "$R/report.txt" 2>&1 || return 1
+        fi
+        put_plain "$1" "$f" "$3"
+    }
+fi
+# t2-only-end
 # edges_read KEY CMD FILE WANT: the disks' first and last MiB (CMD, which only
 # reads) into FILE, WANT lines, one a disk.  sshk waits SSH_CTO seconds for the
 # sshd to answer, and on a loaded host a slow one answers nothing at all, so an

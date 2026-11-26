@@ -264,7 +264,8 @@ UNITS = [("linux", "bcachefs", 1, "big", "chopin", ())] + \
      ("plats", "openbsd_illumos", 5, None, None, (12, 13)), ("plats", "dragonfly", 3, None, None, (10, 11)),
      ("plats", "zfsguests", 2, None, None, (17, 18, 19))]
 # Pinned ones first, then those only some hosts can run, the heavier first;
-# each to the host with the least of its kind so far (the table's order on a tie).
+# each to the host with the least of its kind so far (a tie by the table's
+# tie_key: class, heat, then its order; img-speed.md F13).
 first = sorted(range(len(UNITS)), key=lambda i: (UNITS[i][4] not in hs, UNITS[i][3] is None, -UNITS[i][2], i))
 load, ports, got, lost = {}, {h: set() for h in hs}, {}, []
 for i in first:
@@ -276,7 +277,7 @@ for i in first:
                                                  ": its ports go to another guest platform on " + " ".join(can)))
         lost.append(f"lost {kind} {name} {why}")
         continue
-    h = min(ok, key=lambda x: (load.get((kind, x), 0), hs.index(x)))
+    h = min(ok, key=lambda x: (load.get((kind, x), 0), H.tie_key(x)))
     load[(kind, h)] = load.get((kind, h), 0) + w
     ports[h] |= set(pp)
     got.setdefault((kind, h), []).append(i)

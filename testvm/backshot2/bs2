@@ -402,7 +402,7 @@ def split(jobs, can, nslots, start=None, wide=None):
     that hold each one's source (CAN: {source: [host...]}).  Each goes to the host that would
     finish it soonest (finish()): its START seconds, its slots busy, plus what it has so far,
     plus the job, over its NSLOTS, and its SSD lane's cases (scratch_on(): one at a time,
-    bs2-host's ssd_token) one after another; NSLOTS' order on a tie; the sources on the fewest
+    bs2-host's ssd_token) one after another; a tie by hosts.tie_key (F13); the sources on the fewest
     hosts first, and the longer case first (secs(): each source's own seconds at each tier),
     so the hosts finish about together and in proportion to their slots where they hold the
     same sources.  Every job goes to exactly one host; each host's keep JOBS' order.  A job
@@ -432,7 +432,7 @@ def split(jobs, can, nslots, start=None, wide=None):
             ssd = scratch_on(y, s) == RM.SSD
             p = first(y)
             return max((busy[y] + p * nslots[y] + x) / nslots[y], lane[y] + p + x if ssd else lane[y] + p)
-        h = min(hs, key=lambda y: (finish(y), hosts.index(y)))
+        h = min(hs, key=lambda y: (finish(y), HOSTS_TABLE.tie_key(y)))
         p = first(h)
         if p:
             busy[h] += p * nslots[h]
@@ -480,7 +480,7 @@ def wide_of(sources, n, hosts=None):
         if k:
             # (One host a source, the one with the fewest such sources so far: it prepares the
             # source once, for all of them; a preparation is a case's seconds, prep_secs().)
-            h = min(hs, key=lambda y: (load.get(y, 0), hs.index(y)))
+            h = min(hs, key=lambda y: (load.get(y, 0), HOSTS_TABLE.tie_key(y)))
             load[h] = load.get(h, 0) + 1
             out[(s, 1)] = (k, [h])
     return out
@@ -1284,7 +1284,7 @@ def leftovers_start(h, name, run):
 def assign(sources, hosts=None, have=None):
     """{source: host}, one host a source (replay, shrink, soak, the corpus): its HOME host
     while that host has no more than its share (len(sources) / len(hosts), rounded up), else
-    the host with the fewest sources so far (hosts' order on a tie); HAVE ({host: sources
+    the host with the fewest sources so far (hosts.tie_key on a tie, F13); HAVE ({host: sources
     there}, None: all) limits each source to the hosts that have it, and the sources on the
     fewest hosts are placed first.  A source no host has: sys.exit.  Without --hosts (and
     no HOSTS given): HOME's host, the first lead host for a source it doesn't name."""
@@ -1306,7 +1306,7 @@ def assign(sources, hosts=None, have=None):
                 load[h] += 1
         for s in group:   # else the least loaded
             if s not in out:
-                h = min(can[s], key=lambda x: (load[x], hosts.index(x)))
+                h = min(can[s], key=lambda x: (load[x], HOSTS_TABLE.tie_key(x)))
                 out[s] = h
                 load[h] += 1
     return {s: out[s] for s in sources}
@@ -1365,14 +1365,15 @@ def all_counts(run):
 def all_later(have):
     """What an All run runs once its queues finish: (the corpus cases [(file, name, source)]
     whose source a host of the run holds; the ones left out, {name: why}; the leftovers
-    set's host, the first lead host (then the rest of the run's) that holds its sources, or
+    set's host, the first lead host (then the rest of the run's), in tie_order, that holds its sources, or
     None; its steps)."""
     from bs2lib import leftovers as LO
     cs = corpus_cases()
     ok = [c for c in cs if any(c[2] in have.get(h, ()) for h in RUN_HOSTS)]
     out = {c[1]: f"its source {c[2]} is on no host of the run" for c in cs if c not in ok}
     need = set(LO.sources(LEFTOVERS_SET))
-    order = [h for h in LEAD_HOSTS if h in RUN_HOSTS] + [h for h in RUN_HOSTS if h not in LEAD_HOSTS]
+    order = HOSTS_TABLE.tie_order([h for h in LEAD_HOSTS if h in RUN_HOSTS]) + \
+        HOSTS_TABLE.tie_order([h for h in RUN_HOSTS if h not in LEAD_HOSTS])
     host = next((h for h in order if need <= set(have.get(h, ()))), None)
     return ok, out, host, len(LO.steps(LEFTOVERS_SET))
 

@@ -88,11 +88,22 @@ gets the defaults):
                            gives a --reserve-ssd its room only from the free space above it
                            (less what the other SSD jobs hold), so a host short of free SSD
                            gets no overflow (Test2 starts nothing under 80 GB free there)
+    heat             0     how hot the host runs, 0 (cool) to 9, a tie-break and nothing
+                           else: where a planner has two hosts it rates the same, the tie
+                           goes by class, then heat, then the table's order (tie_key)
 The defaults are what every host had before the table had limits.
 
+Ties (tie_key, tie_order; docs/design/img-speed.md F13, FD2).  A planner that rates two
+hosts the same (the same load so far, the same finish) breaks the tie by tie_key: the host's
+class (class_rank: big first), then its heat (the cooler first), then its place in the
+table, never by the table's order alone, so Chopin, the first row, no longer gets every
+tie.  The table's order stays what lists keep (names, reports); nothing reads its first row
+as the fleet host (that is the fleet role: guest.py first_host).
+
 Command line (what hosts.sh wraps; exit 0 ok, 1 no such host, 2 usage or a bad table):
-    hosts.py names [--all] [--default] [--role R] [--class C] [--arch A] [--field F]
-                   the names, one a line, in the table's order (--field: that field instead)
+    hosts.py names [--all] [--default] [--role R] [--class C] [--arch A] [--field F] [--ties]
+                   the names, one a line, in the table's order (--field: that field instead;
+                   --ties: in tie_order, a tie's winner first)
     hosts.py get NAME FIELD [--all]
                    one field of NAME's row (NAME may be HOST.DOMAIN; a list: its
                    items, space-separated; null: an empty line)
@@ -126,7 +137,7 @@ REQUIRED = ("name", "ssh", "slot_range", "stic_ports", "class", "roles", "defaul
 # the table's class_limits {CLASS: {FIELD: VALUE}}.
 LIMITS = {"stic_slots": 3, "guest_slots": 3, "holt_jobs": 3, "base_gib": 6, "holt_disk_mode": False, "bs2_slots": 3,
           "max_wall_x": None, "scratch_mode": "ram", "ssd_floor_gib": 80, "holt_ram_slots": None,
-          "holt_ssd_slots": None}
+          "holt_ssd_slots": None, "heat": 0}
 SCRATCH_MODES = ("ram", "overflow", "ssd")
 FIELDS += tuple(LIMITS)
 # A host's architecture (its row's arch, else DEFAULT_ARCH), Debian's names; MACHINES maps
@@ -187,6 +198,8 @@ def limit_error(k, v):
         return None if type(v) is int and 1 <= v <= 3 else "1 to 3 (every check.sh's slot_take 3)"
     if k == "bs2_slots":
         return None if type(v) is int and 1 <= v <= 6 else "1 to 6 (bs2-host queue's ports 2943-2948)"
+    if k == "heat":
+        return None if type(v) is int and 0 <= v <= 9 else "a whole number, 0 (cool) to 9"
     if k == "max_wall_x":
         return None if v is None or (type(v) in (int, float) and 0.5 <= v <= 10) else "null, or a number 0.5 to 10"
     return None if type(v) is int and 1 <= v <= 16 else "a whole number, 1 to 16"
@@ -445,6 +458,31 @@ def class_rank(name, table=None):
     return list(t["classes"]).index(r["class"]) if r else 0
 
 
+def tie_key(name, table=None):
+    """NAME's place when a planner rates hosts the same (F13): (class_rank, heat, its row's
+    place in the table, its name), the smallest wins: a big host before a small one, then
+    the cooler (its heat limit), then the table's order.  A name in no row (mac, a test's):
+    after every row, then by name."""
+    t = table if table is not None else load()
+    n = short(name)
+    order = [r["name"] for r in t["hosts"]]
+    if n not in order:
+        return (len(t["classes"]), 0, len(order), n)
+    return (class_rank(n, t), limit(n, "heat", t), order.index(n), n)
+
+
+def tie_order(ns, table=None):
+    """NS sorted by tie_key: the host a tie goes to first."""
+    t = table if table is not None else load()
+    return sorted(ns, key=lambda h: tie_key(h, t))
+
+
+def tie_first(ns, table=None):
+    """The host of NS a tie goes to (tie_order's first), or None for none."""
+    ns = list(ns)
+    return tie_order(ns, table)[0] if ns else None
+
+
 def row_arch(r):
     """A row's architecture: its arch, else DEFAULT_ARCH."""
     return r.get("arch") or DEFAULT_ARCH
@@ -552,7 +590,7 @@ def _value(v):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    usage = ("usage: hosts.py names [--all] [--default] [--role R] [--class C] [--arch A] [--field F] | "
+    usage = ("usage: hosts.py names [--all] [--default] [--role R] [--class C] [--arch A] [--field F] [--ties] | "
              "get NAME FIELD [--all] | limit NAME FIELD | phrase [--all] | arch NAME | guest-arch GUEST | "
              "job-prefix NAME [USER] | rust-env NAME | holt-slots NAME | check")
     if not argv:
@@ -563,7 +601,7 @@ def main(argv=None):
     i = 0
     while i < len(rest):
         a = rest[i]
-        if a in ("--all", "--default"):
+        if a in ("--all", "--default", "--ties"):
             opts[a] = True
         elif a in ("--role", "--class", "--field", "--arch"):
             if i + 1 >= len(rest):
@@ -587,8 +625,9 @@ def main(argv=None):
             if opts.get("--arch") is not None and opts["--arch"] not in ARCHES:
                 print(f"hosts.py: no such arch {opts['--arch']} (arches: {', '.join(ARCHES)})", file=sys.stderr)
                 return 2
-            for n in names(opts.get("--all", False), True if opts.get("--default") else None,
-                           opts.get("--role"), opts.get("--class"), table=t, arch=opts.get("--arch")):
+            ns = names(opts.get("--all", False), True if opts.get("--default") else None,
+                       opts.get("--role"), opts.get("--class"), table=t, arch=opts.get("--arch"))
+            for n in (tie_order(ns, t) if opts.get("--ties") else ns):
                 print(_value(row(n, True, t).get(f, FIELD_DEFAULTS.get(f))))
             return 0
         if word == "get" and len(pos) == 2 and not set(opts) - {"--all"}:

@@ -81,6 +81,7 @@ import threading
 import time
 
 from . import DEFAULT_HOSTS, gate_hosts, host_class, utc_now
+from . import hosts as hosts_table
 from .hostjob import (  # noqa: F401 - host_job and its helpers, as gate.X too
     CMP_RUN, FETCH_SCRIPT, POLL_S, UNKNOWN_MAX, HostIO, JobFailure, _q, guards_of, host_job, host_lost, host_seen,
     job_poll_cmd, job_times, layer_dir, tripped, wait_back)
@@ -301,8 +302,8 @@ class RunEnv:
         return None
 
     def host_for(self, cell):
-        """The host a cell runs on: its @HOST, its pin, the plan's placement, else the
-        first host with facts."""
+        """The host a cell runs on: its @HOST, its pin, the plan's placement, else the host
+        with facts a tie goes to (hosts.tie_order: class, heat, then the table's order)."""
         name, h = split_cell(cell)
         if name == "selftest":
             return "mac"
@@ -315,7 +316,8 @@ class RunEnv:
         for x in (getattr(pc, "placed", None), getattr(pc, "host", None)):
             if x and x in self.hosts:
                 return x
-        return next((x for x in self.hosts if x in self.facts), self.hosts[0])
+        ties = hosts_table.tie_order(self.hosts)
+        return next((x for x in ties if x in self.facts), ties[0])
 
 
 def new_run_id(prefix="t2g", t=None):

@@ -31,6 +31,7 @@ import threading
 import time
 
 from . import hostjob, utc_now
+from . import hosts as hosts_table
 from .gate_judge import counts_of, cut
 
 SUBDIR = "img"
@@ -334,11 +335,12 @@ class Runner:
         return [h for h in self.hosts if not ks or h in ks]
 
     def target(self, pc, ok_hosts):
-        """Where the cell runs: the plan's placement, when that host could pin it."""
+        """Where the cell runs: the plan's placement, when that host could pin it, else the
+        host of OK_HOSTS a tie goes to (hosts.tie_first: class, heat, then the table's order)."""
         for h in (getattr(pc, "placed", None), getattr(pc, "host", None)):
             if h and h in ok_hosts:
                 return h
-        return ok_hosts[0] if ok_hosts else None
+        return hosts_table.tie_first(ok_hosts)
 
     # --- step 2: the pins ------------------------------------------------------------------------
     def host_env(self):

@@ -493,7 +493,8 @@ def simulate(guests, spec, est, hosts, cap, first=(), ranks=None):
         return sum((e - t) * spec[g].load for e, g in run[h]) / caps[h]
 
     def try_start(relax):
-        for h in sorted(hosts, key=lambda h: (busy_until(h), h)):
+        # (A tie goes by the host table's tie_key: class, heat, then its order; F13.)
+        for h in sorted(hosts, key=lambda h: (busy_until(h), HOSTS_TABLE.tie_key(h))):
             v = hosts[h]
             free_cap = caps[h] - sum(spec[g].load for _, g in run[h])
             free_slots = v["slots_free"] - sum(spec[g].slots for _, g in run[h])

@@ -935,12 +935,25 @@ this spec's speedups 2 and 7.
   on copland, published from Chopin, then GuestTest2 PASS.
 - **F13. Ties go to Chopin (yes) (user: FD2).** The planners break ties by
   table order, and Chopin is row 1 (`run-all.sh` split_share,
-  `gate.py host_for`, `plan.py:1018/1063/1098/1176`, `img.py:341/932`, bs2
-  leftovers, promote-bins' default). Change: break ties by class, then by a
-  heat or speed measure, then by order. Regenerate the golden fixtures that
-  assume Chopin first, and check that nothing reads row 1 as the fleet host
-  (fleet ownership comes from the role now, `guest.py:52-63`). *Proof:*
-  t2's self-test with the new goldens, and a plan diff showing ties moved.
+  `gate.py host_for`, `plan.py` estimate's packing and its gate placement,
+  `img.py` target, drive.py's simulate (by name, so cage first), bs2's deals
+  and leftovers host). Change: break ties by class, then by a heat or speed
+  measure, then by order. Regenerate the golden fixtures that assume Chopin
+  first, and check that nothing reads row 1 as the fleet host (fleet
+  ownership comes from the role now, `guest.py:52-63`). *Proof:* t2's
+  self-test with the new goldens, and a plan diff showing ties moved.
+  *Built 2026-11-26:* `hosts.py tie_key` is (class rank, heat, row, name), the
+  smallest winning; `heat` is a new limit (0 to 9, default 0), chopin 1 for
+  its cooler (the temperature sampler's medians: chopin 40.4, cinqcent 35.7 C),
+  so a tie between the big hosts goes to cinqcent and the small ones keep the
+  table's order. `hosts.py names --ties` gives the order to the shell. The
+  plan estimate's GuestTest2 update round read the first reachable host as the
+  fleet host; it now takes `guest.first_host()` (the role). What the audit
+  listed but is no tie, left as it is: `plan.py:1018/1063/1098/1176` set the
+  host when one is left; `img.py:932` labels a row; promote-bins' default
+  source is where the sets are assembled, not a tie, and moving it would
+  promote another host's older set (F20 decides it); bs2's HOME deal and its
+  `leftovers` default host follow where the sources are built.
 - **F14. Warm holt dirs on Chopin (yes).** There are 82 tags in
   `/bkoscratch/holt-warm` on chopin and 0 on copland. Change: choose the host
   with `pick-host --reserve 2 4` and reword the fix-cycle-speedups note.

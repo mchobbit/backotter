@@ -428,6 +428,14 @@ each of these is decided per cell, from the host's facts, not from its name:
   sparse.
 - vm-update's fleet, the store mirror and the Bigfoot link (all Chopin).
 
+**Ties** (docs/design/img-speed.md F13, 2026-11-26). Where a planner rates two
+hosts the same (t2's estimates, the gate's fallback host, ImgTest2's target,
+drive.py's simulation, run-all.sh's SPLIT deal, bs2's deals), the tie goes by
+class (big first), then `heat` (the cooler first), then the table's order:
+`hosts.py tie_key`, `hosts.py names --ties`. `heat` is a limit, 0 to 9, default
+0; Chopin's is 1 (its cooler), so a tie between the big hosts goes to Cinqcent.
+The table's order is unchanged and still what lists and reports keep.
+
 ## Bigfoot, the arm64 host
 
 Bigfoot (`m@bigfoot.local`, 192.168.68.197 as its `ip`) is the user's daily

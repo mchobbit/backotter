@@ -875,17 +875,18 @@ class Gate(unittest.TestCase):
     def test_a_layer_whose_host_rebooted_reruns_once_it_is_back(self):
         io = tgate.FakeIO()
         env, _ = tgate.env_with(io, ["gate:bin:abi"])
+        h = env.host_for("gate:bin:abi")   # (the tie's host since F13: hosts.tie_key)
         s = run.StopEngine("gate", POL)
         s.watch.settle_s = 0
         env.rs.stops = s
-        s.feed_seen("chopin", {"boot": A, "up_s": 86400.0})
+        s.feed_seen(h, {"boot": A, "up_s": 86400.0})
         n = {"a": 0}
 
         def attempt(a):
             n["a"] = a
             if a == 1:
-                s.feed_seen("chopin", {"boot": B, "up_s": 5.0})               # the host came back from a reboot
-                o = gate.harness(hostjob.JobFailure("no answer from chopin in 20 polls; pid 9 may still run",
+                s.feed_seen(h, {"boot": B, "up_s": 5.0})                # the host came back from a reboot
+                o = gate.harness(hostjob.JobFailure(f"no answer from {h} in 20 polls; pid 9 may still run",
                                                     still_running=True))
                 o.start = utc_now(time.time() - 600)
                 return o
@@ -900,11 +901,11 @@ class Gate(unittest.TestCase):
         """SweepTest2 #4's case: the host is still powered off when host_job gives up (its job
         may still run, no reboot seen yet).  The gate waits for it, sees its reboot, and reruns."""
         io = tgate.FakeIO()
-        state = {"phase": "up", "down": 0}
+        state = {"phase": "up", "down": 0, "host": None}
         sh = io.sh
 
         def state_sh(host, cmd, timeout=60, input=None):
-            if "boot_id" in cmd and host == "chopin":
+            if "boot_id" in cmd and host == state["host"]:
                 if state["phase"] == "up":
                     return 0, f"pswpout 0\nboot {A}\nup 86400\n", ""
                 if state["phase"] == "down":
@@ -916,6 +917,7 @@ class Gate(unittest.TestCase):
             return sh(host, cmd, timeout, input)
         io.sh = state_sh
         env, _ = tgate.env_with(io, ["gate:bin:abi"])
+        state["host"] = h = env.host_for("gate:bin:abi")   # (the tie's host since F13)
         s = run.StopEngine("gate", POL)
         s.watch.settle_s, s.watch.away_s = 0, 0
         env.rs.stops = s
@@ -925,7 +927,7 @@ class Gate(unittest.TestCase):
             n["a"] = a
             if a == 1:
                 state["phase"] = "down"
-                o = gate.harness(hostjob.JobFailure("no answer from chopin in 20 polls; pid 9 may still run",
+                o = gate.harness(hostjob.JobFailure(f"no answer from {h} in 20 polls; pid 9 may still run",
                                                     still_running=True))
                 o.start = utc_now(time.time() - 600)
                 return o
@@ -933,7 +935,7 @@ class Gate(unittest.TestCase):
         e = gate.run_one(env, "gate:bin:abi", attempt)
         self.assertEqual(n["a"], 2)
         self.assertEqual(e["verdict"], "PASS")
-        self.assertTrue(s.rebooted("chopin", time.time() - 600))
+        self.assertTrue(s.rebooted(h, time.time() - 600))
 
     def test_no_rerun_beside_a_job_that_may_still_run(self):
         """The host answers again with the same boot: attempt 1's job may still run there."""
@@ -942,6 +944,7 @@ class Gate(unittest.TestCase):
         io.sh = lambda host, cmd, timeout=60, input=None: ((0, f"pswpout 0\nboot {A}\nup 86400\n", "")
                                                            if "boot_id" in cmd else sh(host, cmd, timeout, input))
         env, _ = tgate.env_with(io, ["gate:bin:abi"])
+        h = env.host_for("gate:bin:abi")   # (the tie's host since F13)
         s = run.StopEngine("gate", POL)
         s.watch.settle_s = 0
         env.rs.stops = s
@@ -949,12 +952,12 @@ class Gate(unittest.TestCase):
 
         def attempt(a):
             n["a"] = a
-            return gate.harness(hostjob.JobFailure("no answer from chopin in 20 polls; pid 9 may still run",
+            return gate.harness(hostjob.JobFailure(f"no answer from {h} in 20 polls; pid 9 may still run",
                                                    still_running=True))
         e = gate.run_one(env, "gate:bin:abi", attempt)
         self.assertEqual((n["a"], e["verdict"]), (1, "HARNESS"))
         self.assertTrue(e["host_lost"])
-        self.assertTrue(s.watch.known("chopin"))                              # (the gate's own look)
+        self.assertTrue(s.watch.known(h))                                     # (the gate's own look)
 
     def test_a_slow_layer_lost_with_its_host_stops_nothing(self):
         def fake_cell(env, cell, commits=None):

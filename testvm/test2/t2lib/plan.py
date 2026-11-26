@@ -2594,8 +2594,9 @@ class Planner:
         due = [v for v in views if v.pc.status == "due"]
         gb = {h: 0.0 for h in ctx.hosts}
         wall = 0
+        ties = hosts_table.tie_order(ctx.hosts)   # (F13: a tie goes by class, heat, then the table)
         if self.fam == "stic":
-            have = {h: self.have(h) for h in ctx.hosts if h in ctx.facts}
+            have = {h: self.have(h) for h in ties if h in ctx.facts}
             if self.pending:
                 have = {h: {f"{o}/{n}" for o in ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "omnios", "haiku")
                             for n in ("restic-bko", "rustic-bko")} for h in have}
@@ -2611,8 +2612,13 @@ class Planner:
             for v in due:
                 v.pc.placed = place.get(v.name)
         elif self.fam in ("guest", "img"):
-            reach = [h for h in ctx.hosts if h in ctx.facts]
-            first = reach[:1] if self.w.update else reach
+            reach = [h for h in ties if h in ctx.facts]
+            # (An update runs on the fleet host, by its role, never the table's first row.)
+            if self.w.update:
+                from . import guest as guestmod
+                first = [h for h in reach if h == guestmod.first_host()] or reach[:1]
+            else:
+                first = reach
             jobs = [(v.cell, v.pc.est["wall_s"], self.job_gib(v), [x for x in v.hosts if x in first] or None) for v in due]
             wall, place, left = estimates.pack(jobs, first, slots=2 if self.w.update else estimates.HOLT_JOBS)
             for v in due:
@@ -2621,7 +2627,7 @@ class Planner:
             sizes = estimates.load_ram_sizes(os.path.join(ctx.checkout, "testvm", "holttest1d", "ram-sizes.tsv"))
             jobs = [(v.cell, v.pc.est["wall_s"], sizes.get(v.cell[5:], sizes.get(v.name, 6)),
                      v.hosts or None) for v in due]
-            hs = [h for h in ctx.hosts if h in ctx.facts]
+            hs = [h for h in ties if h in ctx.facts]
             wall, place, left = estimates.pack(jobs, hs, slots={h: hosts_table.limit(h, "holt_jobs") for h in hs},
                                                ranks={h: hosts_table.class_rank(h) for h in hs})
             for v in due:
@@ -2638,11 +2644,11 @@ class Planner:
                         e = {}
                 v.pc.part = e.get("part") or ("slow" if v.name.startswith("loop:") else "fast")
                 part[v.cell] = v.pc.part
-                host_of[v.cell] = v.hosts[0] if v.hosts else v.pc.host
+                host_of[v.cell] = hosts_table.tie_first(v.hosts) if v.hosts else v.pc.host
                 v.pc.placed = host_of[v.cell] if v.pc.status == "due" else None
             wall = estimates.gate_wall([v.cell for v in due], {v.cell: v.pc.est for v in due}, part, host_of)
         for v in due:
-            h = v.pc.placed or (v.hosts[0] if v.hosts else None)
+            h = v.pc.placed or (hosts_table.tie_first(v.hosts) if v.hosts else None)
             if h in gb:
                 gb[h] += v.pc.est.get("gb", 0.0)
         self.plan.totals = {"due": len(due), "gm": round(sum(v.pc.est["gm"] for v in due), 1), "wall_s": int(wall),

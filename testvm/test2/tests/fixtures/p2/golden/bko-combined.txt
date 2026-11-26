@@ -99,7 +99,7 @@ current: 0
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written
 HoltTest2 plan: bko-holt code 5db6749 (not built), rustic-bko bko-bin, base BASE, ledger 0 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
-due: 103 of 103 cells, est. 564.2 gm, ~N wall, 28.9 GB (chopin 28.9, cinqcent 0.0)
+due: 103 of 103 cells, est. 564.2 gm, ~N wall, 28.9 GB (chopin 0.0, cinqcent 28.9)
   holt:aerynos                  any      holt:new  no PASS yet  6.0 gm  tsv
   holt:alpine324                any      holt:new  no PASS yet  1.9 gm  tsv
   holt:alpinebsd                any      holt:new  no PASS yet  3.7 gm  tsv

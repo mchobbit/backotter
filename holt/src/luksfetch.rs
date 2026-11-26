@@ -30,6 +30,11 @@ use std::path::{Path, PathBuf};
 /// restore leaves the directory out of the tree it restores.
 pub const REPO_DIR: &str = "/.bko-holt/luks-headers";
 
+/// The directory REPO_DIR is in: the backup tool's own, not the system's
+/// (Qubes's raw volumes are in it too).  load leaves it out of the restore
+/// with the headers, unless raw volumes are under it.
+pub const BKO_DIR: &str = "/.bko-holt";
+
 /// The archiver load runs unless --archiver says.
 const DEFAULT_ARCHIVER: &str = "rustic-bko";
 
@@ -47,7 +52,8 @@ of bko-holt's own user that no one else may enter; it is made with mode
 fetched or isn't the dump's, nothing is left: DIR is removed.
 
   --repo REPO          the repository (as load's --repo)
-  --password-file FILE its password (under --json, required: nothing asks)
+  --password-file FILE its password (under --json, required: nothing asks;
+                       without it the archiver asks on the terminal)
   --snapshot ID        the snapshot load restores (default latest)
   --archiver PROGRAM   rustic-bko (the default) or restic-bko
   --json               one JSON document on standard output
@@ -149,6 +155,16 @@ pub struct Fetch {
 }
 
 impl Fetch {
+    /// Whether the archiver may ask for the password: text mode with no
+    /// --password-file.  Its standard error is then the terminal's, not
+    /// read, since restic-bko writes its prompt there (rustic-bko's goes
+    /// to /dev/tty).
+    pub fn asks(&self) -> bool {
+        !self.stdin_null && self.password_file.is_none()
+    }
+}
+
+impl Fetch {
     /// The archiver's argv for one header: `ARCHIVER --repository REPO
     /// [--password-file FILE] --no-progress dump SNAPSHOT:PATH` (restic's
     /// takes SNAPSHOT and PATH), as load's raw volumes are read.
@@ -179,18 +195,72 @@ fn last_line(err: &[u8]) -> String {
     if l.chars().count() > 300 { l.chars().take(300).collect::<String>() + "…" } else { l }
 }
 
+/// The buffer's first size: the header's, or this much when the dump
+/// recorded none (it then grows, each old copy zeroed).
+const FIRST_READ: usize = 1 << 20;
+
+/// At most MAX bytes and one more of R, in a buffer that never leaves a
+/// copy of what it held: each regrowth copies into a new buffer and zeroes
+/// the old one.  An allocation that fails is an error, not an abort.
+fn read_capped(r: &mut impl Read, max: u64) -> Result<Vec<u8>, (Vec<u8>, String)> {
+    let cap = max.saturating_add(1);
+    let mut body: Vec<u8> = Vec::new();
+    if body.try_reserve_exact(usize::try_from(cap).unwrap_or(usize::MAX).min(FIRST_READ)).is_err() {
+        return Err((body, "no memory for the header".into()));
+    }
+    let mut chunk = [0u8; 65536];
+    loop {
+        let left = cap - body.len() as u64;
+        if left == 0 {
+            break;
+        }
+        let want = chunk.len().min(usize::try_from(left).unwrap_or(usize::MAX));
+        let n = match r.read(&mut chunk[..want]) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => {
+                crate::recovery::zeroize_bytes(&mut chunk);
+                return Err((body, format!("its output couldn't be read: {e}")));
+            }
+        };
+        if body.len() + n > body.capacity() {
+            let mut bigger: Vec<u8> = Vec::new();
+            let to = (body.capacity().saturating_mul(2)).max(body.len() + n).min(usize::try_from(cap).unwrap_or(usize::MAX));
+            if bigger.try_reserve_exact(to).is_err() {
+                crate::recovery::zeroize_bytes(&mut chunk);
+                return Err((body, "no memory for the header".into()));
+            }
+            bigger.extend_from_slice(&body);
+            crate::recovery::zeroize_bytes(&mut body);
+            body = bigger;
+        }
+        body.extend_from_slice(&chunk[..n]);
+    }
+    crate::recovery::zeroize_bytes(&mut chunk);
+    Ok(body)
+}
+
+/// Why a dump wasn't the header: the archiver failed (or couldn't be
+/// read), or it wrote more than the dump kept.
+#[derive(Debug, PartialEq)]
+enum DumpFailed {
+    Fetch(String),
+    TooBig(String),
+}
+
 /// Runs ARGV and reads at most MAX bytes of its standard output: the
-/// bytes, or why not (it failed, or wrote more).  The buffer is made big
-/// enough at once, so no copy of a header is left behind by a regrowth.
-fn run_dump(argv: &[String], max: u64, stdin_null: bool) -> Result<Vec<u8>, String> {
+/// bytes, or why not.  ASKS: its standard error is the terminal's (it may
+/// ask for the password there), not read.
+fn run_dump(argv: &[String], max: u64, stdin_null: bool, asks: bool) -> Result<Vec<u8>, DumpFailed> {
     use std::process::{Command, Stdio};
-    let prog = argv.first().ok_or("no archiver")?;
+    let prog = argv.first().ok_or_else(|| DumpFailed::Fetch("no archiver".into()))?;
     let mut c = Command::new(prog);
-    c.args(&argv[1..]).stdout(Stdio::piped()).stderr(Stdio::piped());
+    c.args(&argv[1..]).stdout(Stdio::piped()).stderr(if asks { Stdio::inherit() } else { Stdio::piped() });
     if stdin_null {
         c.stdin(Stdio::null());
     }
-    let mut child = c.spawn().map_err(|e| format!("{prog} couldn't be started: {e}"))?;
+    let mut child = c.spawn().map_err(|e| DumpFailed::Fetch(format!("{prog} couldn't be started: {e}")))?;
     let mut err_pipe = child.stderr.take();
     // Standard error in a thread of its own, so a full pipe there can't
     // stop the dump (its last 16 KiB kept).
@@ -210,35 +280,38 @@ fn run_dump(argv: &[String], max: u64, stdin_null: bool) -> Result<Vec<u8>, Stri
         }
         all
     });
-    let mut body = Vec::with_capacity(usize::try_from(max).unwrap_or(usize::MAX).saturating_add(1).min(HEADER_MAX as usize + 1));
     let read = match child.stdout.take() {
-        Some(o) => o.take(max.saturating_add(1)).read_to_end(&mut body).map(|_| ()),
-        None => Ok(()),
+        Some(mut o) => read_capped(&mut o, max),
+        None => Ok(Vec::new()),
     };
-    let over = body.len() as u64 > max;
+    // Stopped before its end (more than the dump kept, or a read that
+    // failed): killed, so the wait can't block on an archiver still
+    // writing.
+    let over = read.as_ref().map_or(true, |b| b.len() as u64 > max);
     if over {
         let _ = child.kill();
     }
     let status = child.wait();
     let err = errs.join().unwrap_or_default();
-    let fail = |body: &mut Vec<u8>, why: String| {
+    let fail = |body: &mut Vec<u8>, why: DumpFailed| {
         crate::recovery::zeroize_bytes(body);
         Err(why)
     };
+    let mut body = match read {
+        Ok(b) => b,
+        Err((mut b, why)) => return fail(&mut b, DumpFailed::Fetch(format!("{prog}: {why}"))),
+    };
     if over {
-        return fail(&mut body, format!("{prog} wrote more than {max} bytes"));
-    }
-    if let Err(e) = read {
-        return fail(&mut body, format!("{prog}'s output couldn't be read: {e}"));
+        return fail(&mut body, DumpFailed::TooBig(format!("{prog} wrote more than {max} bytes")));
     }
     match status {
         Ok(s) if s.success() => Ok(body),
         Ok(s) => {
             let said = last_line(&err);
             let how = s.code().map_or_else(|| "was killed by a signal".to_string(), |c| format!("exited {c}"));
-            fail(&mut body, if said.is_empty() { format!("{prog} {how}") } else { format!("{prog} {how}: {said}") })
+            fail(&mut body, DumpFailed::Fetch(if said.is_empty() { format!("{prog} {how}") } else { format!("{prog} {how}: {said}") }))
         }
-        Err(e) => fail(&mut body, format!("{prog}: {e}")),
+        Err(e) => fail(&mut body, DumpFailed::Fetch(format!("{prog}: {e}"))),
     }
 }
 
@@ -281,11 +354,14 @@ pub fn fetch(entries: &[Entry], dir: &Path, f: &Fetch) -> Result<Vec<Value>, (E,
         // or SNAPSHOT PATH (restic's).
         let from = argv.iter().rposition(|a| a == "dump").map(|i| argv[i + 1..].join(" ")).unwrap_or_default();
         let what = format!("{}'s LUKS2 header ({from})", e.device);
-        let mut body = match run_dump(&argv, e.bytes.unwrap_or(HEADER_MAX), f.stdin_null) {
+        let mut body = match run_dump(&argv, e.bytes.unwrap_or(HEADER_MAX), f.stdin_null, f.asks()) {
             Ok(b) => b,
-            Err(why) => {
+            Err(failed) => {
                 undo(dir, &written);
-                let code = if why.contains("wrote more than") { E::HeaderMismatch } else { E::HeaderFetchFailed };
+                let (code, why) = match failed {
+                    DumpFailed::TooBig(why) => (E::HeaderMismatch, why),
+                    DumpFailed::Fetch(why) => (E::HeaderFetchFailed, why),
+                };
                 return Err((code, format!("{what}: {why}")));
             }
         };
@@ -583,6 +659,55 @@ mod tests {
         assert_eq!(code, E::HeaderFetchFailed);
         assert!(why.contains("couldn't be started"), "{why}");
         assert!(!d.path().join("h4").exists());
+    }
+
+    #[test]
+    fn an_old_dump_without_sizes_reads_a_big_header() {
+        // No `bytes`: the buffer starts at FIRST_READ and grows (each old
+        // copy zeroed), never HEADER_MAX at once (oq12 review).
+        let (d, files, arch) = rig();
+        let big: Vec<u8> = (0..(3 * FIRST_READ + 5)).map(|i| (i % 251) as u8).collect();
+        std::fs::write(files.join("luks2-header-a.img"), &big).unwrap();
+        let mut e = h("luks2-header-a.img", &big);
+        e.put("bytes", Value::Null);
+        let list = entries(&layout(vec![e])).unwrap();
+        let out = d.path().join("h");
+        let rows = fetch(&list, &out, &fetcher(&arch, "latest")).unwrap();
+        assert_eq!(std::fs::read(rows[0].get_str("path").unwrap()).unwrap(), big);
+        // The cap holds: at most MAX and one more byte is read.
+        let mut r: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+        assert_eq!(read_capped(&mut r, 4).unwrap(), [1, 2, 3, 4, 5]);
+        let mut r: &[u8] = &[1, 2, 3];
+        assert_eq!(read_capped(&mut r, 4).unwrap(), [1, 2, 3]);
+    }
+
+    #[test]
+    fn the_code_is_the_failures_kind_not_its_words() {
+        // An archiver that fails with "wrote more than" in its own words:
+        // still header_fetch_failed (oq12 review).
+        let (d, _, _) = rig();
+        let arch = d.path().join("liar");
+        std::fs::write(&arch, "#!/bin/sh\necho 'error: it wrote more than it should' >&2\nexit 1\n").unwrap();
+        std::fs::set_permissions(&arch, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let list = entries(&layout(vec![h("luks2-header-a.img", b"A")])).unwrap();
+        let (code, why) = fetch(&list, &d.path().join("h"), &fetcher(&arch, "latest")).unwrap_err();
+        assert_eq!(code, E::HeaderFetchFailed, "{why}");
+        assert!(why.contains("exited 1: error: it wrote more than it should"), "{why}");
+    }
+
+    #[test]
+    fn text_mode_without_a_password_file_lets_the_archiver_ask() {
+        // restic-bko asks on standard error: it is the terminal's then, not
+        // read (oq12 review), so the refusal has no line of it.
+        let (d, _, arch) = rig();
+        let asks = Fetch { password_file: None, stdin_null: false, ..fetcher(&arch, "latest") };
+        assert!(asks.asks());
+        assert!(!fetcher(&arch, "latest").asks(), "a password file: nothing asks");
+        assert!(!Fetch { password_file: None, ..fetcher(&arch, "latest") }.asks(), "under --json nothing asks");
+        let list = entries(&layout(vec![h("luks2-header-a.img", b"A")])).unwrap();
+        let (code, why) = fetch(&list, &d.path().join("h"), &asks).unwrap_err();
+        assert_eq!(code, E::HeaderFetchFailed);
+        assert!(why.ends_with("exited 1") && !why.contains("path not found"), "{why}");
     }
 
     #[test]

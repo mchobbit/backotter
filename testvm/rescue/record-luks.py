@@ -33,9 +33,13 @@ and SHA-256 the newest headers'.  The calls:
 02 and 03 hold a `password` file (the fake matches them only for it) and
 their snapshot's ID in their argv; 04 any other call.  Then each fetched
 header's `cryptsetup luksDump` UUID, and a restore of the newest snapshot
-with load's glob file (`!/.bko-holt/luks-headers/**`): the tree comes back
-without the headers.  recorded.txt says what and when.  Python's stdlib
-only.
+with load's glob file (LOAD_GLOBS, as load writes it for a layout that
+kept headers and has no raw volume; json_cli.rs pins the same lines): the
+tree comes back without the headers, their directory or /.bko-holt.
+recorded.txt says what and when.  Python's stdlib only.
+
+It works in a new directory in TMPDIR: run it with TMPDIR set to the
+reserved RAM directory (cmp-run.sh --reserve).
 """
 
 import hashlib
@@ -50,6 +54,8 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 CORPUS = os.path.join(HERE, "..", "..", "holt", "tests", "corpus", "uc24-fde", "src.json")
 REPO_DIR = ".bko-holt/luks-headers"
+# load's restore glob file for such a layout (holt/src/load/commands.rs).
+LOAD_GLOBS = ["!/.bko-holt/luks-headers/**", "!/.bko-holt/luks-headers", "!/.bko-holt"]
 PASSWORD = b"correct horse"
 CRYPTSETUP = shutil.which("cryptsetup") or "/usr/sbin/cryptsetup"
 
@@ -193,14 +199,15 @@ def main(argv):
         d4, p4 = fetch("h4", newest, wrong, 1)
         assert not os.path.exists(d4) and json.loads(p4.stdout)["code"] == "header_fetch_failed", p4.stdout
         call(out, "04-wrong-password", pat("*"), p4.stdout, 1)
-        # The restore leaves the headers' copies out (load's glob file).
+        # The restore leaves the headers' copies out (load's glob file),
+        # and their directories: every path listed, directories too.
         globs = os.path.join(work, "restore.globs")
         with open(globs, "w") as f:
-            f.write("!/%s/**\n" % REPO_DIR)
+            f.write("".join(g + "\n" for g in LOAD_GLOBS))
         target = os.path.join(work, "target")
         run(*rp, "restore", "--glob-file", globs, newest, target)
-        left = sorted(os.path.relpath(os.path.join(r, n), target) for r, _, fs in os.walk(target) for n in fs)
-        assert "etc/hostname" in left and not any(x.startswith(REPO_DIR) for x in left), left
+        left = sorted(os.path.relpath(os.path.join(r, n), target) for r, ds, fs in os.walk(target) for n in ds + fs)
+        assert "etc/hostname" in left and not any(x.startswith(".bko-holt") for x in left), left
         ver = lambda *c: run(*c).stdout.decode().strip().splitlines()[0]
         with open(os.path.join(out, "recorded.txt"), "w") as f:
             f.write("Recorded %s by record-luks.py on %s:\n" % (time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime()), os.uname().nodename))
@@ -210,7 +217,7 @@ def main(argv):
             for x in dumps:
                 f.write("  %s\n" % x)
             f.write("03-mismatch: %s\n04-wrong-password: %s\n" % (json.loads(p3.stdout)["text"], json.loads(p4.stdout)["text"]))
-            f.write("A restore of %s with load's glob file (!/%s/**) brought back %s, and no header.\n" % (newest, REPO_DIR, ", ".join(left)))
+            f.write("A restore of %s with load's glob file (%s) brought back %s: no header, no .bko-holt.\n" % (newest, " ".join(LOAD_GLOBS), ", ".join(left)))
         print(open(os.path.join(out, "recorded.txt")).read(), end="")
     finally:
         shutil.rmtree(work, ignore_errors=True)

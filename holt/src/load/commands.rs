@@ -3847,8 +3847,20 @@ impl Builder<'_> {
         let reformat_globs: Vec<String> = self.layout.arr(&["load_reformat", "restore_globs"]).iter().filter_map(Value::as_str).map(str::to_string).collect();
         let raw_globs = self.raw_globs();
         // The kept LUKS2 headers' copies in the backup (luksfetch.rs): key
-        // material, fetched by `bko-holt luks-headers`, never put in the tree.
-        let header_globs: Vec<String> = if self.layout.arr(&["storage", "luks_headers"]).is_empty() { Vec::new() } else { vec![format!("!{}/**", crate::luksfetch::REPO_DIR)] };
+        // material, fetched by `bko-holt luks-headers`, never put in the
+        // tree.  Their directory too, and /.bko-holt when no raw volume is
+        // under it: the backup tool's staging, not the system's (a glob
+        // leaves out the one path it names, `/**` only what is under it;
+        // rustic-bko 0.12.0+backotter.4 checked, oq12 review).
+        let header_globs: Vec<String> = if self.layout.arr(&["storage", "luks_headers"]).is_empty() {
+            Vec::new()
+        } else {
+            let mut g = vec![format!("!{}/**", crate::luksfetch::REPO_DIR), format!("!{}", crate::luksfetch::REPO_DIR)];
+            if raw_globs.is_empty() {
+                g.push(format!("!{}", crate::luksfetch::BKO_DIR));
+            }
+            g
+        };
         let only_headers = globs.is_empty() && pool_globs.is_empty() && reformat_globs.is_empty() && raw_globs.is_empty() && !header_globs.is_empty();
         let headers_too = !header_globs.is_empty();
         let only_raw = globs.is_empty() && pool_globs.is_empty() && reformat_globs.is_empty() && !raw_globs.is_empty();
@@ -3899,7 +3911,7 @@ impl Builder<'_> {
             if need.is_empty() {
                 pre.push(Cmd::new(&["mkdir", "-p", "-m", "700", RUN_DIR]));
             }
-            const HEADERS_WHY: &str = "the copies of the LUKS2 headers the dump kept, which `bko-holt luks-headers` fetches for load to write back: key material, kept out of the tree";
+            const HEADERS_WHY: &str = "the copies of the LUKS2 headers the dump kept, which `bko-holt luks-headers` fetches for load to write back: key material, kept out of the tree, their directory with them";
             let why = if only_headers {
                 format!("left out of the restore: {HEADERS_WHY}")
             } else {

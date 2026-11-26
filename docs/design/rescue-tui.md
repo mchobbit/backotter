@@ -1822,16 +1822,22 @@ backup, and bko-rescue fetches them before the first plan.
   `luks_header_dir`, set in `full_load` only for the snapshot the headers
   came from), so Review's plan and Restore's run name it alike.
 - Another snapshot or machine (`forget_disks`) wipes DIR; the next Disks
-  fetches again.  The session's wipe (`sys::wipe_dir`) now goes into a
-  directory of its own (h/), each file zeroed, a link removed and never
-  followed.
+  fetches again, and so does a fetch cancelled or timed out on its gauge
+  (bko-holt is killed before its own undo; review fix).  The session's
+  wipe (`sys::wipe_dir`) goes into `h/` only, on the session's own file
+  system, each file zeroed, a link removed and never followed.  Any other
+  directory is only removed when empty: a mount point left at `mnt` (the
+  stick's config partition, its umount failed) keeps every file (review
+  fix; before it, the wipe went into every directory).
 - A dry run fetches them too: it reads the repository only, and
   `BKO_HOLT_NO_COMMIT` allows it.
 - **Fixtures:** `record-luks.py` records `luks-headers` from a real
   bko-holt and rustic-bko (two small test LUKS2 containers, two backups:
   the fetch, a mismatch, a wrong password).  `make-disk-fixtures.py`'s
-  `app-lovelace-luks` is app-lovelace with the copy counting 2, that
-  recorded fetch, and `--luks-header-dir *` in every load.  fake-bko-holt
+  `app-lovelace-luks` is app-lovelace with its layout keeping the two
+  headers that recorded fetch returns (its copy counting 2, its bytes and
+  SHA-256 the changed layout's), that fetch, and `--luks-header-dir *` in
+  every load.  fake-bko-holt
   makes DIR and its headers (test bytes of each row's size) for a
   `luks-headers` call and watches them as key files; the Rust tests' fake
   writes them itself and matches loads without `--luks-header-dir`.
@@ -1845,9 +1851,17 @@ backup, and bko-rescue fetches them before the first plan.
   `app-test.py` (311 checks, 0 failed, `test_disks_kept_headers` among
   them) and holt_schema.py over the scenarios, holt's goldens and corpus
   (508 checked, 0 problems).  No screen golden changed.
+- **Review fixes tested** on czerny (Rust 1.85.1): `cargo build` without
+  warnings, `cargo test --locked --offline` (301 tests, the cancelled
+  fetch and the wipe leaving `mnt` among them), `abi/check.sh` (49 facts,
+  9 symbols), `pty-test.py` (117 ok), `demo-test.py` (383 ok),
+  `app-test.py` (311 ok, 0 failed) and holt_schema.py (508 checked, 0
+  problems).
 - **Not done:** no image was rebuilt; the next image round's bko-holt and
   bko-rescue must both be from this commit or later for a kept-header
-  layout to restore from the stick.  No real stick has restored a
+  layout to restore from the stick.  When bko-rescue goes on the images
+  (RT9), its rescue-bin and the images' holt-bin must be refreshed
+  together; marker.py already refuses a bko-holt without `luks_headers`.  No real stick has restored a
   kept-header machine end to end yet (no HoltTest path runs bko-rescue).
 
 ## The app on top (later)

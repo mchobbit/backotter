@@ -31,7 +31,7 @@ def wr(path, data, mode=None):
 def api(**over):
     """A bko-holt-api document, as `bko-holt --version --json` prints it."""
     doc = {"format": "bko-holt-api", "schema": 1, "version": "0.3.0", "generated": "2026-11-26T10:00:00Z",
-           "dry_run": False, "documents": {"plan": [1]}, "dump_schemas": [1], "features": []}
+           "dry_run": False, "documents": {"plan": [1]}, "dump_schemas": [1], "features": ["stick", "luks_headers"]}
     doc.update(over)
     return json.dumps(doc, separators=(",", ":"))
 
@@ -100,6 +100,25 @@ class Marker(unittest.TestCase):
                 self.assertNotEqual(r.returncode, 0)
                 self.assertIn(why, r.stderr)
                 self.assertFalse(os.path.exists(os.path.join(self.tmp, "out", "backotter.json")))
+
+    def test_a_bko_holt_that_cant_fetch_kept_headers(self):
+        """features without luks_headers (a bko-holt from before 3100b25):
+        its image couldn't restore a dump that kept LUKS2 headers (review
+        of oq12).  A recording takes it."""
+        for over in ({"features": ["stick"]}, {"features": None}):
+            doc = json.loads(api())
+            doc.update(over)
+            if over["features"] is None:
+                del doc["features"]
+            with self.subTest(over=over):
+                subprocess.run(["rm", "-rf", os.path.join(self.tmp, "out")])
+                r, m = self.run_marker(json.dumps(doc))
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn("lists no luks_headers in its features", r.stderr)
+                self.assertIn("3100b25", r.stderr)
+                self.assertFalse(os.path.exists(os.path.join(self.tmp, "out", "backotter.json")))
+                r, m = self.run_marker(json.dumps(doc), "--holt-api-unnamed-ok")
+                self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_holt_api_is_required(self):
         env = dict(os.environ, PATH=self.stubs + ":" + os.environ["PATH"])

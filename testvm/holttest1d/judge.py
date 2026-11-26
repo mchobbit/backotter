@@ -312,6 +312,11 @@ BOOT_STAGE = [
     # Qubes OS (ht1-offline.sh's backup): the raw volumes' images go in the
     # backup under /.bko-holt/raw, which load writes into their LVs instead.
     (r"^\.bko-holt(/raw)?$", {"missing", "extra", "mtime (dirs)", "atime (dirs)"}, "the backup's raw-volume directory (/.bko-holt/raw: Qubes's vm-* images, docs/design/qubes.md), which load restores into the LVs, not as files"),
+    # The kept LUKS2 headers' copies (holt-json.md's open question 12): load
+    # leaves them and their directory out of the restore, and /.bko-holt
+    # with no raw volume under it, so neither side should have them; a
+    # source backed up with its mount point there has the bare directory.
+    (r"^\.bko-holt/luks-headers$", {"missing", "extra", "mtime (dirs)", "atime (dirs)"}, "the backup's directory of the kept LUKS2 headers (/.bko-holt/luks-headers, holt-json.md's open question 12), which load fetches with bko-holt luks-headers and leaves out of the restored tree"),
 ]
 # A rEFInd source (PikaOS: EFI/refind, or "BOOTX64 mode"'s EFI/BOOT alone),
 # and what load must leave as the restore made it there.

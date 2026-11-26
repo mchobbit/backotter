@@ -661,7 +661,18 @@ fn luks_headers_fetches_what_load_reads() {
     let header_problems = |v: &Value| v.get_arr("problems").unwrap().iter().filter_map(|p| p.get_str("text")).filter(|t| t.contains("LUKS2 header the dump kept")).map(str::to_string).collect::<Vec<_>>();
     let with = plan(&["--luks-header-dir", &path("h")]);
     assert!(header_problems(&with).is_empty(), "{:?}", header_problems(&with));
-    assert!(with.get_str("text").unwrap().contains("!/.bko-holt/luks-headers/**"), "{}", with.get_str("text").unwrap());
+    // The headers, their directory and /.bko-holt (no raw volume under
+    // it): nothing of the backup tool's staging lands on the restored root.
+    assert!(with.get_str("text").unwrap().contains("<<'EOF'\n!/.bko-holt/luks-headers/**\n!/.bko-holt/luks-headers\n!/.bko-holt\nEOF\n"), "{}", with.get_str("text").unwrap());
+    // Text mode with no password file: the archiver asks on standard error
+    // (restic-bko's prompt), which is the terminal's, not swallowed.
+    let asker = t.p("/restic-bko");
+    std::fs::write(&asker, "#!/bin/sh\nprintf 'enter password for repository: ' >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&asker, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let o = run(&["luks-headers", &layout, &path("h5"), "--repo", "/srv/r", "--archiver", &asker.to_string_lossy()], &[], None);
+    assert_eq!(o.status.code(), Some(1), "{}{}", out(&o), err(&o));
+    assert!(err(&o).starts_with("enter password for repository: "), "{}", err(&o));
+    assert!(!k.join("h5").exists());
     // Refusals: DIR there already; nothing asks for the password under
     // --json; a password in the URL; a header the snapshot doesn't hold, or
     // another one (the layout's and the snapshot's differ): nothing left.

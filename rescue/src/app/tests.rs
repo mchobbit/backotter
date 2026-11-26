@@ -1784,6 +1784,19 @@ fn headers_that_cant_be_fetched_stop_on_disks() {
 }
 
 #[test]
+fn a_cancelled_fetch_leaves_no_header() {
+    // Back on the fetch's gauge: bko-holt killed before its own undo, its
+    // files (the fake writes them at once) wiped by bko-rescue (oq12 review).
+    let files: Vec<(String, Vec<u8>)> = HEADER_FILES.iter().map(|f| (f.to_string(), b"LUKS".to_vec())).collect();
+    let mut t = headers_t(Luks::Files(files));
+    let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, P, Pick(0), Back, Reply::Quit]]));
+    t.app.run(&mut ui);
+    assert!(ran(&t).iter().any(|l| l.contains(" luks-headers ")), "{:#?}", ran(&t));
+    assert!(!t.app.session.path("h").exists() && t.app.headers.is_none(), "nothing left");
+    assert!(!ran(&t).iter().any(|l| l.contains("bko-holt load")), "no plan");
+}
+
+#[test]
 fn a_layout_that_kept_none_fetches_nothing() {
     let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| {
         f.disks = "app-lovelace".into();

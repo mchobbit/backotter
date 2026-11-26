@@ -192,7 +192,9 @@
               "backup_boot_sector": 6,
               "boot_sector_label": null
             },
-            "mounted_at": ["/boot/efi"]
+            "mounted_at": [
+              "/boot/efi"
+            ]
           },
           {
             "name": "vda2",
@@ -221,7 +223,9 @@
               "/dev/disk/by-path/pci-0000:00:03.0-part2",
               "/dev/disk/by-path/virtio-pci-0000:00:03.0-part2"
             ],
-            "holders": ["md0"],
+            "holders": [
+              "md0"
+            ],
             "content": {
               "type": "linux_raid_member",
               "usage": "raid",
@@ -278,7 +282,9 @@
               "/dev/disk/by-path/pci-0000:00:03.0-part3",
               "/dev/disk/by-path/virtio-pci-0000:00:03.0-part3"
             ],
-            "holders": ["md1"],
+            "holders": [
+              "md1"
+            ],
             "content": {
               "type": "linux_raid_member",
               "usage": "raid",
@@ -437,7 +443,9 @@
               "backup_boot_sector": 6,
               "boot_sector_label": null
             },
-            "mounted_at": ["/boot/efi2"]
+            "mounted_at": [
+              "/boot/efi2"
+            ]
           },
           {
             "name": "vdb2",
@@ -466,7 +474,9 @@
               "/dev/disk/by-path/pci-0000:00:04.0-part2",
               "/dev/disk/by-path/virtio-pci-0000:00:04.0-part2"
             ],
-            "holders": ["md0"],
+            "holders": [
+              "md0"
+            ],
             "content": {
               "type": "linux_raid_member",
               "usage": "raid",
@@ -523,7 +533,9 @@
               "/dev/disk/by-path/pci-0000:00:04.0-part3",
               "/dev/disk/by-path/virtio-pci-0000:00:04.0-part3"
             ],
-            "holders": ["md1"],
+            "holders": [
+              "md1"
+            ],
             "content": {
               "type": "linux_raid_member",
               "usage": "raid",
@@ -585,7 +597,10 @@
           "/dev/md/0"
         ],
         "holders": [],
-        "slaves": ["vda2", "vdb2"],
+        "slaves": [
+          "vda2",
+          "vdb2"
+        ],
         "partition_table": null,
         "partitions": [],
         "content": {
@@ -641,7 +656,9 @@
           "want_extra_isize": 32,
           "journal_inode": 8
         },
-        "mounted_at": ["/boot"],
+        "mounted_at": [
+          "/boot"
+        ],
         "md": {
           "level": "raid1",
           "raid_disks": 2,
@@ -685,8 +702,13 @@
           "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000011",
           "/dev/md/1"
         ],
-        "holders": ["dm-0"],
-        "slaves": ["vda3", "vdb3"],
+        "holders": [
+          "dm-0"
+        ],
+        "slaves": [
+          "vda3",
+          "vdb3"
+        ],
         "partition_table": null,
         "partitions": [],
         "content": {
@@ -726,7 +748,9 @@
             }
           ],
           "tokens": [],
-          "digest_hashes": ["sha256"],
+          "digest_hashes": [
+            "sha256"
+          ],
           "json_size": "12288",
           "keyslots_size": "16744448",
           "config_flags": [],
@@ -780,8 +804,14 @@
           "/dev/disk/by-id/lvm-pv-uuid-bkoLVM-0000-0000-0000-0000-0000-000001",
           "/dev/mapper/md1_crypt"
         ],
-        "holders": ["dm-1", "dm-2", "dm-3"],
-        "slaves": ["md1"],
+        "holders": [
+          "dm-1",
+          "dm-2",
+          "dm-3"
+        ],
+        "slaves": [
+          "md1"
+        ],
         "partition_table": null,
         "partitions": [],
         "content": {
@@ -832,7 +862,9 @@
           "/dev/mapper/host--1--vg-root"
         ],
         "holders": [],
-        "slaves": ["dm-0"],
+        "slaves": [
+          "dm-0"
+        ],
         "partition_table": null,
         "partitions": [],
         "content": {
@@ -888,7 +920,9 @@
           "want_extra_isize": 32,
           "journal_inode": 8
         },
-        "mounted_at": ["/"],
+        "mounted_at": [
+          "/"
+        ],
         "dm": {
           "dm_name": "host--1--vg-root",
           "dm_uuid": "LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000003",
@@ -920,7 +954,9 @@
           "/dev/mapper/host--1--vg-srv"
         ],
         "holders": [],
-        "slaves": ["dm-0"],
+        "slaves": [
+          "dm-0"
+        ],
         "partition_table": null,
         "partitions": [],
         "content": {
@@ -950,7 +986,14 @@
           "inodes": 64,
           "free_inodes": 61,
           "free_blocks": 505015,
-          "version_flags": ["nlink", "align", "logv2", "extflg", "dirv2", "morebits"],
+          "version_flags": [
+            "nlink",
+            "align",
+            "logv2",
+            "extflg",
+            "dirv2",
+            "morebits"
+          ],
           "features": [
             "lazysbcount",
             "attr2",
@@ -967,7 +1010,9 @@
           ],
           "log_incompat_features": []
         },
-        "mounted_at": ["/srv"],
+        "mounted_at": [
+          "/srv"
+        ],
         "dm": {
           "dm_name": "host--1--vg-srv",
           "dm_uuid": "LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000004",
@@ -999,7 +1044,9 @@
           "/dev/mapper/host--1--vg-swap_1"
         ],
         "holders": [],
-        "slaves": ["dm-0"],
+        "slaves": [
+          "dm-0"
+        ],
         "partition_table": null,
         "partitions": [],
         "content": {
@@ -1061,7 +1108,11 @@
           "id": "bkoLVM-0000-0000-0000-0000-0000-000002",
           "seqno": 4,
           "format": "lvm2",
-          "status": ["RESIZEABLE", "READ", "WRITE"],
+          "status": [
+            "RESIZEABLE",
+            "READ",
+            "WRITE"
+          ],
           "flags": [],
           "extent_size_bytes": 4194304,
           "max_lv": 0,
@@ -1075,7 +1126,9 @@
               "dev_size_bytes": 11245977600,
               "pe_start_bytes": 1048576,
               "pe_count": 2681,
-              "status": ["ALLOCATABLE"],
+              "status": [
+                "ALLOCATABLE"
+              ],
               "device": "dm-0"
             }
           ],
@@ -1083,7 +1136,11 @@
             {
               "name": "root",
               "id": "bkoLVM-0000-0000-0000-0000-0000-000003",
-              "status": ["READ", "WRITE", "VISIBLE"],
+              "status": [
+                "READ",
+                "WRITE",
+                "VISIBLE"
+              ],
               "flags": [],
               "size_bytes": 7516192768,
               "creation_host": "host2",
@@ -1094,7 +1151,10 @@
                   "extent_count": 1792,
                   "type": "striped",
                   "stripe_count": 1,
-                  "stripes": ["pv0", 0]
+                  "stripes": [
+                    "pv0",
+                    0
+                  ]
                 }
               ],
               "active_device": "dm-1"
@@ -1102,7 +1162,11 @@
             {
               "name": "srv",
               "id": "bkoLVM-0000-0000-0000-0000-0000-000004",
-              "status": ["READ", "WRITE", "VISIBLE"],
+              "status": [
+                "READ",
+                "WRITE",
+                "VISIBLE"
+              ],
               "flags": [],
               "size_bytes": 2147483648,
               "creation_host": "host2",
@@ -1113,7 +1177,10 @@
                   "extent_count": 512,
                   "type": "striped",
                   "stripe_count": 1,
-                  "stripes": ["pv0", 1792]
+                  "stripes": [
+                    "pv0",
+                    1792
+                  ]
                 }
               ],
               "active_device": "dm-2"
@@ -1121,7 +1188,11 @@
             {
               "name": "swap_1",
               "id": "bkoLVM-0000-0000-0000-0000-0000-000005",
-              "status": ["READ", "WRITE", "VISIBLE"],
+              "status": [
+                "READ",
+                "WRITE",
+                "VISIBLE"
+              ],
               "flags": [],
               "size_bytes": 1073741824,
               "creation_host": "host2",
@@ -1132,7 +1203,10 @@
                   "extent_count": 256,
                   "type": "striped",
                   "stripe_count": 1,
-                  "stripes": ["pv0", 2304]
+                  "stripes": [
+                    "pv0",
+                    2304
+                  ]
                 }
               ],
               "active_device": "dm-3"
@@ -1288,7 +1362,10 @@
         "name": "md1_crypt",
         "device": "UUID=bc000000-0000-4000-8000-000000000011",
         "key_file": null,
-        "options": ["luks", "discard"],
+        "options": [
+          "luks",
+          "discard"
+        ],
         "resolves_to": "md1"
       }
     ],
@@ -1311,7 +1388,27 @@
         "homehost": "<system>",
         "mailaddr": "root"
       }
-    }
+    },
+    "luks_headers": [
+      {
+        "device": "vda4",
+        "luks_uuid": "bc000000-0000-4000-8000-00000000000a",
+        "label": "ubuntu-save-enc",
+        "file": "luks2-header-bc000000-0000-4000-8000-00000000000a.img",
+        "written_to": "/run/bko-holt/luks-headers/luks2-header-bc000000-0000-4000-8000-00000000000a.img",
+        "bytes": 294912,
+        "sha256": "dc3668c57feb2bf5c60081cb7cc4832efb422a2e069052873a8b6be9375017c1"
+      },
+      {
+        "device": "vda5",
+        "luks_uuid": "bc000000-0000-4000-8000-00000000000c",
+        "label": "ubuntu-data-enc",
+        "file": "luks2-header-bc000000-0000-4000-8000-00000000000c.img",
+        "written_to": "/run/bko-holt/luks-headers/luks2-header-bc000000-0000-4000-8000-00000000000c.img",
+        "bytes": 294912,
+        "sha256": "275f99b575be4fe3eb698d8d96919a3422ffd57214d3c3e498726bf6495193f2"
+      }
+    ]
   },
   "boot": {
     "loader": {
@@ -1328,7 +1425,15 @@
     "efi": {
       "boot_current": "0001",
       "boot_next": null,
-      "boot_order": ["0000", "0001", "0002", "0003", "0004", "0005", "0006"],
+      "boot_order": [
+        "0000",
+        "0001",
+        "0002",
+        "0003",
+        "0004",
+        "0005",
+        "0006"
+      ],
       "timeout_seconds": 0,
       "entries": [
         {
@@ -1339,7 +1444,9 @@
           "hidden": true,
           "category": "app",
           "in_boot_order": 0,
-          "device_path": ["Fv(bc000000-0000-4000-8000-000000000016)/FvFile(bc000000-0000-4000-8000-000000000017)"],
+          "device_path": [
+            "Fv(bc000000-0000-4000-8000-000000000016)/FvFile(bc000000-0000-4000-8000-000000000017)"
+          ],
           "file": null,
           "optional_data_bytes": 0
         },
@@ -1351,7 +1458,9 @@
           "hidden": false,
           "category": "boot",
           "in_boot_order": 1,
-          "device_path": ["PciRoot(0x0)/Pci(0x3,0x0)"],
+          "device_path": [
+            "PciRoot(0x0)/Pci(0x3,0x0)"
+          ],
           "file": null,
           "optional_data_bytes": 16
         },
@@ -1363,7 +1472,9 @@
           "hidden": false,
           "category": "boot",
           "in_boot_order": 2,
-          "device_path": ["PciRoot(0x0)/Pci(0x4,0x0)"],
+          "device_path": [
+            "PciRoot(0x0)/Pci(0x4,0x0)"
+          ],
           "file": null,
           "optional_data_bytes": 16
         },
@@ -1375,7 +1486,9 @@
           "hidden": false,
           "category": "boot",
           "in_boot_order": 3,
-          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()"],
+          "device_path": [
+            "PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()"
+          ],
           "file": null,
           "optional_data_bytes": 16
         },
@@ -1387,7 +1500,9 @@
           "hidden": false,
           "category": "boot",
           "in_boot_order": 4,
-          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()"],
+          "device_path": [
+            "PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()"
+          ],
           "file": null,
           "optional_data_bytes": 16
         },
@@ -1399,7 +1514,9 @@
           "hidden": false,
           "category": "boot",
           "in_boot_order": 5,
-          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()/Uri()"],
+          "device_path": [
+            "PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()/Uri()"
+          ],
           "file": null,
           "optional_data_bytes": 16
         },
@@ -1411,7 +1528,9 @@
           "hidden": false,
           "category": "boot",
           "in_boot_order": 6,
-          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()/Uri()"],
+          "device_path": [
+            "PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()/Uri()"
+          ],
           "file": null,
           "optional_data_bytes": 16
         }
@@ -1424,7 +1543,12 @@
         "loader_entry_default": null,
         "stub_info": null
       },
-      "shim_variables": ["MokListRT", "MokListTrustedRT", "MokListXRT", "SbatLevelRT"]
+      "shim_variables": [
+        "MokListRT",
+        "MokListTrustedRT",
+        "MokListXRT",
+        "SbatLevelRT"
+      ]
     },
     "esps": [
       {
@@ -1480,7 +1604,9 @@
             }
           ],
           "debian_grub_stub": {
-            "search_uuids": ["bc000000-0000-4000-8000-00000000000f"],
+            "search_uuids": [
+              "bc000000-0000-4000-8000-00000000000f"
+            ],
             "prefix": "($root)/grub",
             "configfile": "$prefix/grub.cfg"
           }
@@ -1539,7 +1665,9 @@
             }
           ],
           "debian_grub_stub": {
-            "search_uuids": ["bc000000-0000-4000-8000-00000000000f"],
+            "search_uuids": [
+              "bc000000-0000-4000-8000-00000000000f"
+            ],
             "prefix": "($root)/grub",
             "configfile": "$prefix/grub.cfg"
           }
@@ -1548,7 +1676,9 @@
     ],
     "grub": {
       "dir": "/boot/grub",
-      "installed_platforms": ["x86_64-efi"],
+      "installed_platforms": [
+        "x86_64-efi"
+      ],
       "grub_cfg": {
         "entries": [
           "Debian GNU/Linux",
@@ -1556,7 +1686,9 @@
           "Advanced options for Debian GNU/Linux>Debian GNU/Linux, with Linux 6.12.115+deb13.1-amd64 (recovery mode)",
           "UEFI Firmware Settings"
         ],
-        "search_uuids": ["bc000000-0000-4000-8000-00000000000f"],
+        "search_uuids": [
+          "bc000000-0000-4000-8000-00000000000f"
+        ],
         "modules": [
           "all_video",
           "efi_gop",

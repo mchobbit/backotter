@@ -1030,6 +1030,29 @@ class Fs(unittest.TestCase):
 
 
 
+class FsBkoHoltDirs(unittest.TestCase):
+    """The backup tool's staging under /.bko-holt (oq12 review): a source
+    backed up with the LUKS2 headers' mount point has its bare directories,
+    which load leaves out of the restore; a header itself is never excused."""
+
+    judge = Fs.judge
+
+    def test_the_headers_directory_may_be_missing(self):
+        before = {"etc": meta("dir"), ".bko-holt": meta("dir", mode=0o700), ".bko-holt/luks-headers": meta("dir", mode=0o700)}
+        after = {"etc": meta("dir")}
+        rc, out = self.judge(before, after)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+
+    def test_a_header_is_still_a_difference(self):
+        before = {"etc": meta("dir")}
+        after = {"etc": meta("dir"), ".bko-holt": meta("dir"), ".bko-holt/luks-headers": meta("dir"),
+                 ".bko-holt/luks-headers/luks2-header-a.img": meta("file")}
+        rc, out = self.judge(before, after)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF extra: 1: .bko-holt/luks-headers/luks2-header-a.img", out)
+
+
 class FsEspAtBoot(unittest.TestCase):
     """judge.py fs over what bootctl install does to an ESP mounted as /boot
     (chimera-uefi, C3): a new random seed, systemd-boot's loaders put back

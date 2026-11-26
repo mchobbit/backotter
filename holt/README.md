@@ -39,7 +39,8 @@ Haiku; Redox and Sculpt OS from Linux):
   DIR, each 0600 and checked against the dump's size and SHA-256, for
   `load --luks-header-dir DIR` (`src/luksfetch.rs`; holt-json.md,
   "bko-holt-luks-headers", open question 12).  load's restore leaves that
-  directory out of the tree.
+  directory and its files out of the tree, and `/.bko-holt` when no raw
+  volume is under it.
 
 ```
 sudo bko-holt dump > layout.json

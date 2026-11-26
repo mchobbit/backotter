@@ -352,10 +352,18 @@ What the backup tool must do (not built: it comes with the backup tool):
    mode 0700, in RAM (dump's default, `/run/bko-holt/luks-headers`, is in
    RAM too).  The dump names each file (`luks2-header-UUID.img`).
 2. Back up those files in the same snapshot as the system's files, at
-   `/.bko-holt/luks-headers/FILE` (`luksfetch::REPO_DIR` in bko-holt), the
-   way HoltTest puts Qubes's raw volumes at `/.bko-holt/raw` (D
-   bind-mounted there for the backup, the backup's root as the snapshot's
-   root).  Same snapshot: the headers and the layout are from one moment.
+   `/.bko-holt/luks-headers/FILE` (`luksfetch::REPO_DIR` in bko-holt).
+   Same snapshot: the headers and the layout are from one moment.  With a
+   `SNAPSHOT:SUBPATH` backup they go under SUBPATH, where `luks-headers`
+   reads them.  However it stages them, the backup tool writes nothing to
+   the system's disks: no mount point is made, or left, on the backed-up
+   root, and a read-only root (Ubuntu Core's base snap) works.  How it
+   stages them is holt-json.md's open question 14 (*recommended*: a
+   staging root in RAM in a private mount namespace, D bind-mounted at
+   `S/.bko-holt/luks-headers`, S backed up with `--as-path /`).  load's
+   restore leaves `/.bko-holt/luks-headers`, its files, and `/.bko-holt`
+   when no raw volume is under it out of the tree, so not even a bare
+   mount point comes back.
 3. Read them back from the new snapshot with `bko-holt luks-headers
    LAYOUT DIR --repo REPO --password-file FILE --snapshot ID` (DIR a new
    private directory): exit 0 means the snapshot holds every header the
@@ -371,11 +379,13 @@ into `h/` in its session's directory (0700, each file 0600), then every
 `load` gets `--luks-header-dir` that directory.  Each file is checked
 against the layout's size and SHA-256.  The stick's layout is the newest
 backup's, so an older snapshot whose headers differ is refused
-(`header_mismatch`) until "Which copy wins" below is built.  load's restore
-leaves `/.bko-holt/luks-headers` out of the tree, so the headers never land
-on the restored disks.  A layout that kept headers needs a bko-rescue and a
+(`header_mismatch`) until "Which copy wins" below is built (holt-json.md's
+open question 15).  load's restore leaves `/.bko-holt/luks-headers` and its
+files out of the tree (and `/.bko-holt`, with no raw volume under it), so
+the headers never land on the restored disks.  A layout that kept headers needs a bko-rescue and a
 bko-holt from 2026-11-26 or later: an older bko-holt's `stick --copy`
-refuses it (`layout_refused`).
+refuses it (`layout_refused`).  So every image's marker.py refuses a
+bko-holt whose api `features` lack `luks_headers` (3100b25 or later).
 
 ### Which copy wins
 

@@ -147,7 +147,15 @@ impl App {
             return Err(Go::Back);
         };
         cmd.timeout_ms = HEADERS_MS;
-        let x = self.run_job(ui, s::SCR_DISKS, s::HEADERS_TITLE, Clean::ours(s::HEADERS_TEXT), cmd)?;
+        // Cancelled or timed out: bko-holt (and the archiver, in its group)
+        // was killed before its own undo, so what it wrote goes here.
+        let x = match self.run_job(ui, s::SCR_DISKS, s::HEADERS_TITLE, Clean::ours(s::HEADERS_TEXT), cmd) {
+            Ok(x) => x,
+            Err(g) => {
+                sys::wipe_dir(&dir);
+                return Err(g);
+            }
+        };
         let version = self.version.clone();
         let doc = document(&x, "bko-holt-luks-headers").and_then(|v| same_version(v, HEADERS_SCHEMA, version.as_deref()));
         match doc {

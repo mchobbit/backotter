@@ -78,6 +78,7 @@ bko-rescue's Disks runs before its first plan (src/app/layout.rs).
 Python's stdlib only.
 """
 
+import hashlib
 import json
 import os
 import shutil
@@ -786,15 +787,28 @@ def lovelace_trouble():
 
 
 def lovelace_luks():
-    """app-lovelace, its layout's copy saying it kept two LUKS2 headers
-    (hand-made from stick-layouts' recorded copy), luks-headers' recorded
+    """app-lovelace, its layout keeping two LUKS2 headers and its copy
+    saying so (hand-made from stick-layouts' recorded copy), luks-headers' recorded
     fetch (scenarios/luks-headers/02-fetch, any snapshot), and every load
     given --luks-header-dir (open question 12)."""
     scen = "app-lovelace-luks"
     lovelace(scen)
+    # The layout's storage.luks_headers: the two the recorded fetch returns
+    # (uc24-fde's, as record-luks.py made them), so the copy's count, the
+    # layout and the fetch agree (oq12 review); its bytes and SHA-256 then.
+    rows = json.loads(open(os.path.join(SC, "luks-headers", "02-fetch", "stdout")).read())["headers"]
+    corpus = os.path.join(HERE, "..", "..", "holt", "tests", "corpus", "uc24-fde", "src.json")
+    kept = {h["file"]: h for h in json.load(open(corpus))["storage"]["luks_headers"]}
+    o = os.path.join(SC, scen, "03-copy", "out")
+    lay = json.loads(open(o).read())
+    lay["storage"]["luks_headers"] = [dict(kept[r["file"]], bytes=r["bytes"], sha256=r["sha256"]) for r in rows]
+    body = (json.dumps(lay, indent=2, ensure_ascii=False) + "\n").encode()
+    with open(o, "wb") as f:
+        f.write(body)
     p = os.path.join(SC, scen, "03-copy", "stdout")
     doc = json.loads(open(p).read())
-    doc["luks_headers"] = 2
+    doc["luks_headers"] = len(rows)
+    doc["bytes"], doc["sha256"] = len(body), hashlib.sha256(body).hexdigest()
     with open(p, "w") as f:
         f.write(json.dumps(doc, separators=(",", ":")) + "\n")
     copy_call("luks-headers", "02-fetch", scen, "04-luks-headers")

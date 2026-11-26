@@ -41,6 +41,10 @@ CONFIG_MIB = 32                 # the default; FAT32 would need more than that
 CONFIG_LABEL = "BACKOTTER"
 SYSTEM_SCHEMAS = [1]            # system.json schemas the stick can read
 DUMP_SCHEMAS_UNNAMED = [1]      # what a bko-holt that names no dump_schemas reads
+# What the image's bko-holt must list in its api document's features:
+# luks_headers, so a machine whose dump kept LUKS2 headers can be restored
+# (holt-json.md's open question 12; an older stick --copy refuses it).
+REQUIRED_FEATURES = ("luks_headers",)
 PLATFORMS = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos", "haiku")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -59,8 +63,9 @@ def dump_schemas(path: str, unnamed_ok: bool = False) -> list[int]:
     """The dump schemas bko-holt load reads, from PATH: that bko-holt's
     `--version --json` document (bko-holt-api, holt-json.md).  A bko-holt
     from before dump_schemas is refused, since its image would fail the boot
-    check dump-schemas, unless UNNAMED_OK (record-stick.py's recordings):
-    then it reads DUMP_SCHEMAS_UNNAMED."""
+    check dump-schemas, and one whose features lack REQUIRED_FEATURES (from
+    before 3100b25), unless UNNAMED_OK (record-stick.py's recordings): then
+    one with no dump_schemas reads DUMP_SCHEMAS_UNNAMED."""
     try:
         with open(path) as f:
             doc = json.load(f)
@@ -79,6 +84,12 @@ def dump_schemas(path: str, unnamed_ok: bool = False) -> list[int]:
     s = doc["dump_schemas"]
     if not (isinstance(s, list) and s and all(type(x) is int and x > 0 for x in s)):
         die(f"--holt-api {path}: dump_schemas isn't a list of schema numbers ({s!r})")
+    have = doc.get("features")
+    missing = [f for f in REQUIRED_FEATURES if not (isinstance(have, list) and f in have)]
+    if missing and not unnamed_ok:
+        die(f"--holt-api {path}: bko-holt {doc.get('version')} lists no {', '.join(missing)} in its features, "
+            "so its image couldn't restore a machine whose dump kept LUKS2 headers (holt-json.md's open "
+            "question 12): refresh holt-bin (img-refresh-holt.sh) to a bko-holt at or after 3100b25")
     return s
 
 

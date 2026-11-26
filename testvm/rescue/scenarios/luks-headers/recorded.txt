@@ -1,11 +1,11 @@
-Recorded 2026-11-26 08:02 UTC by record-luks.py on cinqcent:
-  bko-holt 0.2.6 (/home/m/backotter-work/oq12-out/bko-holt)
+Recorded 2026-11-26 08:41 UTC by record-luks.py on cinqcent:
+  bko-holt 0.2.6 (/mnt/bko-ram/oq12-fix-3810224/target/release/bko-holt)
   rustic 0.12.0+backotter.4
   cryptsetup 2.7.5 flags: UDEV BLKID KEYRING KERNEL_CAPI HW_OPAL
-Snapshots: 167a1db5 (older, another ubuntu-data-enc header), 2c1076ee (newest, the layout's headers).
+Snapshots: b365cfb7 (older, another ubuntu-data-enc header), 6af8282b (newest, the layout's headers).
 Fetched by 02-fetch, each checked by bko-holt and here byte for byte:
   luks2-header-bc000000-0000-4000-8000-00000000000a.img: 294912 bytes, luksDump UUID bc000000-0000-4000-8000-00000000000a
   luks2-header-bc000000-0000-4000-8000-00000000000c.img: 294912 bytes, luksDump UUID bc000000-0000-4000-8000-00000000000c
-03-mismatch: bko-holt luks-headers: vda5's LUKS2 header (167a1db5:/.bko-holt/luks-headers/luks2-header-bc000000-0000-4000-8000-00000000000c.img) isn't the header the dump kept: its SHA-256 isn't the one the dump recorded (a snapshot other than the one the layout was dumped with?)
-04-wrong-password: bko-holt luks-headers: vda4's LUKS2 header (2c1076ee:/.bko-holt/luks-headers/luks2-header-bc000000-0000-4000-8000-00000000000a.img): /home/m/backotter-work/bko-bin/linux/rustic-bko exited 1: The password that has been entered, seems to be incorrect. No suitable key found for the given password. Please check your password and try again.
-A restore of 2c1076ee with load's glob file (!/.bko-holt/luks-headers/**) brought back etc/hostname, and no header.
+03-mismatch: bko-holt luks-headers: vda5's LUKS2 header (b365cfb7:/.bko-holt/luks-headers/luks2-header-bc000000-0000-4000-8000-00000000000c.img) isn't the header the dump kept: its SHA-256 isn't the one the dump recorded (a snapshot other than the one the layout was dumped with?)
+04-wrong-password: bko-holt luks-headers: vda4's LUKS2 header (6af8282b:/.bko-holt/luks-headers/luks2-header-bc000000-0000-4000-8000-00000000000a.img): /home/m/backotter-work/bko-bin/linux/rustic-bko exited 1: The password that has been entered, seems to be incorrect. No suitable key found for the given password. Please check your password and try again.
+A restore of 6af8282b with load's glob file (!/.bko-holt/luks-headers/** !/.bko-holt/luks-headers !/.bko-holt) brought back etc, etc/hostname: no header, no .bko-holt.

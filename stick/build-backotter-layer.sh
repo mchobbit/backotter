@@ -423,6 +423,10 @@ in_root dpkg-query -W -f '${binary:Package}\t${Version}\n' >"$OUT/$LAYER.manifes
 in_root bko-holt --version --json >"$OUT/$LAYER.holt-api.json" &&
     grep -q '"dump_schemas":\[' "$OUT/$LAYER.holt-api.json" ||
     die "the layer's bko-holt names no dump_schemas in --version --json: refresh holt-bin (img-refresh-holt.sh) to a bko-holt at or after ae051fb"
+# And it fetches kept LUKS2 headers (open question 12): marker.py refuses a
+# bko-holt without that feature too, this only sooner.
+grep -q '"features":\[[^]]*"luks_headers"' "$OUT/$LAYER.holt-api.json" ||
+    die "the layer's bko-holt lists no luks_headers in its features: refresh holt-bin (img-refresh-holt.sh) to a bko-holt at or after 3100b25"
 rm -f "$root/usr/sbin/policy-rc.d"
 # With tries, as after the module build: the merged root, like the build
 # root's /dev, can be busy for a moment once the chroots are done, and a

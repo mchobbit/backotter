@@ -848,17 +848,30 @@ impl Session {
     }
 }
 
-/// Every file in a session's directory wiped, then the directory gone
-/// (an empty directory in it, a mount point left, goes too; a full one
-/// stays).
+/// Every file in a session's directory wiped, then the directory gone.
+/// Of the directories in it, only the LUKS2 headers' (`h`,
+/// layout::HEADERS_DIR) on the session's own file system has its files
+/// wiped too; any other is only removed when empty.  So a mount point
+/// left there (the stick's config partition at `mnt`, its umount
+/// failed) stays as it is, every file on it untouched.
 pub fn wipe_dir(dir: &Path) {
+    wipe_in(dir, true);
+}
+
+fn wipe_in(dir: &Path, top: bool) {
+    let dev = fs::symlink_metadata(dir).ok().map(|m| m.dev());
     if let Ok(rd) = fs::read_dir(dir) {
         for e in rd.flatten() {
             let p = e.path();
+            // symlink_metadata: a link is never followed.
             match fs::symlink_metadata(&p) {
-                // A directory of ours (the LUKS2 headers', `h`): its files
-                // wiped too.  symlink_metadata: a link is never followed.
-                Ok(m) if m.is_dir() => wipe_dir(&p),
+                Ok(m) if m.is_dir() => {
+                    if top && e.file_name() == super::layout::HEADERS_DIR && Some(m.dev()) == dev {
+                        wipe_in(&p, false);
+                    } else {
+                        let _ = fs::remove_dir(&p);
+                    }
+                }
                 _ => wipe_file(&p),
             }
         }
@@ -908,8 +921,21 @@ mod tests {
         let outside = base.join("outside");
         fs::write(&outside, b"not ours to wipe").unwrap();
         std::os::unix::fs::symlink(&outside, h.join("link")).unwrap();
+        // Any other directory (`mnt`, the stick's config partition, its
+        // umount failed): never gone into, so its files are left; an
+        // empty one goes.
+        let mnt = s.path("mnt");
+        fs::create_dir_all(mnt.join("x")).unwrap();
+        fs::write(mnt.join("x").join("system.json"), b"another machine's layout").unwrap();
+        fs::write(mnt.join("system.json"), b"a layout").unwrap();
+        fs::create_dir(s.path("empty")).unwrap();
         let dir = s.dir.clone();
         drop(s);
+        assert_eq!(fs::read(mnt.join("system.json")).unwrap(), b"a layout", "a directory other than h/ is left as it is");
+        assert_eq!(fs::read(mnt.join("x").join("system.json")).unwrap(), b"another machine's layout");
+        assert!(!dir.join("h").exists() && !dir.join("empty").exists() && !dir.join("password").exists());
+        fs::remove_dir_all(&mnt).unwrap();
+        wipe_dir(&dir);
         assert!(!dir.exists(), "removed with every file");
         assert_eq!(fs::read(&outside).unwrap(), b"not ours to wipe", "a link's target is left as it is");
         // A base others can read is refused.

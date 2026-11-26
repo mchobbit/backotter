@@ -319,7 +319,7 @@ def holt_api(arch):
     """The api document of an ARCH bko-holt, as `--version --json` prints it."""
     m = {"amd64": "x86_64", "arm64": "aarch64"}[arch]
     return ('{"format":"bko-holt-api","schema":1,"version":"0.3.0","dump_schemas":[1],'
-            '"platform":{"os":"linux","arch":"%s"}}' % m)
+            '"features":["stick","luks_headers"],"platform":{"os":"linux","arch":"%s"}}' % m)
 
 
 def fake_inputs(tmp, arch, holt_runs=True, api_file=None):

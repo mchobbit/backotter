@@ -95,7 +95,9 @@ headers' sizes and SHA-256 as the layout.  `02-fetch` is the newest
 snapshot (both headers fetched, checked byte for byte and by `cryptsetup
 luksDump`), `03-mismatch` the older one (`header_mismatch`),
 `04-wrong-password` rustic-bko's own refusal (`header_fetch_failed`); 02 and
-03 match only the right password (their `password`).  The fake makes the
+03 match only the right password (their `password`).  Re-recorded for the
+review fixes with load's three restore globs (recorded.txt: no header and
+no `.bko-holt` came back).  The fake makes the
 call's DIR and its headers (test bytes of each row's size, never a real
 header) and writes the document with that DIR; it watches them as key
 files.  recorded.txt says what and when.
@@ -150,7 +152,7 @@ only, and checks a copy by its exit, schema, version, install ID and
 | `app-rec-debian13` | recorded: rec-debian13-stack's whole-run plan for every plan, its status after partition for every status (a resume: Go on) |
 | `app-lovelace` | hand-written: lovelace's Samsung and WD Red; here a Crucial 1 TB (much bigger), the WD Red (the same disk), a Kingston 480 GB with photos (4.3 % smaller: the offer), the stick |
 | `app-lovelace-dry` | the same, its api `no_commit` true |
-| `app-lovelace-luks` | app-lovelace, the copy counting 2 kept LUKS2 headers (hand-made), luks-headers' recorded `02-fetch` (any snapshot) as `04-luks-headers`, and `--luks-header-dir *` in every load: the fetch before the first plan |
+| `app-lovelace-luks` | app-lovelace, its layout keeping the 2 LUKS2 headers luks-headers' `02-fetch` returns and the copy counting them (hand-made), luks-headers' recorded `02-fetch` (any snapshot) as `04-luks-headers`, and `--luks-header-dir *` in every load: the fetch before the first plan |
 | `app-lovelace-small` | hand-written: a WDC 320 GB (38.7 % smaller: the user decides) and a Transcend 64 GB (the data doesn't fit) |
 | `app-rec-restore` | built from rec-debian13-stack: a fresh status, then the Restore's one `--through close --commit` run, its stream the recorded stages' under one start and end, the copy's progress a second apart: Done |
 | `app-rec-dry` | the same with app-dry's api, its run the recorded dry run (05-dry) as it is: the dry run's Done |

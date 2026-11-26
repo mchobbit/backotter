@@ -1010,7 +1010,9 @@ same bytes: the stick isn't read again between the check and the write.
   `machine_not_ok` (its row isn't `ok`: `checksum_bad`,
   `checksum_missing`, `schema_unknown`, `unreadable`, with its why),
   `no_layout` (no `layout`, or one that isn't a document: a system.json
-  of today), `layout_refused` (load wouldn't take it, or its kept LUKS
+  of today; one the backup tool wrote without its layout for the stick's
+  room says so in the words, from its `layout_left_out`, open question
+  16), `layout_refused` (load wouldn't take it, or its kept LUKS
   headers can't be fetched), `copy_failed` (OUT couldn't be written: nothing left there,
   or, when a file appeared there after the check, that file left as it
   is).
@@ -2608,6 +2610,81 @@ recommendation):
     `LOG_GZ_MAX` (up to 32 MiB): the 22 MiB don't cover it.  Every image
     has gzip.
 
+### What the stick holds after a refused write built
+
+Built 2026-11-26 as far as it can be before the backup tool (open question
+16, approved that day by the user, the recommendation):
+
+- **bko-holt:** `stick.rs`'s `stick_write(marker, system, len, room)`, in
+  the bko_holt library beside `room_check`: the backup tool's whole
+  decision for one machine, as data.  `Whole { warnings }` when
+  `room_check` takes the file.  Else `WithoutLayout { body, refused,
+  warnings, text }`: `body` is the bytes to write in its place, system.json
+  without `layout` and with `layout_left_out` (`without_layout`), when
+  `room_check` takes those.  Else `RemoveOld { refused, bare, text }`:
+  write nothing and remove the machine's older copies.  `text` is the
+  words to say.  stick-config.md's "Room on the partition" says what the
+  tool does with each.
+- `room_check`'s `StickRefusal` now has the reason (`text`) and the
+  remedy (`remedy`) apart, and no outcome: "nothing is written, and the
+  stick keeps the copy it had" is no longer true.  `stick_room_short`'s
+  words are as they were.
+- `stick --copy`'s `no_layout` reads `layout_left_out` (only its two
+  codes, and `bytes` when it is a number) and says why the layout isn't
+  there, that the backup holds it, and that this stick can't restore the
+  machine's disks until it comes from the backup.  Without
+  `layout_left_out` the words are as they were.  The error code is the
+  same, so no schema changed.
+- **bko-rescue:** `layout_file` says whether bko-holt's refusal was
+  `no_layout` (`layout::NoLayout`).  Then the Disks screen's problem says
+  why (each backup records the layout; this stick holds no copy, and this
+  bko-rescue can't take it from the backup yet) and what to do: restore
+  with another stick that holds the layout, or, while the machine still
+  runs, make room on this stick or write a newer image, then back up
+  again.  Every other reason (a typed address, a bad checksum) keeps the
+  general words.  The title is as it was, so no golden screen changed.
+- **Defaults chosen** (each in one place):
+  - The member is `layout_left_out`, `{"code", "bytes"}` (`stick.rs`'s
+    `LAYOUT_LEFT_OUT_KEY`), in the stick's copy only.
+  - `body` is printed by `Value::pretty`, so its size is known before the
+    check; the tool writes those bytes as they are (`stick_write`).
+  - `RemoveOld` removes `system.json`, `system.prev.json`, their
+    `.sha256` files and a `system.json.new`, then the folder only when
+    nothing else is in it: `restore-logs/` stay (`StickWrite`'s doc).
+  - After `WithoutLayout`, `system.prev.json` may keep an older layout.
+    Nothing reads it at restore time, so it can't be planned onto disks.
+  - The error code stays `no_layout`; the words carry the reason.
+  - The words say "bko-rescue can't do yet" for the fetch from the backup
+    (open question 15).  They change when that is built.
+- **Tested:** `stick.rs`'s `write_time_stick_write` (each answer and its
+  words, `body` without `layout` and with `layout_left_out`, the backup's
+  location kept, the edge where `body` just fits or doesn't, a new machine
+  with nothing to remove, a second `without_layout` replacing the member)
+  and `copy_refuses_what_it_cant_take` (the two codes' words, an unknown
+  code and a size that isn't a number not repeated; golden
+  `stick-copy-json/layout-left-out.json`, new); `write_time_room_check`
+  with the reasons and remedies apart.  bko-rescue's
+  `a_layout_bko_holt_wont_copy_is_said_in_its_words` (stick-three's
+  recorded `no_layout` gets the new words) and
+  `a_layout_the_backup_tool_left_out_is_said_plainly` (the left-out words;
+  `machine_not_ok` keeps the general words).  The holt gate on cinqcent:
+  cargo test 976 passed, 0 failed, 4 ignored; 110 golden plans, 0 differ;
+  redact-corpus passed.  bko-rescue on czerny (Rust 1.85.1): cargo build
+  without warnings, cargo test 287 + 15 passed, abi/check.sh ok (49
+  facts, 9 symbols), pty-test.py 0 failed, demo-test.py 383 ok, app-test.py
+  0 failed, holt_schema.py 411 checked, 0 problems.  demo-test.py's first
+  run had 1 failure, not captured; three runs after it had none.
+- **Waits on the backup tool:** calling `stick_write`, writing `body` and
+  its `.sha256`, and the removals of `RemoveOld`.  bko-rescue's fetch of
+  the layout from the backup is open question 15's.
+- **Spec problems:**
+  - `stick --json` doesn't say a machine has no layout, so bko-rescue says
+    it only on Disks, after the password and the snapshot.  A `layout`
+    field in each row would let the first screen say it.  Not built.
+  - After `RemoveOld` with `restore-logs/` left, `stick --json` lists the
+    folder as `unreadable` ("system.json is missing").  The words are
+    true, but they read as damage.
+
 ## Decisions
 
 - **J1. How bko-rescue finds bko-holt's protocol.**  `bko-holt --version
@@ -2897,7 +2974,7 @@ recommendation):
     the same snapshot.  Or keep the refusal (today's): its help says to
     choose the newest backup.
 16. **What the stick holds after a refused write** (from open question
-    13's review; answered: approved 2026-11-26 by the user, the recommendation; not built yet).  `room_check` refuses a system.json over
+    13's review; answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26 as far as it can be before the backup tool, b121dbb and "holt-json, stick-config, rescue-tui: open question 16 built": "What the stick holds after a refused write built").  `room_check` refuses a system.json over
     `SYSTEM_MAX` (`system_too_big`) or one the partition can't take
     (`stick_full`; the approved text said "warns", see "What room on the
     partition built"), and the tool then writes nothing to the stick.  A

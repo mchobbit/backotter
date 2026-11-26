@@ -1891,6 +1891,27 @@ stick-config.md's "Room on the partition").
   open question 17 (approved 2026-11-26 by the user, the recommendation; not built yet) asks whether bko-rescue keeps only the
   newest.
 
+## What a stick without the layout says
+
+2026-11-26, holt-json.md's open question 16 (approved that day with its
+recommendation): when the stick has no room for a machine's whole
+system.json, the backup tool writes one without its layout, with
+`layout_left_out` saying why (stick-config.md, "Room on the partition").
+The stick still finds the backup; it can't restore the disks.
+
+- `layout.rs`'s `layout_file` returns `NoLayout`: the words, and whether
+  bko-holt's refusal was `no_layout`.  The Disks screen's problem then
+  has its own why (`NO_LAYOUT_ON_STICK_WHY`: each backup records the
+  layout, this stick holds no copy, this bko-rescue can't take it from
+  the backup yet) and what to do (`NO_LAYOUT_ON_STICK_TODO`: another stick
+  that holds it, or make room or write a newer image and back up again,
+  while the machine still runs).  bko-holt's own line says why the layout
+  was left out.  A typed address and every other refusal keep
+  `NO_LAYOUT_WHY` and `NO_LAYOUT_TODO`.
+- The title is as it was, so app-plain's golden didn't change.
+- Not done: the first screen doesn't say it (`stick --json` has no field
+  for it); the fetch from the backup is open question 15's.
+
 ## The app on top (later)
 
 Scoped here so the order is clear; each gets its design when it starts.

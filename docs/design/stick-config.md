@@ -315,8 +315,16 @@ chosen (restic or borg).
   same JSON, and the same bytes only when `layout` is held as dump
   printed it.  Approved 2026-11-26 by the user (holt-json.md's open questions 8
   and 10).  A system.json
-  without `layout` (none is written yet) gives the restore no layout from
-  the stick.  A dump that kept LUKS2 headers has them in the backup, not
+  without `layout` gives the restore no layout from the stick: `stick
+  --copy` refuses it (`no_layout`).
+- `layout_left_out` is in the stick's copy only, when the backup tool
+  left the layout out for the stick's room (below, "Room on the
+  partition"; holt-json.md's open question 16): `{"code": CODE, "bytes":
+  N}`, CODE `system_too_big` or `stick_full`, N the whole file's size in
+  bytes.  The backup's own copy always has `layout`.  `stick --copy`'s
+  `no_layout` then says why in plain words: the backup holds the layout,
+  and this stick can't restore the machine's disks until it comes from
+  the backup.  A dump that kept LUKS2 headers has them in the backup, not
   on the stick (below, "LUKS2 headers in the backup"; holt-json.md's open
   question 12, built 2026-11-26).
 
@@ -457,14 +465,34 @@ backup tool calls `room_check(marker, len, room)` in bko-holt's
   bko-holt wouldn't read it.  It refuses `stick_full` when the file and
   its `.sha256` don't fit: step 2 makes the machine's folder if it isn't
   there, writes the new file while the old two stand, and frees the old
-  `system.prev.json` (and its `.sha256`, if there) only after.  On a
-  refusal the tool writes nothing to the stick (the backup has its copy,
-  written first), says the refusal's words, and the backup itself still
-  succeeds.  The approved text said the tool warns when the partition
-  can't hold the file; it refuses, since that write would fail anyway.
-  What the stick then holds for the machine is holt-json.md's open
-  question 16 (approved 2026-11-26: on a refusal it writes the machine's
-  system.json without `layout`, and says so).
+  `system.prev.json` (and its `.sha256`, if there) only after.  The
+  approved text said the tool warns when the partition can't hold the
+  file; it refuses, since that write would fail anyway.
+- The backup tool doesn't call `room_check` itself.  It calls
+  `stick_write(marker, system, len, room)` (holt-json.md's open question
+  16, approved 2026-11-26), `system` the machine's system.json as it
+  wrote it into the backup and `len` its size as printed.  The answer is
+  one of three:
+  - `Whole`: `room_check` took the file.  Write it as "How it writes"
+    says, and say its warnings.
+  - `WithoutLayout`: the whole file was refused.  Write `body` in its
+    place, as "How it writes" says, its `.sha256` of `body`'s bytes.
+    `body` is system.json without `layout`, with `layout_left_out`
+    saying why (a few KiB; `without_layout` makes it).  So the stick
+    still finds the backup, and it never plans onto an older layout.
+    Say `text`: why, and that this stick can't restore the machine's
+    disks until the layout comes from the backup ("Which copy wins" step
+    2, open question 15); and what makes room, when room would help.
+    Say `body`'s own warnings too.
+  - `RemoveOld`: even `body` doesn't fit.  Write nothing.  Remove the
+    machine's `system.json`, `system.prev.json`, their `.sha256` files
+    and a `system.json.new`, then its folder if nothing else is in it
+    (its `restore-logs/` stay).  Say `text`: what was removed and why, and
+    that this stick can no longer find the machine's backup.  Unmount,
+    then fsync as step 3 does.
+  On any answer the backup itself succeeds: its own system.json, layout
+  and all, was written first.  `system.prev.json` may still hold an older
+  layout after `WithoutLayout`; nothing reads it at restore time.
 - It warns `stick_room_short` when, once written, the partition can't
   also hold the machine's 22 MiB of logs (less what its logs take now,
   plus a cluster for `restore-logs/` when it isn't there).  The tool
@@ -607,13 +635,19 @@ feature means the stick can't import the pool at all.
   256 MiB partition (marker.py's `CONFIG_MIB`; each BSD, illumos and Haiku
   `build.sh` checks config.img has its `CONFIG_SECTORS`).  The images in
   use are older: their next build gets it.
+- What the stick holds after a refused write is built as far as it can be
+  before the backup tool: `stick.rs`'s `stick_write` and `without_layout`
+  (the decision and the layout-less copy, with their words), `stick
+  --copy`'s words for a `layout_left_out`, and bko-rescue's Disks words
+  for a system.json with no layout (holt-json.md's open question 16).
 - The restore side of "LUKS2 headers in the backup": `bko-holt
   luks-headers` (`src/luksfetch.rs`, also the backup tool's read-back),
   `stick --copy`'s `luks_headers` count, load's restore leaving the
   headers out of the tree, and bko-rescue's fetch before the first plan.
 - Not built: the backup tool's stick module (and so no system.json carries a
   `layout` yet), its keeping of the LUKS2 headers in the snapshot (steps
-  1 to 4 above), its call of `room_check`, the rest of the write-time check (ZFS features, kernel,
+  1 to 4 above), its call of `stick_write` and the write or removal it
+  answers, the rest of the write-time check (ZFS features, kernel,
   bcachefs), and `backotter stick repair`.  They come with the backup
   tool.
 

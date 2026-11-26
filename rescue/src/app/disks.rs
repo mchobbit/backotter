@@ -215,9 +215,16 @@ impl App {
     /// No layout to plan from: why, and the ways on.  A system.json that
     /// carries none (bko-holt's `no_layout`: the backup tool left it out
     /// for the stick's room, holt-json.md's open question 16) has its own:
-    /// the backup holds it, and this bko-rescue can't fetch it yet.
+    /// a newer backup holds it (open question 15), or, from a bko-holt
+    /// that can't read a snapshot's own, this bko-rescue can't fetch it.
     fn no_layout(&mut self, ui: &mut dyn Ui, n: &super::layout::NoLayout) -> Go {
-        let (why, todo) = if n.none_on_stick { (s::NO_LAYOUT_ON_STICK_WHY, s::NO_LAYOUT_ON_STICK_TODO) } else { (s::NO_LAYOUT_WHY, s::NO_LAYOUT_TODO) };
+        // The backup asked first holds none of its own either (open
+        // question 15): a newer backup does.
+        let (why, todo) = match (n.none_on_stick, n.none_in_backup) {
+            (true, true) => (s::NO_LAYOUT_IN_BACKUP_WHY, s::NO_LAYOUT_IN_BACKUP_TODO),
+            (true, false) => (s::NO_LAYOUT_ON_STICK_WHY, s::NO_LAYOUT_ON_STICK_TODO),
+            _ => (s::NO_LAYOUT_WHY, s::NO_LAYOUT_TODO),
+        };
         let p = super::Problem {
             code: "no_layout",
             screen: s::SCR_DISKS,
@@ -274,8 +281,10 @@ impl App {
     // ---- The overview ----
 
     pub(crate) fn disks(&mut self, ui: &mut dyn Ui) -> Go {
-        if let Err(n) = self.layout_file() {
-            return self.no_layout(ui, &n);
+        match self.layout_file(ui) {
+            Ok(_) => {}
+            Err(super::layout::LayoutErr::None(n)) => return self.no_layout(ui, &n),
+            Err(super::layout::LayoutErr::Go(g)) => return g,
         }
         // The LUKS2 headers the layout kept, from the backup, before the
         // first plan (holt-json.md's open question 12).

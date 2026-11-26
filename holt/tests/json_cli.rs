@@ -146,6 +146,7 @@ fn version_json_is_the_api_document() {
             "recovery",
             "stick_copy",
             "luks_headers",
+            "snapshot_layout",
             "error",
         ] {
             assert!(v.get("documents").and_then(|x| x.get(d)).is_some(), "{d}");
@@ -167,6 +168,12 @@ fn version_json_is_the_api_document() {
                 .unwrap()
                 .iter()
                 .any(|f| f.as_str() == Some("luks_headers"))
+        );
+        assert!(
+            v.get_arr("features")
+                .unwrap()
+                .iter()
+                .any(|f| f.as_str() == Some("snapshot_layout"))
         );
         // What an image build copies into the stick's marker (open question 11).
         assert_eq!(
@@ -1473,11 +1480,12 @@ fn luks_headers_fetches_what_load_reads() {
         "{:?}",
         header_problems(&with)
     );
-    // The headers, their directory and /.bko-holt (no raw volume under
-    // it): nothing of the backup tool's staging lands on the restored root.
+    // The headers, their directory, the snapshot's system.json (open
+    // question 15) and /.bko-holt (no raw volume under it): nothing of the
+    // backup tool's staging lands on the restored root.
     assert!(
         with.get_str("text").unwrap().contains(
-            "<<'EOF'\n!/.bko-holt/luks-headers/**\n!/.bko-holt/luks-headers\n!/.bko-holt\nEOF\n"
+            "<<'EOF'\n!/.bko-holt/luks-headers/**\n!/.bko-holt/luks-headers\n!/.bko-holt/system.json\n!/.bko-holt\nEOF\n"
         ),
         "{}",
         with.get_str("text").unwrap()
@@ -1648,4 +1656,232 @@ fn luks_headers_fetches_what_load_reads() {
     assert!(out(&o).contains("vda5's LUKS2 header"), "{}", out(&o));
     let o = run(&["luks-headers", "--help"], &[], None);
     assert!(o.status.success() && out(&o).starts_with("Usage: bko-holt luks-headers"));
+}
+
+/// `bko-holt snapshot-layout OUT --repo REPO --password-file FILE
+/// --snapshot ID --install-id ID --json` (open question 15): the layout a
+/// snapshot's own system.json carries, read by the archiver's dump of
+/// /.bko-holt/system.json (here a script serving a test file), checked as
+/// `stick --copy` checks the stick's, and written to a new private OUT
+/// that load takes; a snapshot without one is `no_system_json`.
+#[test]
+fn snapshot_layout_writes_the_snapshots_own_layout() {
+    use std::os::unix::fs::PermissionsExt;
+    const ID: &str = "0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90";
+    let t = Tree::new("json-cli-snaplayout");
+    let k = t.p("/k");
+    std::fs::create_dir(&k).unwrap();
+    std::fs::set_permissions(&k, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let path = |n: &str| k.join(n).to_string_lossy().into_owned();
+    std::fs::write(path("pw"), "repository password").unwrap();
+    std::fs::set_permissions(path("pw"), std::fs::Permissions::from_mode(0o600)).unwrap();
+    let sys = t.p("/system.json");
+    let arch = t.p("/rustic-bko");
+    std::fs::write(
+        &arch,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{}'\n[ -f '{f}' ] || {{ printf 'Message:\\nNode `system.json` not found in tree.\\n' >&2; exit 1; }}\ncat '{f}'\n",
+            t.p("/argv").display(),
+            f = sys.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&arch, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let arch = arch.to_string_lossy().into_owned();
+    let dump = json::parse(include_str!("corpus/debian13-stack/src.json")).unwrap();
+    let system = format!(
+        "{{\"format\": \"backotter-system\", \"schema\": 1, \"sequence\": 41, \"machine\": {{\"install_id\": \"{ID}\"}}, \"layout\": {}}}",
+        dump.compact()
+    );
+    std::fs::write(&sys, &system).unwrap();
+    let pw = path("pw");
+    let get = |o: &str, extra: &[&str], env: &[(&str, &str)]| {
+        let mut a = vec![
+            "snapshot-layout",
+            o,
+            "--repo",
+            "sftp://nas.local/bko",
+            "--password-file",
+            pw.as_str(),
+            "--archiver",
+            arch.as_str(),
+            "--json",
+        ];
+        a.extend(extra);
+        run(&a, env, None)
+    };
+    // Under the dry-run lock too: it reads the repository only.
+    let o = get(
+        &path("layout.json"),
+        &["--snapshot", "1a2b3c4d", "--install-id", ID],
+        &[("BKO_HOLT_NO_COMMIT", "1")],
+    );
+    assert_eq!(o.status.code(), Some(0), "{}{}", out(&o), err(&o));
+    assert!(err(&o).is_empty(), "{}", err(&o));
+    let d = doc(&o);
+    assert_eq!(
+        (
+            d.get_str("format"),
+            d.get_bool("dry_run"),
+            d.get_str("snapshot"),
+            d.get_str("from"),
+            d.get_str("install_id"),
+            d.get_u64("sequence"),
+            d.get_u64("luks_headers")
+        ),
+        (
+            Some("bko-holt-snapshot-layout"),
+            Some(true),
+            Some("1a2b3c4d"),
+            Some("1a2b3c4d:/.bko-holt/system.json"),
+            Some(ID),
+            Some(41),
+            Some(0)
+        )
+    );
+    let text = std::fs::read_to_string(path("layout.json")).unwrap();
+    assert_eq!(text, dump.pretty());
+    assert_eq!(
+        std::fs::metadata(path("layout.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o600
+    );
+    assert_eq!(d.get_u64("bytes"), Some(text.len() as u64));
+    let argv = std::fs::read_to_string(t.p("/argv")).unwrap();
+    assert_eq!(
+        argv,
+        format!(
+            "--repository\nsftp://nas.local/bko\n--password-file\n{pw}\n--no-progress\ndump\n1a2b3c4d:/.bko-holt/system.json\n"
+        )
+    );
+    assert!(!out(&o).contains("repository password"));
+    // load takes OUT as it takes any dump.
+    let lt = Tree::new("json-cli-snaplayout-load");
+    lt.file("/proc/self/mountinfo", "")
+        .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n")
+        .file("/proc/sys/kernel/arch", "x86_64\n");
+    let lroot = lt.root().to_string_lossy().into_owned();
+    let lp = path("layout.json");
+    let o = run(
+        &[
+            "load",
+            &lp,
+            "--json",
+            "--through",
+            "plan",
+            "--sysroot",
+            &lroot,
+        ],
+        &[],
+        None,
+    );
+    assert_eq!(
+        doc(&o).get_str("format"),
+        Some("bko-holt-plan"),
+        "{}",
+        err(&o)
+    );
+    // Another machine's, refused; no install ID asked: any machine's.
+    let v = assert_error(
+        &get(
+            &path("2.json"),
+            &["--install-id", "1c2d3e4f-5a6b-4c7d-8e9f-a0b1c2d3e4f5"],
+            &[],
+        ),
+        1,
+        "system_refused",
+    );
+    assert!(
+        v.get_str("text")
+            .unwrap()
+            .contains("a backup of another machine"),
+        "{}",
+        v.pretty()
+    );
+    assert!(!k.join("2.json").exists());
+    assert_eq!(get(&path("3.json"), &[], &[]).status.code(), Some(0));
+    assert!(
+        std::fs::read_to_string(t.p("/argv"))
+            .unwrap()
+            .ends_with("dump\nlatest:/.bko-holt/system.json\n")
+    );
+    // Refusals before the archiver runs: an install ID that isn't one (not
+    // echoed), OUT there already or not absolute, no password file under
+    // --json, a password in the URL.
+    let o = get(&path("4.json"), &["--install-id", "../../etc/passwd"], &[]);
+    let v = assert_error(&o, 2, "bad_args");
+    assert!(!v.get_str("text").unwrap().contains("passwd") && !err(&o).contains("passwd"));
+    assert_error(&get(&path("layout.json"), &[], &[]), 2, "out_unsafe");
+    assert_error(&get("rel.json", &[], &[]), 2, "out_unsafe");
+    assert_error(
+        &run(
+            &[
+                "snapshot-layout",
+                &path("4.json"),
+                "--repo",
+                "/srv/r",
+                "--json",
+            ],
+            &[],
+            None,
+        ),
+        2,
+        "bad_args",
+    );
+    assert_error(
+        &run(
+            &[
+                "snapshot-layout",
+                &path("4.json"),
+                "--repo",
+                "sftp://u:secret@nas/r",
+                "--password-file",
+                &pw,
+                "--json",
+            ],
+            &[],
+            None,
+        ),
+        2,
+        "bad_args",
+    );
+    // A snapshot without one: no_system_json, nothing left.
+    std::fs::remove_file(&sys).unwrap();
+    let v = assert_error(
+        &get(&path("4.json"), &["--snapshot", "9f8e7d6c"], &[]),
+        1,
+        "no_system_json",
+    );
+    assert!(
+        v.get_str("text")
+            .unwrap()
+            .contains("snapshot 9f8e7d6c holds no /.bko-holt/system.json"),
+        "{}",
+        v.pretty()
+    );
+    assert!(!k.join("4.json").exists());
+    // Text mode: one line; and the help.
+    std::fs::write(&sys, &system).unwrap();
+    let o = run(
+        &[
+            "snapshot-layout",
+            &path("5.json"),
+            "--repo",
+            "/srv/r",
+            "--password-file",
+            &pw,
+            "--archiver",
+            &arch,
+        ],
+        &[],
+        None,
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert_eq!(out(&o).lines().count(), 1, "{}", out(&o));
+    assert!(out(&o).contains(&format!("machine {ID}")), "{}", out(&o));
+    let o = run(&["snapshot-layout", "--help"], &[], None);
+    assert!(o.status.success() && out(&o).starts_with("Usage: bko-holt snapshot-layout"));
 }

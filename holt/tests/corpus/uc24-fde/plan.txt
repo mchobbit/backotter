@@ -90,10 +90,11 @@ mount -t vfat -o defaults /dev/sdq2 /mnt/bko-target/run/mnt/ubuntu-seed
 
 # ---- restore ----
 mkdir -p -m 700 /run/bko-holt
-# left out of the restore: the copies of the LUKS2 headers the dump kept, which `bko-holt luks-headers` fetches for load to write back: key material, kept out of the tree, their directory with them
+# left out of the restore: the backup tool's own files: the machine's system.json, and the copies of the LUKS2 headers the dump kept, which `bko-holt luks-headers` fetches for load to write back: key material, kept out of the tree, their directory with them
 cat > /run/bko-holt/restore.globs <<'EOF'
 !/.bko-holt/luks-headers/**
 !/.bko-holt/luks-headers
+!/.bko-holt/system.json
 !/.bko-holt
 EOF
 # snapshot latest of /srv/bko-repo, with BackOtter's restore flags

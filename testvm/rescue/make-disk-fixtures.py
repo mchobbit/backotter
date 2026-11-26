@@ -832,6 +832,32 @@ def lovelace_luks():
                 "(the copy's luks_headers 2), fetched by luks-headers' recorded call before the first plan.\n")
 
 
+def lovelace_luks_older():
+    """app-lovelace-luks restored from an older backup (open question 15):
+    the api document snapshot-layout's recorded one (it lists
+    snapshot_layout), and snapshot-layout's recorded 02-older (any
+    snapshot) as 05-snapshot-layout, OUT app-lovelace-luks' layout: Disks
+    asks the chosen snapshot for its own layout, then fetches its headers
+    from the same snapshot, and never runs stick --copy."""
+    scen = "app-lovelace-luks-older"
+    if os.path.exists(os.path.join(SC, scen)):
+        shutil.rmtree(os.path.join(SC, scen))
+    shutil.copytree(os.path.join(SC, "app-lovelace-luks"), os.path.join(SC, scen))
+    shutil.rmtree(os.path.join(SC, scen, "01-version"))
+    copy_call("snapshot-layout", "01-version", scen, "01-version")
+    copy_call("snapshot-layout", "02-older", scen, "05-snapshot-layout")
+    a = os.path.join(SC, scen, "05-snapshot-layout", "argv")
+    words = open(a).read().rstrip("\n").split("\n")
+    words[words.index("--snapshot") + 1] = "*"
+    with open(a, "w") as f:
+        f.write("\n".join(words) + "\n")
+    shutil.copyfile(os.path.join(SC, scen, "03-copy", "out"), os.path.join(SC, scen, "05-snapshot-layout", "out"))
+    with open(os.path.join(SC, scen, "README"), "w") as f:
+        f.write("Hand-written by ../../make-disk-fixtures.py: app-lovelace-luks, its bko-holt asking the chosen\n"
+                "snapshot for its own layout (snapshot-layout's recorded 02-older, any snapshot, OUT the luks\n"
+                "layout), then fetching the headers from the same snapshot; its stick --copy never asked.\n")
+
+
 def plan_changed(doc):
     doc["problems"].append({"code": "plan_changed", "text": "--expect-plan %s: this run's plan is %s: a command or a disk's identity changed since the plan was reviewed" % (sha(1), sha(2)),
                             "expected": sha(1), "got": sha(2), "targets": None})
@@ -852,6 +878,7 @@ if __name__ == "__main__":
     lovelace("app-lovelace-changed", review=plan_changed)
     lovelace("app-lovelace-unshown", review=unshown)
     lovelace_luks()
+    lovelace_luks_older()
     rec_again()
     restores()
     moved()

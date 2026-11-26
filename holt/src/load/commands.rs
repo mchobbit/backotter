@@ -5528,31 +5528,32 @@ impl Builder<'_> {
             .map(str::to_string)
             .collect();
         let raw_globs = self.raw_globs();
-        // The kept LUKS2 headers' copies in the backup (luksfetch.rs): key
-        // material, fetched by `bko-holt luks-headers`, never put in the
-        // tree.  Their directory too, and /.bko-holt when no raw volume is
-        // under it: the backup tool's staging, not the system's (a glob
-        // leaves out the one path it names, `/**` only what is under it;
-        // rustic-bko 0.12.0+backotter.4 checked, oq12 review).
-        let header_globs: Vec<String> = if self.layout.arr(&["storage", "luks_headers"]).is_empty()
-        {
-            Vec::new()
-        } else {
-            let mut g = vec![
-                format!("!{}/**", crate::luksfetch::REPO_DIR),
-                format!("!{}", crate::luksfetch::REPO_DIR),
-            ];
-            if raw_globs.is_empty() {
-                g.push(format!("!{}", crate::luksfetch::BKO_DIR));
-            }
-            g
-        };
-        let only_headers = globs.is_empty()
+        let kept_headers = !self.layout.arr(&["storage", "luks_headers"]).is_empty();
+        // The backup tool's own files in the snapshot, never put in the
+        // tree: the machine's system.json, in every snapshot since open
+        // question 15 (snaplayout.rs), and the kept LUKS2 headers' copies
+        // (luksfetch.rs: key material, fetched by `bko-holt luks-headers`)
+        // with their directory; and /.bko-holt when no raw volume is under
+        // it: the backup tool's staging, not the system's (a glob leaves out
+        // the one path it names, `/**` only what is under it; rustic-bko
+        // 0.12.0+backotter.4 checked, oq12 review and record-snaplayout.py).
+        // A snapshot without them matches nothing.  When nothing else is
+        // left out, they go on the command line (`--glob`), with no glob
+        // file to write; else in the glob file with the rest.
+        let mut bko_globs: Vec<String> = Vec::new();
+        if kept_headers {
+            bko_globs.push(format!("!{}/**", crate::luksfetch::REPO_DIR));
+            bko_globs.push(format!("!{}", crate::luksfetch::REPO_DIR));
+        }
+        bko_globs.push(format!("!{}", crate::snaplayout::SYSTEM_PATH));
+        if raw_globs.is_empty() {
+            bko_globs.push(format!("!{}", crate::luksfetch::BKO_DIR));
+        }
+        let only_bko = globs.is_empty()
             && pool_globs.is_empty()
             && reformat_globs.is_empty()
-            && raw_globs.is_empty()
-            && !header_globs.is_empty();
-        let headers_too = !header_globs.is_empty();
+            && raw_globs.is_empty();
+        let args_only = only_bko && !kept_headers;
         let only_raw = globs.is_empty()
             && pool_globs.is_empty()
             && reformat_globs.is_empty()
@@ -5562,7 +5563,7 @@ impl Builder<'_> {
         globs.extend(pool_globs);
         globs.extend(reformat_globs);
         globs.extend(raw_globs);
-        globs.extend(header_globs);
+        globs.extend(bko_globs);
         let aliases = self.btrfs.values().any(|p| !p.aliases.is_empty());
         let mut pre = Vec::new();
         // What the archiver must have: --exact for shared snapshots,
@@ -5602,14 +5603,22 @@ impl Builder<'_> {
         if aliases {
             a.push("--target-metadata".into());
         }
-        if !globs.is_empty() {
+        if args_only {
+            for g in &globs {
+                a.extend(["--glob".into(), g.clone()]);
+            }
+        } else {
             let file = format!("{RUN_DIR}/restore.globs");
             if need.is_empty() {
                 pre.push(Cmd::new(&["mkdir", "-p", "-m", "700", RUN_DIR]));
             }
-            const HEADERS_WHY: &str = "the copies of the LUKS2 headers the dump kept, which `bko-holt luks-headers` fetches for load to write back: key material, kept out of the tree, their directory with them";
-            let why = if only_headers {
-                format!("left out of the restore: {HEADERS_WHY}")
+            let bko_why = if kept_headers {
+                "the backup tool's own files: the machine's system.json, and the copies of the LUKS2 headers the dump kept, which `bko-holt luks-headers` fetches for load to write back: key material, kept out of the tree, their directory with them"
+            } else {
+                "the backup tool's own files: the machine's system.json, a record of the backup, not of the system"
+            };
+            let why = if only_bko {
+                format!("left out of the restore: {bko_why}")
             } else {
                 let base = if only_raw {
                     "left out of the restore: the raw volumes' images, written to their LVs after it"
@@ -5620,11 +5629,7 @@ impl Builder<'_> {
                 } else {
                     "left out of the restore: btrfs subvolumes mounted elsewhere, seen again (aliases), and the contents of the shared snapshots, made after it"
                 };
-                if headers_too {
-                    format!("{base}; and {HEADERS_WHY}")
-                } else {
-                    base.to_string()
-                }
+                format!("{base}; and {bko_why}")
             };
             pre.push(
                 Cmd::write_file(&file, globs.iter().map(|g| format!("{g}\n")).collect()).why(why),
@@ -11941,10 +11946,11 @@ mod tests {
             .expect(&m);
         assert!(root < home && root < nix, "{m}");
         // The restore fills the top level and both mounts, leaving nothing
-        // out: /home and /nix are covered by their own mounts, not aliases.
+        // out but the backup tool's own files (open question 15): /home and
+        // /nix are covered by their own mounts, not aliases.
         let r = text(b.stage(Stage::Restore));
         assert!(
-            r.contains("restore --numeric-id latest /mnt/bko-target\n"),
+            r.contains("restore --numeric-id --glob '!/.bko-holt/system.json' --glob '!/.bko-holt' latest /mnt/bko-target\n"),
             "{r}"
         );
         assert!(
@@ -12255,7 +12261,7 @@ mod tests {
         assert!(root < boot);
         assert!(!m.contains("swap"));
         let r = text(b.stage(Stage::Restore));
-        assert!(r.contains("RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/repo --password-file /run/pw --no-progress restore --numeric-id latest /mnt/bko-target\n"), "{r}");
+        assert!(r.contains("RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/repo --password-file /run/pw --no-progress restore --numeric-id --glob '!/.bko-holt/system.json' --glob '!/.bko-holt' latest /mnt/bko-target\n"), "{r}");
         let bt = text(b.stage(Stage::Boot));
         assert!(
             bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"),

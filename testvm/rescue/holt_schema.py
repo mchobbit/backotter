@@ -9,7 +9,7 @@ can't drift from bko-holt.
 Each PATH is a file or a directory:
 
   - a document (`bko-holt-plan`, `-status`, `-stick`, `-stick-copy`,
-    `-luks-headers`, `-recovery`, `-error`, `-api`): one JSON
+    `-luks-headers`, `-snapshot-layout`, `-recovery`, `-error`, `-api`): one JSON
     value, on one line or pretty-printed (a golden's `version` VERSION lets
     GENERATED and PLAN_SHA256 stand in for the run's own);
   - an events stream (a file named `events` or `*.events`/`*.ndjson`): one
@@ -47,7 +47,9 @@ ERROR_CODES = ("bad_args", "no_commit", "layout_unreadable", "layout_not_json", 
                # stick --copy's refusals (exit 1; holt-json.md, open question 8)
                "config_not_ok", "no_such_machine", "two_machines", "machine_not_ok", "no_layout", "copy_failed",
                # luks-headers' (exit 1; open question 12)
-               "header_fetch_failed", "header_mismatch")
+               "header_fetch_failed", "header_mismatch",
+               # snapshot-layout's (exit 1; open question 15)
+               "no_system_json", "system_fetch_failed", "system_refused")
 FAILURE_CODES = ("cmd_failed", "wrong_passphrase", "archiver_failed", "efi_vars", "readback_failed",
                  "not_done_after", "no_restored_tree", "commit_refused", "write_failed", "lock_held", "internal")
 STATES = ("done", "partly", "not_done", "nothing", "unknown")
@@ -313,6 +315,14 @@ LUKS_HEADERS = header(
     layout=STR, dir=STR, snapshot=STR, repo_dir=STR,
     headers=List(Obj({"device": STR, "label": S_, "file": STR, "path": STR, "from": STR, "bytes": INT, "sha256": SHA})))
 
+# bko-holt snapshot-layout OUT --repo REPO ... --json (open question 15): the
+# layout the snapshot's own system.json carries (/.bko-holt/system.json),
+# written to OUT (a golden's out is "OUT").
+SNAPSHOT_LAYOUT = header(
+    "bko-holt-snapshot-layout",
+    snapshot=STR, install_id=STR, sequence=I_, written=S_, out=STR, bytes=INT, sha256=SHA,
+    system_sha256=SHA, luks_headers=INT, **{"from": STR})
+
 # bko-holt recovery-words OUT --json (RT10p): the words' verdict, never the words.
 RECOVERY = header(
     "bko-holt-recovery",
@@ -321,7 +331,8 @@ RECOVERY = header(
     checksum_ok=B_, written=BOOL, error=S_)
 
 DOCUMENTS = {"bko-holt-plan": PLAN, "bko-holt-status": STATUS, "bko-holt-stick": STICK, "bko-holt-stick-copy": STICK_COPY,
-             "bko-holt-luks-headers": LUKS_HEADERS, "bko-holt-recovery": RECOVERY,
+             "bko-holt-luks-headers": LUKS_HEADERS, "bko-holt-snapshot-layout": SNAPSHOT_LAYOUT,
+             "bko-holt-recovery": RECOVERY,
              "bko-holt-error": ERROR, "bko-holt-api": API}
 
 # ---- the events -------------------------------------------------------------
@@ -401,6 +412,14 @@ def check_document(v, where):
                 errs.append("%s: headers[%d]: file %s, path %s" % (where, i, json.dumps(h["file"]), json.dumps(h["path"])))
             if not h["from"].endswith(v["repo_dir"] + "/" + h["file"]) or not h["from"].startswith(v["snapshot"]):
                 errs.append("%s: headers[%d]: from %s, not %s's %s" % (where, i, json.dumps(h["from"]), v["snapshot"], v["repo_dir"]))
+    if fmt == "bko-holt-snapshot-layout" and not errs:
+        # One machine's, from the snapshot asked for, its system.json's place.
+        if not UUID.fullmatch(v["install_id"]):
+            errs.append("%s: install_id %s" % (where, json.dumps(v["install_id"])))
+        if not v["from"].startswith(v["snapshot"]) or not v["from"].endswith("/.bko-holt/system.json"):
+            errs.append("%s: from %s, not %s's /.bko-holt/system.json" % (where, json.dumps(v["from"]), v["snapshot"]))
+        if not (v["out"].startswith("/") or v["out"] == "OUT"):
+            errs.append("%s: out %s isn't absolute" % (where, json.dumps(v["out"])))
     if fmt == "bko-holt-recovery" and not errs:
         if v["ok"] != (v["problem"] is None) or (v["ok"] and v["checksum_ok"] is not True):
             errs.append("%s: ok %s with problem %s, checksum_ok %s" % (where, v["ok"], json.dumps(v["problem"]), v["checksum_ok"]))

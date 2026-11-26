@@ -12526,7 +12526,11 @@ fn freebsd_pools_glob_file() {
         .iter()
         .position(|c| c.write.as_deref() == Some(want_globs.as_str()))
         .expect("the glob file is written");
-    assert_eq!(rs[w].stdin.as_deref(), Some("!/data/**\n"));
+    // The pools' paths, then the backup tool's own files (open question 15).
+    assert_eq!(
+        rs[w].stdin.as_deref(),
+        Some("!/data/**\n!/.bko-holt/system.json\n!/.bko-holt\n")
+    );
     let r = rs
         .iter()
         .position(|c| c.argv.iter().any(|a| a.ends_with("restore.globs")) && c.write.is_none())

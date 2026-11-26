@@ -1,0 +1,14 @@
+Recorded 2026-11-26 12:48 UTC by record-snaplayout.py on cinqcent:
+  bko-holt 0.2.6 (/mnt/bko-ram/oq15-build/release/bko-holt)
+  rustic 0.12.0+backotter.4
+  cryptsetup 2.7.5 flags: UDEV BLKID KEYRING KERNEL_CAPI HW_OPAL
+Snapshots: f655d971 (before: no system.json), 8a590955 (older: sequence 40), 718440ac (newest: sequence 41, another ubuntu-data-enc header).
+02-older: OUT 88170 bytes, sequence 40, 2 headers kept; the same JSON as the older system.json's layout
+03-older-headers: 2 headers fetched from 8a590955, each the older backup's, byte for byte
+04-newest: OUT 88170 bytes, sequence 41, 2 headers kept; the same JSON as the newest system.json's layout
+The newest layout (the stick's copy) against 8a590955: header_mismatch, as before open question 15.
+05-before: bko-holt snapshot-layout: snapshot f655d971 holds no /.bko-holt/system.json: a backup made before the backup tool kept the machine's system.json in each snapshot, so its own layout isn't in it (the archiver said: Node `.bko-holt` not found in tree.)
+06-other-machine: bko-holt snapshot-layout: snapshot 718440ac's /.bko-holt/system.json is machine 0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90's, not 1c2d3e4f-5a6b-4c7d-8e9f-a0b1c2d3e4f5's: a backup of another machine in the same repository
+07-wrong-password: bko-holt snapshot-layout: snapshot 718440ac's /.bko-holt/system.json couldn't be read (718440ac:/.bko-holt/system.json): /home/m/backotter-work/bko-bin/linux/rustic-bko exited 1: The password that has been entered, seems to be incorrect. No suitable key found for the given password. Please check your password and try again.
+A restore of 8a590955 with load's glob file (!/.bko-holt/luks-headers/** !/.bko-holt/luks-headers !/.bko-holt/system.json !/.bko-holt) brought back etc, etc/hostname: no header, no system.json, no .bko-holt.
+A fourth backup 5d3a7867 (system.json, no header), restored with load's --glob '!/.bko-holt/system.json' --glob '!/.bko-holt': brought back etc, etc/hostname.

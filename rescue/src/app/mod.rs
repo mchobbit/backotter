@@ -228,6 +228,11 @@ pub struct App {
     /// The LUKS2 headers that layout kept (its copy document's count):
     /// fetched from the backup before the first plan (layout.rs).
     pub(crate) layout_headers: u64,
+    /// The snapshot the layout was found for, and whether it is that
+    /// snapshot's own (its system.json in the backup) or the stick's copy,
+    /// which is some backup's, not always that one's (layout.rs).
+    pub(crate) layout_for: Option<String>,
+    pub(crate) layout_own: bool,
     /// Their directory in the session's, and the snapshot they are from.
     pub(crate) headers: Option<(PathBuf, Option<String>)>,
     /// The last plan bko-holt made.
@@ -268,6 +273,9 @@ pub struct App {
     pub(crate) boot_offered: bool,
     /// bko-holt's RUN_DIR, from its api document: where its lock is.
     pub(crate) run_dir: Option<PathBuf>,
+    /// Its api document lists `snapshot_layout`: a snapshot's own layout
+    /// is asked for first (holt-json.md's open question 15).
+    pub(crate) snapshot_layouts: bool,
     /// The Restore: its runs, the one running, how they ended.
     pub(crate) restore: Option<restore::Restore>,
     /// Files a bug report attaches (a failed run's events).
@@ -311,6 +319,8 @@ impl App {
             raw: Vec::new(),
             layout: None,
             layout_headers: 0,
+            layout_for: None,
+            layout_own: false,
             headers: None,
             plan: None,
             map: Vec::new(),
@@ -327,6 +337,7 @@ impl App {
             disks_notice: None,
             boot_offered: false,
             run_dir: None,
+            snapshot_layouts: false,
             restore: None,
             attach: Vec::new(),
         }
@@ -445,9 +456,10 @@ impl App {
             Err(g) => return g,
         };
         match api(&out, self.opts.dry_run) {
-            Ok((v, run_dir)) => {
+            Ok((v, run_dir, snapshot_layouts)) => {
                 self.version = Some(v);
                 self.run_dir = run_dir;
+                self.snapshot_layouts = snapshot_layouts;
             }
             Err(why) => return self.holt_problem(ui, why),
         }
@@ -615,10 +627,6 @@ impl App {
         self.snap = None;
         self.recovery_note = None;
         self.forget_disks();
-        if let Some(p) = self.layout.take() {
-            sys::wipe_file(&p);
-        }
-        self.layout_headers = 0;
     }
 
     /// Another snapshot or machine: the disks' choices and the keys go.
@@ -626,8 +634,9 @@ impl App {
         for (_, _, p) in self.keys.drain(..) {
             sys::wipe_file(&p);
         }
-        // Another snapshot's headers may differ: fetched again.
+        // Another snapshot's headers and layout may differ: found again.
         self.forget_headers();
+        self.forget_layout();
         self.plan = None;
         self.map.clear();
         self.fit.clear();
@@ -1632,9 +1641,11 @@ pub(crate) fn same_version(v: Value, schema: u64, version: Option<&str>) -> Resu
     }
 }
 
-/// `--version --json`: its version and its RUN_DIR, once it says it
-/// speaks what this reads and, in a dry run, that its lock took.
-pub(crate) fn api(x: &Output, dry_run: bool) -> Result<(String, Option<PathBuf>), String> {
+/// `--version --json`: its version, its RUN_DIR and whether it writes
+/// `bko-holt-snapshot-layout` (open question 15: without it, the stick's
+/// copy is the layout, as before), once it says it speaks what this reads
+/// and, in a dry run, that its lock took.
+pub(crate) fn api(x: &Output, dry_run: bool) -> Result<(String, Option<PathBuf>, bool), String> {
     let v = match document(x, "bko-holt-api") {
         Ok(v) => v,
         // Before RT10 it answered `bko-holt 0.2.6` in text.
@@ -1655,7 +1666,8 @@ pub(crate) fn api(x: &Output, dry_run: bool) -> Result<(String, Option<PathBuf>)
     }
     let run_dir = v.get_str("run_dir").filter(|d| d.starts_with('/') && !d.split('/').any(|c| c == "..")).map(PathBuf::from);
     let version = v.get_str("version").map(str::to_string).ok_or_else(|| s::holt_says("no version"))?;
-    Ok((version, run_dir))
+    let snapshot_layouts = v.at(&["documents", "snapshot_layout"]).and_then(Value::as_array).is_some_and(|a| a.iter().any(|n| n.as_u64() == Some(layout::SNAP_SCHEMA)));
+    Ok((version, run_dir, snapshot_layouts))
 }
 
 /// The recovery document's verdict, in words.

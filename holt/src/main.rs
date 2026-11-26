@@ -15,6 +15,7 @@ const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
        bko-holt stick --copy INSTALL_ID OUT --json
        bko-holt recovery-words OUT --json
        bko-holt luks-headers LAYOUT DIR --repo REPO [--password-file FILE] [--json] ...
+       bko-holt snapshot-layout OUT --repo REPO [--password-file FILE] [--json] ...
        bko-holt -h | --help | -V | --version | --license
 
   dump        writes a JSON description of this system's disk layout
@@ -35,6 +36,9 @@ const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
   luks-headers
               fetches the LUKS2 headers a dump kept from the backup into a
               new private directory, for load's --luks-header-dir
+  snapshot-layout
+              writes the disk layout a snapshot's own system.json carries
+              to a new private file, for load
 
 `bko-holt dump --help`, `bko-holt load --help` and `bko-holt report-bug --help`
 say more.
@@ -147,6 +151,7 @@ fn main() -> ExitCode {
         Some("stick") => ExitCode::from(bko_holt::stick::main(&args[1..])),
         Some("recovery-words") => ExitCode::from(bko_holt::recoverycmd::main(&args[1..])),
         Some("luks-headers") => ExitCode::from(bko_holt::luksfetch::main(&args[1..])),
+        Some("snapshot-layout") => ExitCode::from(bko_holt::snaplayout::main(&args[1..])),
         // Not in the usage: run by load's close, partition and boot stages.
         Some("snapcore-boot-areas") => {
             ExitCode::from(bko_holt::load::snapcore::boot_areas_main(&args[1..]))

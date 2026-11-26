@@ -101,11 +101,25 @@ struct Fake {
     /// writes them, and its document; or an exit and a document of its
     /// own (DIR not made).
     luks: Option<Luks>,
+    /// `snapshot-layout`'s answer (open question 15): asked only when the
+    /// api document lists it (`version`), else a call panics.
+    snaplayout: Option<SnapAns>,
 }
 
 #[derive(Clone)]
 enum Luks {
     Files(Vec<(String, Vec<u8>)>),
+    Says(i32, String),
+}
+
+#[derive(Clone)]
+enum SnapAns {
+    /// Exit 0: this layout written to OUT, the document bko-holt writes
+    /// for the snapshot and machine asked, keeping N headers.
+    Own(Vec<u8>, u64),
+    /// Exit 0, a document of its own (OUT still written with this).
+    Odd(Vec<u8>, String),
+    /// An exit and a document; OUT not written.
     Says(i32, String),
 }
 
@@ -292,6 +306,33 @@ impl Fake {
                     Some(Luks::Says(code, doc)) => Output { code: Some(code), stdout: doc.into_bytes(), ..Output::default() },
                     None => panic!("a luks-headers call for a layout that kept none: {a:?}"),
                 },
+                "snapshot-layout" => {
+                    let arg = |f: &str| a.iter().position(|x| x == f).map(|i| a[i + 1].clone());
+                    let version = crate::json::parse(&String::from_utf8(fixture(&format!("scenarios/{}/01-version/stdout", self.holt))).unwrap()).unwrap().get_str("version").unwrap().to_string();
+                    let out = PathBuf::from(&a[1]);
+                    assert!(!out.exists(), "OUT is new: {a:?}");
+                    match self.snaplayout.clone() {
+                        Some(SnapAns::Own(body, n)) => {
+                            write_new(&out, &body).unwrap();
+                            let snap = arg("--snapshot").unwrap();
+                            let id = arg("--install-id").unwrap_or_else(|| "0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90".into());
+                            let doc = format!(
+                                r#"{{"format":"bko-holt-snapshot-layout","schema":1,"version":"{version}","generated":"2026-11-26T10:00:00Z","dry_run":false,"snapshot":"{snap}","from":"{snap}:/.bko-holt/system.json","install_id":"{id}","sequence":40,"written":null,"out":"{}","bytes":{},"sha256":"{}","system_sha256":"{}","luks_headers":{n}}}"#,
+                                out.display(),
+                                body.len(),
+                                "ab".repeat(32),
+                                "cd".repeat(32)
+                            );
+                            ok(format!("{doc}\n").into_bytes())
+                        }
+                        Some(SnapAns::Odd(body, doc)) => {
+                            write_new(&out, &body).unwrap();
+                            ok(doc.replace("VERSION", &version).into_bytes())
+                        }
+                        Some(SnapAns::Says(code, doc)) => Output { code: Some(code), stdout: doc.replace("VERSION", &version).into_bytes(), ..Output::default() },
+                        None => panic!("a snapshot-layout call from a bko-holt whose api doesn't list it: {a:?}"),
+                    }
+                }
                 "report-bug" => {
                     let unredacted = a.contains(&"--no-redact".to_string());
                     let text = if unredacted { "NOT redacted\n" } else { "a redacted report\nhost-1\n" };
@@ -515,6 +556,7 @@ fn t_with(holt: &str, rustic: &str, wh: Where, dry_run: bool, f: impl FnOnce(&mu
         in_turn: false,
         copy: None,
         luks: None,
+        snaplayout: None,
     };
     f(&mut fake);
     let session = Session::new(&base).unwrap();
@@ -854,7 +896,7 @@ fn rustics_failures_each_have_their_help() {
             }
         }
         let base = t.base.0.clone();
-        let fake = Fake { base: base.clone(), holt: "stick-three".into(), version: None, stick: None, rustic: "lovelace".into(), disks: "app-lovelace".into(), config: None, seen: t.seen.clone(), tools: vec!["bko-holt", "rustic-bko"], in_turn: false, copy: None, luks: None };
+        let fake = Fake { base: base.clone(), holt: "stick-three".into(), version: None, stick: None, rustic: "lovelace".into(), disks: "app-lovelace".into(), config: None, seen: t.seen.clone(), tools: vec!["bko-holt", "rustic-bko"], in_turn: false, copy: None, luks: None, snaplayout: None };
         t.app = App::new(Box::new(Failing(fake, stderr)), Session::new(&base).unwrap(), Opts { holt: None, rustic: "rustic-bko".into(), dry_run: false }, LINUX);
         let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, B(B_RAW), Reply::Ok, Back, Reply::Quit]]));
         assert_eq!(t.app.run(&mut ui), Exit::Quit, "{title}");
@@ -1901,7 +1943,8 @@ fn kept_headers_are_fetched_before_the_first_plan() {
     // Another machine or snapshot: gone, fetched again when needed.
     t.app.forget_disks();
     assert!(!h.exists() && t.app.headers.is_none());
-    assert_eq!(t.app.full_load(holt_args::Stage::Plan, true).unwrap().luks_header_dir, None);
+    // The layout too: another snapshot's may differ (open question 15).
+    assert!(t.app.layout.is_none() && !layout.exists() && t.app.full_load(holt_args::Stage::Plan, true).is_none());
     drop(t.app);
     assert!(!dir.exists(), "the session's directory is gone, the headers' with it");
 }
@@ -1922,7 +1965,9 @@ fn headers_that_cant_be_fetched_stop_on_disks() {
         let p = ui.flat("Problem: the encryption headers couldn't be fetched", 0);
         assert!(p.contains("bko-holt was asked for the old disks' encryption headers, and said:") && p.contains(words), "{p}");
         assert!(!p.contains("bko-holt luks-headers:"), "bko-holt named once: {p}");
-        assert!(p.contains("choose the newest backup"), "{p}");
+        // The stick's copy (this bko-holt asks no snapshot for its own): a
+        // mismatch says to choose the newest backup, other failures don't.
+        assert_eq!(p.contains("choose the newest backup"), words != super::strings::HEADERS_NOT_WRITTEN, "{p}");
         assert!(!t.app.session.path("h").exists() && t.app.headers.is_none(), "nothing left");
         assert!(!ran(&t).iter().any(|l| l.contains("bko-holt load")), "no plan without the headers");
     }
@@ -2332,4 +2377,131 @@ fn go_on_runs_each_stage_and_ticks_what_status_says_is_done() {
     let done = ui.text("lovelace is restored", 0);
     assert!(done.contains("[x] Make partitions           [x] Set up RAID and encryption"), "partition as status says: {done}");
     assert!(done.contains("[x] Make it bootable") && done.contains("[x] Finish") && !done.contains("[ ]"), "{done}");
+}
+
+
+/// stick-three's api document as a bko-holt that writes
+/// `bko-holt-snapshot-layout` (open question 15) says it.
+fn version_with_snapshot_layouts() -> String {
+    let v = String::from_utf8(fixture("scenarios/stick-three/01-version/stdout")).unwrap();
+    assert!(!v.contains("snapshot_layout"), "recorded before open question 15");
+    v.replace("\"stick_copy\":[1],", "\"stick_copy\":[1],\"luks_headers\":[1],\"snapshot_layout\":[1],")
+}
+
+/// A session whose bko-holt asks each snapshot for its own layout, which
+/// answers ANS; the stick's copy keeps 2 headers when it is used.
+fn snaplayout_t(ans: SnapAns, luks: Option<Luks>) -> T {
+    t_with("stick-three", "lovelace", LINUX, false, |f| {
+        f.disks = "app-lovelace".into();
+        f.version = Some(version_with_snapshot_layouts());
+        f.copy = Some((0, copy_with_headers(2)));
+        f.snaplayout = Some(ans);
+        f.luks = luks;
+    })
+}
+
+/// The no_system_json refusal, as bko-holt writes it (VERSION the api's).
+const NO_SYSTEM_JSON: &str = "{\"format\":\"bko-holt-error\",\"schema\":1,\"version\":\"VERSION\",\"generated\":\"2026-11-26T10:00:00Z\",\"dry_run\":false,\"exit\":1,\"code\":\"no_system_json\",\"text\":\"bko-holt snapshot-layout: snapshot 3be04d2a holds no /.bko-holt/system.json: a backup made before the backup tool kept the machine's system.json in each snapshot, so its own layout isn't in it (the archiver said: Node `.bko-holt` not found in tree.)\"}\n";
+
+#[test]
+fn an_older_backup_plans_from_its_own_layout_and_headers() {
+    // The second backup chosen: its own layout (2 headers kept), its
+    // headers from it, then the plan; never the stick's copy.  Back, the
+    // newest: its own layout and headers, asked again.
+    let layout = fixture("scenarios/stick-layouts/03-copy/out");
+    let files: Vec<(String, Vec<u8>)> = HEADER_FILES.iter().map(|f| (f.to_string(), format!("LUKS header {f}").into_bytes())).collect();
+    let mut t = snaplayout_t(SnapAns::Own(layout.clone(), 2), Some(Luks::Files(files)));
+    let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, P, Pick(1), P, P, P, Back, Pick(0), P, P, P, Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    let dir = t.app.session.dir.clone();
+    let (out, h, pw) = (dir.join("layout.json"), dir.join("h"), dir.join("password"));
+    let r = ran(&t);
+    assert!(!r.iter().any(|l| l.contains("stick --copy")), "the snapshot's own, not the stick's: {r:#?}");
+    let asks: Vec<&String> = r.iter().filter(|l| l.contains(" snapshot-layout ")).collect();
+    assert_eq!(asks.len(), 2, "{r:#?}");
+    let first = format!("/fake/bin/bko-holt snapshot-layout {} --repo sftp://nas.local/backotter/lovelace --password-file {} --snapshot ", out.display(), pw.display());
+    for a in &asks {
+        assert!(a.starts_with(&first) && a.ends_with(" --install-id 0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90 --json"), "{a}");
+    }
+    assert!(asks[0].contains("--snapshot 3be04d2a") && asks[1].contains("--snapshot a7f3c901"), "{asks:#?}");
+    // Each snapshot's layout, then its headers from the same snapshot,
+    // then its plan.
+    let fetches: Vec<&String> = r.iter().filter(|l| l.contains(" luks-headers ")).collect();
+    assert_eq!(fetches.len(), 2, "{r:#?}");
+    assert!(fetches[0].contains("--snapshot 3be04d2a") && fetches[1].contains("--snapshot a7f3c901"), "{fetches:#?}");
+    let at = |pat: &str, n: usize| r.iter().enumerate().filter(|(_, l)| l.contains(pat)).nth(n).unwrap().0;
+    assert!(at(" snapshot-layout ", 0) < at(" luks-headers ", 0) && at(" luks-headers ", 0) < at("bko-holt load", 0), "{r:#?}");
+    assert!(at(" snapshot-layout ", 1) < at(" luks-headers ", 1), "{r:#?}");
+    assert!(t.app.layout_own && t.app.layout_for == t.app.snap && t.app.layout_headers == 2);
+    assert_eq!(fs::read(&out).unwrap(), layout);
+    assert_eq!(fs::metadata(&out).unwrap().permissions().mode() & 0o777, 0o600);
+    let l = t.app.full_load(holt_args::Stage::Plan, true).unwrap();
+    assert_eq!((l.layout.as_path(), l.luks_header_dir.as_deref()), (out.as_path(), Some(h.as_path())));
+    // Another snapshot: the layout goes with the headers.
+    t.app.forget_disks();
+    assert!(!out.exists() && t.app.layout.is_none() && t.app.layout_for.is_none());
+}
+
+#[test]
+fn a_backup_without_its_own_layout_uses_the_sticks() {
+    // no_system_json: the stick's copy, as before; its headers are a newer
+    // backup's, so a mismatch says to choose the newest backup.
+    let mismatch = "{\"format\":\"bko-holt-error\",\"schema\":1,\"version\":\"VERSION\",\"generated\":\"2026-11-26T10:00:00Z\",\"dry_run\":false,\"exit\":1,\"code\":\"header_mismatch\",\"text\":\"bko-holt luks-headers: vda5's LUKS2 header isn't the header the dump kept\"}\n";
+    let version = crate::json::parse(&version_with_snapshot_layouts()).unwrap().get_str("version").unwrap().to_string();
+    let mut t = snaplayout_t(SnapAns::Says(1, NO_SYSTEM_JSON.into()), Some(Luks::Says(1, mismatch.replace("VERSION", &version))));
+    let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, P, Pick(1), P, P, Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    let r = ran(&t);
+    let at = |pat: &str| r.iter().position(|l| l.contains(pat)).unwrap_or_else(|| panic!("{pat}: {r:#?}"));
+    assert!(at(" snapshot-layout ") < at("stick --copy") && at("stick --copy") < at(" luks-headers "), "{r:#?}");
+    assert!(!t.app.layout_own);
+    let p = ui.flat("Problem: the encryption headers couldn't be fetched", 0);
+    assert!(p.contains("so the stick's copy was used") && p.contains("choose the newest backup"), "{p}");
+    assert!(!r.iter().any(|l| l.contains("bko-holt load")), "no plan without the headers");
+    // A layout that kept none: planned from the stick's copy.
+    let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| {
+        f.disks = "app-lovelace".into();
+        f.version = Some(version_with_snapshot_layouts());
+        f.copy = Some((0, copy_with_headers(0)));
+        f.snaplayout = Some(SnapAns::Says(1, NO_SYSTEM_JSON.into()));
+    });
+    let mut ui = Shots::new(script(&[&to_disks(), &[Reply::Quit]]));
+    t.app.run(&mut ui);
+    assert!(t.app.layout.is_some() && !t.app.layout_own && t.app.layout_for == t.app.snap);
+    assert!(ran(&t).iter().any(|l| l.contains("bko-holt load")), "{:#?}", ran(&t));
+    // Neither holds one (stick-three's recorded no_layout): a newer backup
+    // does, and the words say so.
+    let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| {
+        f.disks = "stick-three".into();
+        f.version = Some(version_with_snapshot_layouts());
+        f.snaplayout = Some(SnapAns::Says(1, NO_SYSTEM_JSON.into()));
+    });
+    let mut ui = Shots::new(script(&[&to_disks(), &[Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    let p = ui.flat("Problem: the old disks' layout isn't here", 0);
+    assert!(p.contains("carries no disk layout") && p.contains("This backup holds none of its own") && p.contains("choose a newer backup"), "{p}");
+    assert!(!p.contains("can't take it from the backup yet"), "{p}");
+}
+
+#[test]
+fn a_snapshot_layout_that_cant_be_had_stops_on_disks() {
+    // Never the stick's copy for any other failure: bko-holt's words, Try
+    // again, Back; nothing planned, nothing left.
+    let layout = fixture("scenarios/stick-layouts/03-copy/out");
+    let failed = "{\"format\":\"bko-holt-error\",\"schema\":1,\"version\":\"VERSION\",\"generated\":\"2026-11-26T10:00:00Z\",\"dry_run\":false,\"exit\":1,\"code\":\"system_fetch_failed\",\"text\":\"bko-holt snapshot-layout: snapshot a7f3c901's /.bko-holt/system.json couldn't be read: rustic-bko exited 1: The password that has been entered, seems to be incorrect.\"}\n";
+    let other = "{\"format\":\"bko-holt-snapshot-layout\",\"schema\":1,\"version\":\"VERSION\",\"generated\":\"2026-11-26T10:00:00Z\",\"dry_run\":false,\"snapshot\":\"a7f3c901\",\"from\":\"a7f3c901:/.bko-holt/system.json\",\"install_id\":\"1c2d3e4f-5a6b-4c7d-8e9f-a0b1c2d3e4f5\",\"sequence\":1,\"written\":null,\"out\":\"/x\",\"bytes\":1,\"sha256\":\"ab\",\"system_sha256\":\"cd\",\"luks_headers\":0}\n";
+    for (ans, words) in [
+        (SnapAns::Says(1, failed.into()), "seems to be incorrect"),
+        (SnapAns::Odd(layout.clone(), other.into()), super::strings::SNAP_LAYOUT_NOT_WRITTEN),
+    ] {
+        let mut t = snaplayout_t(ans, None);
+        let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, P, Pick(0), P, Reply::Quit]]));
+        assert_eq!(t.app.run(&mut ui), Exit::Quit);
+        let p = ui.flat("Problem: this backup's layout couldn't be read", 0);
+        assert!(p.contains("bko-holt was asked for the layout this backup holds, and said:") && p.contains(words), "{p}");
+        assert!(!p.contains("bko-holt snapshot-layout:"), "bko-holt named once: {p}");
+        let r = ran(&t);
+        assert!(!r.iter().any(|l| l.contains("stick --copy") || l.contains("bko-holt load")), "{r:#?}");
+        assert!(!t.app.session.path("layout.json").exists() && t.app.layout.is_none(), "nothing left");
+    }
 }

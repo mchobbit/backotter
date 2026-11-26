@@ -1,0 +1,11 @@
+snapshot-layout
+*
+--repo
+*
+--password-file
+*
+--snapshot
+*
+--install-id
+*
+--json

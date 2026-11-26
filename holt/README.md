@@ -49,6 +49,15 @@ Haiku; Redox and Sculpt OS from Linux):
   "bko-holt-luks-headers", open question 12).  load's restore leaves that
   directory and its files out of the tree, and `/.bko-holt` when no raw
   volume is under it.
+- `bko-holt snapshot-layout OUT --repo REPO --password-file FILE
+  [--snapshot ID] [--install-id ID] [--json]` writes the disk layout a
+  snapshot's own system.json carries (`/.bko-holt/system.json` in the
+  snapshot, where the backup tool keeps it) to a new private OUT for load,
+  checked as `stick --copy` checks the stick's.  A snapshot from before the
+  backup tool kept one is `no_system_json`, so bko-rescue falls back to the
+  stick's copy for it only (`src/snaplayout.rs`; holt-json.md,
+  "bko-holt-snapshot-layout", open question 15).  load's restore leaves
+  `/.bko-holt/system.json` out of every tree.
 
 ```
 sudo bko-holt dump > layout.json

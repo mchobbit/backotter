@@ -36,6 +36,7 @@ pub mod report;
 #[cfg(test)]
 mod scenarios;
 pub mod snapcore;
+pub mod snaplayout;
 pub mod stick;
 pub(crate) mod store;
 pub mod sys;

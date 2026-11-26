@@ -1,7 +1,24 @@
 //! The layout file every `bko-holt load` of this session reads: the disk
-//! layout the chosen machine's system.json carries, written once into the
-//! session's directory (0700) by `bko-holt stick --copy INSTALL_ID OUT
-//! --json` (holt-json.md's open question 8, approved 2026-11-26).
+//! layout the chosen snapshot's own system.json carries, else the one the
+//! chosen machine's system.json on the stick carries, written once a
+//! snapshot into the session's directory (0700).
+//!
+//! First the snapshot's own (holt-json.md's open question 15, approved
+//! 2026-11-26; stick-config.md's "Which copy wins", step 2): once the
+//! password is in and the snapshot chosen, `bko-holt snapshot-layout OUT
+//! --repo URL --password-file FILE --snapshot ID [--install-id ID] --json`
+//! reads `/.bko-holt/system.json` from that snapshot, checks it as `stick
+//! --copy` checks the stick's (and that it is the chosen machine's), and
+//! writes its `layout` to OUT.  The stick's copy is some backup's (the
+//! newest one the stick was plugged in for), so only the snapshot's own is
+//! the layout of the backup restored.  A snapshot that holds none (a backup
+//! from before the backup tool kept one, bko-holt's `no_system_json`) falls
+//! back to the stick's copy, as before; any other failure is a problem
+//! screen, never that fallback.  A bko-holt whose api document doesn't list
+//! `snapshot_layout` isn't asked: the stick's copy, as before.
+//!
+//! The stick's copy: `bko-holt stick --copy INSTALL_ID OUT --json`
+//! (holt-json.md's open question 8, approved 2026-11-26).
 //!
 //! bko-holt finds the config partition as `stick --json` did, checks the
 //! machine's system.json against its `.sha256`, and writes the dump it
@@ -11,9 +28,8 @@
 //! load reads is the JSON whose checksum was checked.  bko-holt's
 //! refusal (no layout in system.json, a checksum gone bad since, a layout
 //! load won't take) is shown in its words on the Disks screen.  A typed
-//! location has no system.json on the stick: the backup's own copy waits
-//! on the backup tool (rescue-screens.md, "4. Snapshot"), so then there is
-//! no layout, and a screen says so.
+//! location has no system.json on the stick: only the snapshot's own then,
+//! asked with no install ID, and without it a screen says there is none.
 //!
 //! A layout that kept LUKS2 headers (`dump --keep-luks-header`, Ubuntu
 //! Core's encryption always: the copy document's `luks_headers` counts
@@ -22,9 +38,10 @@
 //! snapshot chosen, before the first plan, `bko-holt luks-headers LAYOUT
 //! DIR --repo URL --password-file FILE --snapshot ID --json` fetches them
 //! into DIR, `h` in the session's directory: bko-holt makes it 0700, each
-//! header 0600, checked against the dump's size and SHA-256.  Every load
-//! then gets `--luks-header-dir DIR`.  Another snapshot fetches them
-//! again; the session's end wipes them with the rest (key material).
+//! header 0600, checked against the dump's size and SHA-256 (the layout's:
+//! the snapshot's own, so its headers match).  Every load then gets
+//! `--luks-header-dir DIR`.  Another snapshot finds its layout and fetches
+//! them again; the session's end wipes them with the rest (key material).
 
 use std::path::{Path, PathBuf};
 
@@ -46,6 +63,13 @@ pub const HEADERS_DIR: &str = "h";
 
 /// The `bko-holt-luks-headers` schema read.
 pub const HEADERS_SCHEMA: u64 = 1;
+
+/// The `bko-holt-snapshot-layout` schema read.
+pub const SNAP_SCHEMA: u64 = 1;
+
+/// How long reading a snapshot's system.json may take: one file, a dump
+/// inside, over the network.
+pub const SNAP_MS: u64 = 300_000;
 
 /// How long a fetch may take: two Ubuntu Core headers are 13 MiB, a big
 /// keyslots area 128 MiB each, over the network.
@@ -78,30 +102,159 @@ pub fn install_id_ok(id: &str) -> bool {
 pub(crate) struct NoLayout {
     pub what: String,
     pub none_on_stick: bool,
+    /// The snapshot was asked for its own, and holds none (`no_system_json`).
+    pub none_in_backup: bool,
 }
 
 impl NoLayout {
     fn said(what: &str) -> NoLayout {
-        NoLayout { what: what.to_string(), none_on_stick: false }
+        NoLayout { what: what.to_string(), none_on_stick: false, none_in_backup: false }
     }
 }
 
-/// Whether a run's standard output is bko-holt's `no_layout` refusal.
-fn is_no_layout(x: &sys::Output) -> bool {
+/// What the snapshot said of its own layout.
+enum Own {
+    /// Written: the layout file.
+    Written(PathBuf),
+    /// It holds none (`no_system_json`).
+    NoneThere,
+    /// Not asked: a bko-holt that can't, or nothing to ask with.
+    NotAsked,
+}
+
+/// Why the layout file isn't there: no layout (a screen of its own), or
+/// where to go, its problem screen shown.
+#[derive(Debug)]
+pub(crate) enum LayoutErr {
+    None(NoLayout),
+    Go(Go),
+}
+
+/// Whether a run's standard output is bko-holt's refusal CODE.
+fn is_refusal(x: &sys::Output, code: &str) -> bool {
     let v = std::str::from_utf8(&x.stdout).ok().and_then(|t| crate::json::parse(t.trim()).ok());
-    v.is_some_and(|v| v.get_str("format") == Some("bko-holt-error") && v.get_str("code") == Some("no_layout"))
+    v.is_some_and(|v| v.get_str("format") == Some("bko-holt-error") && v.get_str("code") == Some(code))
 }
 
 impl App {
-    /// The layout file: copied the first time, then the same file.  Err
-    /// is why there is none.
-    pub(crate) fn layout_file(&mut self) -> Result<PathBuf, NoLayout> {
+    /// The layout file and its headers' count gone, the file zeroed first.
+    pub(crate) fn forget_layout(&mut self) {
+        if let Some(p) = self.layout.take() {
+            sys::wipe_file(&p);
+        }
+        self.layout_headers = 0;
+        self.layout_for = None;
+        self.layout_own = false;
+    }
+
+    /// The layout file for the chosen snapshot: found the first time, then
+    /// the same file.  Err is why there is none.
+    pub(crate) fn layout_file(&mut self, ui: &mut dyn Ui) -> Result<PathBuf, LayoutErr> {
         if let Some(p) = &self.layout {
-            if p.is_file() {
+            if p.is_file() && self.layout_for == self.snap {
                 return Ok(p.clone());
             }
         }
-        let Some(m) = self.chosen().cloned() else { return Err(NoLayout::said(super::strings::LAYOUT_NONE_TYPED)) };
+        self.forget_headers();
+        self.forget_layout();
+        // The snapshot's own first, then the stick's copy.
+        let asked = match self.snapshot_layout(ui).map_err(LayoutErr::Go)? {
+            Own::Written(p) => return Ok(p),
+            Own::NoneThere => true,
+            Own::NotAsked => false,
+        };
+        self.stick_layout(asked).map_err(LayoutErr::None)
+    }
+
+    /// The chosen snapshot's own layout (open question 15).  Err is where
+    /// to go, its problem screen shown.
+    fn snapshot_layout(&mut self, ui: &mut dyn Ui) -> Result<Own, Go> {
+        let (Some(t), Some(pw), Some(snap)) = (self.target(), self.password.clone(), self.snap.clone()) else { return Ok(Own::NotAsked) };
+        if !self.snapshot_layouts {
+            return Ok(Own::NotAsked);
+        }
+        let id = self.chosen().map(|m| m.install_id.clone());
+        if id.as_deref().is_some_and(|i| !install_id_ok(i)) {
+            return Err(self.snapshot_layout_failed(ui, s::LAYOUT_NO_ID));
+        }
+        let out = self.session.path(NAME);
+        sys::wipe_file(&out);
+        let Some(mut cmd) = self.holt_cmd(&HoltCmd::SnapshotLayout { out: &out, repo: &t.place.url, password_file: &pw, snapshot: &snap, install_id: id.as_deref() }) else {
+            return Ok(Own::NotAsked);
+        };
+        cmd.timeout_ms = SNAP_MS;
+        let x = match self.run_job(ui, s::SCR_DISKS, s::SNAP_LAYOUT_TITLE, Clean::ours(s::SNAP_LAYOUT_TEXT), cmd) {
+            Ok(x) => x,
+            Err(g) => {
+                sys::wipe_file(&out);
+                return Err(g);
+            }
+        };
+        let version = self.version.clone();
+        let doc = document(&x, "bko-holt-snapshot-layout").and_then(|v| same_version(v, SNAP_SCHEMA, version.as_deref()));
+        let size = std::fs::symlink_metadata(&out).ok().filter(|f| f.is_file()).map(|f| f.len());
+        match doc {
+            Ok(v) if x.code == Some(0)
+                && v.get_str("snapshot") == Some(snap.as_str())
+                && id.as_deref().is_none_or(|i| v.get_str("install_id").is_some_and(|g| g.eq_ignore_ascii_case(i)))
+                && size.is_some()
+                && v.get_u64("bytes") == size =>
+            {
+                self.layout = Some(out.clone());
+                self.layout_headers = v.get_u64("luks_headers").unwrap_or(0);
+                self.layout_for = Some(snap);
+                self.layout_own = true;
+                Ok(Own::Written(out))
+            }
+            Ok(_) => {
+                sys::wipe_file(&out);
+                Err(self.snapshot_layout_failed(ui, s::SNAP_LAYOUT_NOT_WRITTEN))
+            }
+            Err(_) if is_refusal(&x, "no_system_json") => {
+                // A backup from before the backup tool kept one: the
+                // stick's copy, as before.
+                sys::wipe_file(&out);
+                Ok(Own::NoneThere)
+            }
+            Err(why) => {
+                sys::wipe_file(&out);
+                let why = why.strip_prefix("bko-holt snapshot-layout: ").unwrap_or(&why).to_string();
+                Err(self.snapshot_layout_failed(ui, &why))
+            }
+        }
+    }
+
+    /// The snapshot's layout couldn't be had: why, Try again, Back, Report.
+    fn snapshot_layout_failed(&mut self, ui: &mut dyn Ui, why: &str) -> Go {
+        let p = Problem {
+            code: "snapshot_layout_failed",
+            screen: s::SCR_DISKS,
+            title: s::SNAP_LAYOUT_FAILED_TITLE.to_string(),
+            what: s::snap_layout_failed(Clean::line(why, cap::PROBLEM).as_str()),
+            why: s::SNAP_LAYOUT_FAILED_WHY.to_string(),
+            todo: s::SNAP_LAYOUT_FAILED_TODO.to_string(),
+            fixes: Vec::new(),
+            again: true,
+            back: Some(Go::Back),
+        };
+        self.problem(ui, p)
+    }
+
+    /// The stick's copy of the chosen machine's layout; ASKED: the
+    /// snapshot was asked for its own first, and holds none.  Err is why
+    /// there is none.
+    fn stick_layout(&mut self, asked: bool) -> Result<PathBuf, NoLayout> {
+        let r = self.stick_copy(asked);
+        r.map_err(|mut n| {
+            n.none_in_backup = asked;
+            n
+        })
+    }
+
+    fn stick_copy(&mut self, asked: bool) -> Result<PathBuf, NoLayout> {
+        let Some(m) = self.chosen().cloned() else {
+            return Err(NoLayout::said(if asked { s::LAYOUT_NONE_TYPED_IN_BACKUP } else { s::LAYOUT_NONE_TYPED }));
+        };
         if !install_id_ok(&m.install_id) {
             return Err(NoLayout::said(super::strings::LAYOUT_NO_ID));
         }
@@ -122,6 +275,8 @@ impl App {
                 // A bko-holt from before open question 12 says none: it
                 // refused such a layout.
                 self.layout_headers = v.get_u64("luks_headers").unwrap_or(0);
+                self.layout_for = self.snap.clone();
+                self.layout_own = false;
                 Ok(out)
             }
             Ok(_) => {
@@ -132,7 +287,7 @@ impl App {
                 sys::wipe_file(&out);
                 // bko-holt's line names itself; the words before it do too.
                 let why = why.strip_prefix("bko-holt stick --copy: ").unwrap_or(&why);
-                Err(NoLayout { what: super::strings::layout_refused(why), none_on_stick: is_no_layout(&x) })
+                Err(NoLayout { what: super::strings::layout_refused(why), none_on_stick: is_refusal(&x, "no_layout"), none_in_backup: false })
             }
         }
     }
@@ -192,20 +347,29 @@ impl App {
             Err(why) => {
                 sys::wipe_dir(&dir);
                 let why = why.strip_prefix("bko-holt luks-headers: ").unwrap_or(&why).to_string();
-                Err(self.headers_failed(ui, &why))
+                // Another snapshot's headers than the layout's: the stick's
+                // copy, used for a backup that holds no layout of its own,
+                // is another backup's (open question 15).
+                let todo = if is_refusal(&x, "header_mismatch") && !self.layout_own { s::HEADERS_MISMATCH_STICK_TODO } else { s::HEADERS_FAILED_TODO };
+                Err(self.headers_failed_todo(ui, &why, todo))
             }
         }
     }
 
     /// The headers couldn't be fetched: why, Try again, Back, Report.
     fn headers_failed(&mut self, ui: &mut dyn Ui, why: &str) -> Go {
+        self.headers_failed_todo(ui, why, s::HEADERS_FAILED_TODO)
+    }
+
+    /// The same, with TODO's words for what to do.
+    fn headers_failed_todo(&mut self, ui: &mut dyn Ui, why: &str, todo: &str) -> Go {
         let p = Problem {
             code: "headers_failed",
             screen: s::SCR_DISKS,
             title: s::HEADERS_FAILED_TITLE.to_string(),
             what: s::headers_failed(Clean::line(why, cap::PROBLEM).as_str()),
             why: s::HEADERS_FAILED_WHY.to_string(),
-            todo: s::HEADERS_FAILED_TODO.to_string(),
+            todo: todo.to_string(),
             fixes: Vec::new(),
             again: true,
             back: Some(Go::Back),

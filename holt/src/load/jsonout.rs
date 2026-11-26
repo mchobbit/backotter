@@ -43,12 +43,13 @@ pub const FEATURES: &[&str] = &[
     "recovery_words",
     "stick_copy",
     "luks_headers",
+    "snapshot_layout",
 ];
 
 /// The documents this bko-holt writes, each with the schemas it writes.
 /// Grows with RT10's steps (plan: `RT10c`, status: `RT10e`, events: `RT10f`,
 /// stick: `RT10k`, recovery: `RT10p`, `stick_copy`: open question 8,
-/// `luks_headers`: open question 12).
+/// `luks_headers`: open question 12, `snapshot_layout`: open question 15).
 pub const DOCUMENTS: &[(&str, &[u64])] = &[
     ("plan", &[SCHEMA]),
     ("status", &[SCHEMA]),
@@ -57,6 +58,7 @@ pub const DOCUMENTS: &[(&str, &[u64])] = &[
     ("recovery", &[SCHEMA]),
     ("stick_copy", &[SCHEMA]),
     ("luks_headers", &[SCHEMA]),
+    ("snapshot_layout", &[SCHEMA]),
     ("error", &[SCHEMA]),
 ];
 
@@ -88,10 +90,17 @@ pub enum ErrorCode {
     /// header the dump kept (its size or SHA-256).
     HeaderFetchFailed,
     HeaderMismatch,
+    /// `snapshot-layout`'s refusals (exit 1, open question 15): the
+    /// snapshot holds no system.json (a backup from before the backup tool
+    /// kept one in each); the archiver couldn't read it; what it read isn't
+    /// a system.json of the machine this bko-holt reads.
+    NoSystemJson,
+    SystemFetchFailed,
+    SystemRefused,
 }
 
 impl ErrorCode {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 20] = [
         Self::BadArgs,
         Self::NoCommit,
         Self::LayoutUnreadable,
@@ -109,6 +118,9 @@ impl ErrorCode {
         Self::CopyFailed,
         Self::HeaderFetchFailed,
         Self::HeaderMismatch,
+        Self::NoSystemJson,
+        Self::SystemFetchFailed,
+        Self::SystemRefused,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -130,6 +142,9 @@ impl ErrorCode {
             Self::CopyFailed => "copy_failed",
             Self::HeaderFetchFailed => "header_fetch_failed",
             Self::HeaderMismatch => "header_mismatch",
+            Self::NoSystemJson => "no_system_json",
+            Self::SystemFetchFailed => "system_fetch_failed",
+            Self::SystemRefused => "system_refused",
         }
     }
 }
@@ -1562,7 +1577,10 @@ mod tests {
                 "no_layout",
                 "copy_failed",
                 "header_fetch_failed",
-                "header_mismatch"
+                "header_mismatch",
+                "no_system_json",
+                "system_fetch_failed",
+                "system_refused"
             ]
         );
         let d = error_doc(
@@ -1999,6 +2017,10 @@ mod tests {
                 "1s",
                 "restore",
                 "--numeric-id",
+                "--glob",
+                "!/.bko-holt/system.json",
+                "--glob",
+                "!/.bko-holt",
                 "latest",
                 "/mnt/bko-target"
             ]

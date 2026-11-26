@@ -1,0 +1,11 @@
+{
+  "format": "bko-holt-error",
+  "schema": 1,
+  "version": "VERSION",
+  "generated": "GENERATED",
+  "dry_run": false,
+  "exit": 1,
+  "code": "no_system_json",
+  "text": "bko-holt snapshot-layout: snapshot 1a2b3c4d holds no /.bko-holt/system.json: a backup made before the backup tool kept the machine's system.json in each snapshot, so its own layout isn't in it (the archiver said: Node `.bko-holt` not found in tree.)"
+}
+

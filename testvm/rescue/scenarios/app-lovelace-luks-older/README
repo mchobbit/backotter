@@ -1,0 +1,3 @@
+Hand-written by ../../make-disk-fixtures.py: app-lovelace-luks, its bko-holt asking the chosen
+snapshot for its own layout (snapshot-layout's recorded 02-older, any snapshot, OUT the luks
+layout), then fetching the headers from the same snapshot; its stick --copy never asked.

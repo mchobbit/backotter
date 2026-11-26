@@ -55,7 +55,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CORPUS = os.path.join(HERE, "..", "..", "holt", "tests", "corpus", "uc24-fde", "src.json")
 REPO_DIR = ".bko-holt/luks-headers"
 # load's restore glob file for such a layout (holt/src/load/commands.rs).
-LOAD_GLOBS = ["!/.bko-holt/luks-headers/**", "!/.bko-holt/luks-headers", "!/.bko-holt"]
+LOAD_GLOBS = ["!/.bko-holt/luks-headers/**", "!/.bko-holt/luks-headers", "!/.bko-holt/system.json", "!/.bko-holt"]
 PASSWORD = b"correct horse"
 CRYPTSETUP = shutil.which("cryptsetup") or "/usr/sbin/cryptsetup"
 

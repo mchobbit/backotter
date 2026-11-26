@@ -190,6 +190,12 @@ impl Fetch {
     /// [--password-file FILE] --no-progress dump SNAPSHOT:PATH` (restic's
     /// takes SNAPSHOT and PATH), as load's raw volumes are read.
     pub fn argv(&self, file: &str) -> Vec<String> {
+        self.argv_path(&repo_path(file))
+    }
+
+    /// The archiver's argv for PATH in the snapshot (a `SNAPSHOT:SUBPATH`
+    /// snapshot puts SUBPATH first): `snapshot-layout`'s system.json too.
+    pub fn argv_path(&self, path: &str) -> Vec<String> {
         let mut pre = vec![
             self.archiver.clone(),
             "--repository".to_string(),
@@ -199,7 +205,7 @@ impl Fetch {
             pre.extend(["--password-file".to_string(), p.clone()]);
         }
         pre.push("--no-progress".into());
-        crate::load::rawvol::dump_argv(&pre, &self.archiver, &self.snapshot, &repo_path(file))
+        crate::load::rawvol::dump_argv(&pre, &self.archiver, &self.snapshot, path)
     }
 }
 
@@ -243,7 +249,7 @@ fn read_capped(r: &mut impl Read, max: u64) -> Result<Vec<u8>, (Vec<u8>, String)
         .try_reserve_exact(usize::try_from(cap).unwrap_or(usize::MAX).min(FIRST_READ))
         .is_err()
     {
-        return Err((body, "no memory for the header".into()));
+        return Err((body, "no memory for what it wrote".into()));
     }
     let mut chunk = [0u8; 65536];
     loop {
@@ -268,7 +274,7 @@ fn read_capped(r: &mut impl Read, max: u64) -> Result<Vec<u8>, (Vec<u8>, String)
                 .min(usize::try_from(cap).unwrap_or(usize::MAX));
             if bigger.try_reserve_exact(to).is_err() {
                 crate::recovery::zeroize_bytes(&mut chunk);
-                return Err((body, "no memory for the header".into()));
+                return Err((body, "no memory for what it wrote".into()));
             }
             bigger.extend_from_slice(&body);
             crate::recovery::zeroize_bytes(&mut body);
@@ -280,18 +286,28 @@ fn read_capped(r: &mut impl Read, max: u64) -> Result<Vec<u8>, (Vec<u8>, String)
     Ok(body)
 }
 
-/// Why a dump wasn't the header: the archiver failed (or couldn't be
-/// read), or it wrote more than the dump kept.
+/// Why a dump wasn't the file: the archiver failed (or couldn't be read:
+/// WHY, and SAID, the archiver's own last line, empty when it said none
+/// or wasn't read), or it wrote more than MAX.
 #[derive(Debug, PartialEq)]
-enum DumpFailed {
-    Fetch(String),
+pub(crate) enum DumpFailed {
+    Fetch { why: String, said: String },
     TooBig(String),
+}
+
+impl DumpFailed {
+    fn fetch(why: String) -> DumpFailed {
+        DumpFailed::Fetch {
+            why,
+            said: String::new(),
+        }
+    }
 }
 
 /// Runs ARGV and reads at most MAX bytes of its standard output: the
 /// bytes, or why not.  ASKS: its standard error is the terminal's (it may
 /// ask for the password there), not read.
-fn run_dump(
+pub(crate) fn run_dump(
     argv: &[String],
     max: u64,
     stdin_null: bool,
@@ -300,7 +316,7 @@ fn run_dump(
     use std::process::{Command, Stdio};
     let prog = argv
         .first()
-        .ok_or_else(|| DumpFailed::Fetch("no archiver".into()))?;
+        .ok_or_else(|| DumpFailed::fetch("no archiver".into()))?;
     let mut c = Command::new(prog);
     c.args(&argv[1..]).stdout(Stdio::piped()).stderr(if asks {
         Stdio::inherit()
@@ -312,7 +328,7 @@ fn run_dump(
     }
     let mut child = c
         .spawn()
-        .map_err(|e| DumpFailed::Fetch(format!("{prog} couldn't be started: {e}")))?;
+        .map_err(|e| DumpFailed::fetch(format!("{prog} couldn't be started: {e}")))?;
     let mut err_pipe = child.stderr.take();
     // Standard error in a thread of its own, so a full pipe there can't
     // stop the dump (its last 16 KiB kept).
@@ -351,7 +367,7 @@ fn run_dump(
     };
     let mut body = match read {
         Ok(b) => b,
-        Err((mut b, why)) => return fail(&mut b, DumpFailed::Fetch(format!("{prog}: {why}"))),
+        Err((mut b, why)) => return fail(&mut b, DumpFailed::fetch(format!("{prog}: {why}"))),
     };
     if over {
         return fail(
@@ -367,16 +383,14 @@ fn run_dump(
                 || "was killed by a signal".to_string(),
                 |c| format!("exited {c}"),
             );
-            fail(
-                &mut body,
-                DumpFailed::Fetch(if said.is_empty() {
-                    format!("{prog} {how}")
-                } else {
-                    format!("{prog} {how}: {said}")
-                }),
-            )
+            let why = if said.is_empty() {
+                format!("{prog} {how}")
+            } else {
+                format!("{prog} {how}: {said}")
+            };
+            fail(&mut body, DumpFailed::Fetch { why, said })
         }
-        Err(e) => fail(&mut body, DumpFailed::Fetch(format!("{prog}: {e}"))),
+        Err(e) => fail(&mut body, DumpFailed::fetch(format!("{prog}: {e}"))),
     }
 }
 
@@ -430,7 +444,7 @@ pub fn fetch(entries: &[Entry], dir: &Path, f: &Fetch) -> Result<Vec<Value>, (E,
                 undo(dir, &written);
                 let (code, why) = match failed {
                     DumpFailed::TooBig(why) => (E::HeaderMismatch, why),
-                    DumpFailed::Fetch(why) => (E::HeaderFetchFailed, why),
+                    DumpFailed::Fetch { why, .. } => (E::HeaderFetchFailed, why),
                 };
                 return Err((code, format!("{what}: {why}")));
             }

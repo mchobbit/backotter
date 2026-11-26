@@ -26,15 +26,22 @@ whose `argv` matches answers:
     out      written, when the call answers, to the OUT its argv names
              (argv[1], as `recovery-words OUT` and `recovery-key-file
              OUT` take it, `--output FILE`'s, as report-bug's, or argv[3],
-             as `stick --copy INSTALL_ID OUT` takes it): a new file
-             (O_EXCL, 0600) in a directory of ours with mode 0700, as
-             bko-holt writes it, else a failed check; then watched as a
-             key file is (below), but for stick --copy's, the session's
+             as `stick --copy INSTALL_ID OUT` takes it; `snapshot-layout
+             OUT`'s is argv[1] too): a new file (O_EXCL, 0600) in a
+             directory of ours with mode 0700, as bko-holt writes it, else
+             a failed check; then watched as a key file is (below), but
+             for stick --copy's and snapshot-layout's, the session's
              layout, which bko-rescue keeps until it ends
     password the call matches only when the `--password-file` it is
              given holds exactly these bytes, so one scenario answers a
              right password and a wrong one (a later call without this
              file); the fake as rustic-bko (`fake-rustic-bko`) uses it
+
+A `snapshot-layout OUT ...` call (holt-json.md's open question 15) that
+answers with exit 0 writes its `out` to OUT, and its document's `out`,
+`snapshot`, `from`, `bytes` and `sha256` (the recording's) are written as
+this call's: OUT, its --snapshot, that snapshot's /.bko-holt/system.json,
+and the `out` file's size and SHA-256.
 
 A `luks-headers LAYOUT DIR ...` call (holt-json.md's open question 12)
 that answers with exit 0 makes DIR as bko-holt does: a new directory
@@ -465,10 +472,17 @@ def main():
         finally:
             os.close(fd)
         keys.append({"path": target, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(), "out": True})
-        if argv[:1] != ["stick"]:
+        if argv[:1] not in (["stick"], ["snapshot-layout"]):
             watched.append(target)
     out = read(d, "stdout")
     code = read(d, "exit")
+    if argv[:1] == ["snapshot-layout"] and data is not None and out and not (code and code.strip() != b"0"):
+        doc = json.loads(out)
+        snap = argv[argv.index("--snapshot") + 1] if "--snapshot" in argv[:-1] else "latest"
+        entry["snapshot_was"] = doc.get("snapshot")
+        doc.update(out=argv[1], snapshot=snap, bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+        doc["from"] = snap + ":/.bko-holt/system.json"
+        out = (json.dumps(doc, separators=(",", ":")) + "\n").encode()
     if argv[:1] == ["luks-headers"] and out and not (code and code.strip() != b"0"):
         target = argv[2] if len(argv) > 2 else ""
         bad = check_out(target)

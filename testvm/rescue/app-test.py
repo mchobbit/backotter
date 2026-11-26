@@ -147,7 +147,7 @@ class Run:
         while True:
             ls = self.calls()
             # A report and the layout are OUTs that are kept: not secrets.
-            keys = {k["path"] for l in ls if "argv" in l and l["argv"][:1] not in (["report-bug"], ["stick"]) for k in l.get("keys", [])}
+            keys = {k["path"] for l in ls if "argv" in l and l["argv"][:1] not in (["report-bug"], ["stick"], ["snapshot-layout"]) for k in l.get("keys", [])}
             gone = {l["removed"] for l in ls if "removed" in l}
             if keys <= gone or time.time() > end:
                 break
@@ -491,6 +491,39 @@ def test_disks_kept_headers():
     check(not os.path.exists(hdir), "headers: gone with the session")
 
 
+def test_disks_older_backup():
+    """An older backup of a machine that kept LUKS2 headers (open question
+    15): Disks asks that snapshot for its own layout (snapshot-layout, the
+    machine's install ID), fetches its headers from the same snapshot, then
+    plans from that layout; the stick's copy is never asked for."""
+    r = Run("disks-luks-older", holt="app-lovelace-luks-older", fake_mount=True)
+    d = r.d
+    to_password(r)
+    password(r, PASSWORD, "Which backup?")
+    d.keys("Down", "Enter")
+    d.wait("Where each disk goes")
+    r.d.signal(signal.SIGTERM)
+    r.finish(143)
+    calls = r.secrets_checked(None)
+    own = [c for c in calls if c["argv"][:1] == ["snapshot-layout"]]
+    fetch = [c for c in calls if c["argv"][:1] == ["luks-headers"]]
+    check(len(own) == 1 and own[0]["call"] == "05-snapshot-layout", "older: one snapshot-layout (%s)" % [c["argv"][:2] for c in own])
+    check(not [c for c in calls if c["argv"][:2] == ["stick", "--copy"]], "older: the stick's copy never asked for")
+    if not own or not fetch:
+        check(False, "older: a layout and a fetch (%d, %d)" % (len(own), len(fetch)))
+        return
+    a, f = own[0]["argv"], fetch[0]["argv"]
+    snap = a[a.index("--snapshot") + 1]
+    check(snap == f[f.index("--snapshot") + 1] and snap != "latest" and not snap.startswith("a7f3c901"),
+          "older: the layout and the headers from the backup chosen, not the newest (%s, %s)" % (snap[:8], f[f.index("--snapshot") + 1][:8]))
+    check(a[a.index("--install-id") + 1] == "0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90", "older: the chosen machine's install ID (%s)" % a)
+    check(a[1].startswith(r.run_dir + "/") and a[1].endswith("/layout.json") and f[1] == a[1], "older: the headers fetched against its layout (%s, %s)" % (a[1], f[1]))
+    loads = [c for c in calls if c["argv"][:1] == ["load"]]
+    check(loads != [] and all(c["argv"][1] == a[1] for c in loads), "older: every load reads the snapshot's own layout")
+    check(calls.index(own[0]) < calls.index(fetch[0]) < calls.index(loads[0]) if loads else False, "older: layout, then headers, then the first plan")
+    check(not os.path.exists(a[1]), "older: the layout gone with the session")
+
+
 def test_network():
     r = Run("network", reach=False)
     d = r.d
@@ -729,7 +762,7 @@ def test_restore_plain():
 
 
 TESTS = [test_shell_and_back, test_full_utf8_colour, test_full_ascii_vt220, test_recovery_key, test_plain, test_plain_signals,
-         test_mismatch_and_report, test_location_with_no_stick, test_dry_run, test_network, test_disks_to_review, test_disks_dry_run, test_disks_kept_headers,
+         test_mismatch_and_report, test_location_with_no_stick, test_dry_run, test_network, test_disks_to_review, test_disks_dry_run, test_disks_kept_headers, test_disks_older_backup,
          test_restore_to_done, test_restore_dry_run, test_restore_fail_help_try_again, test_restore_stop, test_restore_plain]
 
 

@@ -397,6 +397,7 @@ table is *Check* until RT1's header test passes in that family's guest.**
 | `raise`, `SIG_DFL` | function, 0 | function, 0 | function, 0 | function, 0 *Check* |
 | `ttyname` | function | function | function | function |
 | later (RT12): `setsid`, `kill` | functions | functions | functions | functions |
+| `statvfs` (holt-json.md's open question 17): `f_frsize`, `f_bavail` offsets, 8 bytes each | 8, 32 | FreeBSD 64, 0; NetBSD 16, 48 (`__statvfs90`); OpenBSD, DragonFly 8, 32 | 8, 32 | 8, 32 |
 
 `ioctl` is declared variadic (`fn ioctl(fd: c_int, req: Req, ...) -> c_int`).
 `isatty` comes from `std::io::IsTerminal`, errno from `std`.  Nothing else.
@@ -1415,8 +1416,9 @@ holt_schema.py over the scenarios.  No holt change.
 - **Defaults taken** where rescue-screens.md is open, each in one place:
   the BIP39 list is a copy of holt's (`src/bip39-english.txt`, a test
   compares them; holt-json.md's open question 9); the hint is system.json's
-  `password_hint` as `stick --json` passes it (open question 2); reports
-  aren't counted or pruned (open question 9); no step count in plain mode
+  `password_hint` as `stick --json` passes it (open question 2); the
+  stick keeps the 5 newest reports (open question 9; holt-json.md's open
+  question 17, "What bug reports on the stick changed" below); no step count in plain mode
   (open question 10); times as above (open question 6).
 - **Not built here:** the scan of this computer's disks for backups (Type
   a location's list), the host-key and login screens for sftp (rustic-bko
@@ -1886,10 +1888,11 @@ stick-config.md's "Room on the partition").
   `LOG_GZ_MAX` (up to `LOG_READ_MAX`, 32 MiB), so `room_check`'s room is
   short for it.  Every image has gzip; left as it is.
 - Bug reports saved to the stick (`backotter/reports`, with their
-  `-UNREDACTED` twins) are never removed, and take room the logs need.
-  `room_check` can't see reports saved after the backup.  holt-json.md's
-  open question 17 (approved 2026-11-26 by the user, the recommendation; not built yet) asks whether bko-rescue keeps only the
-  newest.
+  `-UNREDACTED` twins) took room the logs need, and `room_check` can't
+  see reports saved after the backup.  holt-json.md's open question 17
+  (approved and built 2026-11-26): bko-rescue keeps the 5 newest and
+  never lets a save leave under 22 MiB ("What bug reports on the stick
+  changed" below).
 
 ## What a stick without the layout says
 
@@ -1915,6 +1918,36 @@ The stick still finds the backup; it can't restore the disks.
 - The title is as it was, so app-plain's golden didn't change.
 - Not done: the first screen doesn't say it (`stick --json` has no field
   for it); the fetch from the backup is open question 15's.
+
+## What bug reports on the stick changed
+
+2026-11-26, holt-json.md's open question 17 (approved that day with its
+recommendation): bko-rescue keeps the newest reports on the stick and
+leaves the restore logs their room.
+
+- `report.rs`'s save, with the partition mounted: statvfs on the mount
+  point (`Sys::room`, `ffi::free_room`) gives the room and the cluster;
+  `backotter/reports` is listed; `reports_to_remove` names the pairs
+  beyond the newest `REPORTS_KEPT` (5), a pair being
+  `bko-report-STAMP.txt` and `bko-report-STAMP-UNREDACTED.txt`, newest by
+  STAMP, the one just written always kept; `report_room` refuses a file
+  over `REPORT_MAX` (64 MiB), one that doesn't fit, and one whose save
+  would leave under `REPORT_ROOM_MIN` (22 MiB: `LOG_GZ_MAX` x
+  (`LOGS_KEPT` + 1)), the removed pairs counted as freed.  Then the copy,
+  the removal, and a sync of the folder.  Restore logs are saved as
+  before.
+- A refusal keeps the report in RAM, and "Report saved" says why and to
+  copy the older reports in `backotter/reports` off the stick on another
+  computer.  When both reports were made and one couldn't be saved, the
+  screen now says why too.  When older reports went, it says how many
+  ("The stick keeps its 5 newest reports, so the 2 oldest were removed").
+- `ffi.rs` gained statvfs, the one new C function: only `f_frsize` and
+  `f_bavail` are read, at each family's offsets, from an 8 KiB buffer.
+  NetBSD's link name is `__statvfs90`.  The header test checks the two
+  offsets, their sizes (8 bytes) and that the struct fits the buffer
+  (`room statvfs`), and the symbol: 54 facts and 10 symbols on Linux.
+- `copy_in` refuses a file over `REPORT_MAX` instead of cutting it off.
+- Not done: no image carries this bko-rescue yet.
 
 ## The app on top (later)
 

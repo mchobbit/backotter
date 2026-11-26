@@ -144,7 +144,9 @@ are 0600 files in a new 0700 directory under `/run/bko-rescue`
 exit, after a signal (caught for the whole session, in plain mode a
 password read's too) and on a panic's unwinding.  Bug reports go to
 `backotter/reports/` on the stick's BACKOTTER partition, else stay in
-`/run/bko-rescue/reports/`.  For the tests, which don't run as root:
+`/run/bko-rescue/reports/`.  The stick keeps the 5 newest (each with its
+`-UNREDACTED` twin), and a report that would leave the partition under
+22 MiB free, the restore logs' room, stays in RAM.  For the tests, which don't run as root:
 `BKO_RESCUE_RUN_DIR` names that directory, and
 `BKO_RESCUE_ASSUME_REACHABLE=1` counts every server as reachable (the
 fakes have none); nothing on a stick sets either.

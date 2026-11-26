@@ -73,7 +73,7 @@ the backup location by hand.
 /backotter/machines/<install-id>/system.prev.json
 /backotter/machines/<install-id>/system.prev.json.sha256
 /backotter/machines/<install-id>/restore-logs/<timestamp>.log
-/backotter/reports/bko-report-<date-time>.txt  bko-rescue's bug reports (and -UNREDACTED)
+/backotter/reports/bko-report-<date-time>.txt  bko-rescue's 5 newest bug reports (and -UNREDACTED)
 /backotter/bin/{bko-holt,rustic-bko}     Linux image only
 /backotter/realworld/<date-time>/...     Linux image only; bko-realworld-1a's logs
 /backotter/authorized_keys               Linux image only; optional, see below
@@ -84,7 +84,10 @@ Every image's partition is 256 MiB: the Linux image's from the start, to
 hold the two programs and those logs; the BSDs', illumos' and Haiku's since
 2026-11-26 (32 MiB before; holt-json.md's open question 13).  It holds a
 system.json of up to 64 MiB, the one before it, and each machine's restore
-logs ("Room on the partition" below).  The GRUB entries pass `nopersistent`, or casper would
+logs ("Room on the partition" below).  bko-rescue's bug reports take what
+is left: the 5 newest, each with its `-UNREDACTED` twin, each file up to
+64 MiB, and never a save that leaves under 22 MiB free, the restore logs'
+room (holt-json.md's open question 17).  The GRUB entries pass `nopersistent`, or casper would
 add a partition in the stick's free space on first boot, moving the backup GPT.
 
 `authorized_keys` is for driving a restore from another machine.  With it,
@@ -459,8 +462,10 @@ backup tool calls `stick_write` (below), which checks the room with
   is there (`folder`), the sizes of its `system.json` and
   `system.prev.json` (None where one is missing), whether
   `system.prev.json.sha256` is there (`prev_sum`), the size of each file
-  in its `restore-logs/` (None when that folder isn't there), and whether
-  other machines have folders on the stick (`others`).  A
+  in its `restore-logs/` (None when that folder isn't there), whether
+  other machines have folders on the stick (`others`), and the size of
+  each of bko-rescue's bug reports in `backotter/reports`
+  (`bko-report-*.txt`; `reports`, empty when there are none).  A
   `system.json.new` left by a write that failed is removed first.
 - It refuses `system_too_big`, a system.json over `SYSTEM_MAX`: a stick's
   bko-holt wouldn't read it.  It refuses `stick_full` when the file and
@@ -512,13 +517,29 @@ backup tool calls `stick_write` (below), which checks the room with
   enough?".
 - Each file and folder is counted in whole clusters, each `.sha256` as
   one.  The words round the room down and the need up to 0.1 MiB, so the
-  two never print equal.  They say to remove other machines' folders only
-  when there are some; else to free room on the partition (old bug
-  reports can go).  On an older image's smaller partition they say to
-  write a newer image, by its size (256 MiB), not its date.
+  two never print equal.  They say to remove other machines' folders,
+  and to copy bko-rescue's bug reports off the stick and remove them
+  (with the room they take, rounded up), each only when there are some;
+  else to free room on the partition.  On an older image's smaller
+  partition they say to write a newer image, by its size (256 MiB), not
+  its date.
 - bko-rescue's bug reports (`backotter/reports`) take room from the same
-  partition and are never removed yet: holt-json.md's open question 17 (approved
-  2026-11-26: keep the 5 newest, refuse a save that leaves under 22 MiB).
+  partition (holt-json.md's open question 17, approved 2026-11-26 and
+  built that day as far as it can be before the backup tool).  bko-rescue keeps the 5 newest (`REPORTS_KEPT`), each
+  `bko-report-STAMP.txt` with its `bko-report-STAMP-UNREDACTED.txt` as one
+  pair, newest by STAMP (a UTC time); the pair it just wrote always stays.
+  It removes older pairs after it writes a new file, as it does the logs.
+  Before it saves one, it refuses when the save would leave the partition
+  under 22 MiB free (`REPORT_ROOM_MIN`, `LOG_MAX` x (`LOGS_KEPT` + 1)),
+  the pairs it removes after counted as freed, and when the file doesn't
+  fit beside them first; the report stays in RAM, and the screen says to
+  copy old reports off the stick on another computer.  A file over 64 MiB
+  (`REPORT_MAX`) isn't copied.  Each file and folder counts in whole
+  clusters, as statvfs gives them on the mounted partition.  So reports
+  never take the room a machine's logs need, and `room_check` keeps no
+  room for reports to come: those there now are in `free` already.  Five
+  pairs at their cap would be 640 MiB, more than the partition: the
+  22 MiB floor, not a reserve, is what bounds them.
 
 ## Finding the config at boot
 
@@ -655,14 +676,18 @@ feature means the stick can't import the pool at all.
   older copies removed first when only that makes room), `stick
   --copy`'s words for a `layout_left_out`, and bko-rescue's Disks words
   for a system.json with no layout (holt-json.md's open question 16).
+- Bug reports on the stick (holt-json.md's open question 17): bko-rescue
+  keeps the 5 newest pairs and refuses a save that would leave under
+  22 MiB (`report.rs`, statvfs in `ffi.rs`); `room_check` takes the
+  reports' sizes in `Room.reports` for its words.
 - The restore side of "LUKS2 headers in the backup": `bko-holt
   luks-headers` (`src/luksfetch.rs`, also the backup tool's read-back),
   `stick --copy`'s `luks_headers` count, load's restore leaving the
   headers out of the tree, and bko-rescue's fetch before the first plan.
 - Not built: the backup tool's stick module (and so no system.json carries a
   `layout` yet), its keeping of the LUKS2 headers in the snapshot (steps
-  1 to 4 above), its call of `stick_write` and the write or removal it
-  answers, the rest of the write-time check (ZFS features, kernel,
+  1 to 4 above), its call of `stick_write` (with `Room.reports` filled
+  from `backotter/reports`) and the write or removal it answers, the rest of the write-time check (ZFS features, kernel,
   bcachefs), and `backotter stick repair`.  They come with the backup
   tool.
 

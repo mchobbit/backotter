@@ -2722,6 +2722,95 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     folder as `unreadable` ("system.json is missing").  The words are
     true, but they read as damage.
 
+### Bug reports on the stick built
+
+Built 2026-11-26 as far as it can be before the backup tool (open question
+17, approved that day by the user, the recommendation):
+
+- **bko-rescue:** `report.rs` keeps the 5 newest reports
+  (`REPORTS_KEPT`) in `backotter/reports`, each `bko-report-STAMP.txt`
+  with its `bko-report-STAMP-UNREDACTED.txt` as one pair.  With the
+  partition mounted, a save reads the room by statvfs on the mount point,
+  lists the folder, names the pairs beyond the newest five
+  (`reports_to_remove`), and checks the room (`report_room`).  It refuses
+  a file over `REPORT_MAX` (64 MiB), one that doesn't fit beside the old
+  pairs, and one whose save would leave the partition under
+  `REPORT_ROOM_MIN`: `LOG_GZ_MAX` x (`LOGS_KEPT` + 1), 22 MiB, holt's
+  `LOG_MAX` x (`LOGS_KEPT` + 1).  Then it copies, removes the older pairs
+  and syncs the folder.  A refused report stays in RAM; "Report saved"
+  says why and to copy the older reports off the stick on another
+  computer.  When older pairs went, it says how many.  When both reports
+  were made and one wasn't saved, it now says why too.  Restore logs are
+  saved as before.
+- **The FFI:** `ffi.rs`'s `free_room` calls statvfs into an 8 KiB buffer
+  and reads only `f_frsize` and `f_bavail`, at each family's offsets
+  (8 and 32; FreeBSD 64 and 0; NetBSD 16 and 48).  NetBSD links
+  `__statvfs90`.  `abi.c` and `check.sh` check the two offsets, their
+  sizes and that the struct fits the buffer (`room statvfs`, passed to the
+  C side as `BKO_STATVFS_BUF`), and the symbol.
+- **bko-holt:** `stick.rs` has bko-rescue's `REPORTS_KEPT` and `REPORT_MAX`
+  (test_marker.py checks they match report.rs, and that `REPORT_ROOM_MIN`
+  is made of the log constants).  `Room` gained `reports`, each report's
+  size.  `room_check`'s words name copying the reports off, with the room
+  they take, only when there are some; "old bug reports can go" is gone
+  from the plain words.  `room_check` keeps no room for reports to come:
+  bko-rescue's floor keeps them out of the logs' room.
+- **Defaults chosen** (each in one place):
+  - The room a save leaves counts the pairs it removes after the copy as
+    freed; the file must fit beside them first (`report_room`'s doc).
+  - The pair just written always stays, even when the clock made its
+    stamp older than the others' (`reports_to_remove`'s doc).
+  - Only names of the two forms count and go; other files in
+    `backotter/reports` stay (`report_stamp`).
+  - When statvfs fails, the copy goes ahead, as before the check: refusing
+    would keep every report off the stick there (`save_report`'s doc).
+  - A file over 64 MiB isn't copied (it was cut off before;
+    `REPORT_MAX`'s doc).
+  - `room_check` reserves nothing for reports (stick.rs's
+    `REPORTS_KEPT` doc); its words give their room rounded up.
+- **Commits:** dda939d (bko-rescue, test_marker.py).  The bko-holt half
+  (stick.rs) rode along in ebf88e9, another session's lint commit, whose
+  message says "No code change": it was staged with that session's
+  files.  Its stick.rs diff is this change alone.
+- **Tested:** stick.rs's `write_time_room_check` (the remedy with
+  reports alone, with other folders and an older image, their room in
+  clusters rounded up) and `write_time_stick_write` (the plain words).
+  bko-rescue's `report_names`, `the_five_newest_pairs_stay` (a twin joins
+  its pair, a clock that makes the new one oldest, many pairs),
+  `the_room_a_save_leaves` (a first folder, the removal counted, the fit
+  beside them, the cap, a 0 cluster), `a_report_is_saved_then_the_oldest_go`
+  (on real files: refused leaves all, then one pair goes), and the app's
+  `a_report_keeps_the_five_newest_pairs` (golden `app-report-saved-pruned`,
+  new) and `a_report_that_would_leave_under_22_mib_stays_in_ram` (the
+  edge a byte apart, a full stick, statvfs failing); ffi.rs's
+  `statvfs_reads_the_room`.  The holt gate on cinqcent: cargo test 976
+  passed, 0 failed, 4 ignored; 110 golden plans, 0 differ; redact-corpus
+  passed.  bko-rescue on czerny (Rust 1.85.1): cargo build without
+  warnings, cargo test 294 + 15 passed, abi/check.sh ok (54 facts, 10
+  symbols), pty-test.py 117 ok, 0 failed, demo-test.py 383 ok, 0 failed,
+  app-test.py 311 ok, 0 failed, holt_schema.py 411 checked, 0 problems.
+  test_marker.py 11 OK on the Mac.  The header test in each build guest
+  (build-holt.sh `HOLT_CRATE=rescue`): FreeBSD 14.5 54 facts, OpenBSD 8.0
+  57, NetBSD 11.1 54, DragonFly 6.4 54, illumos (OmniOS) 51, Haiku beta6
+  56, each with 10 symbols, all ok.  A first demo-test.py run had 2
+  failures, not captured, while macOS `._` files were in the copied tree;
+  with them removed, two runs had none.  A first NetBSD build on cinqcent had no `cc` (no build
+  image there); on copland's it passed.
+- **Waits on the backup tool:** filling `Room.reports` (the sizes of
+  `backotter/reports/bko-report-*.txt`) and saying `room_check`'s words.
+- **Spec problems:**
+  - "5 pairs, each up to its cap" is 640 MiB at 64 MiB a file, more than
+    the 256 MiB partition.  No reserve can hold that; the 22 MiB floor is
+    what keeps the logs' room, and reports may fill the rest.
+  - The floor is 22 MiB in bytes.  `room_check`'s need is in clusters,
+    with one more for a first `restore-logs/`: a cluster apart on a new
+    machine.
+  - The floor doesn't count what the machine's logs hold already, as the
+    approved text says.  A stick with ten logs needs only one more log's
+    room.
+  - A stick with more than five pairs from before this build loses all but
+    the newest five at its next save, without asking.
+
 ## Decisions
 
 - **J1. How bko-rescue finds bko-holt's protocol.**  `bko-holt --version
@@ -3032,7 +3121,7 @@ Built 2026-11-26 as far as it can be before the backup tool (open question
     plainly that the stick's copy is from `written` and older than the
     backup.
 17. **Bug reports on the stick** (from open question 13's review;
-    answered: approved 2026-11-26 by the user, the recommendation; not built yet).  bko-rescue saves `backotter/reports/bko-report-*.txt`
+    answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26 as far as it can be before the backup tool, dda939d, "rescue: keep the 5 newest bug reports, and the logs' room (open question 17)", its bko-holt half in ebf88e9: "Bug reports on the stick built").  bko-rescue saves `backotter/reports/bko-report-*.txt`
     (and an `-UNREDACTED` copy, read up to 64 MiB) on the config
     partition, and nothing removes them.  `room_check` keeps 22 MiB for
     each machine's restore logs, but reports saved later eat that same

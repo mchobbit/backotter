@@ -949,11 +949,11 @@ only when it is a UUID), a string field over 4 KiB
 
 `bko-holt stick --copy INSTALL_ID OUT --json` (`--sysroot DIR` as
 `stick`'s): the disk layout machine INSTALL_ID's system.json carries,
-written to OUT for `load`.  It finds the config partition and judges each
-machine exactly as `stick --json` does, keeps the bytes of that machine's
-system.json it read, checks its `.sha256` on them, and writes the dump
-taken from those same bytes: the stick isn't read again between the check
-and the write.
+written to OUT for `load`.  It finds the config partition as `stick
+--json` does, but reads and judges only the directories named by the ID
+(the other machines are counted, not read).  It keeps the bytes of that
+system.json, checks its `.sha256` on them, and parses the dump from those
+same bytes: the stick isn't read again between the check and the write.
 
 ```json
 {"format": "bko-holt-stick-copy", "schema": 1, "version": "0.3.0", "generated": "…", "dry_run": false,
@@ -963,16 +963,24 @@ and the write.
 ```
 
 - What OUT holds: system.json's top-level `layout`, the whole `bko-holt
-  dump` document (stick-config.md's system.json, a default chosen here),
-  printed as dump prints it (json.rs's `pretty`).  So OUT is a dump, and
-  `load` takes it as it takes any: load, text mode and `report-bug` are
-  unchanged.  `bytes` and `sha256` are OUT's, `system_sha256` the
-  checked system.json's.
+  dump` document (stick-config.md's system.json; a default chosen here,
+  open question 10), printed again as dump prints it (json.rs's
+  `pretty`).  It is the same JSON as the checked bytes, not always the
+  same bytes: OUT is byte for byte the dump only when system.json holds
+  it as dump printed it.  So OUT is a dump, and `load` takes it as it
+  takes any: load, text mode and `report-bug` are unchanged.  `bytes` and
+  `sha256` are OUT's, `system_sha256` the checked system.json's.
 - Its own check: the `layout` must be a document `load`'s
   `Layout::from_json` takes (format `bko-holt`, a schema it reads, a
-  supported OS, a dump made as root) before OUT is written.
+  supported OS, a dump made as root) before OUT is written.  A layout
+  that kept LUKS2 headers (`storage.luks_headers` not empty: an Ubuntu
+  Core's encryption, or `dump --keep-luks-header`) is `layout_refused`
+  too: load needs the header files beside it, and the stick carries none
+  (open question 12).
 - The machine: INSTALL_ID must be a UUID (else exit 2, `bad_args`, not
-  echoed), matched case aside among the rows `stick --json` lists.
+  echoed), matched case aside among the machine directories `stick
+  --json` would list.  `--copy` takes its two values whatever they are:
+  `--copy ID -h --json` is `bad_args`, not the help.
 - OUT is checked before the stick is read, as `recovery-words`' OUT
   (`recoverycmd::out_unsafe`): absolute, not there yet, in a real
   directory of bko-holt's effective user with no group or other bits;
@@ -984,8 +992,10 @@ and the write.
   `machine_not_ok` (its row isn't `ok`: `checksum_bad`,
   `checksum_missing`, `schema_unknown`, `unreadable`, with its why),
   `no_layout` (no `layout`, or one that isn't a document: a system.json
-  of today), `layout_refused` (load wouldn't take it), `copy_failed`
-  (OUT couldn't be written; nothing left there).
+  of today), `layout_refused` (load wouldn't take it, or it kept LUKS
+  headers), `copy_failed` (OUT couldn't be written: nothing left there,
+  or, when a file appeared there after the check, that file left as it
+  is).
 - Exit 0 when OUT is written, 1 refused, 2 bad arguments.  Read-only
   toward every disk; allowed under `BKO_HOLT_NO_COMMIT`.  Without
   `--json` it refuses (exit 2), as `stick` does.
@@ -2175,6 +2185,27 @@ every disk and the stick image kept its md5.
   - "Which copy wins" (the backup's own system.json when the repository is
     reached) isn't built: the stick's copy is the only layout bko-rescue
     has.
+- **Review fixes** (2026-11-26, two reviews):
+  - `stick --copy` reads only the asked machine's system.json; the other
+    directories are counted, for `no_such_machine`'s words.  `stick
+    --json` still reads them all (open question 13 on their size).
+  - A layout that kept LUKS2 headers is `layout_refused`, said at the
+    copy (open question 12).
+  - `--copy`'s two values are never taken for the help.
+  - `copy_failed` says "left as it is" when a file appeared at OUT
+    after the check (O_EXCL), not "nothing left there".
+  - The words on OUT: the same JSON as the checked bytes, printed again,
+    not always the same bytes.
+  - Open: where system.json carries the dump (question 10), the dump's
+    schema in the marker (11), LUKS headers (12), room on the partition
+    (13).
+  - Not fixed, with why: the copy isn't tied to the scan the Machine
+    screen showed (only the install ID is compared).  Both read the boot
+    stick, and a stick swapped for another set up for the same machine
+    in the middle of a session is unlikely.  A check would need
+    `sequence` or `written` in the copy document.  A write that fails after OUT is made (zeroed and
+    removed) has no test: it needs a full disk or an I/O error, and the
+    code is recoverycmd's shared `write_new`.
 
 ## Decisions
 
@@ -2376,7 +2407,8 @@ every disk and the stick image kept its md5.
    bko-rescue mounts `config.dev` read-only, copies the file and checks its
    `.sha256` itself (a SHA-256 in bko-rescue, D2).  Either way load can't
    take a `backotter-system` document until the backup tool's spec says
-   how system.json carries the dump.
+   how system.json carries the dump.  How it carries it was then chosen
+   by the builder, not the user: open question 10.
 9. **The Recovery key screen's word list** (blocks RT11's completion: a
    word filled in after 4 letters, an unknown one named as it is typed):
    `bip39-english.txt` taken by `include_str!` from `holt/src` (D2 amended
@@ -2384,3 +2416,46 @@ every disk and the stick image kept its md5.
    call to fail) (*recommended*).  Or `bko-holt recovery-words --list`,
    the 2048 words on stdout, read once at start.  The check itself stays
    in holt either way.
+10. **Where system.json carries the dump** (from the stick --copy
+    review, 2026-11-26; built as the default, not approved).  The
+    builder put the whole `bko-holt dump` in a top-level `layout` member,
+    and `stick --copy` writes that member.  stick-config.md's envelope
+    also has `storage` and `boot`, meant for a system description that
+    was never designed; the dump has its own of both.  *Recommended:*
+    keep `layout` as built, and drop the envelope's `storage` and `boot`
+    from schema 1, so the dump is the one record of the disks and the
+    boot (the pools' features included).  Or keep `storage` and `boot` as
+    the record and have `stick --copy` build a dump from them (a second
+    format to keep in step with dump).  Until it is answered,
+    stick-config.md says `layout` is the record and the two are unused.
+11. **The dump's schema and the stick's age** (from the same review).
+    The marker's `system_schemas` covers system.json's envelope only.  A
+    backup machine whose bko-holt writes dump schema 2 passes the
+    write-time check, and an old stick's `stick --copy` then refuses the
+    layout (`layout_refused`).  *Recommended:* the marker gets
+    `dump_schemas` (the dump schemas the image's bko-holt load reads),
+    and the backup tool's write-time check warns when `layout.schema`
+    isn't in it, as it does for `system_schemas`.  Or nothing: the
+    restore says it, late.
+12. **LUKS headers a dump kept** (from the same review).  A dump made
+    with `--keep-luks-header` (an Ubuntu Core's encryption always) needs
+    its header files beside it, and nothing puts them on the stick.
+    Until this is answered, `stick --copy` refuses such a layout
+    (`layout_refused`, in words that say so), so the restore stops on
+    Disks, not at the first plan.  *Recommended:* the backup keeps the
+    header files in the repository (encrypted, no size limit; a header
+    backup is 16 MiB or more), and bko-rescue fetches them into the
+    session's directory once the password is in, before the first plan.
+    Or the stick carries them beside system.json, each with its
+    `.sha256`, and `stick --copy` copies them too (they fill a 32 MiB
+    partition fast).
+13. **Room on the config partition** (from the same review).  A
+    system.json is read up to 64 MiB (`stick.rs`'s `SYSTEM_MAX`), a dump
+    may be up to 1 GiB (`LAYOUT_MAX`), the BSD images' config partition
+    is 32 MiB, and each machine's restore logs may take 20 MiB.  A large
+    dump (ESP images) or several machines won't fit.  *Recommended:* the
+    backup tool refuses to write a system.json over `SYSTEM_MAX` and warns
+    when the partition can't hold it and its machine's 20 MiB of logs;
+    and every image's config partition is 256 MiB, as the Linux image's
+    is.  Or a smaller cap for `layout`, with ESP images left out of the
+    stick's copy.

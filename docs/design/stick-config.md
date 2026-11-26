@@ -255,9 +255,12 @@ It's not `/etc/machine-id`, which is copied along when someone clones a VM
 template, and not the DMI UUID, which changes when the hardware is replaced:
 the replacement machine is exactly the case BackOtter exists for.
 
-This document fixes the envelope.  The `storage` and `boot` sections are the
-system description, which gets its own design doc.  `backup` depends on the
-backup engine, still to be chosen (restic or borg).
+This document fixes the envelope.  The disks and the boot are recorded in
+`layout`, the machine's `bko-holt dump` (below).  The `storage` and `boot`
+sections were meant for a system description with its own design doc,
+never written; they are unused (holt-json.md's open question 10 asks
+whether to drop them).  `backup` depends on the backup engine, still to be
+chosen (restic or borg).
 
 ```json
 {
@@ -273,8 +276,8 @@ backup engine, still to be chosen (restic or borg).
   },
   "os": {"id": "ubuntu", "version_id": "26.04", "kernel": "7.0.0-30-generic",
          "boot_mode": "uefi", "secure_boot": true},
-  "storage": {"…": "system description: disks, partition tables, md, LVM, LUKS, ZFS, filesystems, mounts"},
-  "boot": {"…": "loader, ESP, EFI boot entries"},
+  "storage": {"…": "unused: the dump in layout records the disks (open question 10)"},
+  "boot": {"…": "unused: the dump in layout records the boot (open question 10)"},
   "backup": {
     "engine": "restic",
     "repository": {"kind": "sftp", "url": "sftp://nas.local/backotter/lovelace"},
@@ -290,14 +293,16 @@ backup engine, still to be chosen (restic or borg).
 ```
 
 - `layout` is the machine's disk layout: the whole `bko-holt dump`
-  document, as a JSON object, as dump wrote it.  The restore reads it with
-  `bko-holt stick --copy INSTALL_ID OUT --json`, which checks the file's
-  `.sha256` and writes this member to OUT for `bko-holt load`
-  (holt-json.md, "bko-holt-stick-copy").  A default chosen 2026-11-26
-  where this spec was open (holt-json.md's open question 8): `storage` and
-  `boot` above stay placeholders, since the dump has its own, inside
-  `layout`.  A system.json without `layout` (none is written yet) gives the
-  restore no layout from the stick.
+  document, as a JSON object.  The restore reads it with `bko-holt stick
+  --copy INSTALL_ID OUT --json`, which checks the file's `.sha256` and
+  writes this member to OUT for `bko-holt load` (holt-json.md,
+  "bko-holt-stick-copy").  OUT is printed again as dump prints it: the
+  same JSON, and the same bytes only when `layout` is held as dump
+  printed it.  A default chosen 2026-11-26 where this spec was open, not
+  yet approved (holt-json.md's open questions 8 and 10).  A system.json
+  without `layout` (none is written yet) gives the restore no layout from
+  the stick.  A dump that kept LUKS2 headers can't be restored from the
+  stick alone yet (open question 12).
 
 - `sequence` goes up by one with each backup of that machine, so "which copy is
   newer" never depends on clocks.
@@ -312,9 +317,9 @@ backup engine, still to be chosen (restic or borg).
   `zfs_features` lists every feature enabled or active on any of the machine's
   pools, not only the ones in use, so the stick can recreate each pool exactly
   (see "A stick newer than the machine").
-- The `storage` section records, per pool, its feature list and its
-  `compatibility` property (`grub2` on Ubuntu's `bpool`, for example), whatever
-  else its own design doc puts there.
+- The dump in `layout` records, per pool, its feature list and its
+  `compatibility` property (`grub2` on Ubuntu's `bpool`, for example), in its
+  own `storage`.
 - `system.json.sha256` is in `sha256sum` format.  Cheap sticks get corrupted
   when yanked, and a damaged config should be reported, not half-used.
 
@@ -403,7 +408,9 @@ When a restore fails, the repository may be unreachable, the machine's disks
 half-written, and the stick's root filesystem is in RAM: the config partition is
 the only storage left that survives a reboot.  So every restore, successful or
 not, writes `restore-logs/<UTC timestamp>.log.gz` under its machine directory,
-capped at 2 MiB compressed, keeping the 10 newest.  It's also copied to the
+capped at 2 MiB compressed, keeping the 10 newest.  With a large `layout` in
+system.json, a 32 MiB partition may not hold them all (holt-json.md's open
+question 13).  It's also copied to the
 repository when that's reachable.  Logs name hosts, devices and paths, never
 passwords.
 
@@ -424,7 +431,9 @@ compares `system.json`'s `requirements` with the marker:
 
 - every `zfs_features` entry must be in the marker's `zfs.features`, or the
   stick can't import the pool;
-- the schema must be in `system_schemas`;
+- the schema must be in `system_schemas`; the marker doesn't name the dump
+  schemas the stick reads, so `layout`'s schema isn't checked yet
+  (holt-json.md's open question 11);
 - for kernel modules, the backup tool can't check the stick's module list from
   the marker alone; schema 1 only warns when the machine runs a newer kernel
   series than the stick (say 7.2 against 7.0);
@@ -447,7 +456,7 @@ and a restore that looked fine leaves a machine that won't boot.  The same
 happens to a `bpool` created without `compatibility=grub2`: GRUB can't read it.
 
 So the restore never creates a pool with the stick's defaults.  It creates each
-one with exactly the features `storage` recorded, starting from none:
+one with exactly the features the dump's `storage` recorded, starting from none:
 `zpool create -d -o feature@X=enabled …` for each, plus `-o compatibility=…`
 when the pool had one.  A recorded feature the stick doesn't know is left off
 (the write-time check already warned about it), and the restore says so; it

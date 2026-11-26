@@ -495,6 +495,9 @@ fn stick_copy_writes_a_layout_load_takes() {
     let v = assert_error(&run(&["stick", "--copy", "../../etc", &path("c.json"), "--json", "--sysroot", &root], &[], None), 2, "bad_args");
     assert!(!v.get_str("text").unwrap().contains("etc"));
     assert_error(&run(&["stick", "--copy", sample::LOVELACE, "--json"], &[], None), 2, "bad_args");
+    // A help flag as --copy's OUT or ID is a value, not the help.
+    assert_error(&run(&["stick", "--copy", sample::LOVELACE, "-h", "--json"], &[], None), 2, "bad_args");
+    assert_error(&run(&["stick", "--copy", "--help", &path("c.json"), "--json"], &[], None), 2, "bad_args");
     let v = assert_error(&run(&["stick", "--copy", "2d3e4f5a-6b7c-4d8e-9fa0-b1c2d3e4f5a6", &path("c.json"), "--json", "--sysroot", &root], &[], None), 1, "no_such_machine");
     assert!(v.get_str("text").unwrap().contains("it has 2"));
     assert!(!k.join("c.json").exists());

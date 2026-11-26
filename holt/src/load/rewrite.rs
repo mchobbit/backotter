@@ -490,6 +490,26 @@ fn boot_dirs(layout: &Value) -> Vec<String> {
     v
 }
 
+/// Whether the initramfs mounts change C's filesystem, so that its images
+/// need the new type's module: / and /usr (dracut, mkinitcpio,
+/// initramfs-tools and systemd's initrd all mount a separate /usr), and an
+/// fstab entry with x-initrd.mount (systemd's initrd; the option is generic,
+/// so it's in C's options).  Any other mount (/boot, /home) is mounted by
+/// the booted system, with the module from its /lib/modules.
+fn initrd_mounts(c: &Change) -> bool {
+    c.mount == "/" || c.mount == "/usr" || c.options.split(',').any(|o| o == "x-initrd.mount")
+}
+
+/// Whether an image's file NAME is kdump's crash kernel initramfs, Fedora's
+/// and RHEL's kdumpctl's initramfs-KVERkdump.img.  It mounts only the dump
+/// target (kdump.conf's path, /var/crash on /), and load doesn't remake
+/// it: kdump.service's kdumpctl does, at its start, when /etc/fstab (which
+/// the rewrite edits) is newer than the image (check_files_modified).
+/// openSUSE's and Debian's kdump keep theirs in /var/lib/kdump, not listed.
+fn is_kdump_image(name: &str) -> bool {
+    name.starts_with("initramfs-") && name.ends_with("kdump.img")
+}
+
 /// What a Slackware initrd's /rootfs (ROOTFS, trimmed) says of change C's
 /// /: its init mounts / as that type (`mount -t $ROOTFS`).
 fn slackware_rootfs_verdict(rootfs: &str, c: &Change) -> Result<String, String> {
@@ -660,9 +680,19 @@ impl Run<'_> {
     }
 
     /// Each initramfs image, by the generator's own lister, must have the
-    /// new type's module or a kernel with it built in.
+    /// new type's module or a kernel with it built in: for a filesystem
+    /// the initramfs mounts (initrd_mounts) only.  kdump's images aren't
+    /// checked (is_kdump_image).
     fn check_initramfs(&mut self, c: &Change, layout: &Value) {
-        let lister = match layout.at(&["boot", "initramfs", "generator"]).and_then(Value::as_str) {
+        let generator = layout.at(&["boot", "initramfs", "generator"]).and_then(Value::as_str);
+        if let Some(g @ ("mkinitrd" | "geninitrd")) = generator {
+            return self.check_slackware_initrd(c, layout, g);
+        }
+        if !initrd_mounts(c) {
+            self.log += &format!("bko-holt rewrite: the initramfs doesn't mount {} (only /, /usr and x-initrd.mount ones); its images not checked for {}\n", c.mount, c.to);
+            return;
+        }
+        let lister = match generator {
             Some("dracut") => "lsinitrd",
             Some("mkinitcpio") => "lsinitcpio",
             Some("initramfs-tools") => "lsinitramfs",
@@ -670,31 +700,13 @@ impl Run<'_> {
                 self.log += "bko-holt rewrite: the initramfs came with its kernel; not checked\n";
                 return;
             }
-            Some(g @ ("mkinitrd" | "geninitrd")) => return self.check_slackware_initrd(c, layout, g),
             // mkinitfs (Alpine), booster (PikaOS), tiny-initramfs: no lister.
             g => {
                 self.log += &format!("bko-holt rewrite: {}'s images aren't listed here; not checked\n", g.unwrap_or("an unknown generator"));
                 return;
             }
         };
-        let mut images: Vec<PathBuf> = Vec::new();
-        for d in boot_dirs(layout) {
-            let dir = self.at(&d);
-            for p in read_dir(&dir) {
-                let n = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                if is_file(&p) && (n.starts_with("initramfs-") || n.starts_with("initrd.img-") || n.starts_with("initrd-")) {
-                    images.push(p);
-                } else if is_dir(&p) {
-                    // kernel-install's ENTRY-TOKEN/KVER/initrd.
-                    for k in read_dir(&p).into_iter().filter(|k| is_dir(k)) {
-                        // limine-mkinitcpio-hook's MACHINE-ID/KERNEL/initramfs.
-                        images.extend(read_dir(&k).into_iter().filter(|f| is_file(f) && f.file_name().is_some_and(|n| n.to_string_lossy().starts_with("initrd") || n.to_string_lossy() == "initramfs")));
-                    }
-                }
-            }
-        }
-        images.sort();
-        images.dedup();
+        let images = self.initramfs_images(layout);
         if images.is_empty() {
             self.errors.push("no initramfs image found under /boot or the ESP to check".into());
             return;
@@ -715,6 +727,35 @@ impl Run<'_> {
             };
             self.module_in(&inside, &text, c);
         }
+    }
+
+    /// The initramfs images under /boot and the ESPs, to check; kdump's are
+    /// logged and left out.
+    fn initramfs_images(&mut self, layout: &Value) -> Vec<PathBuf> {
+        let mut images: Vec<PathBuf> = Vec::new();
+        for d in boot_dirs(layout) {
+            let dir = self.at(&d);
+            for p in read_dir(&dir) {
+                let n = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                if is_file(&p) && (n.starts_with("initramfs-") || n.starts_with("initrd.img-") || n.starts_with("initrd-")) {
+                    images.push(p);
+                } else if is_dir(&p) {
+                    // kernel-install's ENTRY-TOKEN/KVER/initrd.
+                    for k in read_dir(&p).into_iter().filter(|k| is_dir(k)) {
+                        // limine-mkinitcpio-hook's MACHINE-ID/KERNEL/initramfs.
+                        images.extend(read_dir(&k).into_iter().filter(|f| is_file(f) && f.file_name().is_some_and(|n| n.to_string_lossy().starts_with("initrd") || n.to_string_lossy() == "initramfs")));
+                    }
+                }
+            }
+        }
+        images.sort();
+        images.dedup();
+        let (kdump, images): (Vec<PathBuf>, Vec<PathBuf>) = images.into_iter().partition(|p| p.file_name().is_some_and(|n| is_kdump_image(&n.to_string_lossy())));
+        for k in kdump {
+            let inside = k.to_string_lossy().trim_start_matches(self.t).to_string();
+            self.log += &format!("bko-holt rewrite: {inside}: kdump's image, remade by the kdump service when /etc/fstab is newer than it (as the rewrite made it); not checked\n");
+        }
+        images
     }
 
     /// Whether the image INSIDE (its file list, TEXT) has the new type's
@@ -1399,6 +1440,60 @@ LABEL=My\\040Data /mnt/my\\040dat btrfs subvol=/@other 0 0\n\
         assert!(std::fs::symlink_metadata(format!("{root}/etc/fstab")).unwrap().file_type().is_symlink());
         let fstab = std::fs::read_to_string(format!("{root}/usr/share/fstab/fstab")).unwrap();
         assert!(fstab.contains("\txfs\tnoatime\t") && !fstab.contains("@home"), "{fstab}");
+    }
+
+    /// The module check is for what the initramfs mounts: /, /usr and an
+    /// x-initrd.mount entry, not /boot (BackShot2 rocky10 `/boot=ext4`).
+    #[test]
+    fn only_what_the_initramfs_mounts_needs_its_module() {
+        let at = |m: &str, o: &str| Change { mount: m.into(), options: o.into(), ..change() };
+        assert!(initrd_mounts(&at("/", "noatime")));
+        assert!(initrd_mounts(&at("/usr", "defaults")));
+        assert!(!initrd_mounts(&at("/boot", "defaults")));
+        assert!(!initrd_mounts(&at("/home", "noatime")));
+        assert!(initrd_mounts(&at("/srv/data", "noatime,x-initrd.mount")));
+        assert!(!initrd_mounts(&at("/srv/data", "noatime,x-initrd.mountx")));
+    }
+
+    #[test]
+    fn kdumps_images_are_told_apart() {
+        assert!(is_kdump_image("initramfs-6.12.0-211.69.1.el10_2.x86_64kdump.img"));
+        assert!(!is_kdump_image("initramfs-6.12.0-211.69.1.el10_2.x86_64.img"));
+        assert!(!is_kdump_image("initramfs-0-rescue-6b6e557af0ae43d5b802b3440e5510d1.img"));
+        assert!(!is_kdump_image("initrd.img-6.12.0-amd64"));
+    }
+
+    /// A /boot reformat on dracut: no image is listed (no chroot is run),
+    /// no error, and the log says why.
+    #[test]
+    fn a_boot_reformat_checks_no_image() {
+        let t = crate::testutil::TempDir::new("rewrite-boot-reformat");
+        let root = t.path().to_string_lossy().into_owned();
+        std::fs::create_dir_all(format!("{root}/boot")).unwrap();
+        std::fs::write(format!("{root}/boot/initramfs-6.12.0-211.69.1.el10_2.x86_64kdump.img"), "x").unwrap();
+        let layout = crate::json::parse(r#"{"boot": {"initramfs": {"generator": "dracut"}}}"#).unwrap();
+        let c = Change { mount: "/boot".into(), from: "xfs".into(), to: "ext4".into(), folded: vec![], options: "defaults".into(), ..change() };
+        let mut run = Run { t: &root, log: String::new(), errors: vec![] };
+        run.check_initramfs(&c, &layout);
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
+        assert!(run.log.contains("the initramfs doesn't mount /boot") && run.log.contains("not checked for ext4"), "{}", run.log);
+    }
+
+    /// kdump's images are left out of the list, each with a log line;
+    /// the rescue image and the kernels' are kept.
+    #[test]
+    fn kdumps_images_are_not_listed() {
+        let t = crate::testutil::TempDir::new("rewrite-kdump-list");
+        let root = t.path().to_string_lossy().into_owned();
+        std::fs::create_dir_all(format!("{root}/boot")).unwrap();
+        for n in ["initramfs-6.12.0-211.73.1.el10_2.x86_64.img", "initramfs-6.12.0-211.73.1.el10_2.x86_64kdump.img", "initramfs-0-rescue-6b6e557af0ae43d5b802b3440e5510d1.img", "vmlinuz-6.12.0-211.73.1.el10_2.x86_64"] {
+            std::fs::write(format!("{root}/boot/{n}"), "x").unwrap();
+        }
+        let mut run = Run { t: &root, log: String::new(), errors: vec![] };
+        let got: Vec<String> = run.initramfs_images(&Value::Null).iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(got, ["initramfs-0-rescue-6b6e557af0ae43d5b802b3440e5510d1.img", "initramfs-6.12.0-211.73.1.el10_2.x86_64.img"]);
+        assert!(run.log.contains("/boot/initramfs-6.12.0-211.73.1.el10_2.x86_64kdump.img: kdump's image") && run.log.contains("not checked"), "{}", run.log);
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
     }
 
     /// An edited file is written in place: the same inode, so the

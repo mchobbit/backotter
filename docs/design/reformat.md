@@ -187,6 +187,23 @@ module in it, unless that kernel has it built in (`modules.builtin`).  It
 also requires every loader entry's `options` to have no `subvol=` left.  A
 failure stops the stage before `close`, with the system mounted for a look.
 
+The module check is only for a filesystem the initramfs mounts: `/`, `/usr`
+(dracut, mkinitcpio, initramfs-tools and systemd's initrd mount a separate
+one), and an fstab entry with `x-initrd.mount`.  Any other mount, `/boot`
+say, is mounted by the booted system, which loads the module from its own
+`/lib/modules`; for it the images aren't listed, and the log says so.
+Slackware's initrd mounts `/` only.  kdump's images (Fedora's and RHEL's
+`initramfs-KVERkdump.img`) aren't checked either: load doesn't remake them,
+and they mount only the dump target (`path /var/crash`, on `/`).
+kdump.service's `kdumpctl` remakes one at its start when `/etc/fstab` is
+newer than it (`check_files_modified`), and the rewrite has just edited
+`/etc/fstab`, so the restored system's kdump is rebuilt for the new type on
+its first boot, as kdump does on the source after any fstab change.  Each one
+is logged as not checked.  BackShot2 found both (rocky10 `/boot=ext4`: three
+`kdump.img`s with XFS only, and `/boot` never needed a module in an
+initramfs).  openSUSE's and Debian's kdump keep their image in
+`/var/lib/kdump`, which the check doesn't list.
+
 **Leftovers.** Last, it searches the restored `/etc`, `/boot` and the ESP for
 anything still tied to the old type: `subvol=`, and the old type's name next
 to the UUID.  It lists each hit in the log and in `status`.  These are

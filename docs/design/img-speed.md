@@ -352,8 +352,11 @@ listing's `os_manifest`, its entry count, its tree names and `swap_missing`
 (the swap-list paths, not marked optional, that the listing lacks: empty on
 all seven in I1's set). `test.os_manifest` is the test copy's. `built.run`
 is null when img-one.sh is given no `BKO_IMG_RUN` (img-lanes.sh passes none
-yet). `holt_code` is null until holt-bin records the CODE a bko-holt was
-built from (today only `COMMIT`). `tests.tools` holds the QEMU and OVMF
+yet). The provenance is not written (said in `result.txt`) when the build's
+stick/ inputs, builder, ISO, slim, host tools or binaries moved since its
+start (`--start`), so that a vm-update or a sync during the boot tests cannot
+record inputs the image was not built from. `holt_code` is null until
+holt-bin records the CODE a bko-holt was built from (today only `COMMIT`). `tests.tools` holds the QEMU and OVMF
 versions.
 
 **The tree listing.** One line per entry, tab-separated: tree, path, type

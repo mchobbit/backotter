@@ -440,6 +440,20 @@ class ImgOne(EnvCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("stick/netbsd/build.sh", rd(os.path.join(self.i, "netbsd", "result.txt")))
 
+    def test_a_vm_update_during_the_boot_tests_writes_no_provenance(self):
+        # The guest lock is gone by then: provenance must not record the new generation.
+        wr(os.path.join(self.w, "stick", "boot-test.py"),
+           "import os, subprocess\nsubprocess.run(os.environ['BOOT_HOOK'], shell=True)\nprint('  ok   tools  all')\n")
+        hook = f"python3 -c 'import sys; sys.path.insert(0, \"{HERE}\"); import test_img_inputs as t; " \
+               f"t.set_generation(\"{self.w}\", \"netbsd11\", \"ef\" * 32, \"updated\\n\")'"
+        r = self.run_one("netbsd", BOOT_HOOK=hook)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(rd(os.path.join(self.i, "netbsd", "done.exit")), "0\n")
+        res = rd(os.path.join(self.i, "netbsd", "result.txt"))
+        self.assertIn("provenance: FAILED", res)
+        self.assertIn("the builder moved", res)
+        self.assertFalse(os.path.exists(os.path.join(self.i, "netbsd", "provenance.json")))
+
     def test_not_the_plans_builder_refuses(self):
         r = self.run_one("netbsd", BKO_PLAN_BUILDER='{"generation":"' + "ef" * 32 + '"}')
         self.assertEqual(r.returncode, 1)

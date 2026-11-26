@@ -202,9 +202,12 @@ if [[ $fails -eq 0 ]]; then
 fi
 # The provenance, last before done.exit: a failure to write it leaves the
 # image as built (a plan treats an image without one as due a full build).
+# --start: inputs that moved after the build's check (a vm-update or a sync
+# during the boot tests) refuse it, rather than record inputs the image was
+# not built from.
 rel=$(cd "$D" && ls ./*.img 2>/dev/null | head -n 1)
 if pv=$(dig provenance --platform "$P" --dir "$D" --release "${rel#./}" --test "${img#"$D"/}" \
-        --run "${BKO_IMG_RUN:-}" "${boots[@]}" 2>&1); then
+        --run "${BKO_IMG_RUN:-}" --start .inputs-start.json "${boots[@]}" 2>&1); then
     echo "$pv" >>"$r"
 else
     echo "provenance: FAILED: $pv" >>"$r"

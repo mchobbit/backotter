@@ -431,7 +431,7 @@ Unchanged, plus one under `--json` only:
 
 ```json
 {"format": "bko-holt-api", "schema": 1, "version": "0.3.0",
- "documents": {"plan": [1], "status": [1], "events": [1], "stick": [1], "recovery": [1], "stick_copy": [1], "error": [1]},
+ "documents": {"plan": [1], "status": [1], "events": [1], "stick": [1], "recovery": [1], "stick_copy": [1], "luks_headers": [1], "error": [1]},
  "dump_schemas": [1],
  "features": ["no_commit_env", "stop", "progress", "candidates", "sizes",
               "open_stage", "fit_per_disk"],
@@ -510,7 +510,9 @@ unsupported OS, a dump made without root), `arch_mismatch`,
 isn't a new file in a private directory, RT10p), and `stick --copy`'s
 refusals, exit 1: `config_not_ok`, `no_such_machine`, `two_machines`,
 `machine_not_ok`, `no_layout`, `layout_refused` (the copy's own check)
-and `copy_failed` ("bko-holt-stick-copy").  `text` is the line text mode prints on stderr, without the
+and `copy_failed` ("bko-holt-stick-copy"), and `luks-headers`' refusals,
+exit 1: `header_fetch_failed`, `header_mismatch`, and the layout's and
+`copy_failed` ("bko-holt-luks-headers").  `text` is the line text mode prints on stderr, without the
 usage that follows it.  A reader following an events file must take a
 first line with `format` `bko-holt-error` as the whole stream and show its
 `text` (the demo fails it today as "an event with no \"event\"").
@@ -972,7 +974,7 @@ same bytes: the stick isn't read again between the check and the write.
 {"format": "bko-holt-stick-copy", "schema": 1, "version": "0.3.0", "generated": "…", "dry_run": false,
  "install_id": "0b7e…", "path": "backotter/machines/0b7e…/system.json",
  "out": "/run/bko-rescue/s-1-0/layout.json", "bytes": 55497,
- "sha256": "…", "system_sha256": "…"}
+ "sha256": "…", "system_sha256": "…", "luks_headers": 0}
 ```
 
 - What OUT holds: system.json's top-level `layout`, the whole `bko-holt
@@ -987,9 +989,12 @@ same bytes: the stick isn't read again between the check and the write.
   `Layout::from_json` takes (format `bko-holt`, a schema it reads, a
   supported OS, a dump made as root) before OUT is written.  A layout
   that kept LUKS2 headers (`storage.luks_headers` not empty: an Ubuntu
-  Core's encryption, or `dump --keep-luks-header`) is `layout_refused`
-  too: load needs the header files beside it, and the stick carries none
-  (open question 12).
+  Core's encryption, or `dump --keep-luks-header`) is copied, and
+  `luks_headers` counts them: bko-rescue then fetches them from the
+  backup ("bko-holt-luks-headers", open question 12).  One whose list
+  couldn't be fetched (a file name dump never makes, two the same, no
+  SHA-256, a size no header has: `luksfetch::entries`) is
+  `layout_refused`, said at the copy, not at the first plan.
 - The machine: INSTALL_ID must be a UUID (else exit 2, `bad_args`, not
   echoed), matched case aside among the machine directories `stick
   --json` would list.  `--copy` takes its two values whatever they are:
@@ -1005,8 +1010,8 @@ same bytes: the stick isn't read again between the check and the write.
   `machine_not_ok` (its row isn't `ok`: `checksum_bad`,
   `checksum_missing`, `schema_unknown`, `unreadable`, with its why),
   `no_layout` (no `layout`, or one that isn't a document: a system.json
-  of today), `layout_refused` (load wouldn't take it, or it kept LUKS
-  headers), `copy_failed` (OUT couldn't be written: nothing left there,
+  of today), `layout_refused` (load wouldn't take it, or its kept LUKS
+  headers can't be fetched), `copy_failed` (OUT couldn't be written: nothing left there,
   or, when a file appeared there after the check, that file left as it
   is).
 - Exit 0 when OUT is written, 1 refused, 2 bad arguments.  Read-only
@@ -1015,6 +1020,68 @@ same bytes: the stick isn't read again between the check and the write.
 - The layout names hosts, disks and paths as a dump does; no secret is in
   it (stick-config.md: no secret ever goes in system.json).  bko-rescue
   keeps OUT in the session's 0700 directory, removed with it.
+
+### `bko-holt-luks-headers` (open question 12)
+
+`bko-holt luks-headers LAYOUT DIR --repo REPO --password-file FILE
+[--snapshot ID] [--archiver PROGRAM] --json`: the LUKS2 headers the dump
+LAYOUT kept (`storage.luks_headers`: `dump --keep-luks-header`, and an
+Ubuntu Core's encrypted partitions always), fetched from the backup into
+DIR for `load LAYOUT --luks-header-dir DIR` (`src/luksfetch.rs`).
+
+```json
+{"format": "bko-holt-luks-headers", "schema": 1, "version": "0.3.0", "generated": "…", "dry_run": false,
+ "layout": "/run/bko-rescue/s-1-0/layout.json", "dir": "/run/bko-rescue/s-1-0/h",
+ "snapshot": "a7f3c901", "repo_dir": "/.bko-holt/luks-headers",
+ "headers": [{"device": "vda5", "label": "ubuntu-data-enc",
+   "file": "luks2-header-bc000000-0000-4000-8000-00000000000c.img",
+   "path": "/run/bko-rescue/s-1-0/h/luks2-header-bc000000-0000-4000-8000-00000000000c.img",
+   "from": "a7f3c901:/.bko-holt/luks-headers/luks2-header-bc000000-0000-4000-8000-00000000000c.img",
+   "bytes": 16777216, "sha256": "…"}]}
+```
+
+- Where they are: in the backup, in the same snapshot as the system's
+  files, at `/.bko-holt/luks-headers/FILE` (`luksfetch::REPO_DIR`, beside
+  Qubes's `/.bko-holt/raw`), FILE the name dump gave it.  The backup tool
+  puts them there (stick-config.md, "LUKS2 headers in the backup"); the
+  repository is encrypted.  load's restore leaves that directory out of
+  the tree (`!/.bko-holt/luks-headers/**` in its glob file, whenever the
+  layout kept a header): key material never lands on the restored disks.
+- How: for each header, the archiver's `dump` of that one file, read-only
+  toward the repository and every disk: `rustic-bko --repository REPO
+  --password-file FILE --no-progress dump SNAPSHOT:/.bko-holt/luks-headers/FILE`
+  (restic-bko's takes `SNAPSHOT PATH`; a `SNAPSHOT:SUBPATH` snapshot puts
+  SUBPATH first, as load's raw volumes do).  `from` is what the dump was
+  given.  At most the dump's `bytes` and one more are read (256 MiB when a
+  dump from before `bytes` has none), into a buffer made big enough at
+  once, zeroed after.
+- The check, each file before it is kept (`luksfetch::check_bytes`, the
+  shared check): the dump's `bytes`, then its `sha256`.  A header that
+  isn't the dump's (another snapshot's: the stick's layout is the newest
+  backup's) is `header_mismatch`; one the archiver couldn't read (no such
+  file, a wrong password, the repository not there) is
+  `header_fetch_failed`, with the last line the archiver said (a URL's
+  password redacted).
+- DIR is checked before anything is read, as `stick --copy`'s OUT
+  (`recoverycmd::out_unsafe`): absolute, not there yet, in a real
+  directory of bko-holt's effective user with no group or other bits;
+  else exit 2, `out_unsafe`.  It is made 0700, each header in it
+  `O_CREAT|O_EXCL`, 0600, synced.  Any failure leaves nothing: what was
+  written is zeroed and removed, and DIR too.  A layout that kept none:
+  exit 0, DIR made, empty.
+- Under `--json` the password file is required (nothing asks) and
+  checked as load checks key files ("Secrets" 4); a `--repo` with a
+  password in it is refused (exit 2, `bad_args`).  The layout must be one
+  load takes (`layout_unreadable`, `layout_not_json`, `layout_refused`,
+  exit 1), and its list one that can be fetched (`layout_refused`).
+  Without `--json` it is the same, a line a header on stdout (a restore
+  by hand), and the archiver may ask for the password.
+- Exit 0 when every header is in DIR, 1 refused or failed (nothing left),
+  2 bad arguments.  It writes no disk: allowed under `BKO_HOLT_NO_COMMIT`.
+  `RLIMIT_CORE` is 0 for it and the archiver.
+- The backup tool runs the same command on the snapshot it just made, as
+  its read-back: the headers that snapshot holds are the ones its layout
+  names.
 
 ### `bko-holt-recovery` (J21, RT10p)
 
@@ -1126,6 +1193,14 @@ in the environment, in a document or in an event.  Only their paths do.
     or its run directory; under `BKO_HOLT_NO_COMMIT` both refuse an OUT
     that exists (`O_EXCL` only), so a device can't be one.  Without the
     variable, text mode is as today.
+12. **The LUKS2 headers a dump kept** are key material too: with an old
+    passphrase, a header opens its volume.  `luks-headers` writes them
+    only to a new 0700 DIR, each 0600 (open question 12); bko-rescue's DIR
+    is `h/` in its session's directory, and it wipes them as it wipes the
+    key files (each zeroed to its length, then unlinked; the session's
+    wipe goes into `h/`, and removes a link there without following it).
+    Another snapshot fetches them again, the old ones wiped first.  load's
+    restore never writes the backup's copies into the restored tree.
 
 Why not a file descriptor or a pipe: `load` runs detached (`systemd-run`
 on Linux, `setsid` elsewhere: `ui.md`, "The restore outlives the UI"),
@@ -2191,7 +2266,8 @@ every disk and the stick image kept its md5.
   - A dump made with `--keep-luks-header` (Ubuntu Core's encrypted
     partitions always) needs its header files beside it ("load looks for
     them there"; `load --luks-header-dir`).  The stick carries none, so such
-    a layout can't be restored from the stick's copy alone.
+    a layout can't be restored from the stick's copy alone.  (Open
+    question 12, built 2026-11-26: they are fetched from the backup.)
   - A system.json is read up to 64 MiB (`stick.rs`'s `SYSTEM_MAX`), a
     dump up to 1 GiB (`LAYOUT_MAX`), and the BSD images' config partition
     is 32 MiB: a large dump (ESP images) or several machines may not fit.
@@ -2301,6 +2377,92 @@ Built 2026-11-26 (open question 11, approved that day by the user):
 - **Spec problem:** `marker.py`'s `system_schemas` is still its own
   constant, not bko-holt's `stick.rs` `SYSTEM_SCHEMAS`.  The api document
   could carry both; left as it is.
+
+### What the LUKS headers' fetch built
+
+Built 2026-11-26 in 3100b25 (open question 12, approved that day by the user, the
+recommendation):
+
+- **Where they live:** in the backup, in the same snapshot as the system's
+  files, at `/.bko-holt/luks-headers/FILE` (`luksfetch::REPO_DIR`), FILE
+  the name dump gave each.  The snapshot doesn't hold them today: dump
+  writes them to RAM (`/run/bko-holt/luks-headers`, or
+  `--luks-header-dir`), never into a backup's tree, and HoltTest's
+  uc24-fde and aeon runs copy them beside the layout in the share by hand.
+  The backup tool must put them there (stick-config.md, "LUKS2 headers in
+  the backup", steps 1 to 4); it isn't built.
+- **bko-holt:** `bko-holt luks-headers LAYOUT DIR --repo REPO
+  --password-file FILE [--snapshot ID] [--archiver PROGRAM] [--json]`
+  (`src/luksfetch.rs`; "bko-holt-luks-headers").  bko-holt does the
+  repository reads: it runs the archiver's `dump` of each file
+  (`rawvol::dump_argv`, as load's raw volumes), checks it
+  (`luksfetch::check_bytes`: size, then SHA-256; `luksfetch::entries`
+  checks the list itself), and writes it to a new 0700 DIR, 0600 each.
+  The same command is the backup tool's read-back of a new snapshot.
+  `luks_headers` in the api's `documents` and `features`; two new error
+  codes, `header_fetch_failed` and `header_mismatch`.
+- **load:** the restore leaves `!/.bko-holt/luks-headers/**` out whenever
+  the layout kept a header (its glob file, with its own `why`), so the
+  backup's copies never land in the restored tree.  A missing header's
+  problem now names `bko-holt luks-headers`.  `--luks-header-dir` is as it
+  was.
+- **stick --copy:** the interim refusal of a non-empty
+  `storage.luks_headers` is gone.  The document has `luks_headers`, the
+  count; a list that couldn't be fetched is still `layout_refused`.
+- **bko-rescue:** rescue-tui.md, "What the LUKS headers' fetch changed".
+- **Defaults chosen** (each in one place):
+  - The path in the snapshot: `/.bko-holt/luks-headers/FILE`
+    (`luksfetch::REPO_DIR`), the snapshot of the system itself, not a
+    snapshot of its own.
+  - The read: the archiver's `dump`, one file at a time, at most the
+    dump's `bytes` plus one (`HEADER_MAX`, 256 MiB, without `bytes`).
+  - DIR must be new (`recoverycmd::out_unsafe`), and any failure removes
+    all of it; a layout that kept none gives an empty DIR, exit 0.
+  - The document's fields: `layout`, `dir`, `snapshot`, `repo_dir`,
+    `headers[]` (`device`, `label`, `file`, `path`, `from`, `bytes`,
+    `sha256`).  `from` is what the archiver's dump was given.
+  - bko-rescue's DIR: `h` in the session's directory (`layout::HEADERS_DIR`),
+    its gauge's limit 600 s (`HEADERS_MS`).
+  - The restore's exclusion only when the layout kept a header, so no
+    other golden plan changes.
+- **Tested:** `luksfetch.rs`'s unit tests (the list's checks, the size and
+  SHA-256 check, the archiver's argv for rustic, a snapshot's subpath and
+  restic, a fetch with a script archiver: 0700 and 0600, byte for byte;
+  any failure leaving nothing; more than the dump kept; no archiver; none
+  kept; rustic's and restic's error words), `stick.rs`'s (the count, a
+  list that can't be fetched), `tests/json_cli.rs` (as a program, under
+  `BKO_HOLT_NO_COMMIT`; uc24-fde's dump fetched, load's plan with DIR
+  without a header problem and with the exclusion; every refusal), the
+  stick-copy golden re-blessed for `luks_headers`, holt_schema.py, and the
+  holt gate on cinqcent (cargo test 970 passed, 0 failed, 4 ignored; 110
+  golden plans, 0 differ after the re-bless; redact-corpus passed).  One golden plan differs, uc24-fde,
+  and is re-blessed on purpose: its restore stage now writes the glob file
+  (`!/.bko-holt/luks-headers/**`) and passes `--glob-file` (7 lines of
+  plan.txt, plan.json's restore commands).
+- **Real proof:** `testvm/rescue/record-luks.py` on cinqcent, with this
+  bko-holt and the farm's rustic-bko (0.12.0+backotter.4) and cryptsetup
+  2.7.5: two LUKS2 test containers with uc24-fde's UUIDs, two backups of a
+  tree holding their header backups at `/.bko-holt/luks-headers/`.  The
+  newest snapshot's fetch wrote both headers (294912 bytes each) byte for
+  byte, `cryptsetup luksDump` read each one's UUID; the older snapshot
+  was `header_mismatch` and a wrong password `header_fetch_failed` (in
+  rustic's words), nothing left; a restore with load's glob file brought
+  back the tree without the headers.  That is the `luks-headers` scenario.
+  No real uc24-fde round trip ran: HoltTest's json path doesn't run
+  bko-rescue or a backup that holds the headers (its share holds them
+  beside the layout), so a uc24-fde run would test nothing new here.
+- **Not done:** the backup tool's part (stick-config.md's steps 1 to 4).
+  No image was rebuilt: the next image round needs this bko-holt and this
+  bko-rescue (holt-bin and rescue-bin), and nothing in the image build
+  scripts changes.
+- **Spec problems:**
+  - "Which copy wins" isn't built, so the layout is always the stick's,
+    the newest backup's.  Choosing an older snapshot whose headers
+    differ is refused (`header_mismatch`), not restored with that
+    snapshot's own layout and headers.
+  - HoltTest's kept-header runs (uc24-fde, aeon) still copy the headers
+    beside the layout; they could be put in the backup at REPO_DIR and
+    fetched, once a HoltTest json run goes through bko-rescue.
 
 ## Decisions
 
@@ -2534,7 +2696,7 @@ Built 2026-11-26 (open question 11, approved that day by the user):
     and the backup tool's write-time check warns when `layout.schema`
     isn't in it, as it does for `system_schemas`.  Or nothing: the
     restore says it, late.
-12. **LUKS headers a dump kept** (answered: approved 2026-11-26 by the user, the recommendation; not built yet).  A dump made
+12. **LUKS headers a dump kept** (answered: approved 2026-11-26 by the user, the recommendation; built 2026-11-26, 3100b25 and "holt-json, stick-config, rescue-tui: open question 12 built": "What the LUKS headers' fetch built").  A dump made
     with `--keep-luks-header` (an Ubuntu Core's encryption always) needs
     its header files beside it, and nothing puts them on the stick.
     Until this is answered, `stick --copy` refuses such a layout

@@ -312,10 +312,9 @@ chosen (restic or borg).
   printed it.  Approved 2026-11-26 by the user (holt-json.md's open questions 8
   and 10).  A system.json
   without `layout` (none is written yet) gives the restore no layout from
-  the stick.  A dump that kept LUKS2 headers can't be restored from the
-  stick alone yet (holt-json.md's open question 12, approved 2026-11-26: the headers
-  go in the repository and bko-rescue fetches them after the password;
-  not built yet).
+  the stick.  A dump that kept LUKS2 headers has them in the backup, not
+  on the stick (below, "LUKS2 headers in the backup"; holt-json.md's open
+  question 12, built 2026-11-26).
 
 - `sequence` goes up by one with each backup of that machine, so "which copy is
   newer" never depends on clocks.
@@ -335,6 +334,48 @@ chosen (restic or borg).
   own `storage`.
 - `system.json.sha256` is in `sha256sum` format.  Cheap sticks get corrupted
   when yanked, and a damaged config should be reported, not half-used.
+
+### LUKS2 headers in the backup
+
+A dump made with `--keep-luks-header DEV` (an Ubuntu Core's encrypted
+partitions always) keeps each LUKS2 header as a file, its size and SHA-256
+in `layout.storage.luks_headers`, and load writes it back: the volume key,
+the keyslots and the tokens (a TPM's, a recovery key's) come back, so what
+opened the disk opens it again.  A header backup is 16 MiB or more by
+default, and key material: it goes in the repository (encrypted, no size
+limit), never on the stick (approved 2026-11-26 by the user, holt-json.md's
+open question 12).
+
+What the backup tool must do (not built: it comes with the backup tool):
+
+1. Run `bko-holt dump --luks-header-dir D`, D a new directory of its own,
+   mode 0700, in RAM (dump's default, `/run/bko-holt/luks-headers`, is in
+   RAM too).  The dump names each file (`luks2-header-UUID.img`).
+2. Back up those files in the same snapshot as the system's files, at
+   `/.bko-holt/luks-headers/FILE` (`luksfetch::REPO_DIR` in bko-holt), the
+   way HoltTest puts Qubes's raw volumes at `/.bko-holt/raw` (D
+   bind-mounted there for the backup, the backup's root as the snapshot's
+   root).  Same snapshot: the headers and the layout are from one moment.
+3. Read them back from the new snapshot with `bko-holt luks-headers
+   LAYOUT DIR --repo REPO --password-file FILE --snapshot ID` (DIR a new
+   private directory): exit 0 means the snapshot holds every header the
+   layout names, each its size and SHA-256.  Anything else is a failed
+   backup of that machine: the restore couldn't keep the disks' keys.
+   Then wipe D and DIR (each file zeroed, then removed).
+4. Only then write system.json (with that `layout`) into the backup and to
+   the stick, as below.
+
+At the restore, bko-rescue fetches them once the repository's password is
+in and the snapshot chosen, before the first plan: `bko-holt luks-headers`
+into `h/` in its session's directory (0700, each file 0600), then every
+`load` gets `--luks-header-dir` that directory.  Each file is checked
+against the layout's size and SHA-256.  The stick's layout is the newest
+backup's, so an older snapshot whose headers differ is refused
+(`header_mismatch`) until "Which copy wins" below is built.  load's restore
+leaves `/.bko-holt/luks-headers` out of the tree, so the headers never land
+on the restored disks.  A layout that kept headers needs a bko-rescue and a
+bko-holt from 2026-11-26 or later: an older bko-holt's `stick --copy`
+refuses it (`layout_refused`).
 
 ### Which copy wins
 
@@ -502,8 +543,13 @@ feature means the stick can't import the pool at all.
 - The schema half of "Is this stick good enough?" is built, as a function
   for the backup tool (`stick.rs`'s `schema_warnings`); the marker carries
   `dump_schemas` from the image's own bko-holt.
+- The restore side of "LUKS2 headers in the backup": `bko-holt
+  luks-headers` (`src/luksfetch.rs`, also the backup tool's read-back),
+  `stick --copy`'s `luks_headers` count, load's restore leaving the
+  headers out of the tree, and bko-rescue's fetch before the first plan.
 - Not built: the backup tool's stick module (and so no system.json carries a
-  `layout` yet), the rest of the write-time check (ZFS features, kernel,
+  `layout` yet), its keeping of the LUKS2 headers in the snapshot (steps
+  1 to 4 above), the rest of the write-time check (ZFS features, kernel,
   bcachefs), and `backotter stick repair`.  They come with the backup
   tool.
 

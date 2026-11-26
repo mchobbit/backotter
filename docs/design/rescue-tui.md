@@ -610,6 +610,9 @@ screen: the type system says so.
     with `O_EXCL`, no trailing newline, the path passed as `--key-file
     NAME=PATH` or `--password-file`.  Never in argv, never in the
     environment, never in a log.
+  - The LUKS2 headers a dump kept are key material too: fetched into the
+    session's `h/` (0700, each 0600) and wiped with the session or the
+    snapshot ("What the LUKS headers' fetch changed").
   - Removed when the program that reads it exits.  Load outlives the UI, so
     a restarted bko-rescue removes key files only once load's process is
     gone, not at its own start.
@@ -1793,6 +1796,59 @@ interim is gone: a system.json with a layout now passes, and one without
   `stick --json`'s `image.dump_schemas` and the api document's
   `dump_schemas` are new members bko-rescue doesn't read; holt_schema.py
   takes both.
+
+## What the LUKS headers' fetch changed
+
+2026-11-26, holt-json.md's open question 12 (approved that day with its
+recommendation): a layout that kept LUKS2 headers (`dump
+--keep-luks-header`, an Ubuntu Core's encryption always) has them in the
+backup, and bko-rescue fetches them before the first plan.
+
+- `stick --copy`'s document now has `luks_headers`, the count; `layout.rs`
+  keeps it (`App::layout_headers`; none from an older bko-holt, which
+  refused such a layout).
+- On Disks, after the layout and before the first plan, `header_dir` runs
+  `bko-holt luks-headers LAYOUT DIR --repo URL --password-file FILE
+  --snapshot ID --json` (`HoltCmd::LuksHeaders`) under a gauge
+  ("Fetching the encryption headers", `HEADERS_MS` 600 s): DIR is `h` in
+  the session's directory.  bko-holt makes it 0700, each header 0600, each
+  checked against the dump's size and SHA-256.  The document must be
+  `bko-holt-luks-headers` of the api's version, exit 0, DIR as asked, and
+  one plain file of its row's size in DIR for each header the copy
+  counted; else DIR is wiped and a problem screen says bko-holt's words
+  (`headers_failed`: Try again, Back, Report; its help says to choose the
+  newest backup when a header isn't the dump's).
+- Every load from then on gets `--luks-header-dir DIR` (`Load`'s
+  `luks_header_dir`, set in `full_load` only for the snapshot the headers
+  came from), so Review's plan and Restore's run name it alike.
+- Another snapshot or machine (`forget_disks`) wipes DIR; the next Disks
+  fetches again.  The session's wipe (`sys::wipe_dir`) now goes into a
+  directory of its own (h/), each file zeroed, a link removed and never
+  followed.
+- A dry run fetches them too: it reads the repository only, and
+  `BKO_HOLT_NO_COMMIT` allows it.
+- **Fixtures:** `record-luks.py` records `luks-headers` from a real
+  bko-holt and rustic-bko (two small test LUKS2 containers, two backups:
+  the fetch, a mismatch, a wrong password).  `make-disk-fixtures.py`'s
+  `app-lovelace-luks` is app-lovelace with the copy counting 2, that
+  recorded fetch, and `--luks-header-dir *` in every load.  fake-bko-holt
+  makes DIR and its headers (test bytes of each row's size) for a
+  `luks-headers` call and watches them as key files; the Rust tests' fake
+  writes them itself and matches loads without `--luks-header-dir`.
+- **Tested** on czerny (Rust 1.85.1): `cargo build` without warnings,
+  `cargo test --locked --offline` (300 tests: the fetch's argv and its
+  place before the first plan, every load's `--luks-header-dir`, another
+  snapshot fetching again, a refusal and a document that isn't as it says
+  (nothing planned, nothing left), a layout that kept none fetching
+  nothing, the session's wipe into `h/`), `abi/check.sh` (49 facts, 9
+  symbols), `pty-test.py` (117 checks), `demo-test.py` (0 failed),
+  `app-test.py` (311 checks, 0 failed, `test_disks_kept_headers` among
+  them) and holt_schema.py over the scenarios, holt's goldens and corpus
+  (508 checked, 0 problems).  No screen golden changed.
+- **Not done:** no image was rebuilt; the next image round's bko-holt and
+  bko-rescue must both be from this commit or later for a kept-header
+  layout to restore from the stick.  No real stick has restored a
+  kept-header machine end to end yet (no HoltTest path runs bko-rescue).
 
 ## The app on top (later)
 

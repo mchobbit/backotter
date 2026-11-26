@@ -2,8 +2,9 @@
 
 Status: **the seven speedups are approved in principle** by the user
 (2026-11-26, "Yes to all 1-7"). This spec designs them and lists the
-decisions the user still has to take (§13, D1-D14 and FD1-FD6), each with my
-recommendation. Nothing is built. Hosts: chopin, cinqcent (big), copland,
+decisions the user still has to take (§13, D1-D17 and FD1-FD6), each with my
+recommendation. Nothing is built. Reviewed against the scripts on
+2026-11-26 (§16 lists what the review changed). Hosts: chopin, cinqcent (big), copland,
 cage, czerny (small, build role), choubox (small, no build role), all amd64.
 Bigfoot (arm64) is out of scope except where noted. est. marks an estimate;
 every other figure was measured on 2026-11-26 from the logs and file times
@@ -80,24 +81,43 @@ What the user wants instead:
   uefi). It refuses an image whose binaries changed during the build. After a
   pass it runs `compress-images.sh -p P` (xz; `-T2` on Chopin, else `-T4`):
   the current release image gets a `.img.xz` beside it, and the `prev-*`
-  images are replaced by `.xz`. `done.exit` is written last.
+  images are replaced by `.xz`. `done.exit` is written last. **The only
+  writer of `images/P/SHA256SUMS` is `compress-images.sh`**, and that file is
+  where facts take the release image's SHA-256 (`facts_host.one_image`), which
+  ImgTest2's key reads as `PLAT/release-image` (`img/spec.json`, `keys.py`).
+  §7 must keep it written when xz goes.
+- The FreeBSD builder listens on the fixed port 2400, so one host runs at
+  most one FreeBSD build at a time. The snapshot builders have their own
+  fixed ports (netbsd 2410 and so on).
 - **Linux**: `slim-base-layer.sh` (the updated, slimmed Ubuntu base, built
   rarely, shared at `server/slim -> slim-20261120`), then
-  `build-backotter-layer.sh` (packages from the ISO's pool plus the archive's
-  -updates and -security pockets over the network, a DKMS bcachefs module,
-  and the three binaries in `/usr/local/bin`), then `make-img.sh` (xorriso
+  `build-backotter-layer.sh` (packages from the ISO's pool, plus over the
+  network the archive's release pocket, its -updates and -security pockets,
+  and `bcachefs-tools` and the DKMS module's source from apt.bcachefs.org,
+  checked against `stick/keys/apt.bcachefs.org.asc`; the drop-ins of
+  `stick/layer/`; a DKMS bcachefs module built against -updates' kernel
+  headers; and the three binaries in `/usr/local/bin`, checked by
+  `--version` and by `bko-holt --version --json`'s features, which also
+  writes the layer's `holt-api.json`), then `make-img.sh` (xorriso
   replays the ISO's signed boot setup, about 5 s). The config partition
   (256 MiB FAT, `marker.py`'s `config.img`) carries copies of the layer's
   bko-holt and rustic-bko.
 - **The others** (`make-img-bsd.sh`): inside a VM of the platform. FreeBSD
-  uses the long-lived `freebsd15-builder` (`BUILD_VM_MODE=running`); the
-  rest boot a throwaway snapshot of a test guest (netbsd11, openbsd8,
-  dragonfly6, omnios58, haiku6). `fetch` downloads and verifies the official
+  uses the long-lived `freebsd15-builder` (`BUILD_VM_MODE=running`): a
+  per-host full folder, not in vm-store (HOSTS.md), whose qcow2 is written
+  at every boot. The rest boot a throwaway snapshot of a test guest
+  (netbsd11, openbsd8, dragonfly6, omnios58, haiku6), which vm-update and
+  vm-store change underneath. `fetch` downloads and verifies the official
   media into `img-media/P`. `build.sh info` and `build.sh assemble` run in the
-  VM.
+  VM. `info` prints the kernel and ZFS versions that `marker.py` writes into
+  the marker; on FreeBSD it is also where `freebsd-update -b` updates the
+  image's root over the network.
 - **Then, by hand**: `img-xcopy.sh cinqcent P...` (it also compresses on the
-  destination). `promote-bins.sh --sets holt-bin` goes from Chopin to the
-  other hosts. ImgTest2 (`t2 ImgTest2`) pins each host's test image
+  destination, and brings DEST's `holt-bin/P` to the image's bko-holt, but
+  not its bko-bin). `promote-bins.sh --sets holt-bin` goes from Chopin to the
+  other hosts. promote-bins and `img-refresh-holt.sh` hold `images/.lock-P`
+  only while they install P's files: nothing stops either between two image
+  builds of the same round. ImgTest2 (`t2 ImgTest2`) pins each host's test image
   (`tool_img.py`: a hard link, a `release_same` check on Linux) and boots it
   again (`testvm/test2/img/boot.sh`, again mode after mode, under
   `--reserve 1 5`). The HoltTest2 +img panel then runs one HoltTest line per
@@ -147,16 +167,21 @@ the last `boot-*.out`; compress = `compress.log`. Minutes:
 | platform | the binaries | file system | id sites (derived from `image_id`) |
 |---|---|---|---|
 | linux | layer squashfs `/usr/local/bin/{restic-bko,rustic-bko,bko-holt}`; copies of bko-holt and rustic-bko in config.img | squashfs in the ISO 9660 tree | `/.disk/backotter.json`, config.img |
-| freebsd | `root.ufs: /usr/local/bin/*` | FFS2 made by `makefs`, label `BACKOTTER-<8 hex>` | the label (and whatever mounts by it), `/.disk/backotter.json`, config.img |
-| netbsd | the root's `/usr/local/bin/*` | FFS2 made by `makefs -b 10% -f 10%` | `/.disk/backotter.json`, config.img |
-| openbsd | the root's `/usr/local/bin/*` | FFS (`newfs -m 0 -o space` on a vnd) | `/.disk/backotter.json`, config.img |
-| dragonfly | `usr/local/bin/*` | UFS (`newfs -m 0`), sized from the binaries (`ours_kb`) | label `BKO_<32 hex>`, `/.disk/backotter.json`, config.img |
-| illumos | `usr/local/bin/*` **inside** `boot_archive.gz` (gzipped UFS miniroot) on the V_ROOT UFS | UFS in UFS, s2 sized +25 % +16 MB | `.volsetid`, the marker in the archive and on s2, config.img |
-| haiku | `system/non-packaged/bin/{rustic-bko,bko-holt}` | BFS, sized from the binaries | `/.disk/backotter.json`, config.img |
+| freebsd | `root.ufs: /usr/local/bin/*` | FFS2 made by `makefs` with no free-space option (sized to fit) | the UFS label `BACKOTTER-<8 hex>`, `/etc/fstab` **and** `conf/base/etc/fstab` (a hard link made by `pax -l`: rewrite in place, never by rename), `/.disk/backotter.json`, config.img |
+| netbsd | the root's `/usr/local/bin/*` | FFS2 made by `makefs -b 10% -f 10%` | `/.disk/backotter.json`, config.img; random GPT disk and partition GUIDs (`gpt create`/`add`) |
+| openbsd | the root's `/usr/local/bin/*` | FFS (`newfs -m 0 -o space` on a vnd), partition `kb + kb/8 + 32 MiB` | `/.disk/backotter.json`, config.img; **the disklabel's random DUID, which `/etc/fstab` mounts root by** |
+| dragonfly | `usr/local/bin/*` | UFS (`newfs -m 0`), sized from the binaries (`ours_kb`) +10 % + `ROOM_MB` 256 | the disklabel64 label `BKO_<32 hex>` (slice 2's label, not the file system's), `etc/fstab` and `boot/loader.conf`'s `vfs.root.mountfrom`, both by that label, `/.disk/backotter.json`, config.img |
+| illumos | `usr/local/bin/*` **inside** `boot_archive.gz` (gzipped UFS miniroot, +10 % + 48 MiB) on the V_ROOT UFS | UFS in UFS, s2 sized +25 % +16 MB | `.volsetid`, the marker in the archive and on s2, `boot_archive.hash` (SHA-1 of the uncompressed archive, always present), config.img; random GPT GUIDs (`mkgpt.py`) |
+| haiku | `system/non-packaged/bin/{rustic-bko,bko-holt}` | BFS, sized from the binaries +10 % + `ROOM_MB` 256 | `/.disk/backotter.json`, config.img |
 
-The table comes from `stick/*/build.sh` (grep for `bko-holt` and `image_id`).
-I2 must confirm it platform by platform: the tree-diff check in §2 C2 fails
-any refresh that touches a path outside its platform's list.
+On Linux the files a refresh rewrites, besides the binaries and the marker,
+are the layer's squashfs and `.size`, `md5sum.txt`, and the appended config
+partition; `make-img.sh` writes them all.
+
+The table comes from `stick/*/build.sh` (grep for `bko-holt`, `image_id`,
+`fstab`, `duid`, `uuid`). I2 must confirm it platform by platform: the
+tree-diff check in §2 C2 fails any refresh that touches a path outside its
+platform's list.
 
 ### 1.4 Signed objects
 
@@ -173,13 +198,23 @@ something of ours cannot pass through a refresh unnoticed.
 
 Some inputs can be hashed: the ISO, slim, the media, the builder guest's
 vm-store generation and the stick/ files. Others arrive over the network at
-build time: Linux's layer from the -updates and -security pockets, FreeBSD's
-`freebsd-update -b`, OpenBSD's syspatches, and illumos packages from the
-repository under its pinned incorporation. NetBSD and DragonFly have no
+build time: Linux's layer from the -updates and -security pockets and from
+apt.bcachefs.org (a pinned `BCACHEFS_DEB_VERSION`, but a third-party
+repository), FreeBSD's `freebsd-update -b`, OpenBSD's syspatches (their
+signed list is fetched afresh by every `fetch`), and illumos packages from
+the repository under its pinned incorporation. NetBSD and DragonFly have no
 binary updates. Haiku's updates come from the haiku6 guest's packages, so
 they follow its generation. **A digest therefore cannot prove that a Linux,
-FreeBSD, OpenBSD or illumos base is current.** The OS-update cadence (D3)
-decides when the network is consulted again.
+FreeBSD, OpenBSD or illumos base is current.** The planner never runs
+`fetch`, so new media, syspatches or a moved kayak branch are seen only by
+the next full build. The OS-update cadence (D3) decides when the network is
+consulted again.
+
+Some image bytes come from **host tools**, not from any hashed file: on
+Linux `make-img.sh` runs the host's xorriso, mksquashfs, mkfs.vfat and
+mtools, and `marker.py` makes every platform's config.img with the host's
+mkfs.vfat and mtools. The farm runs one Debian release, but these packages
+are updated host by host (§3.2, D15).
 
 ### 1.6 The bko-holt builds
 
@@ -211,14 +246,20 @@ in §14.
   the marker, the id sites). Every refresh checks this, and a difference
   anywhere else fails it. The layout, partition table, boot code and ESP are
   compared byte for byte, except for the partitions the swap rewrote.
+  The random ids a build makes (§1.3: GPT GUIDs, OpenBSD's DUID) are masked
+  in that comparison, because the refresh makes them anew (D2). The release
+  and test children must also differ from each other exactly as their
+  parents did, ids aside.
 - **C3. Signed objects untouched.** On Linux: the El Torito boot images, the
   appended EFI partition, `casper/vmlinuz` and `casper/initrd` match the
   parent's SHA-256. A refresh whose change list includes a signed object
   refuses and asks for a full build.
-- **C4. Only a proven parent.** A refresh starts from the image that is
-  current on its host and whose ImgTest2 row **and** +img panel row are PASS
-  in the ledger for its SHA-256, not merely `done.exit 0`. Its provenance
-  names the parent.
+- **C4. Only a proven parent.** A refresh starts from the release and test
+  pair of one provenance, current on its host, whose test image's ImgTest2
+  row **and** +img panel row are PASS in the ledger for its SHA-256, not
+  merely `done.exit 0`. (The release image is never booted, as today; C2
+  ties it to its tested sibling.) Its provenance names the parent. A parent
+  that is itself a refresh is allowed: the cadence (C5) bounds the chain.
 - **C5. Same base.** A refresh needs the parent's base digest (§3.2) to
   equal the base digest that would be built now, and its OS epoch to be
   within the cadence (D3). Anything else is a full build.
@@ -227,13 +268,34 @@ in §14.
   marks a cell PASS without running it.
 - **C7. Same inputs wherever it builds.** A host builds only if its inputs'
   digests equal the plan's (§5). The plan computes them on that host, from
-  the files it will actually read.
+  the files it will actually read. **The plan's** inputs are the newest:
+  for a test guest, the newest vm-store generation (Chopin's working copy
+  when it is ahead of the store); for slim, Chopin's `server/slim` link; for
+  stick/, the synced commit; for bko-bin and holt-bin, the sets every
+  builder holds (§5.2). A host that differs gets no unit of that platform
+  and is named. **And at build time**: `img-one.sh` reads the builder's
+  identity again once its VM is up and once the build ends, as it already
+  rereads the binaries, and refuses the image if it moved (a vm-store link
+  repointed, a vm-update committed) or if it is not the plan's. For the
+  duration of its VM, `make-img-bsd.sh` holds the guest's
+  `vms/G/.vm-update.lock`, so that vm-update refuses that guest instead of
+  committing under a snapshot boot. Today vm-update's message would then say
+  "another vm-update is working on it", so I1 rewords it.
 - **C8. What is tested is the raw image.** Publishing compresses a copy and
   checks that the decompressed copy has the raw image's SHA-256, as
   `compress-images.sh` does today.
 - **C9. Locks and order as today.** `images/.lock-P`, done.exit written last,
   and img-xcopy's move-then-done.exit protocol stay the only way an image
-  directory changes.
+  directory changes. A retest (§6) follows them too.
+- **C10. One round at a time, and no promotion inside one.** `img-round.sh
+  run` holds a farm round lock: a file on the Mac, and `images/.round.lock`
+  on each host it uses, from facts to the end of fan-out. While a host's
+  round lock is held, `promote-bins.sh` and `img-refresh-holt.sh` refuse
+  that host, as they refuse a held `images/.lock-P` today. Each unit is also
+  started with the plan's bko-bin and holt-bin `SHA256SUMS` digests, and
+  `img-one.sh` refuses at its start when the host's sets differ. Without
+  this, a promotion between two units of one round yields a set whose
+  platforms were built from different binaries (D16).
 
 ## 3. Provenance and input digests (the base for speedups 1 and 3)
 
@@ -253,7 +315,8 @@ refreshes. img-xcopy copies it with the image. Schema 1:
    "digest": "sha256 of the canonical JSON of inputs below",
    "inputs": {"stick": {"stick/make-img-bsd.sh": "sha256", "stick/freebsd/build.sh": "...", ...},
               "media": {"FreeBSD-15.1-RELEASE-amd64-memstick.img": "sha256", ...},
-              "builder": {"vm": "freebsd15-builder", "identity": "vm-store generation, else qcow2 sha256"},
+              "builder": {"vm": "freebsd15-builder", "identity": "see §3.2"},
+              "host_tools": {"xorriso": "dpkg version", "squashfs-tools": "...", "dosfstools": "...", "mtools": "..."},
               "iso": "sha256 (linux)", "slim": {"path": "slim-20261120", "manifest": "sha256 of its file list"}},
    "os_epoch": "2026-11-27",   // when this base last took updates from the network (full builds only)
    "os_manifest": "sha256 of C2's tree listing, the swap list left out"
@@ -272,17 +335,47 @@ C2 would already have failed it.
 ### 3.2 The three digests
 
 - **base**: the stick/ files the platform's build reads, its media, its
-  builder guest's identity and, on Linux, the ISO and slim. This is a fixed
-  per-platform list in `stick/img-inputs.tsv` (platform, glob, kind), so
-  that a change to `stick/linux/` never rebuilds Haiku. Shared files
-  (`marker.py`, `make-img-bsd.sh`, `stick/bsd/*`, `testvm/vm-run`,
-  `vm-lib.sh`) are listed for every platform that reads them. The digest is
-  taken over file contents, never over the git commit: a commit that touches
-  no input changes no digest.
+  builder guest's identity, the host tools that write image bytes and, on
+  Linux, the ISO and slim. This is a fixed per-platform list in
+  `stick/img-inputs.tsv` (platform, glob, kind), so that a change to
+  `stick/linux/` never rebuilds Haiku. Every platform lists `img-one.sh`,
+  `marker.py` and `stick/config-partition/*` (config.img's README and
+  settings). The VM platforms add `make-img-bsd.sh`, `stick/bsd/*`,
+  `testvm/vm-run`, `vm-lib.sh`, and all of `stick/P/` except the test files
+  below (`platform.conf` pins the release, its keys and kayak's commit;
+  `build.sh`, `mkgpt.py`, `hook.sh` and the BUILD_FILES). Linux adds
+  `build-backotter-layer.sh`, `make-img.sh`, `stick/layer/**` and
+  `stick/keys/*`. The media part is the list the last `fetch` set (recorded
+  in `img-media/P/MEDIA` by `make-img-bsd.sh`), hashed by content, not
+  whatever else the directory holds. **A lint in I1 fails when a file under
+  `stick/` is neither an input of some platform nor listed in the tsv as
+  `none` (with a reason)**, so a new script cannot be missed silently. The
+  digest is taken over file contents, never over the git commit: a commit
+  that touches no input changes no digest.
+- **The builder's identity.** For a snapshot builder (a test guest), its
+  vm-store generation, read through the `vms/G` link. A guest that is a full
+  folder falls back to its qcow2's SHA-256, cached by (size, mtime, inode),
+  because hashing a multi-GB qcow2 per plan is slow. **FreeBSD's
+  freebsd15-builder has neither**: it is a per-host folder written at every
+  boot, so its qcow2 hash would change every build and differ on every
+  host, and FreeBSD would never refresh or build off its first host. Its
+  identity is a fingerprint the build takes from the running builder and
+  writes to `vms/freebsd15-builder/fingerprint`: `freebsd-version -ku` and
+  the SHA-256 of the base tools the build runs (makefs, mkimg, mdconfig,
+  gpart, tar, pax, freebsd-update). The planner reads that file; a refresh
+  or build that finds the live fingerprint different stops before it writes
+  (C7). Hosts whose builders differ therefore show up in `plan`.
+- **Host tools**: on every platform the dpkg versions of `dosfstools` and
+  `mtools` (config.img), and on Linux also of `xorriso` and `squashfs-tools`.
+  They are recorded in provenance, and whether they enter the digest is D15.
 - **bins**: the three files' SHA-256 (two for Haiku).
 - **tests**: `boot-test.py`, `stick/P/checks.sh` and `config-checks.sh`,
-  `manifest.sh`. When only this digest changes, the image is not rebuilt.
-  Its boot tests run again on the same image (§6).
+  `manifest.sh`, and `img-one.sh`'s mode list. The host's QEMU and OVMF
+  versions (`uefi-secureboot` boots OVMF's MS-keyed variables) are recorded
+  in provenance's `tests` but kept out of the digest: they differ host by
+  host, and ImgTest2 boots every new image on each host's own anyway. When
+  only this digest changes, the image is not rebuilt. Its boot tests run
+  again on the same image (§6).
 
 `stick/img-digest.sh P` prints the three digests and the input list as JSON
 on any host. It reads only, and never touches `images/`.
@@ -317,10 +410,14 @@ builds for a round (a debugging escape).
    `unsquashfs` it as root. That keeps owners, xattrs and the overlay
    whiteouts, which are character devices.
 3. Replace the three files in `usr/local/bin` (`install -m 755 -o 0 -g 0`).
-   Write `holt-api.json` by running the new bko-holt on the host. It is a
-   static amd64 binary, and make-img.sh already falls back to running it
-   there. Write `report.txt`'s "Archivers, and bko-holt" lines the same way,
-   keeping the parent's package section.
+   Run the checks `build-backotter-layer.sh` runs on them today, by the same
+   code (factored out, not copied): ELF machine and static linking (`:150`),
+   `--version` of each (`:407-412`), and `bko-holt --version --json` **in the
+   unpacked tree's chroot**, which writes `$LAYER.holt-api.json` and must list
+   `dump_schemas`, `luks_headers` and `snapshot_layout` (`:423-433`). Then
+   `make-img.sh` takes that file as it does today. Write `report.txt`'s
+   "Archivers, and bko-holt" lines the same way, keeping the parent's package
+   section.
 4. Run `mksquashfs` with the options `--settings` prints, then
    `.size`. The manifest (the package list) is the parent's, unchanged.
 5. `make-img.sh` and `make-img.sh --test` from that layer, unchanged. They
@@ -346,25 +443,43 @@ binaries, the new `backotter.json` and `config.img`. The subcommand:
    the file system that holds the binaries read-write. On illumos, it
    gunzips `boot_archive.gz` and mounts that as well.
 2. Writes the tree listing before the change. Replaces the binaries and the
-   marker. Rewrites the platform's id sites (D2): `tunefs -L` and whatever
-   mounts by the label on FreeBSD, the `BKO_` label on DragonFly, `.volsetid`
-   on illumos. Writes the listing after the change.
+   marker. Rewrites the platform's id sites (§1.3, D2): on FreeBSD `tunefs
+   -L` and both fstabs, in place; on DragonFly the disklabel64 label and the
+   fstab and loader.conf lines that name it; on OpenBSD a new DUID
+   (`disklabel -R` from the parent's label with a fresh `duid:`) and the
+   fstab line; on illumos `.volsetid` in the archive and on s2. Writes the
+   listing after the change.
 3. Unmounts and runs fsck again. On illumos it runs `gzip -9` on the archive,
-   puts it back on s2 and refreshes `boot_archive.hash` if the image has one.
+   puts it back on s2 and rewrites `boot_archive.hash` (the SHA-1 of the
+   uncompressed archive, `build.sh:170`). On NetBSD and illumos the host
+   then gives the GPT new random disk and partition GUIDs, so that the child
+   shares no id with its parent.
 4. Refuses, with its own exit code, when the new files do not fit. The
    planner then falls back to a full build of that platform.
 
-The host writes `config.img` into its partition with dd, outside the VM.
-The partition is a fixed 256 MiB at a fixed offset. The host then compares
-both listings and the partition table (C2). The release and test copies are
-each refreshed from their own parent, because today they are two separate
-builds.
+**The new marker.** `marker.py` runs on the host as today, but with the
+parent's `base_os`, `base_release`, kernel, ZFS version and ZFS feature list
+(read from the parent's `backotter.json` and from the parent tree's
+`usr/share/zfs/compatibility.d/` file), because `build.sh info` cannot be
+rerun: on FreeBSD it rebuilds the root from the memstick and runs
+`freebsd-update` over the network. Only `image_id`, the build time, the
+bins and `holt-api.json` are new. The holt-api comes from running the new
+bko-holt in the VM, as `make-img-bsd.sh` does today. The refresh checks that
+the parent's marker fields still match the parent's tree.
 
-**Headroom.** DragonFly and Haiku size their root to the binaries (`ours_kb`),
-and illumos adds only 25 % + 16 MB. A refresh would soon stop fitting. So
-every full build reserves slack (D1): `max(64 MiB, 50 % of the binaries'
-size)` of free space in the file system that holds them. That is a few tens
-of MB per image, the one change to full builds that this spec makes.
+The host writes `config.img` into its partition with dd, outside the VM.
+The partition is 256 MiB, at the offset the parent's partition table gives.
+The host then compares both listings and the partition table (C2). The
+release and test copies are each refreshed from their own parent, because
+today they are two separate builds.
+
+**Headroom.** Today's free space differs by platform (§1.3). DragonFly and
+Haiku keep 10 % + 256 MiB, which is enough. FreeBSD's `makefs` is given no
+free space, NetBSD keeps 10 %, OpenBSD `kb/8 + 32 MiB`, and illumos 48 MiB
+in the archive and 25 % + 16 MB on s2. So I4 measures each image's free
+space, and full builds get slack (D1) only where it falls short of
+`max(64 MiB, 50 % of the binaries' size)`. That adds a few tens of MB to
+some images, the one change to full builds that this spec makes.
 
 Est. per platform: 1-2 min of VM boot, under a minute of swap and fsck per
 copy, and no media fetch or OS updates. That is 3-5 min against 2.3-15.0 min
@@ -399,17 +514,26 @@ in every plan.
 - **The BSDs, illumos and Haiku need nothing new** on copland, cage and
   czerny. Checked on copland: `vms/` has freebsd15-builder, netbsd11,
   openbsd8, dragonfly6, omnios58 and haiku6, and `img-media/` has a directory
-  for each of the six. Their 10G RAM disk holds the largest measured build
-  peak (illumos 3.9 GB). The builder's identity enters the base digest, so a
-  host with an older generation is told so and gets no units (C7).
+  for each of the six. Cage and czerny were not checked: the facts step
+  (§5.2) finds out, and a host that lacks a builder or its media gets no unit
+  of that platform. Their 10G RAM disk (ceiling 9.0) holds the largest
+  measured build peak (illumos 3.9 GB, so `--reserve` about 4.6). The
+  builder's identity enters the base digest, so a host with an older
+  generation is told so and gets no units (C7). Every small host's
+  freebsd15-builder is its own (§3.2), so until they are brought alike the
+  FreeBSD units stay on the hosts whose fingerprint matches.
 - **Linux** needs `server/` on the small hosts: the 26.10 ISO (2.7 GB) and
   `slim-20261120` (2.2 GB). `stick/img-seed.sh HOST...` (from the Mac) copies
   them the way `shared-slim-path` says:
   `sudo tar --numeric-owner --xattrs --acls` over ssh into
   `/bkoscratch/imgbuild/server`, the `server` link, and `slim -> slim-YYYYMMDD`.
-  It then checks the slim manifest (§3.1) against the source. Whenever slim
-  is repointed on Chopin, the same script repoints every seeded host, and the
-  planner refuses a host whose slim manifest differs.
+  It then checks the slim manifest (§3.1) against the source, and the host
+  tools `make-img.sh` and the layer build need (squashfs-tools 4.6 or later,
+  xorriso 1.5 or later, dosfstools, mtools, `sudo -n` for the layer build,
+  and HTTPS to archive.ubuntu.com, security.ubuntu.com and
+  apt.bcachefs.org). Whenever slim is repointed on Chopin, the same script
+  repoints every seeded host, and the planner refuses a host whose slim
+  manifest differs.
 - **choubox** gets no build units. It has no build role, its RAM disk is 4G,
   and its memory ceiling of 6.0 is under img-lanes' 10.
 
@@ -432,8 +556,14 @@ img-round.sh fanout [--to H,H|all] RUN      # gather and distribute only
    earliest, as `deal-units.py` deals a build round. Image units are added to
    its table with measured minutes: full builds from §1.2 minus compression,
    refreshes est. 3-5 min. Per host: one image unit at a time on a small host
-   (memory 10 of 10.1), two on a big host. Hosts that lack an input are
-   skipped. Chopin is penalised as `pick-host` penalises it.
+   (memory 10 of 10.1), two on a big host (20 of about 23). At most one
+   FreeBSD unit per host (port 2400). Hosts that lack an input are skipped.
+   Chopin is penalised as `pick-host` penalises it. A small host's 10 GiB
+   reservation waits for all of its memory, so the dealer prefers hosts whose
+   room is free now (step 1's `--free`), and `run`'s summary names any unit
+   that waited more than 5 min for its reservation. A refresh's real memory
+   need is measured in I3 and I4; if it is well under 10 GiB, its
+   reservation shrinks so that it fits beside a host's other work.
 4. **Build.** Each host runs `img-lanes.sh --run RUN "P"` for its units.
    `img-one.sh` gains `--refresh-from` and the `BKO_IMG_COMPRESS=0` default
    (§7).
@@ -462,9 +592,16 @@ plans seven retests: boot tests on the current images, a new
 `tests.digest`, and no new SHA-256. A retest writes its results into the
 current provenance's `tests` and refreshes `test/boot-*.out`.
 
-ImgTest2 needs no change. Its keys already follow the image's SHA-256 and
-its harness files, so a reused image's cells stay PASS, and a retest's
-harness change makes them due by the harness digest.
+A retest changes the image directory, so it follows C9: it holds
+`images/.lock-P`, removes `done.exit` while it runs (pins refuse the
+platform meanwhile, as during a build), and writes `done.exit` last with
+the count of failed modes. It runs on the builder's copy only. The fanned-out
+copies keep their provenance until the next fan-out.
+
+ImgTest2 needs no change, provided `images/P/SHA256SUMS` is still written
+(§7). Its keys already follow the image's SHA-256 and its harness files, so
+a reused image's cells stay PASS, and a retest's harness change makes them
+due by the harness digest.
 
 ## 7. Speedup 4: no compression on the farm; compress at publish
 
@@ -472,18 +609,30 @@ harness change makes them due by the harness digest.
   (`BKO_IMG_COMPRESS=0`; `=1` restores today's behaviour). The farm keeps
   raw images only. That saves 37 image-minutes a set, 40 % (§1.2), and every
   xz on Chopin.
+- **`SHA256SUMS` stays.** `img-one.sh` writes `images/P/SHA256SUMS` itself,
+  in the same format, with the raw release image's line (and the test
+  image's, in `test/`). Without it, facts lose the release image's SHA-256
+  and ImgTest2's `PLAT/release-image` key goes blank (§1.1), so a new
+  release image would no longer change the key. img-xcopy already copies the
+  file. I5's proof checks that the keys are unchanged.
 - **Publish**: `stick/img-publish.sh [--host H] SET`, which the user starts
   (or CarpetBeater's step does). On a host that is not Chopin (default: the
   least loaded build host), it copies the current release images of the set
   to `images/publish/SET/P/`, compresses them there with xz `-T0` under a
   reservation, and writes `SHA256SUMS` with both checksums after a
-  decompress-and-hash check (C8). It never touches `images/P/` itself.
+  decompress-and-hash check (C8). It never touches `images/P/` itself. It
+  publishes only images that passed C4's rows, and it refuses (naming the
+  platform) a set whose `os_epoch` is past the cadence (D3), so that a
+  published image is never older in OS updates than the cadence allows.
 - **Retention** replaces what compressing `prev-*` did for disk space (D6).
   Without xz, each set adds about 15.3 GB raw per holding host (7.66 GB of
   release images plus the same again in test copies). The proposal: keep the
   current image and the last two `prev-*` raw on every host, because the
   refresh parent and a rollback need them. Delete older `prev-*` and
-  `prev-x*` directories only after the user's yes (D6). Published sets stay
+  `prev-x*` directories only after the user's yes (D6). Retention never
+  deletes a directory that a running refresh reads as its parent (it holds
+  `images/.lock-P`), and a deleted image that an ImgTest2 pin still
+  hard-links frees its space only when the pin moves. Published sets stay
   as `.xz`.
 
 ## 8. Speedup 5: cross-compiled bko-holt (and bko-rescue)
@@ -515,9 +664,21 @@ booted, against today's 2.3-9 min in a guest.
 The bytes cannot match, because the compiler differs (§1.6). Per platform,
 before the cross build may ship:
 
-1. **API**: `bko-holt --version --json` of the cross build equals the VM
-   build's, apart from the build fields (`features`, `dump_schemas`,
-   `platform`).
+0. **ELF shape**: `readelf -lnd` (and `-V`) of the cross build equals the VM
+   build's, apart from addresses and sizes: static or dynamic, PIE,
+   RELRO, the interpreter, `DT_NEEDED` with library versions, the symbol
+   versions it needs, and the OS notes and segments (FreeBSD's `.note.tag`
+   ABI version, which must be 14's; NetBSD's `.note.netbsd.ident` and PaX
+   notes; OpenBSD's `.note.openbsd.ident`, `PT_OPENBSD_RANDOMIZE`,
+   `PT_OPENBSD_WXNEEDED`, `PT_OPENBSD_NOBTCFI` and `endbr64` landing pads).
+   **This is the only guard for OpenBSD's IBT enforcement**: OpenBSD kills
+   a binary without landing pads or `NOBTCFI` on Intel CPUs that have IBT
+   (Tiger Lake and later), and no farm host has such a CPU (the M900s and
+   choubox's Comet Lake do not; est., to check for Chopin and Cinqcent), so
+   steps 2 and 3 cannot catch it.
+1. **API**: `bko-holt --version --json` of the cross build, run in a guest
+   of the platform, equals the VM build's, apart from the build fields
+   (`features`, `dump_schemas`, `platform`).
 2. **Unit tests on the target**: `cargo test --no-run --target T` cross-builds
    holt's test binaries. They are copied into a throwaway guest of the
    platform and run there, and all of them must pass.
@@ -527,8 +688,29 @@ before the cross build may ship:
    and once with the cross build, on the same guest generation, under a
    private T2_HOST_ROOT and ledger. Both must PASS, and their dumps must be
    equal after the judge's existing normalisation.
-4. **Twice**: steps 1-3 must hold on two consecutive holt-change rounds
+4. **Twice**: steps 0-3 must hold on two consecutive holt-change rounds
    (D11).
+
+The first cross build may simply fail: the BSD and illumos `cfg` code has
+only ever been compiled by the guests' Rust 1.98-1.100, never by 1.94.1, so
+it may use a newer API. I10 finds out.
+
+### 8.2a Keys: the cross build must be tested as itself
+
+HoltTest2 keys a platform's bko-holt by its **code digest** CODE (R14,
+`keys.py`: "built or not"), and `HOST_ROOT/holt-bin/CODE/` never has a
+binary written over (`holt.py`). So a cross build of the same code would
+find the VM build already in place, and every holt cell would stay PASS on
+the VM build's rows. C1 would then be broken without any check noticing.
+The cross build therefore gets a key of its own: a build-kind input in the
+holt key (`PLAT/bko-holt-build`: `vm`, or `cross:` with the toolchain and the
+sysroot's guest generation), and its own directory beside CODE's
+(`holt-bin/CODE/cross/PLAT/`). I10's check builds go there, never to
+`CODE/PLAT/`. At I12's switch the key changes, so every holt line of that
+platform is due once and is run on the cross build. `img-refresh-holt.sh`
+copies from the directory the key names. (A guest's Rust update changes
+today's VM build without changing CODE either: a pre-existing gap, which
+D10's pinned toolchain closes for the cross-built platforms.)
 
 ### 8.3 Rollout
 
@@ -536,8 +718,8 @@ before the cross build may ship:
   ships and tests the VM build. The cross build is a **check build**, as
   `linux-arm64-check` is, and E2 runs privately.
 - **I12**: per platform that passed E2, HoltTest2 builds cross only. That
-  build is the one tested and the one `img-refresh-holt.sh` copies, so C1
-  holds. `provenance.bins.holt_build` says `cross`. The VM build runs as a
+  build is the one tested (its own key, §8.2a) and the one
+  `img-refresh-holt.sh` copies, so C1 holds. `provenance.bins.holt_build` says `cross`. The VM build runs as a
   **reference** once a week and at each change of the pinned toolchain or
   the guest generation, with E2's step 3 on one guest. A difference makes
   that platform go back to the VM build until it is explained.
@@ -558,15 +740,24 @@ whenever a guest is updated.
 - `img-one.sh` and ImgTest2's `boot.sh` run the modes as parallel jobs. They
   first copy the test image into the reservation's RAM directory (up to
   1.6 GB), so the reads do not hit the P3, and overlays already go to TMPDIR.
+  img-lanes' reservation is sized from the build's peak alone, and Linux's
+  is 1.0 GiB (its build works on disk), which does not hold a 1.28 GB image:
+  `img-lanes.sh size()` becomes the larger of the peak rule and the test
+  image's size + 0.5 GiB.
 - **Width.** As many modes at once as the reservation's memory holds at
   4.5 GiB each (D8: the guests keep 4 GiB). Inside img-lanes' 10 GiB that is
   two. ImgTest2's `--reserve 1 5` is raised to
   `--reserve (image + 0.5) (4.5 × width)`, with width 4 on a big host, 2 on
-  a small one and 1 on choubox. The planner picks the width from the
-  host's ceiling.
+  a small one and 1 on choubox, and never more than the platform's modes
+  (two for the BSDs). The planner picks the width from the host's ceiling.
+  On a small host width 2 reserves 9 of its 10.1 GiB, so an ImgTest2 cell
+  there runs beside nothing else heavy.
 - The manifest, which the first mode that reaches the checks types, is
-  written only by the mode named first. Each mode's `.out`, `.log` and `.rc`
-  go to their own files, as today.
+  written only by the mode named first. If that mode fails before the
+  checks, the next mode that reached them is booted once more, alone, with
+  `--manifest`, after the parallel batch, so that a manifest is still typed
+  as in today's serial order (its verdicts stay those of the batch). Each
+  mode's `.out`, `.log` and `.rc` go to their own files, as today.
 - Gain: boot phases from 12.5 to about 6 image-minutes (est.: Linux 3.0 to
   about 1.0, the BSDs about halved), and the same again in each ImgTest2
   run.
@@ -579,11 +770,20 @@ whenever a guest is updated.
   and provenance.json along. img-xcopy already accepts any hosts.json name;
   it loses only its compression step (§7). Disk per host: about 15.3 GB for
   the current set and the same per kept `prev-*` set. Copland has 282 GB
-  free.
+  free. Before it copies, fan-out checks that DEST's `holt-bin/P` is the
+  plan's or the image's, so that a fan-out never rolls back a newer holt-bin
+  (C10 keeps promotions out meanwhile), and that DEST's bko-bin matches the
+  image's `bko-bin.sha256`, which img-xcopy does not bring along (else the
+  pin writes `bins-stale`).
+- **Order.** ImgTest2 and the +img panel start only once fan-out has ended:
+  a host whose copy is still under way has no `done.exit`, and its pin
+  refuses the platform.
 - **choubox.** Its img cells fit (`--reserve 1 5` within 3.0 6.0, at width
   1). Of the +img panel, only the lines with D ≤ 3 fit (dragonfly6,
   freebsd14, netbsd11; `ram-sizes.tsv`). The planner already knows this from
-  `fit_ceilings`. If disk is short there, D12 lets it take test copies only.
+  `fit_ceilings`. If disk is short there, D12 lets it take the BSDs', illumos'
+  and Haiku's test copies only. Linux always needs both images on a host,
+  because its pin checks `release_same` against the release image.
 - **Placement** needs no new rule. `plan.py place_img` and `place_img_panel`
   place a cell on any host whose facts show `images/P` with `done_exit` and
   no `bins_stale`. Once fanned out, every host qualifies, and the planner's
@@ -674,8 +874,10 @@ this spec's speedups 2 and 7.
 
 - **F6. run-all.sh's name-keyed profiles and units (yes).**
   `compare/run-all.sh:194-200` keys profiles by host name. In `:256-265`,
-  bcachefs has HOME chopin, ZFS units need big, and netbsd has HOME cinqcent.
-  Change: drop the netbsd HOME (netbsd11-rust.qcow2 is on all 5 build hosts).
+  bcachefs has HOME chopin, ZFS units need big, and netbsd has HOME cinqcent
+  and needs big too.
+  Change: drop the netbsd HOME and its big requirement (netbsd11-rust.qcow2
+  is on all 5 build hosts; check its peak against a small host's ceiling).
   Drop the ZFS "big" requirement once the loop pools are checked against a
   small host's 10 GiB RAM disk under JOBS_CAP 1. Make bcachefs's HOME "any
   host with the tool", or copy the arch-root bcachefs tool to the small
@@ -804,7 +1006,10 @@ this spec's speedups 2 and 7.
    stage tree per platform per host. The in-place swap is what the user
    proposed, touches fewer tested bytes, and C2 proves it each time.
 2. **D2. A refreshed image's identity.** *Recommend:* a new `image_id`, with
-   the labels derived from it rewritten (§1.3's id sites). Two different
+   the labels derived from it rewritten (§1.3's id sites), and the random ids
+   a full build makes drawn anew: OpenBSD's DUID (required: its fstab mounts
+   root by it, so a parent and child stick plugged in together could mount
+   each other's root) and the GPT GUIDs on NetBSD and illumos. Two different
    images must never share an id or a file-system label: two sticks plugged
    in at once would collide. *Alternative:* keep the parent's id and add a
    `refresh` counter to the marker. That needs fewer edits, but one id would
@@ -825,8 +1030,12 @@ this spec's speedups 2 and 7.
    image and the last two `prev-*` sets raw on every host. With the user's
    yes, delete older `prev-*` and `prev-x*` directories (on Chopin today that
    is most of `images/`'s about 71 GB). It is a permanent deletion, so it is the
-   user's call, and nothing is deleted before they say so. Published sets
-   stay as `.xz`.
+   user's call, and nothing is deleted before they say so. The user also
+   says whether that yes is a standing rule (each round deletes what falls
+   out of the last two, by itself) or one cleanup now, with each later one
+   asked again. I recommend the standing rule, scoped to `images/P/prev-*`
+   and `prev-x*` only: without it, every round adds 15.3 GB per host.
+   Published sets stay as `.xz`.
 7. **D7. What "publish" is.** *Recommend:* `img-publish.sh SET`, started by
    the user or by CarpetBeater, on a host that is not Chopin, writing
    `images/publish/SET/` with xz and both checksums. Nothing is published
@@ -848,11 +1057,14 @@ this spec's speedups 2 and 7.
 11. **D11. When a cross build may ship.** *Recommend:* after E2 (§8.2) passes
     on two consecutive holt-change rounds, platform by platform. The VM
     build then runs as a reference weekly and on every toolchain or guest
-    change.
+    change. For OpenBSD, E2's step 0 must show the same IBT handling as the
+    VM build (§8.2), because no farm CPU enforces IBT. If it does not, or if
+    the user wants proof on hardware, OpenBSD stays a VM build until a run
+    on an IBT-capable Intel machine passes.
 12. **D12. Fan-out scope.** *Recommend:* every amd64 host gets the release
     and test images of the current set (Linux's pin needs the release
-    image for `release_same`). If choubox's disk is short, it takes the test
-    copies only.
+    image for `release_same`). If choubox's disk is short, it takes only the
+    test copies of the six non-Linux platforms, and Linux's both.
 13. **D13. The in-build boot tests.** *Recommend:* keep them in `img-one.sh`
     as the gate before fan-out. They become cheap with parallel modes, and
     a bad image is caught before it is copied to five hosts. Whether
@@ -861,6 +1073,30 @@ this spec's speedups 2 and 7.
     planner; no behaviour change), then I5-I6 (no xz, parallel boots: quick
     and independent), I3 (Linux refresh), I7-I9 (spread), I4 (BSD refreshes,
     one platform at a time, NetBSD first), and I10-I12 (cross) last.
+15. **D15. Host tools in the base digest.** *Recommend:* yes, for the
+    packages that write image bytes on the host (§3.2: dosfstools and mtools
+    everywhere, xorriso and squashfs-tools for Linux). A host whose versions
+    differ from the plan's then gets no unit of the platforms they touch, and
+    a package update on the farm forces one full build of those platforms.
+    *Alternative:* record them in provenance only. Builds stay possible on
+    every host, but two hosts could make different bytes from "the same"
+    inputs, and I7's equivalence proof would hold only for the versions it
+    ran on.
+16. **D16. Promotions during an image round.** *Recommend:* C10's round
+    lock. `promote-bins.sh` and `img-refresh-holt.sh` refuse a host while a
+    round holds it (they say which round, and the user waits or stops it),
+    and every unit refuses binaries that are not the plan's. This changes
+    promote-bins, which the user runs by hand, so it is the user's call.
+    *Alternative:* no lock, and the round's summary flags a set that mixes
+    binaries. That is cheaper, but a mixed set is then caught only after it
+    was built and fanned out.
+17. **D17. Where the cross build's key lives.** *Recommend:* §8.2a, a
+    build-kind input in HoltTest2's holt key and its own `cross/`
+    directory under CODE, so that the switch to a cross build makes every
+    holt line of that platform due once. *Alternative:* fold the build kind
+    into CODE itself. That is simpler, but CODE would then no longer name
+    the code alone, and every tool that reads CODE as "the code" would need
+    checking.
 
 ### 13.2 Farm balance
 
@@ -888,25 +1124,27 @@ Each step is done when its proof passes. Figures are rough (est.).
 
 | id | what | proof (done when) |
 |---|---|---|
-| **I1** | `stick/img-inputs.tsv`, `img-digest.sh`. `img-one.sh` writes `provenance.json` (full builds) with the tree listing (`os_manifest`), the per-platform swap and id-site lists checked against §1.3. (~1 d) | Unit tests in a fixture world (BKO_IMG_DIR and a test T2_HOST_ROOT): digests stable across two runs, and each input class moves only its own digest. Two hosts with the same inputs give the same base digest. A full set built with I1 matches its pre-I1 counterpart in every image file but the provenance |
+| **I1** | `stick/img-inputs.tsv`, `img-digest.sh`, the tsv lint (§3.2). `img-one.sh` writes `provenance.json` (full builds) with the tree listing (`os_manifest`), the per-platform swap and id-site lists checked against §1.3, the FreeBSD builder's fingerprint, and the build-time identity recheck and guest lock (C7). (~1 d) | Unit tests in a fixture world (BKO_IMG_DIR and a test T2_HOST_ROOT): digests stable across two runs, and each input class moves only its own digest. Two hosts with the same inputs give the same base digest. The lint fails on a new unlisted stick/ file. Two FreeBSD builds on one host with no builder change give the same base digest. A vm-update of a builder guest during a fixture build makes the build refuse. A full set built with I1 matches its pre-I1 counterpart in every image file but the provenance |
 | **I2** | `img-round.sh plan` (§3.3, §5.2 steps 1-3), with no execution. Image units in `deal-units.py`. (~1 d) | Table tests over fixture facts: every row of §3.3, a host with a mismatched holt-bin refused, a stale slim refused. On the farm, `plan` right after a fresh set says reuse ×7 |
-| **I3** | Linux refresh: `build-backotter-layer.sh --refresh-from`, `img-one.sh --refresh-from`, C2 and C3 checks. (~1 d) | **E1**: on one day, two full builds with the same bins (A, A') give the noise floor; then, with new bins, a full build B and a refresh R from A. diff(B, R) must fall within diff(A, A'): ids, times, nothing else. R passes all 4 boot modes, then ImgTest2 and the +img panel. A deliberate extra change in the layer makes C2 refuse |
-| **I4** | `build.sh refresh` for netbsd, then freebsd, openbsd, dragonfly, illumos, haiku. The headroom rule in their full builds. (~0.5-1 d each) | E1 per platform. fsck clean before and after. The id sites rewritten (the label checked from the booted image). A too-large binary set makes the refresh refuse and the planner fall back to a full build |
-| **I5** | `BKO_IMG_COMPRESS=0` in img-one.sh and img-xcopy.sh, and `img-publish.sh`. The retention rule only after D6. (~0.5 d) | A set builds with no xz process (sampled ps and wear tags). Publish's decompress-and-hash matches the raw SHA-256 of every image |
+| **I3** | Linux refresh: `build-backotter-layer.sh --refresh-from`, `img-one.sh --refresh-from`, C2 and C3 checks. (~1 d) | **E1**: on one day, two full builds with the same bins (A, A') give the noise floor; then, with new bins, a full build B and a refresh R from A. diff(B, R) must fall within diff(A, A'): ids, times, nothing else. A, A' and B run within one hour, and a package list (manifest) that differs between them voids the trial, since -updates may have moved. R passes all 4 boot modes, then ImgTest2 and the +img panel. A deliberate extra change in the layer makes C2 refuse |
+| **I4** | `build.sh refresh` for netbsd, then freebsd, openbsd, dragonfly, illumos, haiku. The headroom rule in their full builds, where §4.2's measure says it is short. (~0.5-1 d each) | E1 per platform. fsck clean before and after. The id sites rewritten (the label checked from the booted image), OpenBSD's DUID and the GPT GUIDs new. With parent and child attached to one guest, each boots its own root. The marker's kernel and ZFS fields equal the parent's. A too-large binary set makes the refresh refuse and the planner fall back to a full build |
+| **I5** | `BKO_IMG_COMPRESS=0` in img-one.sh and img-xcopy.sh, `img-one.sh` writing `SHA256SUMS`, and `img-publish.sh`. The retention rule only after D6. (~0.5 d) | A set builds with no xz process (sampled ps and wear tags). Facts give the same release SHA-256 as before, and ImgTest2's keys for an unchanged image are unchanged. Publish's decompress-and-hash matches the raw SHA-256 of every image, and publish refuses a set past the cadence |
 | **I6** | Parallel modes in img-one.sh and ImgTest2's boot.sh, the image copied into the RAM disk, reservations sized by width. (~0.5 d) | The same image tested serial and parallel gives the same per-check verdicts on 3 sets. No reservation goes over its ceiling (cmp-run logs). The flakes.json match rate is unchanged |
 | **I7** | `img-seed.sh`, and Linux inputs on copland, cage and czerny. (~0.5 d) | The slim manifests match. A full Linux build on copland and one on Chopin from the same inputs, the same day, have the same layer manifest (package list), the same base squashfs bytes, and both PASS ImgTest2 |
-| **I8** | `img-round.sh run` and `fanout`. Retire Chopin's `images/lanes.sh`. promote-bins' source relaxed (F20). (~1.5 d) | A full farm round: each platform built where `plan` said, identical SHA-256 on every holding host, every host's pin accepts every platform, and no host over its limits |
+| **I8** | `img-round.sh run` and `fanout`, the round lock (C10, after D16). Retire Chopin's `images/lanes.sh`. promote-bins' source relaxed (F20). (~1.5 d) | A full farm round: each platform built where `plan` said, identical SHA-256 on every holding host, every host's pin accepts every platform, and no host over its limits. A promote-bins started mid-round is refused, and a unit started with a host's sets changed under it refuses |
 | **I9** | Proof cells on six hosts: fan-out to all, choubox's width-1 boot cells. (~0.5 d) | An ImgTest2 run places cells on at least 5 hosts. The panel's lines spread, and its wall time drops to about its longest line |
-| **I10** | `holt-cross.sh` for freebsd, netbsd and illumos, as HoltTest2 check builds. (~1.5 d) | E2 steps 1-3 for each |
-| **I11** | The same for openbsd and dragonfly (tier 3). (~1.5 d) | E2 steps 1-3 for each |
-| **I12** | The switch per platform after D11, the weekly VM reference, `holt_build` in the provenance. (~0.5 d) | E2 on two consecutive rounds. The first image set built from cross builds passes ImgTest2 and the panel |
+| **I10** | `holt-cross.sh` for freebsd, netbsd and illumos, as HoltTest2 check builds in `CODE/cross/` with their own key (§8.2a, D17). (~1.5 d) | E2 steps 0-3 for each. A check build never lands in `CODE/PLAT/` |
+| **I11** | The same for openbsd and dragonfly (tier 3). (~1.5 d) | E2 steps 0-3 for each |
+| **I12** | The switch per platform after D11, the weekly VM reference, `holt_build` in the provenance. (~0.5 d) | E2 on two consecutive rounds. At the switch, `t2 plan` shows every holt line of the platform due. The first image set built from cross builds passes ImgTest2 and the panel |
 | **F1-F20** | §12, each with its own proof. | As listed in §12 |
 
 Shared files the work touches, each a small hunk: `img-one.sh`,
 `img-lanes.sh`, `img-xcopy.sh`, `build-backotter-layer.sh`,
 `make-img-bsd.sh`, every `stick/P/build.sh` (one subcommand each),
-`deal-units.py` (image units), `promote-bins.sh` (the source rule),
-`t2lib/img.py` and `img/boot.sh` (width), and `t2lib/holt.py` (cross builds).
+`deal-units.py` (image units), `promote-bins.sh` (the source rule and the
+round lock), `img-refresh-holt.sh` (the round lock), `testvm/vm-update` (the
+refusal's wording), `t2lib/img.py` and `img/boot.sh` (width), and
+`t2lib/holt.py` and `t2lib/keys.py` (cross builds and their key).
 `compress-images.sh` is unchanged; only its callers change.
 
 ## 15. Open
@@ -930,3 +1168,51 @@ Shared files the work touches, each a small hunk: `img-one.sh`,
 5. **The estimates in §11** come from one day's two sets. The first rounds of
    I8 and I9 should record actual wall times per phase in `RUN/plan.json`
    against the plan's, as `t2 batch` records them.
+6. **Bringing the FreeBSD builders alike.** Each host's freebsd15-builder
+   is its own folder (§3.2), so FreeBSD units go only where the fingerprint
+   matches the plan's. Publishing the builder to vm-store, or rebuilding it
+   from `builder-setup.sh` on each host, would let FreeBSD spread like the
+   rest. That is not part of the seven.
+
+## 16. Review of 2026-11-26
+
+Checked against `stick/img-one.sh`, `img-lanes.sh`, `img-xcopy.sh`,
+`compress-images.sh`, `make-img.sh`, `make-img-bsd.sh`,
+`build-backotter-layer.sh`, `marker.py`, every `stick/P/build.sh` and
+`platform.conf`, `testvm/promote-bins.sh`, `vm-update`, `hosts.json`, and
+t2's `facts_host.py`, `keys.py`, `tool_img.py`, `holt.py` and `img/boot.sh`.
+What changed:
+
+- **§7, I5**: `images/P/SHA256SUMS`, which only xz's script writes, is
+  where ImgTest2's `release-image` key comes from. `img-one.sh` now writes it.
+- **§8.2a, D17**: HoltTest2 keys bko-holt by its code, and never writes a
+  binary over another in `CODE/`, so a cross build would have shipped on
+  the VM build's PASSes. It gets its own key and directory.
+- **§3.2, C7**: the FreeBSD builder is a per-host folder, written at every
+  boot, so a qcow2 hash would have blocked every FreeBSD refresh. It gets a
+  fingerprint. The plan's reference inputs are named. A build-time
+  recheck and the guest's vm-update lock close the race with vm-update and
+  vm-store.
+- **C10, D16**: a round lock against promotions between units.
+- **§1.3, §4.2, D2**: the id sites were incomplete: FreeBSD's second
+  (hard-linked) fstab, DragonFly's fstab and loader.conf, OpenBSD's DUID
+  (which fstab mounts by), and GPT GUIDs. The marker's kernel and ZFS fields
+  are now carried over from the parent, since `build.sh info` reaches the
+  network on FreeBSD.
+- **§4.2 headroom**: DragonFly and Haiku already keep 256 MiB free. The
+  short ones are FreeBSD, NetBSD, OpenBSD and illumos.
+- **§1.1, §1.5, §3.2, D15**: the Linux layer also pulls from
+  apt.bcachefs.org. The input list now names `img-one.sh`,
+  `config-partition/`, `stick/layer/`, `stick/keys/`, the Linux scripts and
+  the host tools, and a lint catches unlisted stick/ files.
+- **§4.1**: holt-api is written in the chroot with today's feature checks,
+  not on the host.
+- **§8.2 step 0, D11**: an ELF-shape comparison, the only guard for
+  OpenBSD's IBT enforcement, which no farm CPU exercises.
+- **§9**: Linux's 1.0 GiB lane reservation cannot hold the image copied
+  into RAM, and a failing first mode would have left no manifest.
+- **§10, D12**: Linux cannot take test copies only. Fan-out checks DEST's
+  holt-bin and bko-bin first, and the proof cells wait for fan-out to end.
+- **§6, D6, publish**: a retest follows C9's lock protocol. D6 asks
+  whether its yes is a standing rule. Publish refuses a set past the
+  cadence.

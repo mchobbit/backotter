@@ -155,7 +155,7 @@ pub mod sample {
         let b = &mut img[0x8000..0x8100];
         b[0..4].copy_from_slice(b"JFS1");
         b[4..8].copy_from_slice(&version.to_le_bytes());
-        b[8..16].copy_from_slice(&262144u64.to_le_bytes());
+        b[8..16].copy_from_slice(&262_144_u64.to_le_bytes());
         b[16..20].copy_from_slice(&4096u32.to_le_bytes());
         b[24..28].copy_from_slice(&512u32.to_le_bytes());
         b[36..40].copy_from_slice(&0x0000_0800u32.to_le_bytes());
@@ -242,7 +242,7 @@ mod tests {
         assert_eq!(c.uuid.as_deref(), Some("2026-11-04-12-00-00-00"));
         assert_eq!(
             c.details.build().get("size_bytes").and_then(Value::as_u64),
-            Some(2048000)
+            Some(2_048_000)
         );
         img[0x8000 + 813] = b' ';
         assert_eq!(iso9660(&MemSource(img.clone())).unwrap().uuid, None);
@@ -267,7 +267,7 @@ mod tests {
         assert!(c.uuid.unwrap().starts_with("42"));
         assert_eq!(
             c.details.build().get("size_bytes").and_then(Value::as_u64),
-            Some(512000)
+            Some(512_000)
         );
         img[0x8004] = 1;
         assert_eq!(jfs(&MemSource(img)).unwrap().label.as_deref(), Some("old"));

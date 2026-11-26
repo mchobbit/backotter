@@ -928,7 +928,7 @@ mod tests {
         assert_eq!(parse("-9223372036854775808").unwrap(), Value::Int(i64::MIN));
         assert_eq!(
             parse("18446744073709551616").unwrap(),
-            Value::Float(18446744073709551616.0)
+            Value::Float(18_446_744_073_709_551_616.0)
         );
     }
 

@@ -396,7 +396,7 @@ mod tests {
         assert_eq!(vda.model.as_deref(), Some("QEMU HARDDISK"));
         assert_eq!(vda.serial.as_deref(), Some("SER123"));
         assert_eq!(vda.transport().as_deref(), Some("virtio"));
-        assert_eq!(vda.discard_max_bytes, Some(2147483136));
+        assert_eq!(vda.discard_max_bytes, Some(2_147_483_136));
         assert_eq!(vda.removable, Some(false));
         assert_eq!(
             vda.udev.links,

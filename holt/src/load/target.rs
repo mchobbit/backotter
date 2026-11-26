@@ -1707,9 +1707,9 @@ mod tests {
     fn tree() -> Tree {
         let t = Tree::new("load-target");
         t.disk("vdb", "253:16", &[], 512)
-            .file("/sys/block/vdb/size", format!("{}\n", 33554432));
+            .file("/sys/block/vdb/size", format!("{}\n", 33_554_432));
         t.disk("vdc", "253:32", &[], 512)
-            .file("/sys/block/vdc/size", format!("{}\n", 16777216));
+            .file("/sys/block/vdc/size", format!("{}\n", 16_777_216));
         t.disk("sda", "8:0", &[], 512)
             .file("/sys/block/sda/size", "30000000\n");
         t.partition("sda", "sda3", "8:3", 3, 2048, 65536, &[]);
@@ -2216,7 +2216,7 @@ mod tests {
             format!(
                 "{}
 ",
-                33554432
+                33_554_432
             ),
         );
         t.disk("vdf", "253:80", &[], 512)
@@ -2225,7 +2225,7 @@ mod tests {
                 format!(
                     "{}
 ",
-                    33554432
+                    33_554_432
                 ),
             )
             .file(
@@ -2238,11 +2238,11 @@ mod tests {
             format!(
                 "{}
 ",
-                2 * 33554432
+                2 * 33_554_432
             ),
         );
         let mut other = vec![0u8; 1 << 20];
-        other[440..444].copy_from_slice(&0xdeadbeefu32.to_le_bytes());
+        other[440..444].copy_from_slice(&0xdead_beef_u32.to_le_bytes());
         other[446 + 4] = 0x83;
         other[446 + 8..446 + 12].copy_from_slice(&2048u32.to_le_bytes());
         other[446 + 12..446 + 16].copy_from_slice(&1024u32.to_le_bytes());
@@ -2253,7 +2253,7 @@ mod tests {
             format!(
                 "{}
 ",
-                33554432
+                33_554_432
             ),
         );
         t.disk("vdi", "253:128", &[], 512).file(
@@ -2261,7 +2261,7 @@ mod tests {
             format!(
                 "{}
 ",
-                33554432
+                33_554_432
             ),
         );
         t.file(
@@ -2804,9 +2804,9 @@ mod tests {
     /// The sample layout's own table, every partition at its sectors.
     fn own_table() -> Vec<u8> {
         mbr(&[
-            (0, 2048, 1953792),
-            (1, 1955840, 3905536),
-            (2, 5861376, 27693056),
+            (0, 2048, 1_953_792),
+            (1, 1_955_840, 3_905_536),
+            (2, 5_861_376, 27_693_056),
         ])
     }
 

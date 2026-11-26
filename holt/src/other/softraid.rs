@@ -673,7 +673,7 @@ mod tests {
             controller: Some("softraid0".into()),
             id: Some(0),
             status: "Online".into(),
-            size: Some(17179566080),
+            size: Some(17_179_566_080),
             device: "sd1".into(),
             level: "CRYPTO".into(),
             chunks: vec!["sd0a".into()],
@@ -815,10 +815,10 @@ mod tests {
     fn guest() -> (Tree, FakeRunner) {
         use crate::parttable::build::mbr_entry;
         let mut sd0 = vec![0u8; 80 * 512 + META_LEN];
-        mbr_entry(&mut sd0[..512], 3, 0x80, 0xa6, 64, 33554368);
+        mbr_entry(&mut sd0[..512], 3, 0x80, 0xa6, 64, 33_554_368);
         sd0[80 * 512..].copy_from_slice(&metadata(3, 242));
-        let mut sd1 = vec![0u8; 64 * 512 + 131072];
-        mbr_entry(&mut sd1[..512], 3, 0x80, 0xa6, 64, 33553776);
+        let mut sd1 = vec![0u8; 64 * 512 + 131_072];
+        mbr_entry(&mut sd1[..512], 3, 0x80, 0xa6, 64, 33_553_776);
         sd1[64 * 512..].copy_from_slice(&crate::probe::ufs::sample::image(""));
         let t = Tree::new("softraid-guest");
         t.file("/dev/rsd0c", &sd0)
@@ -886,7 +886,7 @@ mod tests {
         );
         assert_eq!(
             vol.get("size_bytes").and_then(Value::as_u64),
-            Some(33553840 * 512)
+            Some(33_553_840 * 512)
         );
         assert_eq!(
             vol.get("softraid").unwrap().compact(),
@@ -901,7 +901,7 @@ mod tests {
         assert_eq!(
             vol.at(&["partitions", "0", "sectors"])
                 .and_then(Value::as_u64),
-            Some(33553776)
+            Some(33_553_776)
         );
         assert_eq!(str_at(vol, &["disklabel"]), Some(LABEL_SD1));
         let root = vol.at(&["label_partitions", "0"]).unwrap();

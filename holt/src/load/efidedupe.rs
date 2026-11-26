@@ -471,12 +471,12 @@ mod tests {
         assert_eq!(
             nums(matching(
                 &v,
-                &Disk::Mbr(0x1a2b3c4d, 1),
+                &Disk::Mbr(0x1a2b_3c4d, 1),
                 "/efi/alpine/grubx64.efi"
             )),
             ["0004"]
         );
-        assert!(matching(&v, &Disk::Mbr(0x1a2b3c4d, 2), "/efi/alpine/grubx64.efi").is_empty());
+        assert!(matching(&v, &Disk::Mbr(0x1a2b_3c4d, 2), "/efi/alpine/grubx64.efi").is_empty());
     }
 
     /// No entries, and lines that only look like them.

@@ -330,7 +330,7 @@ mod tests {
             let dev = std::fs::read(self.root.join(args[1].trim_start_matches('/'))).ok()?;
             std::fs::write(
                 self.root.join(args[3].trim_start_matches('/')),
-                &dev[..dev.len().min(2 * 16384 + 16744448).min(dev.len())],
+                &dev[..dev.len().min(2 * 16384 + 16_744_448).min(dev.len())],
             )
             .ok()?;
             Some(String::new())

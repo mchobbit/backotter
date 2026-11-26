@@ -47,7 +47,7 @@ pub mod sample {
         s[..name.len()].copy_from_slice(name.as_bytes());
         s[32..36].copy_from_slice(&super::MAGIC1.to_le_bytes());
         s[40..44].copy_from_slice(&2048u32.to_le_bytes());
-        s[48..56].copy_from_slice(&8388096u64.to_le_bytes());
+        s[48..56].copy_from_slice(&8_388_096_u64.to_le_bytes());
         s[64..68].copy_from_slice(&2048u32.to_le_bytes());
         s[68..72].copy_from_slice(&super::MAGIC2.to_le_bytes());
         s[72..76].copy_from_slice(&4u32.to_le_bytes());

@@ -300,10 +300,10 @@ pub mod sample {
             22,
             256,
             0,
-            14757658624,
+            14_757_658_624,
             4096,
             1,
-            3031038,
+            3_031_038,
             0xa5,
         ));
         img
@@ -341,10 +341,10 @@ mod tests {
                 ealgo: 22,
                 keylen: 256,
                 aalgo: Some(0),
-                provsize: 14757658624,
+                provsize: 14_757_658_624,
                 sectorsize: 4096,
                 keys: 1,
-                iterations: 3031038
+                iterations: 3_031_038
             }
         );
     }
@@ -365,11 +365,11 @@ mod tests {
             Some("HMAC/SHA256")
         );
         // Version 0: no aalgo, the rest two bytes earlier.
-        let m =
-            decode(&sample::sector(0, 0x2, 11, 128, 0, 123456789, 512, 1, 5000, 0)[..47]).unwrap();
+        let m = decode(&sample::sector(0, 0x2, 11, 128, 0, 123_456_789, 512, 1, 5000, 0)[..47])
+            .unwrap();
         assert_eq!(
             (m.aalgo, m.provsize, m.sectorsize, m.keys, m.iterations),
-            (None, 123456789, 512, 1, 5000)
+            (None, 123_456_789, 512, 1, 5000)
         );
         assert_eq!(ealgo_name(m.ealgo), Some("AES-CBC"));
         // A version this decoder doesn't know: GELI's, its fields left out.

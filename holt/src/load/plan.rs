@@ -956,7 +956,10 @@ mod tests {
     fn fit_largest_plans_a_smaller_target() {
         let t = tree();
         // vdb a GiB smaller than the source's vda.
-        t.file("/sys/block/vdb/size", format!("{}\n", 33554432 - 2097152));
+        t.file(
+            "/sys/block/vdb/size",
+            format!("{}\n", 33_554_432 - 2_097_152),
+        );
         let runner = FakeRunner::default().with(
             "/usr/sbin/rustic-bko --version",
             "rustic 0.11.4+backotter.4\n",

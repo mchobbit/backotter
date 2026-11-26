@@ -939,11 +939,11 @@ mod tests {
             parse_pool_status(
                 "0 72302592 thin-pool 3 228/9216 3800/564800 - rw discard_passdown queue_if_no_space - 1024"
             ),
-            Some(((228, 9216), (3800, 564800)))
+            Some(((228, 9216), (3800, 564_800)))
         );
         assert_eq!(
             parse_thin_status("0 41943040 thin 2097152 41943039"),
-            Some(2097152)
+            Some(2_097_152)
         );
         assert_eq!(parse_thin_status("0 41943040 thin Fail"), None);
         assert_eq!(parse_pool_status("0 8 linear"), None);

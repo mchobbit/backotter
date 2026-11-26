@@ -1159,7 +1159,7 @@ mod tests {
             },
         );
         let mut sector =
-            probe::geli::sample::sector(7, 0x282, 22, 256, 0, 6103 * 512, 4096, 1, 3031038, 0);
+            probe::geli::sample::sector(7, 0x282, 22, 256, 0, 6103 * 512, 4096, 1, 3_031_038, 0);
         for (i, b) in sector[47..].iter_mut().enumerate() {
             *b = b"SECRETKEY"[i % 9];
         }

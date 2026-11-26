@@ -343,8 +343,8 @@ mod tests {
             parts[2],
             L64Part {
                 letter: 'd',
-                size_kib: 13629440,
-                offset_kib: 3145728,
+                size_kib: 13_629_440,
+                offset_kib: 3_145_728,
                 fstype: "HAMMER2".into()
             }
         );
@@ -364,7 +364,7 @@ mod tests {
             parts,
             vec![L64Part {
                 letter: 'a',
-                size_kib: 4194304,
+                size_kib: 4_194_304,
                 offset_kib: 0,
                 fstype: "4.2BSD".into()
             }]

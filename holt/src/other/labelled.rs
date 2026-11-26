@@ -597,7 +597,7 @@ mod tests {
             w,
             vec![
                 ("dk0".into(), "EFI".into(), 34),
-                ("dk2".into(), "AlpineBSD".into(), 6291490)
+                ("dk2".into(), "AlpineBSD".into(), 6_291_490)
             ]
         );
         // A GPT name with ", " (and " at ") in it is read whole.

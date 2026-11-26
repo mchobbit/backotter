@@ -305,7 +305,7 @@ mod tests {
     pub(crate) fn plain() -> Vec<u8> {
         let mut x: u32 = 12345;
         let mut next = || {
-            x = x.wrapping_mul(1103515245).wrapping_add(12345);
+            x = x.wrapping_mul(1_103_515_245).wrapping_add(12345);
             (x >> 16) & 0x7fff
         };
         let words = [

@@ -970,12 +970,12 @@ mod tests {
             let d = &l.disks[0];
             assert_eq!(
                 (d.size_bytes, d.sector_size, d.parts.len()),
-                (17179869184, 512, 3),
+                (17_179_869_184, 512, 3),
                 "{start}"
             );
             assert_eq!(
                 (d.parts[0].number, d.parts[0].start_lba, d.parts[0].sectors),
-                (1, 2048, 1953792),
+                (1, 2048, 1_953_792),
                 "{start}"
             );
         }

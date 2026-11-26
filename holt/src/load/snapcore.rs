@@ -717,7 +717,7 @@ mod tests {
         let w = boot_area_writes(&v, "vda").unwrap();
         assert_eq!(
             w.iter().map(|(o, b, _)| (*o, b.len())).collect::<Vec<_>>(),
-            vec![(0, 440), (1048576, 1024)]
+            vec![(0, 440), (1_048_576, 1024)]
         );
         assert!(
             boot_area_writes(&v, "vdb")
@@ -757,9 +757,9 @@ mod tests {
         let d = std::fs::read(t.p("/disk")).unwrap();
         assert!(
             d[..440] == code[..]
-                && d[440..1048576].iter().all(|&b| b == 0)
-                && d[1048576..1048576 + 1024] == core[..]
-                && d[1048576 + 1024] == 0
+                && d[440..1_048_576].iter().all(|&b| b == 0)
+                && d[1_048_576..1_048_576 + 1024] == core[..]
+                && d[1_048_576 + 1024] == 0
         );
     }
 }

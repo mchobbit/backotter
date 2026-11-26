@@ -3210,17 +3210,17 @@ mod tests {
 
     #[test]
     fn a_resized_ext_keeps_its_blocks_and_inodes_per_group() {
-        let c = crate::json::parse(&ext4_full(3538432, 2_000_000)).unwrap();
+        let c = crate::json::parse(&ext4_full(3_538_432, 2_000_000)).unwrap();
         // fail-005's shrink: 108 groups to 105, and their inodes; the
         // source's 3466368 inodes would be 33013 a group, more than an
         // inode bitmap block's 32768.
-        let e = ext_resized(&c, 3424947).unwrap().unwrap();
+        let e = ext_resized(&c, 3_424_947).unwrap().unwrap();
         assert_eq!(
             (e.blocks, e.groups, e.ipg, e.inodes),
-            (3424947, 105, 32096, 105 * 32096)
+            (3_424_947, 105, 32096, 105 * 32096)
         );
         assert_eq!(e.reserved_gdt_blocks, Some(261));
-        assert_eq!(e.reserved_blocks, Some(171246));
+        assert_eq!(e.reserved_blocks, Some(171_246));
         // A last group of 100 blocks is dropped, one of its own overhead
         // (2 bitmaps, 2006 inode-table blocks) and 50 kept.
         assert_eq!(
@@ -3258,8 +3258,8 @@ mod tests {
         // Less than a group's own overhead is no filesystem.
         assert!(ext_resized(&c, 1000).is_err());
         // Without inodes per group in the dump, nothing to go by.
-        let bare = crate::json::parse(&ext4(3538432, None)).unwrap();
-        assert_eq!(ext_resized(&bare, 3424947), Ok(None));
+        let bare = crate::json::parse(&ext4(3_538_432, None)).unwrap();
+        assert_eq!(ext_resized(&bare, 3_424_947), Ok(None));
     }
 
     #[test]
@@ -3273,14 +3273,14 @@ mod tests {
     #[test]
     fn a_shrunk_ext_gets_the_inodes_its_groups_have() {
         // fail-005: the partition (and so the ext4) loses 464835584 bytes.
-        let blocks = 3538432;
+        let blocks = 3_538_432;
         let root = blocks * 8;
         let total = 2048 + root + 34;
         let v = D::gpt(total)
             .part(1, 2048, root, &ext4_full(blocks, 2_000_000), "")
             .mount("vda1", blocks * 4096, 6 * GIB)
             .build();
-        let (out, f) = fitted(&v, (total - 464835584 / 512) * 512, 9);
+        let (out, f) = fitted(&v, (total - 464_835_584 / 512) * 512, 9);
         let c = out
             .at(&["storage", "disks", "0", "partitions", "0", "content"])
             .unwrap();
@@ -3299,7 +3299,7 @@ mod tests {
 
     #[test]
     fn a_shrunk_ext_whose_inodes_in_use_dont_fit_is_refused() {
-        let blocks = 3538432;
+        let blocks = 3_538_432;
         let root = blocks * 8;
         let total = 2048 + root + 34;
         // 3.4 M inodes in use: the 105 groups' 3.37 M can't hold them.
@@ -3309,7 +3309,7 @@ mod tests {
             .part(1, 2048, root, &ext, "")
             .mount("vda1", blocks * 4096, 6 * GIB)
             .build();
-        let e = refused(&v, (total - 464835584 / 512) * 512, 9).is("inodes");
+        let e = refused(&v, (total - 464_835_584 / 512) * 512, 9).is("inodes");
         assert!(e.contains("inodes in use"), "{e}");
     }
 

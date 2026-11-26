@@ -503,7 +503,7 @@ mod tests {
         else {
             panic!()
         };
-        assert_eq!((*partition, *start, *size, *format), (1, 2048, 532480, 2));
+        assert_eq!((*partition, *start, *size, *format), (1, 2048, 532_480, 2));
         assert_eq!(signature, "d4fcc28e-3910-4876-86f2-564a396c6a27");
         assert_eq!(
             lo.text()[1],

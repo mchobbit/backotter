@@ -103,13 +103,13 @@ mod tests {
         let t = "# /dev/rsd0c:\ntype: SCSI\nduid: 1a4a1728e6a303a2\nbytes/sector: 512\ntotal sectors: 33554432\nboundstart: 64\n\n16 partitions:\n#                size           offset  fstype [fsize bsize   cpg]\n  a:         29360064               64  4.2BSD   2048 16384 12960 # /\n  b:          4194304         29360128    swap                    # none\n  c:         33554432                0  unused                    \n";
         let l = parse(t);
         assert_eq!(l.duid.as_deref(), Some("1a4a1728e6a303a2"));
-        assert_eq!(l.total_sectors, 33554432);
+        assert_eq!(l.total_sectors, 33_554_432);
         assert_eq!(l.parts.len(), 3);
         assert_eq!(
             l.parts[0],
             LabelPart {
                 letter: 'a',
-                size: 29360064,
+                size: 29_360_064,
                 offset: 64,
                 fstype: "4.2BSD".into()
             }

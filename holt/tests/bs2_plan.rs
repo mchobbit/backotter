@@ -153,7 +153,7 @@ fn bs2_plan_a_corpus_dump_onto_a_smaller_target() {
     let small = |_: &str, size: u64| size - (1 << 30);
     let p = common::plan_onto(&text, &small, &["--fit-largest".into(), "10".into()]).unwrap();
     assert_eq!(p.code, 0, "{}{}", p.out, p.err);
-    assert_eq!(p.maps[0].2, 17179869184 - (1 << 30));
+    assert_eq!(p.maps[0].2, 17_179_869_184 - (1 << 30));
     let c = common::invariants::invariants(&dump, &p);
     assert!(c.violations.is_empty(), "{:?}", c.violations);
     // And without the flag, load refuses the smaller disk.

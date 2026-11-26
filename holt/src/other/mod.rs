@@ -674,7 +674,7 @@ mod tests {
         assert_eq!(keys(&b), ["kind", "first_bytes", "code_b64"]);
         assert_eq!(b.0[2].1, Value::Null);
         let nb = "Device      512-blocks     Used    Avail Capacity  Priority\n/dev/wd0b       2097152        0  2097152     0%    0\n";
-        assert_eq!(swapctl_list(nb), vec![("/dev/wd0b", 2097152 * 512)]);
+        assert_eq!(swapctl_list(nb), vec![("/dev/wd0b", 2_097_152 * 512)]);
         assert_eq!(
             swapctl_list("Device\n/dev/sd0b 1000 0 1000 0% 0\nbad line\n"),
             vec![("/dev/sd0b", 1000 * 512)]

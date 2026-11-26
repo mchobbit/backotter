@@ -2581,12 +2581,12 @@ mod tests {
             .and_then(Value::as_u64)
             .unwrap();
         assert_eq!(g.to_string().len(), "15105800815207446011".len());
-        assert_ne!(g, 15105800815207446011);
+        assert_ne!(g, 15_105_800_815_207_446_011);
         assert!(
             r.at(&["storage", "zfs", "pools", "0", "hostid"])
                 .and_then(Value::as_u64)
                 .unwrap()
-                != 545037285
+                != 545_037_285
         );
         // MBR-style ids stay inside load options; the PXE entry's MAC goes.
         let lo = s(&["boot", "efi", "entries", "0", "load_option_hex"]);
@@ -2660,7 +2660,7 @@ mod tests {
         assert_eq!(
             r.at(&["storage", "disks", "0", "size_bytes"])
                 .and_then(Value::as_u64),
-            Some(512110190592)
+            Some(512_110_190_592)
         );
         assert_eq!(
             s(&["storage", "disks", "0", "model"]),
@@ -3239,7 +3239,7 @@ mod tests {
         let disk = |v: &Value| v.at(&["storage", "disks", "0"]).cloned();
         let raw_sig = crate::load::commands::pmbr_signature(disk(&d).as_ref());
         let red_sig = crate::load::commands::pmbr_signature(disk(&r).as_ref());
-        assert_eq!(raw_sig, Some(0x922b9cd8));
+        assert_eq!(raw_sig, Some(0x922b_9cd8));
         let u = r
             .at(&[
                 "storage",

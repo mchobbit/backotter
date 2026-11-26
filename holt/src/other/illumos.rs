@@ -260,7 +260,11 @@ mod tests {
     fn parsers() {
         assert_eq!(
             parse_diskinfo("-\tc3t0d0\tVirtio\tBlock Device\t17179869184\tno\tno\n"),
-            vec![("c3t0d0".into(), 17179869184, "Virtio Block Device".into())]
+            vec![(
+                "c3t0d0".into(),
+                17_179_869_184,
+                "Virtio Block Device".into()
+            )]
         );
         let m = parse_mnttab(
             "rpool/ROOT/omnios-r151058y\t/\tzfs\tdev=4310002\t0\n/devices\t/devices\tdevfs\tdev=8980000\t1793913084\n",
@@ -296,8 +300,16 @@ Size: 1000.20GB <1000204886016 bytes>\n";
         assert_eq!(
             parse_iostat_en(IOSTAT_EN),
             vec![
-                ("c2t0d0".into(), 17179869184, "Virtio Block Device".into()),
-                ("c3t0d0".into(), 1000204886016, "INTEL SSDPE2KX010T8".into())
+                (
+                    "c2t0d0".into(),
+                    17_179_869_184,
+                    "Virtio Block Device".into()
+                ),
+                (
+                    "c3t0d0".into(),
+                    1_000_204_886_016,
+                    "INTEL SSDPE2KX010T8".into()
+                )
             ]
         );
     }
@@ -323,8 +335,12 @@ Size: 1000.20GB <1000204886016 bytes>\n";
         assert_eq!(
             names(&s),
             vec![
-                ("c2t0d0".into(), "/dev/rdsk/c2t0d0p0".into(), 17179869184),
-                ("c3t0d0".into(), "/dev/rdsk/c3t0d0p0".into(), 1000204886016)
+                ("c2t0d0".into(), "/dev/rdsk/c2t0d0p0".into(), 17_179_869_184),
+                (
+                    "c3t0d0".into(),
+                    "/dev/rdsk/c3t0d0p0".into(),
+                    1_000_204_886_016
+                )
             ]
         );
         assert_eq!(
@@ -355,7 +371,7 @@ Size: 1000.20GB <1000204886016 bytes>\n";
         );
         assert_eq!(
             names(&s),
-            vec![("c5t0d0".into(), "/dev/rdsk/c5t0d0p0".into(), 1048576)]
+            vec![("c5t0d0".into(), "/dev/rdsk/c5t0d0p0".into(), 1_048_576)]
         );
         assert!(s.warnings().is_empty(), "{:?}", s.warnings());
     }

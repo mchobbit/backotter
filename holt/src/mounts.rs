@@ -525,7 +525,7 @@ short line
         assert_eq!(s.len(), 3);
         assert_eq!(s[0].file, "/dev/zram0");
         assert_eq!(s[0].priority, 100);
-        assert_eq!(s[1].size_kib, 4194300);
+        assert_eq!(s[1].size_kib, 4_194_300);
         assert_eq!(s[2].file, "/swap file");
         assert_eq!(s[2].priority, -2);
         assert!(parse_swaps("").is_empty());

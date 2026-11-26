@@ -127,7 +127,7 @@ mod tests {
         assert_eq!(d.get("block_size").and_then(Value::as_u64), Some(4096));
         assert_eq!(
             d.get("btree_node_size").and_then(Value::as_u64),
-            Some(262144)
+            Some(262_144)
         );
         assert_eq!(
             d.get("data_checksum").and_then(Value::as_str),

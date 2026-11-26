@@ -970,7 +970,7 @@ fn golden_invariants_hold_on_a_synthetic_plan() {
     );
     // The +bigger plan keeps them too, on targets 1 GiB bigger.
     let b = common::plan(SYNTH, BIGGER).unwrap();
-    assert_eq!(b.maps[0].2, 17179869184 + BIGGER);
+    assert_eq!(b.maps[0].2, 17_179_869_184 + BIGGER);
     assert!(invariants(&v, &b).violations.is_empty());
 }
 

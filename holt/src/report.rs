@@ -1652,7 +1652,7 @@ mod tests {
         assert!(q[0].get("max_referenced").unwrap().is_null());
         assert_eq!(
             q[1].get("max_referenced").and_then(Value::as_u64),
-            Some(2147483648)
+            Some(2_147_483_648)
         );
         assert_eq!(q[1].get("parents"), Some(&Value::from(vec!["1/100"])));
         assert_eq!(q[1].get("path").and_then(Value::as_str), Some("@home"));

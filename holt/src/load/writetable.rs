@@ -555,7 +555,7 @@ mod tests {
     #[test]
     fn gpt_round_trip() {
         let d = crate::json::parse(GPT).unwrap();
-        for size in [16777216usize, 16777216 + (1 << 20)] {
+        for size in [16_777_216_usize, 16_777_216 + (1 << 20)] {
             let img = apply(&plan(&d, size as u64).unwrap(), size);
             let Some(Table::Gpt { pmbr, gpt }) = read_table(&MemSource(img.clone()), 512) else {
                 panic!("no GPT")
@@ -566,7 +566,7 @@ mod tests {
             assert_eq!(gpt.first_usable_lba, 40);
             assert_eq!(
                 gpt.last_usable_lba,
-                if size == 16777216 {
+                if size == 16_777_216 {
                     32727
                 } else {
                     (size as u64 / 512) - 34
@@ -598,11 +598,11 @@ mod tests {
     fn mbr_round_trip() {
         let d = crate::json::parse(r#"{"name": "wd0", "size_bytes": 8392704, "partition_table": {"type": "dos", "sector_size": 512, "disk_signature": "1234abcd"},
           "partitions": [{"number": 1, "start_lba": 63, "sectors": 16321, "type": "0xa6", "bootable": true}, {"number": 4, "start_lba": 16384, "sectors": 8, "type": "0x83"}]}"#).unwrap();
-        let img = apply(&plan(&d, 8392704).unwrap(), 8392704);
+        let img = apply(&plan(&d, 8_392_704).unwrap(), 8_392_704);
         let Some(Table::Mbr(m)) = read_table(&MemSource(img), 512) else {
             panic!("no MBR")
         };
-        assert_eq!(m.disk_signature, 0x1234abcd);
+        assert_eq!(m.disk_signature, 0x1234_abcd);
         assert_eq!(
             m.parts
                 .iter()
@@ -641,7 +641,7 @@ mod tests {
             ),
             (
                 r#"{"size_bytes": 1048576, "partition_table": {"type": "gpt", "sector_size": 512, "disk_guid": "d837c5f1-d686-11f1-83e1-03e680c1a8f0"}, "partitions": [{"number": 1, "start_lba": 0, "sectors": 0, "type": "83bd6b9d-7f41-11dc-be0b-001560b84f0f", "uuid": "d837c62b-d686-11f1-83e1-03e680c1a8f0"}]}"#,
-                1048576,
+                1_048_576,
             ),
             (
                 r#"{"size_bytes": 8192, "partition_table": {"type": "dos", "sector_size": 512}, "boot_code": {"gap_b64": "QlRY"}, "partitions": [{"number": 1, "start_lba": 1, "sectors": 8, "type": "0x83"}]}"#,
@@ -687,12 +687,12 @@ mod tests {
         assert!(guid_bytes("C12A7328-F81F-11D2-BA4B-00A0C93EC93B").is_some());
         let js = GPT.replace("83bd6b9d-7f41-11dc-be0b-001560b84f0f", &wide);
         assert_eq!(
-            plan(&crate::json::parse(&js).unwrap(), 16777216).unwrap_err(),
+            plan(&crate::json::parse(&js).unwrap(), 16_777_216).unwrap_err(),
             "partition 1: a bad type GUID"
         );
         let js = GPT.replace("d837c62b-d686-11f1-83e1-03e680c1a8f0", &wide);
         assert_eq!(
-            plan(&crate::json::parse(&js).unwrap(), 16777216).unwrap_err(),
+            plan(&crate::json::parse(&js).unwrap(), 16_777_216).unwrap_err(),
             "partition 1: a bad GUID"
         );
     }

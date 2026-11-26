@@ -1770,9 +1770,9 @@ mod tests {
         let mut table = vec![0u8; 512];
         table[440..444].copy_from_slice(&0x1f2e_3d4cu32.to_le_bytes());
         for (slot, start, n) in [
-            (0, 2048, 1953792),
-            (1, 1955840, 3905536),
-            (2, 5861376, 27693056),
+            (0, 2048, 1_953_792),
+            (1, 1_955_840, 3_905_536),
+            (2, 5_861_376, 27_693_056),
         ] {
             crate::parttable::build::mbr_entry(&mut table, slot, 0, 0x83, start, n);
         }
@@ -2050,9 +2050,9 @@ mod tests {
         let mut table = vec![0u8; 512];
         table[440..444].copy_from_slice(&0x1f2e_3d4cu32.to_le_bytes());
         for (slot, start, n) in [
-            (0, 2048, 1953792),
-            (1, 1955840, 3905536),
-            (2, 5861376, 27693056),
+            (0, 2048, 1_953_792),
+            (1, 1_955_840, 3_905_536),
+            (2, 5_861_376, 27_693_056),
         ] {
             crate::parttable::build::mbr_entry(&mut table, slot, 0, 0x83, start, n);
         }

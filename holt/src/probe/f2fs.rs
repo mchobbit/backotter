@@ -113,7 +113,7 @@ pub mod sample {
         s[20..24].copy_from_slice(&9u32.to_le_bytes());
         s[24..28].copy_from_slice(&1u32.to_le_bytes());
         s[28..32].copy_from_slice(&1u32.to_le_bytes());
-        s[36..44].copy_from_slice(&3407872u64.to_le_bytes());
+        s[36..44].copy_from_slice(&3_407_872_u64.to_le_bytes());
         s[48..52].copy_from_slice(&6655u32.to_le_bytes());
         for (i, b) in (0..16u8).enumerate() {
             s[108 + i] = 0x80 + b;
@@ -150,7 +150,7 @@ mod tests {
         assert_eq!(d.get("block_size").and_then(Value::as_u64), Some(4096));
         assert_eq!(
             d.get("size_bytes").and_then(Value::as_u64),
-            Some(3407872 * 4096)
+            Some(3_407_872 * 4096)
         );
         assert_eq!(
             d.get("blocks_per_segment").and_then(Value::as_u64),

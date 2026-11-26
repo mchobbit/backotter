@@ -439,7 +439,7 @@ fn chimera_uefi() -> Tree {
                     LINUX,
                     "11112222-3333-4444-5555-666677778888",
                     73728,
-                    131038,
+                    131_038,
                     0,
                     "",
                 ),
@@ -578,7 +578,7 @@ fn limine_fallback(loader_info: bool) -> Tree {
                     LINUX,
                     "21112222-3333-4444-5555-666677778888",
                     73728,
-                    131038,
+                    131_038,
                     0,
                     "",
                 ),
@@ -739,7 +739,7 @@ fn uefi_shim() -> Tree {
                     LINUX,
                     "11112222-3333-4444-5555-666677778888",
                     73728,
-                    131038,
+                    131_038,
                     0,
                     "",
                 ),
@@ -891,7 +891,7 @@ fn luks_lvm_tree() -> Tree {
                     LINUX,
                     "aaaaaaaa-0000-0000-0000-000000000003",
                     51200,
-                    131038,
+                    131_038,
                     0,
                     "",
                 ),
@@ -1025,7 +1025,7 @@ fn thin_lvm_tree() -> Tree {
                     LINUX,
                     "7a05e5e5-0000-4000-8000-000000000003",
                     90112,
-                    131038,
+                    131_038,
                     0,
                     "vos-root",
                 ),
@@ -1545,15 +1545,15 @@ fn vanilla_tree(b_used: bool) -> Tree {
                     LINUX,
                     "7a05e5e5-0000-4000-8000-000000000003",
                     90112,
-                    131071,
+                    131_071,
                     0,
                     "vos-root",
                 ),
                 (
                     LINUX,
                     "7a05e5e5-0000-4000-8000-000000000004",
-                    131072,
-                    163806,
+                    131_072,
+                    163_806,
                     0,
                     "vos-var",
                 ),
@@ -1582,7 +1582,7 @@ fn vanilla_tree(b_used: bool) -> Tree {
     );
     let mut var_pv = lvm::sample::pv_with(512, 1 << 20, VOS_VAR_VG);
     var_pv[544..576].copy_from_slice(b"VaRpv0aaaabbbbccccddddeeeeffffff");
-    put(&mut img, 131072, &var_pv);
+    put(&mut img, 131_072, &var_pv);
     let mut init = ext::sample::image(
         0x4 | 0x8 | 0x10 | 0x20,
         0x2 | 0x40 | 0x80 | 0x200,
@@ -1603,7 +1603,7 @@ fn vanilla_tree(b_used: bool) -> Tree {
         .partition("vda", "vda1", "254:1", 1, 2048, 16384, &img)
         .partition("vda", "vda2", "254:2", 2, 18432, 71680, &img)
         .partition("vda", "vda3", "254:3", 3, 90112, 40960, &img)
-        .partition("vda", "vda4", "254:4", 4, 131072, 32735, &img)
+        .partition("vda", "vda4", "254:4", 4, 131_072, 32735, &img)
         .file("/sys/block/vda/device/model", "")
         .file("/sys/block/vda/vda3/holders/dm-0", "")
         .file("/sys/block/vda/vda3/holders/dm-1", "")
@@ -2402,7 +2402,7 @@ fn zfs_root_tree() -> (Tree, FakeRunner) {
     let mut img = vec![0u8; 64 * MIB];
     mbr_entry(&mut img[..512], 0, 0x80, 0x83, 2048, 8192);
     mbr_entry(&mut img[..512], 1, 0, 0x82, 10240, 4096);
-    mbr_entry(&mut img[..512], 2, 0, 0xbf, 14336, 116736);
+    mbr_entry(&mut img[..512], 2, 0, 0xbf, 14336, 116_736);
     img[..440].copy_from_slice(&grub::grub2_boot_img(1)[..440]);
     let cfg = crate::json::parse(
         r#"{"version": 5000, "name": "rpool", "state": 0, "txg": 4, "pool_guid": 777, "hostname": "deb13zfs", "top_guid": 1, "guid": 1,
@@ -2410,12 +2410,12 @@ fn zfs_root_tree() -> (Tree, FakeRunner) {
             "features_for_read": {"com.delphix:hole_birth": true}}"#,
     )
     .unwrap();
-    let vdev = zfs::pack::vdev(116736 * 512, &cfg);
+    let vdev = zfs::pack::vdev(116_736 * 512, &cfg);
     put(&mut img, 14336, &vdev);
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 2048, 8192, &img)
         .partition("vda", "vda2", "254:2", 2, 10240, 4096, &img)
-        .partition("vda", "vda3", "254:3", 3, 14336, 116736, &img)
+        .partition("vda", "vda3", "254:3", 3, 14336, 116_736, &img)
         .file("/etc/zfs/zpool.cache", zfs::pack::packed(&crate::json::parse(r#"{"rpool": {"name": "rpool", "pool_guid": 777}}"#).unwrap()))
         .file("/proc/self/mountinfo", "26 1 0:24 / / rw,relatime shared:1 - zfs rpool/ROOT/debian rw,xattr,posixacl\n27 26 254:1 / /boot rw - ext4 /dev/vda1 rw\n")
         .file("/proc/cmdline", "BOOT_IMAGE=/vmlinuz root=ZFS=rpool/ROOT/debian ro\n");
@@ -2473,7 +2473,7 @@ fn zfs_root() {
     );
     assert_eq!(s(tools, &["datasets", "1", "name"]), "rpool/ROOT/debian");
     assert_eq!(s(tools, &["datasets", "1", "canmount"]), "noauto");
-    assert_eq!(u(tools, &["datasets", "1", "recordsize"]), 131072);
+    assert_eq!(u(tools, &["datasets", "1", "recordsize"]), 131_072);
     assert!(tools.at(&["datasets", "1", "volsize"]).unwrap().is_null());
     assert_eq!(s(tools, &["datasets", "1", "casesensitivity"]), "sensitive");
     // Every local property, user properties too, with its source.
@@ -2586,7 +2586,7 @@ fn chimera_uefi_zfs() -> (Tree, FakeRunner) {
                     "6a898cc3-1dd2-11b2-99a6-080020c9b98d",
                     "21112222-3333-4444-5555-666677778888",
                     73728,
-                    190463,
+                    190_463,
                     0,
                     "",
                 ),
@@ -2600,7 +2600,7 @@ fn chimera_uefi_zfs() -> (Tree, FakeRunner) {
             "features_for_read": {"com.delphix:hole_birth": true}}"#,
     )
     .unwrap();
-    put(&mut img, 73728, &zfs::pack::vdev(116736 * 512, &cfg));
+    put(&mut img, 73728, &zfs::pack::vdev(116_736 * 512, &cfg));
     let mut loader_info = vec![6u8, 0, 0, 0];
     for c in "systemd-boot 256.11".encode_utf16().chain([0]) {
         loader_info.extend(c.to_le_bytes());
@@ -2608,7 +2608,7 @@ fn chimera_uefi_zfs() -> (Tree, FakeRunner) {
     let opts = "root=ZFS=rpool/ROOT/chimera ro";
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
-        .partition("vda", "vda2", "254:2", 2, 73728, 116736, &img)
+        .partition("vda", "vda2", "254:2", 2, 73728, 116_736, &img)
         .file("/sys/firmware/efi/fw_platform_size", "64\n")
         .file(&format!("/sys/firmware/efi/efivars/SecureBoot-{GLOBAL}"), [6u8, 0, 0, 0, 0])
         .file(&format!("/sys/firmware/efi/efivars/LoaderInfo-{LOADER}"), loader_info)
@@ -3041,15 +3041,15 @@ fn kinoite_ostree() -> Tree {
                     LINUX,
                     "e53caff6-0000-4000-8000-000000000002",
                     73728,
-                    106495,
+                    106_495,
                     0,
                     "",
                 ),
                 (
                     LINUX,
                     "e53caff6-0000-4000-8000-000000000003",
-                    106496,
-                    196574,
+                    106_496,
+                    196_574,
                     0,
                     "",
                 ),
@@ -3064,7 +3064,7 @@ fn kinoite_ostree() -> Tree {
     );
     put(
         &mut img,
-        106496,
+        106_496,
         &btrfs::sample::image("fedora", 0x1 | 0x20 | 0x40 | 0x100 | 0x200),
     );
     let boot_uuid = "10111213-1415-1617-1819-1a1b1c1d1e1f";
@@ -3092,7 +3092,7 @@ fn kinoite_ostree() -> Tree {
     t.disk("vda", "253:0", &img, 512)
         .partition("vda", "vda1", "253:1", 1, 2048, 71680, &img)
         .partition("vda", "vda2", "253:2", 2, 73728, 32768, &img)
-        .partition("vda", "vda3", "253:3", 3, 106496, 90079, &img)
+        .partition("vda", "vda3", "253:3", 3, 106_496, 90079, &img)
         .file("/sys/firmware/efi/fw_platform_size", "64\n")
         .file(&var("Boot0001"), unhex(&shim))
         .file(&var("BootOrder"), unhex("07000000 0100"))
@@ -4543,7 +4543,7 @@ fn biglinux() -> Tree {
                     LINUX,
                     "b16b16b1-0000-4000-8000-000000000002",
                     73728,
-                    196574,
+                    196_574,
                     0,
                     "",
                 ),
@@ -4567,7 +4567,7 @@ fn biglinux() -> Tree {
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
-        .partition("vda", "vda2", "254:2", 2, 73728, 122847, &img)
+        .partition("vda", "vda2", "254:2", 2, 73728, 122_847, &img)
         .symlink(&format!("/dev/disk/by-partuuid/{BIGLINUX_ESP}"), "../../vda1")
         .file("/sys/firmware/efi/fw_platform_size", "64\n")
         .file(&var("Boot0001"), efi_load_option("BigLinux", 1, 2048, 71680, BIGLINUX_ESP, "\\EFI\\BigLinux\\grubx64.efi"))
@@ -4821,7 +4821,7 @@ fn garuda() -> Tree {
                     LINUX,
                     "9a2d0da0-0000-4000-8000-000000000002",
                     73728,
-                    196574,
+                    196_574,
                     0,
                     "garuda",
                 ),
@@ -4875,7 +4875,7 @@ fn garuda() -> Tree {
     fstab.push_str("UUID=9A2D-0001 /boot/efi vfat umask=0077 0 2\n");
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
-        .partition("vda", "vda2", "254:2", 2, 73728, 122847, &img)
+        .partition("vda", "vda2", "254:2", 2, 73728, 122_847, &img)
         .symlink(&format!("/dev/disk/by-partuuid/{GARUDA_ESP}"), "../../vda1")
         .file("/sys/firmware/efi/fw_platform_size", "64\n")
         .file(&var("Boot0001", GLOBAL), misc)
@@ -5243,7 +5243,7 @@ fn anduinos() -> Tree {
                     LINUX,
                     "a2d00105-0000-4000-8000-000000000003",
                     86016,
-                    204766,
+                    204_766,
                     0,
                     "root",
                 ),
@@ -5287,7 +5287,7 @@ fn anduinos() -> Tree {
         .partition("vda", "vda1", "254:1", 1, 2048, 4096, &img)
         .partition("vda", "vda2", "254:2", 2, 6144, 71680, &img)
         .partition("vda", "vda3", "254:3", 3, 77824, 8192, &img)
-        .partition("vda", "vda4", "254:4", 4, 86016, 118751, &img)
+        .partition("vda", "vda4", "254:4", 4, 86016, 118_751, &img)
         .file("/sys/block/vda/device/model", "")
         .symlink(&format!("/dev/disk/by-partuuid/{ANDUINOS_ESP}"), "../../vda2")
         .file("/sys/firmware/efi/fw_platform_size", "64\n")
@@ -5702,15 +5702,15 @@ fn kali() -> Tree {
                     LINUX,
                     "ca11ca11-0000-4000-8000-000000000002",
                     73728,
-                    196607,
+                    196_607,
                     0,
                     "",
                 ),
                 (
                     SWAP,
                     "ca11ca11-0000-4000-8000-000000000003",
-                    196608,
-                    204766,
+                    196_608,
+                    204_766,
                     0,
                     "",
                 ),
@@ -5723,7 +5723,7 @@ fn kali() -> Tree {
         73728,
         &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""),
     );
-    put(&mut img, 196608, &misc::sample::swap(1024, ""));
+    put(&mut img, 196_608, &misc::sample::swap(1024, ""));
     let (root, swap) = (
         "10111213-1415-1617-1819-1a1b1c1d1e1f",
         "c0c1c2c3-c4c5-c6c7-c8c9-cacbcccdcecf",
@@ -5732,8 +5732,8 @@ fn kali() -> Tree {
     let grub = vec![2u8; 400];
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
-        .partition("vda", "vda2", "254:2", 2, 73728, 122880, &img)
-        .partition("vda", "vda3", "254:3", 3, 196608, 8159, &img)
+        .partition("vda", "vda2", "254:2", 2, 73728, 122_880, &img)
+        .partition("vda", "vda3", "254:3", 3, 196_608, 8159, &img)
         .file("/sys/block/vda/device/model", "")
         .symlink(&format!("/dev/disk/by-partuuid/{KALI_ESP}"), "../../vda1")
         .file("/sys/firmware/efi/fw_platform_size", "64\n")
@@ -6005,7 +6005,7 @@ fn neon() -> Tree {
                     LINUX,
                     "bc000000-0000-4000-8000-000000000003",
                     73728,
-                    204766,
+                    204_766,
                     0,
                     "",
                 ),
@@ -6040,7 +6040,7 @@ fn neon() -> Tree {
     );
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
-        .partition("vda", "vda2", "254:2", 2, 73728, 131039, &img)
+        .partition("vda", "vda2", "254:2", 2, 73728, 131_039, &img)
         .file("/sys/block/vda/device/model", "")
         .symlink(&format!("/dev/disk/by-partuuid/{NEON_ESP}"), "../../vda1")
         .file("/sys/firmware/efi/fw_platform_size", "64\n")
@@ -6323,7 +6323,7 @@ fn elementary(luks: bool) -> Tree {
             "e1e0e1e0-0000-4000-8000-000000000002"
         },
         pv_start,
-        204766,
+        204_766,
         0,
         "",
     ));
@@ -6376,9 +6376,25 @@ fn elementary(luks: bool) -> Tree {
         );
     if luks {
         t.partition("vda", "vda2", "254:2", 2, 73728, 16384, &img)
-            .partition("vda", "vda3", "254:3", 3, pv_start, 204767 - pv_start, &img);
+            .partition(
+                "vda",
+                "vda3",
+                "254:3",
+                3,
+                pv_start,
+                204_767 - pv_start,
+                &img,
+            );
     } else {
-        t.partition("vda", "vda2", "254:2", 2, pv_start, 204767 - pv_start, &img);
+        t.partition(
+            "vda",
+            "vda2",
+            "254:2",
+            2,
+            pv_start,
+            204_767 - pv_start,
+            &img,
+        );
     }
     // The LVs (and, encrypted, the LUKS mapping under them) as dm devices.
     let lv = |id: &str| format!("LVM-{ELEMENTARY_VG}{id}aaaabbbbccccddddeeeeffffff");
@@ -7077,7 +7093,7 @@ fn proxmox(mirror: bool) -> (Tree, FakeRunner) {
                             "9e9e9e9e-3333-4000-8000-00000000000b"
                         },
                         67584,
-                        184319,
+                        184_319,
                         0,
                         "",
                     ),
@@ -7094,7 +7110,7 @@ fn proxmox(mirror: bool) -> (Tree, FakeRunner) {
         put(
             &mut img,
             67584,
-            &zfs::pack::vdev(116736 * 512, &crate::json::parse(&cfg).unwrap()),
+            &zfs::pack::vdev(116_736 * 512, &crate::json::parse(&cfg).unwrap()),
         );
         let major = devno.split(':').next().unwrap();
         let minor: u32 = devno.split(':').nth(1).unwrap().parse().unwrap();
@@ -7123,7 +7139,7 @@ fn proxmox(mirror: bool) -> (Tree, FakeRunner) {
                 &format!("{major}:{}", minor + 3),
                 3,
                 67584,
-                116736,
+                116_736,
                 &img,
             )
             .symlink(
@@ -7689,7 +7705,7 @@ fn guix_uefi() -> Tree {
                     LINUX,
                     "9a1c0000-0000-4000-8000-000000000002",
                     73728,
-                    131038,
+                    131_038,
                     0,
                     "",
                 ),
@@ -7782,7 +7798,7 @@ fn guix_bios() -> Tree {
                     LINUX,
                     "9a1c0000-0000-4000-8000-000000000012",
                     14336,
-                    131038,
+                    131_038,
                     0,
                     "",
                 ),
@@ -7822,7 +7838,7 @@ fn guix_bios() -> Tree {
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 2048, 4096, &img)
         .partition("vda", "vda2", "254:2", 2, 6144, 8192, &img)
-        .partition("vda", "vda3", "254:3", 3, 14336, 116703, &img)
+        .partition("vda", "vda3", "254:3", 3, 14336, 116_703, &img)
         .file("/proc/self/mountinfo", mountinfo)
         .file("/proc/swaps", "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n/dev/vda2                               partition\t4096\t\t0\t\t-2\n")
         .file("/etc/fstab", fstab)
@@ -10314,8 +10330,8 @@ fn openindiana(uefi: bool) -> (Tree, FakeRunner) {
     let mut img = vec![0u8; 64 * MIB];
     let (esp, pool, resv) = (
         (256u64, 16639u64),
-        (16640u64, 114654u64),
-        (114655u64, 131038u64),
+        (16640u64, 114_654_u64),
+        (114_655_u64, 131_038_u64),
     );
     let mut parts = vec![
         (
@@ -10864,7 +10880,7 @@ fn truenas(mirror: bool) -> (Tree, FakeRunner) {
                             "7e7e7e7e-3333-4000-8000-00000000000b"
                         },
                         67584,
-                        184319,
+                        184_319,
                         0,
                         "",
                     ),
@@ -10885,7 +10901,7 @@ fn truenas(mirror: bool) -> (Tree, FakeRunner) {
         put(
             &mut img,
             67584,
-            &zfs::pack::vdev(116736 * 512, &crate::json::parse(&cfg).unwrap()),
+            &zfs::pack::vdev(116_736 * 512, &crate::json::parse(&cfg).unwrap()),
         );
         let major = devno.split(':').next().unwrap();
         let minor: u32 = devno.split(':').nth(1).unwrap().parse().unwrap();
@@ -10914,7 +10930,7 @@ fn truenas(mirror: bool) -> (Tree, FakeRunner) {
                 &format!("{major}:{}", minor + 3),
                 3,
                 67584,
-                116736,
+                116_736,
                 &img,
             )
             .symlink(
@@ -10951,7 +10967,7 @@ fn truenas(mirror: bool) -> (Tree, FakeRunner) {
                     BF01,
                     "7e7e7e7e-3333-4000-8000-00000000000c",
                     2048,
-                    194559,
+                    194_559,
                     0,
                     "",
                 )],
@@ -10962,10 +10978,10 @@ fn truenas(mirror: bool) -> (Tree, FakeRunner) {
         put(
             &mut img,
             2048,
-            &zfs::pack::vdev(192512 * 512, &crate::json::parse(cfg).unwrap()),
+            &zfs::pack::vdev(192_512 * 512, &crate::json::parse(cfg).unwrap()),
         );
         t.disk("vdc", "254:32", &img, 512)
-            .partition("vdc", "vdc1", "254:33", 1, 2048, 192512, &img);
+            .partition("vdc", "vdc1", "254:33", 1, 2048, 192_512, &img);
     } else {
         t.file("/sys/firmware/efi/fw_platform_size", "64\n")
             .file(&var("BootOrder"), order)
@@ -11819,7 +11835,7 @@ fn zfsbootmenu(enc: bool) -> (Tree, FakeRunner) {
                     BF00,
                     "2bb0e0e1-2222-4000-8000-00000000000a",
                     73728,
-                    190463,
+                    190_463,
                     0,
                     "",
                 ),
@@ -11833,7 +11849,7 @@ fn zfsbootmenu(enc: bool) -> (Tree, FakeRunner) {
             "features_for_read": {"com.delphix:hole_birth": true}}"#,
     )
     .unwrap();
-    put(&mut img, 73728, &zfs::pack::vdev(116736 * 512, &cfg));
+    put(&mut img, 73728, &zfs::pack::vdev(116_736 * 512, &cfg));
     let zbm = sample::uki(
         sample::RELEASE_OSREL,
         sample::RELEASE_CMDLINE,
@@ -11855,7 +11871,7 @@ fn zfsbootmenu(enc: bool) -> (Tree, FakeRunner) {
     let db: String = pkgs.iter().map(|(n, v)| format!("\t<key>{n}</key>\n\t<dict>\n\t\t<key>architecture</key>\n\t\t<string>x86_64</string>\n\t\t<key>pkgver</key>\n\t\t<string>{n}-{v}</string>\n\t</dict>\n")).collect();
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
-        .partition("vda", "vda2", "254:2", 2, 73728, 116736, &img)
+        .partition("vda", "vda2", "254:2", 2, 73728, 116_736, &img)
         .symlink(&format!("/dev/disk/by-partuuid/{ESP_UUID}"), "../../vda1")
         .file("/sys/firmware/efi/fw_platform_size", "64\n")
         .file(&var("Boot0000"), efi_load_option("ZFSBootMenu (Backup)", 1, 2048, 71680, ESP_UUID, "\\EFI\\ZBM\\VMLINUZ-BACKUP.EFI"))
@@ -12706,7 +12722,7 @@ fn solus(mounted: bool, esp_name: &str) -> Tree {
                     0,
                     "",
                 ),
-                (LINUX, SOLUS_ROOT_PART, 79872, 196574, 0, ""),
+                (LINUX, SOLUS_ROOT_PART, 79872, 196_574, 0, ""),
             ],
         },
     );
@@ -12748,7 +12764,7 @@ fn solus(mounted: bool, esp_name: &str) -> Tree {
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 4096, 71680, &img)
         .partition("vda", "vda2", "254:2", 2, 75776, 4096, &img)
-        .partition("vda", "vda3", "254:3", 3, 79872, 116703, &img)
+        .partition("vda", "vda3", "254:3", 3, 79872, 116_703, &img)
         .file("/sys/block/vda/device/model", "")
         .symlink(&format!("/dev/disk/by-partuuid/{SOLUS_ESP}"), "../../vda1")
         .symlink(&format!("/dev/disk/by-partuuid/{SOLUS_ROOT_PART}"), "../../vda3")
@@ -13226,15 +13242,15 @@ fn snapcore_tree(fde: bool) -> Tree {
                     LINUX,
                     "fb2212f5-3d65-4656-89ae-18b3bb660bfb",
                     86016,
-                    126975,
+                    126_975,
                     0,
                     "ubuntu-save",
                 ),
                 (
                     LINUX,
                     "ca4a89d0-44fa-4fa8-a211-f1ca46ad4f55",
-                    126976,
-                    188415,
+                    126_976,
+                    188_415,
                     0,
                     "ubuntu-data",
                 ),
@@ -13265,13 +13281,13 @@ fn snapcore_tree(fde: bool) -> Tree {
         )
     };
     put(&mut img, 86016, &save);
-    put(&mut img, 126976, &data);
+    put(&mut img, 126_976, &data);
     t.disk("vda", "254:0", &img, 512)
         .partition("vda", "vda1", "254:1", 1, 2048, 2048, &img)
         .partition("vda", "vda2", "254:2", 2, 4096, 73728, &img)
         .partition("vda", "vda3", "254:3", 3, 77824, 8192, &img)
         .partition("vda", "vda4", "254:4", 4, 86016, 40960, &img)
-        .partition("vda", "vda5", "254:5", 5, 126976, 61440, &img)
+        .partition("vda", "vda5", "254:5", 5, 126_976, 61440, &img)
         .file("/sys/block/vda/device/model", "")
         .disk("loop0", "7:0", &[0u8; 4096], 512)
         .file(
@@ -13504,7 +13520,7 @@ impl crate::sys::Runner for SnapcoreRunner {
             let dev = std::fs::read(self.root.join(args[1].trim_start_matches('/'))).ok()?;
             std::fs::write(
                 self.root.join(args[3].trim_start_matches('/')),
-                &dev[..dev.len().min(2 * 16384 + 16744448)],
+                &dev[..dev.len().min(2 * 16384 + 16_744_448)],
             )
             .ok()?;
             return Some(String::new());
@@ -14418,7 +14434,7 @@ fn qubes_tree() -> (Tree, FakeRunner) {
                     LINUX,
                     "9b0e5c11-0000-4000-8000-000000000004",
                     51200,
-                    131038,
+                    131_038,
                     0,
                     "",
                 ),
@@ -14679,9 +14695,9 @@ fn qubes_guest() {
             .find(|l| l.get("name").and_then(Value::as_str) == Some(n))
             .unwrap()
     };
-    assert_eq!(u(lv("vm-pool"), &["data_used_bytes"]), 190000 * 65536);
+    assert_eq!(u(lv("vm-pool"), &["data_used_bytes"]), 190_000 * 65536);
     assert_eq!(u(lv("vm-pool"), &["metadata_used_bytes"]), 4100 * 4096);
-    assert_eq!(u(lv("vm-work-private"), &["mapped_bytes"]), 524288 * 512);
+    assert_eq!(u(lv("vm-work-private"), &["mapped_bytes"]), 524_288 * 512);
     // The raw volumes: every vm-* LV but the volatile one; backup sources
     // with fstype raw at their image paths.
     let dms = arr(&v, &["storage", "dm_devices"]);

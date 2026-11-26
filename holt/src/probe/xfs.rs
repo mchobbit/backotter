@@ -189,11 +189,11 @@ pub mod sample {
         let mut s = vec![0u8; 65536];
         s[0..4].copy_from_slice(b"XFSB");
         s[4..8].copy_from_slice(&4096u32.to_be_bytes());
-        s[8..16].copy_from_slice(&262144u64.to_be_bytes());
+        s[8..16].copy_from_slice(&262_144_u64.to_be_bytes());
         for (i, b) in s[32..48].iter_mut().enumerate() {
             *b = 0xa0 + i as u8;
         }
-        s[48..56].copy_from_slice(&131076u64.to_be_bytes());
+        s[48..56].copy_from_slice(&131_076_u64.to_be_bytes());
         s[84..88].copy_from_slice(&65536u32.to_be_bytes());
         s[88..92].copy_from_slice(&4u32.to_be_bytes());
         s[96..100].copy_from_slice(&16384u32.to_be_bytes());
@@ -213,7 +213,7 @@ pub mod sample {
     pub fn log_record(fs_uuid: u8) -> Vec<u8> {
         let mut s = vec![0u8; 65536];
         let r = &mut s[1024..1536];
-        r[0..4].copy_from_slice(&0xfeedbabeu32.to_be_bytes());
+        r[0..4].copy_from_slice(&0xfeed_babe_u32.to_be_bytes());
         r[4..8].copy_from_slice(&1u32.to_be_bytes());
         r[8..12].copy_from_slice(&2u32.to_be_bytes());
         r[12..16].copy_from_slice(&512u32.to_be_bytes());
@@ -284,7 +284,7 @@ mod tests {
         assert_eq!(d.get("ag_count").and_then(Value::as_u64), Some(4));
         assert_eq!(
             d.get("size_bytes").and_then(Value::as_u64),
-            Some(262144 * 4096)
+            Some(262_144 * 4096)
         );
         assert_eq!(d.get("log_internal"), Some(&Value::Bool(true)));
         assert_eq!(d.get("imax_pct").and_then(Value::as_u64), Some(25));

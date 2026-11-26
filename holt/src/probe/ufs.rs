@@ -23,7 +23,7 @@ const UFS2EA_MAGIC: u32 = 0x1901_2038;
 const MAGIC_AT: usize = 1372;
 
 pub fn probe(src: &dyn ByteSource) -> Option<Content> {
-    for off in [65536u64, 8192, 0, 262144] {
+    for off in [65536u64, 8192, 0, 262_144] {
         let Some(b) = src.read_exact_at(off, 1536) else {
             continue;
         };
@@ -34,7 +34,7 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
             _ => continue,
         };
         // UFS2 lives at 64 KiB; a UFS1 magic there is a stale backup.
-        if (version == 2) != (off == 65536 || off == 262144) {
+        if (version == 2) != (off == 65536 || off == 262_144) {
             continue;
         }
         let bsize = le32(&b, 48);
@@ -78,13 +78,13 @@ pub mod sample {
     /// A UFS2 superblock at 64 KiB in a 128 KiB image: 32 KiB blocks, 4 KiB
     /// fragments.
     pub fn image(volname: &str) -> Vec<u8> {
-        let mut img = vec![0u8; 131072];
+        let mut img = vec![0u8; 131_072];
         let s = &mut img[65536..65536 + 1536];
         s[44..48].copy_from_slice(&4u32.to_le_bytes());
         s[48..52].copy_from_slice(&32768u32.to_le_bytes());
         s[52..56].copy_from_slice(&4096u32.to_le_bytes());
-        s[144..148].copy_from_slice(&0x6a1b2c3du32.to_le_bytes());
-        s[148..152].copy_from_slice(&0x01020304u32.to_le_bytes());
+        s[144..148].copy_from_slice(&0x6a1b_2c3d_u32.to_le_bytes());
+        s[148..152].copy_from_slice(&0x0102_0304_u32.to_le_bytes());
         s[184..188].copy_from_slice(&1024u32.to_le_bytes());
         s[212..213].copy_from_slice(b"/");
         s[680..680 + volname.len()].copy_from_slice(volname.as_bytes());
@@ -115,6 +115,6 @@ mod tests {
                 .label
                 .is_none()
         );
-        assert!(probe(&MemSource(vec![0u8; 131072])).is_none());
+        assert!(probe(&MemSource(vec![0u8; 131_072])).is_none());
     }
 }

@@ -851,23 +851,25 @@ mod tests {
         use crate::parttable::build::mbr_entry;
         let mut s = vec![0u8; 512];
         s[440..444].copy_from_slice(&0x1f2e_3d4cu32.to_le_bytes());
-        mbr_entry(&mut s, 0, 0x80, 0x83, 2048, 1953792);
-        mbr_entry(&mut s, 1, 0, 0x82, 1955840, 3905536);
-        mbr_entry(&mut s, 2, 0, 0x83, 5861376, root as u32);
+        mbr_entry(&mut s, 0, 0x80, 0x83, 2048, 1_953_792);
+        mbr_entry(&mut s, 1, 0, 0x82, 1_955_840, 3_905_536);
+        mbr_entry(&mut s, 2, 0, 0x83, 5_861_376, root as u32);
         s
     }
 
     /// An MBR as a fit of the sample layout wrote it: the root partition a
     /// GiB smaller, everything else where the source had it.
     fn fitted_mbr() -> Vec<u8> {
-        mbr_with(27693056 - 2097152)
+        mbr_with(27_693_056 - 2_097_152)
     }
 
     #[test]
     fn a_fitted_table_needs_the_same_flag_again() {
         let t = Tree::new("load-status-fit");
-        t.disk("vdb", "253:16", &fitted_mbr(), 512)
-            .file("/sys/block/vdb/size", format!("{}\n", 33554432 - 2097152));
+        t.disk("vdb", "253:16", &fitted_mbr(), 512).file(
+            "/sys/block/vdb/size",
+            format!("{}\n", 33_554_432 - 2_097_152),
+        );
         t.file("/proc/self/mountinfo", "")
             .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
@@ -911,8 +913,10 @@ mod tests {
     /// source disk and holds `table`.
     fn bigger_target(table: Vec<u8>) -> Tree {
         let t = Tree::new("load-status-fit-bigger");
-        t.disk("vdb", "253:16", &table, 512)
-            .file("/sys/block/vdb/size", format!("{}\n", 33554432 + 2097152));
+        t.disk("vdb", "253:16", &table, 512).file(
+            "/sys/block/vdb/size",
+            format!("{}\n", 33_554_432 + 2_097_152),
+        );
         t.file("/proc/self/mountinfo", "")
             .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
         t
@@ -933,7 +937,7 @@ mod tests {
         // grown into it: --fit-largest 10% writes exactly that table, so
         // without the flag every later stage would misread the disk.
         let l = Layout::from_json(crate::json::parse(&sample::fittable()).unwrap()).unwrap();
-        let t = bigger_target(mbr_with(27693056 + 2097152));
+        let t = bigger_target(mbr_with(27_693_056 + 2_097_152));
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         let (code, out, _) = run(&l, &fit_opts(&["--fit-largest", "10"]), &s);
         assert_eq!(code, EXIT_OK, "{out}");
@@ -954,7 +958,7 @@ mod tests {
         // --fit-largest percentage writes that, so it isn't one of ours and
         // the rows are the ones a table that isn't the source's always got.
         let l = Layout::from_json(crate::json::parse(&sample::fittable()).unwrap()).unwrap();
-        let t = bigger_target(mbr_with(27693056 + 2048));
+        let t = bigger_target(mbr_with(27_693_056 + 2048));
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         let (code, out, _) = run(&l, &fit_opts(&[]), &s);
         assert_eq!(code, EXIT_OK, "{out}");
@@ -1187,9 +1191,9 @@ mod tests {
         let mut table = vec![0u8; 512];
         table[440..444].copy_from_slice(&0x1f2e_3d4cu32.to_le_bytes());
         for (slot, start, n) in [
-            (0, 2048, 1953792),
-            (1, 1955840, 3905536),
-            (2, 5861376, 27693056),
+            (0, 2048, 1_953_792),
+            (1, 1_955_840, 3_905_536),
+            (2, 5_861_376, 27_693_056),
         ] {
             crate::parttable::build::mbr_entry(&mut table, slot, 0, 0x83, start, n);
         }

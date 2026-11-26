@@ -667,7 +667,7 @@ mod tests {
         assert_eq!(p.get("version").and_then(Value::as_u64), Some(5000));
         assert_eq!(
             p.get("pool_guid").and_then(Value::as_u64),
-            Some(15105800815207446011)
+            Some(15_105_800_815_207_446_011)
         );
         assert_eq!(p.get("hostname").and_then(Value::as_str), Some("(none)"));
         assert_eq!(
@@ -691,7 +691,7 @@ mod tests {
         assert_eq!(
             p.at(&["vdev_tree", "children", "0", "asize"])
                 .and_then(Value::as_u64),
-            Some(13952876544)
+            Some(13_952_876_544)
         );
         let f: Vec<&str> = p
             .get("features_for_read")
@@ -721,11 +721,11 @@ mod tests {
         assert_eq!(v.get("name").and_then(Value::as_str), Some("rpool"));
         assert_eq!(
             v.get("pool_guid").and_then(Value::as_u64),
-            Some(15105800815207446011)
+            Some(15_105_800_815_207_446_011)
         );
         assert_eq!(
             v.get("guid").and_then(Value::as_u64),
-            Some(12321095712930874282)
+            Some(12_321_095_712_930_874_282)
         );
         assert_eq!(
             v.at(&["vdev_tree", "type"]).and_then(Value::as_str),

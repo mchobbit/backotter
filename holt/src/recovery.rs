@@ -1020,7 +1020,7 @@ mod tests {
             }
             to_other.push(o);
         }
-        assert_eq!((total, same, other), (626118, 1503, 3449));
+        assert_eq!((total, same, other), (626_118, 1503, 3449));
         // ... and in whole phrases, what the checksum lets past.
         let (mut tried, mut past) = (0usize, 0usize);
         for e in entropies(3, 100) {

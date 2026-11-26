@@ -280,7 +280,7 @@ mod tests {
         assert_eq!(
             d.at(&["keyslots", "0", "kdf_memory"])
                 .and_then(Value::as_u64),
-            Some(1048576)
+            Some(1_048_576)
         );
         assert_eq!(
             d.at(&["tokens", "0", "type"]).and_then(Value::as_str),

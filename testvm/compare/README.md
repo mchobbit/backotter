@@ -35,6 +35,7 @@ Here, in `testvm/compare/`:
 | `verdict.py` | `run-all.sh`'s verdicts: each script's PASS/FAIL lines, `fs_roundtrip.py`'s `results.json` (against `expected-coverage.json`: what `torture.sh` covered and skipped per file system in round 9; `verdict.py expect` remakes it) and `nonroot-rt.sh`'s full log judged into table rows (the accepted differences are in its header); `verdict.py judge KIND LOG` judges one log by hand |
 | `guest-slot.sh` | Host-wide guest slots, which `run-all.sh` (Cinqcent) and `stick/build-round.sh`'s guest builds both take, so that together they stay within the host's limit |
 | `affected.sh [--explain] [--restic A..B] [--rustic-core A..B] [--rustic A..B] [--harness A..B]` | The platforms a fix round must test again, from what changed in the forks and the harness: OS-specific files (Go build constraints and file names, `osattrs/OS.rs`, `OS/` scripts) for their OS, anything else for all, tests and docs for none |
+| `wfwatch.sh RUN_DIR [STALL_MIN=20]` | On the Mac, a watchdog for a Claude Code Workflow run (OtterGrind1, a fix round), started in the background by the main session: exit 0 `DONE` when the run's state file `SESSION/workflows/wf_X.json` appears, 2 `STALL` (with the agents still running) when nothing under RUN_DIR has been written for STALL_MIN minutes, 3 if RUN_DIR is missing; reads only |
 
 In `stick/`, the builds of rustic-bko, which tests and images share:
 

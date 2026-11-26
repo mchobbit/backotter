@@ -118,7 +118,7 @@ due: 103 of 103 cells, est. 564.2 gm, ~N wall, 28.9 GB (chopin 0.0, cinqcent 28.
   holt:debian13-stack           any      holt:new  no PASS yet  3.4 gm  tsv
   holt:debian13-zfs             any      holt:new  no PASS yet  2.8 gm  tsv
   holt:devuan6                  any      holt:new  no PASS yet  2.6 gm  tsv
-  holt:dragonfly6               cinqcent holt:new  no PASS yet  15.4 gm  tsv
+  holt:dragonfly6               any      holt:new  no PASS yet  15.4 gm  tsv
   holt:elementary8              any      holt:new  no PASS yet  9.0 gm  tsv
   holt:elementary8-luks         any      holt:new  no PASS yet  9.0 gm  tsv
   holt:endeavouros              any      holt:new  no PASS yet  4.0 gm  tsv
@@ -158,13 +158,13 @@ due: 103 of 103 cells, est. 564.2 gm, ~N wall, 28.9 GB (chopin 0.0, cinqcent 28.
   holt:omarchy                  any      holt:new  no PASS yet  9.3 gm  tsv
   holt:omnios58                 any      holt:new  no PASS yet  5.6 gm  tsv
   holt:omnios58-mirror          any      holt:new  no PASS yet  6.0 gm  tsv
-  holt:openbsd8                 chopin   holt:new  no PASS yet  6.3 gm  tsv
+  holt:openbsd8                 any      holt:new  no PASS yet  6.3 gm  tsv
   holt:pikaos4                  any      holt:new  no PASS yet  6.2 gm  tsv
   holt:pikaos4-luks             any      holt:new  no PASS yet  6.3 gm  tsv
   holt:pop24                    any      holt:new  no PASS yet  9.2 gm  tsv
   holt:proxmox9                 any      holt:new  no PASS yet  5.8 gm  tsv
   holt:proxmox9-mirror          any      holt:new  no PASS yet  7.1 gm  tsv
-  holt:redox                    cinqcent holt:new  no PASS yet  2.5 gm  tsv
+  holt:redox                    any      holt:new  no PASS yet  2.5 gm  tsv
   holt:rocky10                  any      holt:new  no PASS yet  4.2 gm  tsv
   holt:rocky10-lvm              any      holt:new  no PASS yet  3.5 gm  tsv
   holt:rocky10-raid5            any      holt:new  no PASS yet  6.0 gm  tsv
@@ -316,4 +316,4 @@ not runnable: img:dragonfly (dragonfly/bko-holt 29a491194633: no PASS at its dig
 not runnable: img:illumos (illumos/bko-holt 9f334a07f8e8: no PASS at its digest; run t2 HoltTest2 omnios58; illumos/restic-bko 0d82a9690d13: no PASS at its digest; run t2 SticTest2 ROUND omnios58; illumos/rustic-bko 5a87834d6355: no PASS at its digest; run t2 SticTest2 ROUND omnios58)
 not runnable: img:haiku (haiku/bko-holt bb9e1e37dcbe: no PASS at its digest; run t2 HoltTest2 haiku6; haiku/rustic-bko f0ca9138481d: no PASS at its digest; run t2 SticTest2 ROUND haiku6)
 sweep: SweepTest2 never ran, due now
-combined: 288 due, 1546.8 gm, 16749 s wall, 30.6 GB, ['gate:selftest'] left over
+combined: 288 due, 1546.8 gm, 16750 s wall, 30.6 GB, ['gate:selftest'] left over

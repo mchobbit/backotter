@@ -878,6 +878,21 @@ class Planner:
                     note = "BIOS rescuer for a UEFI source: no host has rescuer-uefi.qcow2"
                     if note not in self.notes:
                         self.notes.append(note)
+            elif v.hosts and self.holt_prep(v.name):
+                # (F11, docs/design/img-speed.md: in place of classes.json's one-host pins)
+                need = self.holt_prep(v.name)
+                with_p = [h for h in v.hosts if all(self.has_rescuer_file(h, n) for n in need)]
+                if with_p:
+                    if len(with_p) < len(v.hosts):
+                        v.pc.reasons_extra = list(getattr(v.pc, "reasons_extra", None) or []) + [
+                            f"one-time rescuer: only {', '.join(with_p)} have {', '.join(need)}"]
+                    v.hosts = with_p
+                    if len(with_p) == 1:
+                        v.pc.host = with_p[0]
+                else:
+                    note = f"{', '.join(need)}: no host has it; the first {v.name} run makes it (ht1-bsd.sh)"
+                    if note not in self.notes:
+                        self.notes.append(note)
             if v.hosts and not v.why_not:
                 self.fit_ceilings(v, lambda h: self.holt_need_here(v, h))
             if v.hosts and not v.why_not:
@@ -1297,6 +1312,25 @@ class Planner:
     def has_uefi_rescuer(self, h):
         imgs = (((self.ctx.facts.get(h) or {}).get("rescuers") or {}).get("images") or {})
         return any(str(n).endswith("rescuer-uefi.qcow2") for n in imgs)
+
+    def holt_prep(self, guest):
+        """The one-time rescuer preps a BSD-kind source needs (holt/spec.json's rescuer names
+        that are files, NAME.qcow2: openbsd8-newduid, dragonfly6-newfsid, omnios58-reguid),
+        which ht1-bsd.sh makes on a host without them (an hour for DragonFly's) and whose
+        imgsum is in the cell's key.  Its cells go to the hosts holding them (F11), as a UEFI
+        source's go to the hosts with rescuer-uefi.qcow2; with none, anywhere."""
+        sf = self.ctx.specs.get("holt")
+        try:
+            e = sf.entry(guest) if sf is not None else {}
+        except KeyError:
+            return []
+        if e.get("kind") != "bsd":
+            return []
+        return [str(n) for n in e.get("rescuer") or () if str(n).endswith(".qcow2")]
+
+    def has_rescuer_file(self, h, name):
+        imgs = (((self.ctx.facts.get(h) or {}).get("rescuers") or {}).get("images") or {})
+        return name in imgs
 
     def stic_spec(self, guest):
         if not hasattr(self, "_stic_specs"):

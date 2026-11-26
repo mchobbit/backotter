@@ -929,6 +929,18 @@ this spec's speedups 2 and 7.
   capability like `has_uefi_rescuer`. Copy `dragonfly6-newfsid.qcow2`, then
   unpin dragonfly6. *Proof:* the plan places these lines on other hosts, and
   each PASSes once there.
+  *Built 2026-11-26:* `holt.pins` is `{}`. `plan.py holt_prep` reads a BSD
+  source's one-time rescuer preps from `holt/spec.json` (its `NAME.qcow2`
+  rescuers, so the illumos sources' `omnios58-reguid.qcow2` too, which keeps
+  them off choubox, the one host without it) and keys its cells only on the
+  hosts whose facts list them; with none, anywhere, and the first run makes
+  it (ht1-bsd.sh), as before. +img cells are exempt (the image is their
+  rescuer). `dragonfly6-newfsid.qcow2` (sha256 3ad5f08e...) went from
+  cinqcent to the other five hosts. `classes.json` is gate:selftest's harness,
+  so that cell is due once. Proof: `t2 HoltTest2 openbsd8 dragonfly6 redox
+  --hosts copland,cage,czerny` (t2h-20261126T2114-82fa): openbsd8 PASS on
+  copland (czerny's runner left it to the others), dragonfly6 on cage, redox
+  on czerny.
 - **F12. New guest builds (partly).** Copy `/bkoscratch/rebuild-inputs` to
   the build host, and ship the finished image to Chopin for its vm-store
   publish. *Stays on Chopin:* the publish (D2). *Proof:* one make-*.sh build

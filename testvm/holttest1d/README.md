@@ -1409,7 +1409,7 @@ can run ("What a host can't run", below).
 It writes the todo on the queue host (`--order`, biggest first) and
 starts a runner on each host, with that host's `holt_jobs` as MAXJOBS and its
 `holt_disk_mode` as `DISK_OVER` (the host table's limits), leaving a guest
-pinned in `classes.json` (`holt.pins`) to its own host (`ONLY_ELSEWHERE`);
+pinned in `classes.json` (`holt.pins`, empty since 2026-11-26) to its own host (`ONLY_ELSEWHERE`);
 then it prints how to watch and stop them. `--hosts a,b` names other hosts of
 the table, in its order: the first is the queue host. `--queue-host H`, one
 of the hosts run on (else it refuses), is the queue host instead; without
@@ -1509,11 +1509,16 @@ as root, no RAM disk) says why in its `.out` file only: its log,
   everything under it, and its QEMU.
 - **ONLY_ELSEWHERE** (guests, space-separated) are left in todo for the
   other host, and `redox` is too wherever `~/backotter-work/tools/redox` is
-  missing (Chopin).  `openbsd8` and `dragonfly6` each need a one-time
-  rescuer prep, which exists on one host only, openbsd8's on Chopin and
-  dragonfly6's on Cinqcent: give `ONLY_ELSEWHERE=dragonfly6` to Chopin's
-  runner and `ONLY_ELSEWHERE=openbsd8` to Cinqcent's, or each host makes
-  its own.
+  missing (every host has it since 2026-11).  `openbsd8`, `dragonfly6` and
+  the illumos sources each need a one-time rescuer prep
+  (`rescuer/openbsd8-newduid.qcow2`, `dragonfly6-newfsid.qcow2`,
+  `omnios58-reguid.qcow2`), which a host without it makes on its first run
+  (dragonfly6's takes about an hour).  HoltTest2 keys their cells only on
+  the hosts whose facts list the prep (plan.py `holt_prep`, img-speed.md
+  F11, 2026-11-26: openbsd8's is on chopin, copland and cage, dragonfly6's
+  was copied from cinqcent to every host), so its runner names them in the
+  others' `ONLY_ELSEWHERE`; by hand, name them likewise or let each host
+  make its own.
 - **What a host can't run.**  Before each take the runner reads the todo
   again and leaves queued, for another host, every line this host can never
   run: one whose D or M is over its ceiling (`cmp-run.sh --ceiling`); one

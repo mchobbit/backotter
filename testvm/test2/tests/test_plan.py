@@ -437,10 +437,23 @@ class Holt(WorldCase):
         self.assertEqual(due, {f"holt:{g}" for g in world.BSD_PLAT if g not in world.GUEST_ONLY})
 
     def test_pins_and_uefi_rescuer(self):
+        # F11 (docs/design/img-speed.md): no pins; a one-time rescuer prep places by its file
         p = self.w.plan("HoltTest2 plan")
-        self.assertEqual(p.cell("holt:openbsd8").host, "chopin")
-        self.assertEqual(sorted(p.cell("holt:openbsd8").keys), ["chopin"])
-        self.assertEqual(p.cell("holt:redox").host, "cinqcent")
+        for g in ("holt:openbsd8", "holt:dragonfly6", "holt:redox", "holt:omnios58"):
+            self.assertEqual(sorted(p.cell(g).keys), ["chopin", "cinqcent"], g)
+        f = self.w.facts()
+        del f["chopin"]["rescuers"]["images"]["openbsd8-newduid.qcow2"]
+        del f["cinqcent"]["rescuers"]["images"]["dragonfly6-newfsid.qcow2"]
+        p = self.w.plan("HoltTest2 plan", facts=f)
+        self.assertEqual((p.cell("holt:openbsd8").host, sorted(p.cell("holt:openbsd8").keys)), ("cinqcent", ["cinqcent"]))
+        self.assertEqual((p.cell("holt:dragonfly6").host, sorted(p.cell("holt:dragonfly6").keys)), ("chopin", ["chopin"]))
+        self.assertIn("one-time rescuer: only cinqcent have openbsd8-newduid.qcow2", p.cell("holt:openbsd8").reasons)
+        self.assertEqual(sorted(p.cell("holt:omnios58").keys), ["chopin", "cinqcent"])
+        # no host has it: anywhere, the first run makes it (ht1-bsd.sh), and a note says so
+        del f["cinqcent"]["rescuers"]["images"]["openbsd8-newduid.qcow2"]
+        p = self.w.plan("HoltTest2 plan", facts=f)
+        self.assertEqual(sorted(p.cell("holt:openbsd8").keys), ["chopin", "cinqcent"])
+        self.assertIn("openbsd8-newduid.qcow2: no host has it; the first openbsd8 run makes it (ht1-bsd.sh)", p.notes)
         # R17: a UEFI source keys only on the hosts with rescuer-uefi.qcow2
         f = self.w.facts(uefi_rescuer=("chopin",))
         p = self.w.plan("HoltTest2 plan", facts=f)
@@ -450,7 +463,7 @@ class Holt(WorldCase):
         p = self.w.plan("HoltTest2 plan", facts=f)
         self.assertTrue(any("BIOS rescuer for a UEFI source" in n for n in p.notes))
         p = self.w.plan("HoltTest2 openbsd8 plan", hosts=("cinqcent",), facts=self.w.facts(hosts=("cinqcent",)))
-        self.assertEqual(st(p, "holt:openbsd8")[0], "not-runnable")
+        self.assertEqual(sorted(p.cell("holt:openbsd8").keys), ["cinqcent"])   # (pinned to chopin before F11)
 
     def test_family_letters_and_variant_words(self):
         p = self.w.plan("HoltTest2D plan", self.r_holt)
@@ -1546,11 +1559,13 @@ class ImgCells(WorldCase):
         q = self.w.plan("HoltTest2 plan", rows, facts=self.w.facts(images=im), universe=["holt:debian12+img"])
         self.assertEqual(st(q, "holt:debian12+img"), ("due", "img:panel"))
 
-    def test_no_uefi_filter_but_pins_apply(self):
+    def test_no_uefi_filter_nor_prep_filter_for_img(self):
         p = self.w.plan("HoltTest2 debian13-stack+img plan", facts=self.w.facts(uefi_rescuer=()))
         self.assertEqual(sorted(p.cell("holt:debian13-stack+img").keys), ["chopin", "cinqcent"])
-        p = self.w.plan("HoltTest2 dragonfly6+img plan")
-        self.assertEqual(sorted(p.cell("holt:dragonfly6+img").keys), ["cinqcent"])
+        f = self.w.facts()
+        del f["chopin"]["rescuers"]["images"]["dragonfly6-newfsid.qcow2"]
+        p = self.w.plan("HoltTest2 dragonfly6+img plan", facts=f)
+        self.assertEqual(sorted(p.cell("holt:dragonfly6+img").keys), ["chopin", "cinqcent"])   # (pinned to cinqcent before F11)
 
     def test_bins_stale(self):
         im = self.w.images()

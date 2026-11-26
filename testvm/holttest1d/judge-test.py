@@ -2409,6 +2409,43 @@ class Reformat(unittest.TestCase):
         dst["boot"]["grub"]["grub_cfg"]["modules"] = ["part_gpt", "xfs", "ext2"]
         self.assertIn("DIFF boot.grub.grub_cfg.modules.1", self.bad(src, dst, "--reformat", "/=xfs"))
 
+    def test_grub_module_of_a_filesystem_grub_does_not_read(self):
+        """rocky10 /boot=ext4 (bs2rf2, 2026-11-26): its / is XFS as /boot was
+        (here an XFS /srv), but grub.cfg reads only /boot (its one search
+        --fs-uuid): insmod xfs becomes insmod ext2.  Another XFS grub.cfg
+        does read (its UUID in search_uuids) keeps the old module, as does
+        any without search_uuids."""
+        boot, srv = "77777777-7777-4777-8777-777777777777", "99999999-9999-4999-8999-999999999999"
+        src = btrfs_root_guest()
+        st = src["storage"]
+        st["disks"][0]["partitions"][0]["content"] = xfs(1 * GIB, boot)
+        st["disks"].append(disk("vdb", 8 * GIB, [part("vdb1", 1, 2048, 16775168, xfs(8 * GIB - 2048 * 512, srv), mounted_at=["/srv"])]))
+        st["fstab"][1].update(type="xfs", passno=0)
+        st["fstab"].append({"spec": f"UUID={srv}", "file": "/srv", "type": "xfs", "options": "defaults", "freq": 0, "passno": 0, "resolves_to": "vdb1"})
+        st["mounts"][1].update(fstype="xfs")
+        st["backup_sources"][1].update(fstype="xfs")
+        src["boot"]["grub"]["grub_cfg"].update(modules=["part_msdos", "xfs", "blscfg"], search_uuids=[boot])
+
+        def restored(mods):
+            d = copy.deepcopy(src)
+            t = d["storage"]
+            t["disks"][0]["partitions"][0]["content"] = ext4(1 * GIB, boot)
+            t["fstab"][1].update(type="ext4", passno=2)
+            t["mounts"][1].update(fstype="ext4")
+            t["backup_sources"][1].update(fstype="ext4")
+            d["boot"]["grub"]["grub_cfg"]["modules"] = mods
+            return d
+        out = self.good(src, restored(["part_msdos", "ext2", "blscfg"]), "--reformat", "/boot=ext4")
+        self.assertIn("grub.cfg loads ext2 where it loaded xfs", out)
+        self.assertIn("DIFF boot.grub.grub_cfg.modules.1", self.bad(src, restored(["part_msdos", "xfs", "blscfg"]), "--reformat", "/boot=ext4"))
+        # grub.cfg reads the XFS /srv too: its insmod xfs stays.
+        src["boot"]["grub"]["grub_cfg"]["search_uuids"] = [boot, srv]
+        self.good(src, restored(["part_msdos", "xfs", "blscfg"]), "--reformat", "/boot=ext4")
+        self.assertIn("DIFF boot.grub.grub_cfg.modules.1", self.bad(src, restored(["part_msdos", "ext2", "blscfg"]), "--reformat", "/boot=ext4"))
+        # No search_uuids: every other XFS counts.
+        del src["boot"]["grub"]["grub_cfg"]["search_uuids"]
+        self.good(src, restored(["part_msdos", "xfs", "blscfg"]), "--reformat", "/boot=ext4")
+
 
 class FsReformat(unittest.TestCase):
     """judge.py fs --reformat: the restored files after a btrfs root became ext4 or XFS."""

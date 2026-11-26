@@ -2046,11 +2046,23 @@ def reformat_expect(src, dst, reforms):
         # (Void's insmod btrfs before gfxterm, with an ext4 /boot).  The boot
         # stage's grub-mkconfig writes the new type's (ext2 for ext2-4) where
         # the old one was, when no other filesystem of the old module's type
-        # is left to need it.  Its modules are deduplicated, the first kept
-        # (boot.rs parse_grub_cfg).
+        # is left to need it: one grub.cfg reads, which its prepare_grub_to_
+        # access_device names by a search --fs-uuid (boot.rs search_uuids;
+        # rocky10 /boot=ext4, bs2rf2 2026-11-26: / is XFS too, but GRUB reads
+        # only /boot).  Without search_uuids every other fstab filesystem
+        # counts, as does one whose UUID the dump doesn't give.  Its modules
+        # are deduplicated, the first kept (boot.rs parse_grub_cfg).
         g = ((src.get("boot") or {}).get("grub") or {}).get("grub_cfg")
         old, new = GRUB_FS_MODULE.get(frm), GRUB_FS_MODULE.get(to)
-        others = {GRUB_FS_MODULE.get(e.get("type")) for e in ss.get("fstab") or [] if e is not entry}
+        reads = set(g.get("search_uuids") or []) if isinstance(g, dict) else set()
+
+        def grub_reads(e):
+            if not reads:
+                return True
+            h = next((d for d in _dicts(ss) if d.get("name") == e.get("resolves_to") and isinstance(d.get("content"), dict)), None)
+            u = (h or {}).get("content", {}).get("uuid")
+            return not u or u in reads
+        others = {GRUB_FS_MODULE.get(e.get("type")) for e in ss.get("fstab") or [] if e is not entry and grub_reads(e)}
         if isinstance(g, dict) and isinstance(g.get("modules"), list) and old and new and old != new and old in g["modules"] and old not in others:
             mods = []
             for m in (new if m == old else m for m in g["modules"]):

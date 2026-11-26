@@ -598,6 +598,31 @@ if command -v zpool >/dev/null && [ -n "$(zpool list -H -o name 2>/dev/null)" ];
 [ -f /etc/crypttab ] && command -v cryptsetup >/dev/null && for c in $(awk "\$1 !~ /^#/ && NF {print \$1}" /etc/crypttab); do cryptsetup status "$c" 2>/dev/null | grep -q "is active" && echo "$c open" || no "LUKS $c not open"; done
 ls /var/log/bko-holt/load.log >/dev/null 2>&1 && echo "load log kept" || no "/var/log/bko-holt/load.log missing"
 exit $f'
+# HT_REFORMAT's /=TYPE of another type than ext4: load's fstab rewrite gives
+# / pass 0 (judge.py reformat_expect), which findmnt --verify before
+# util-linux 2.38 warns of for any type ("recommended root FS passno is 1
+# (current is 0)", Slackware 15's 2.37; later ones skip XFS and btrfs).
+# That warning is the type change's, not the restore's: rf_health KEY writes
+# R/tmp/restored-health-rf.txt, restored-health.txt with its findmnt line
+# the source's, when the restored findmnt --verify --verbose
+# (logs/restored-findmnt.txt) has it in /'s entry and its counts are the
+# source's with that one warning more; else it fails (returns 1).
+# findmnt --verify's counts, "PARSE ERRORS WARNINGS", from its summary line
+# or the health line that has it.
+findmnt_counts() { sed -nE 's/^(FAIL findmnt --verify: )?([0-9]+) parse errors?, ([0-9]+) errors?, ([0-9]+) warnings?.*/\2 \3 \4/p' | head -1; }
+rf_health() {
+    local f rf="" h=$R/logs/restored-health.txt fv=$R/logs/restored-findmnt.txt want="" got line p e w
+    for f in ${HT_REFORMAT:-}; do [[ $f != /=* ]] || rf=${f#/=}; done
+    [[ -n $rf && $rf != ext4 ]] && grep -q '^FAIL findmnt --verify: ' "$h" || return 1
+    sshk "$1" 'findmnt --verify --verbose 2>&1' > "$fv"
+    line=$(grep '^FAIL findmnt --verify: ' "$R/logs/source-health.txt")
+    if [[ -n $line ]]; then want=$(findmnt_counts <<<"$line"); elif grep -qx 'fstab verifies' "$R/logs/source-health.txt"; then want="0 0 0"; fi
+    got=$(grep '^FAIL findmnt --verify: ' "$h" | findmnt_counts)
+    [[ -n $want && -n $got ]] && read -r p e w <<<"$want" && [[ $got == "$p $e $((w + 1))" && $(findmnt_counts < "$fv") == "$got" ]] || return 1
+    awk '/^[^ ]/ { e = $0; next } e == "/" && $0 ~ /^ +\[W\] recommended root FS passno is 1 \(current is 0\)$/ { n++ } END { exit n != 1 }' "$fv" || return 1
+    { grep -v '^FAIL findmnt --verify: ' "$h"; [[ -z $line ]] || echo "$line"; } > "$R/tmp/restored-health-rf.txt"
+    ok "health: findmnt --verify's one warning more is the reformat's: / at pass 0 (--reformat /=$rf; logs/restored-findmnt.txt)"
+}
 # Boot state: line 1 systemd's overall state (or the init system's name;
 # Slackware's BSD-style rc with its runlevel), then for Slackware each rc
 # script that is executable (on) whose daemon isn't running,
@@ -834,8 +859,11 @@ solus_loader_check() {  # KEY: the restored guest booted through systemd-boot, u
 # host (LILO's first stage: "LILO" at offset 6, then its version), and
 # slack_root_check wants the restored boot's / on the source's device, as
 # the source has it (SLACK_ROOT: by the root's major:minor in /sys, as a
-# boot without an initrd shows / as /dev/root; under HT_REFORMAT's /=TYPE,
-# of that TYPE): a wrong numeric root panics the kernel or mounts another.
+# boot without an initrd shows / as /dev/root; a btrfs's is an anonymous
+# 0:N, not in /sys/dev/block: then by findmnt's SOURCE, its [/subvol] cut,
+# resolved as /sys names it (dm-0 for a /dev/mapper name); under
+# HT_REFORMAT's /=TYPE, of that TYPE): a wrong numeric root panics the
+# kernel or mounts another.
 # slackware15-uefi boots ELILO from the fallback path, on a fresh NVRAM
 # (--uefi --no-secure-boot): elilo_check
 # wants ELILO in the restored ESP's EFI/Slackware (elilo.efi) and EFI/BOOT
@@ -846,6 +874,7 @@ solus_loader_check() {  # KEY: the restored guest booted through systemd-boot, u
 # ELILO_KEPT).
 slack=0; case $G in slackware*) slack=1 ;; esac
 SLACK_ROOT='d=$(mountpoint -d /); n=$(basename "$(readlink -f "/sys/dev/block/$d")")
+if [ ! -e "/sys/dev/block/$d" ]; then s=$(findmnt -no SOURCE --mountpoint / | tail -1); s=${s%%\[*}; [ ! -b "$s" ] || n=$(basename "$(readlink -f "$s")"); fi
 echo "root $n $(findmnt -no FSTYPE --mountpoint / | tail -1) $(findmnt -no OPTIONS --mountpoint / | tail -1 | cut -d, -f1)"
 echo "cmdline $(cat /proc/cmdline)"'
 slack_root_check() {  # KEY: the restored boot's / as the source's
@@ -2303,10 +2332,12 @@ phase_verify() {
     [[ $VARIANT != bs2 ]] || bs2_restored_probe "$gkey"
     # A check that failed on the source too isn't the restore's doing.
     sshk "$gkey" "$HEALTH" > "$R/logs/restored-health.txt" 2>&1
+    local rh=$R/logs/restored-health.txt
+    ! rf_health "$gkey" || rh=$R/tmp/restored-health-rf.txt
     # MISSING-TOOL: a check that never ran, a FAIL whatever the source said.
-    local worse; worse=$(comm -13 <(grep '^FAIL' "$R/logs/source-health.txt" 2>/dev/null | sort) <(grep '^FAIL' "$R/logs/restored-health.txt" | sort); grep '^MISSING-TOOL' "$R/logs/restored-health.txt")
-    if [[ -z $worse ]] && grep -q 'load log kept' "$R/logs/restored-health.txt"; then
-        ok "health: $(grep -v '^FAIL' "$R/logs/restored-health.txt" | tr '\n' ',' | sed 's/,$//; s/,/, /g')$(grep -q '^FAIL' "$R/logs/restored-health.txt" && echo "; as on the source: $(grep '^FAIL' "$R/logs/restored-health.txt" | tr '\n' ' ')")"
+    local worse; worse=$(comm -13 <(grep '^FAIL' "$R/logs/source-health.txt" 2>/dev/null | sort) <(grep '^FAIL' "$rh" | sort); grep '^MISSING-TOOL' "$rh")
+    if [[ -z $worse ]] && grep -q 'load log kept' "$rh"; then
+        ok "health: $(grep -v '^FAIL' "$rh" | tr '\n' ',' | sed 's/,$//; s/,/, /g')$(grep -q '^FAIL' "$rh" && echo "; as on the source: $(grep '^FAIL' "$rh" | tr '\n' ' ')")"
     else
         bad "health: $(echo "$worse" | tr '\n' ' ')"
     fi

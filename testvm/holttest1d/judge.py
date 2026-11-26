@@ -2036,7 +2036,11 @@ def reformat_expect(src, dst, reforms):
                         if st is ss:
                             m["root"] = "/"
                     elif st is ss:
-                        m["subvol"] = None
+                        # A backup source's subvol is its mount's subvol=
+                        # (report/sources.rs): a new btrfs has no subvolumes,
+                        # load mounts its top level, which the kernel shows
+                        # as subvol=/; no other type has one.
+                        m["subvol"] = "/" if to == "btrfs" else None
         # grub-mkconfig's grub.cfg loads the module of each filesystem it reads:
         # its own directory's, and the root's for a font or theme under /usr
         # (Void's insmod btrfs before gfxterm, with an ext4 /boot).  The boot

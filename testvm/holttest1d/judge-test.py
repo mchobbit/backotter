@@ -2182,15 +2182,17 @@ def reformatted(src, to="ext4"):
     st = d["storage"]
     p = st["disks"][0]["partitions"][2]
     size = p["size_bytes"]
-    p["content"] = dict((ext4 if to == "ext4" else xfs)(size, "dddddddd-dddd-4ddd-8ddd-dddddddddddd"), label="fedora")
+    p["content"] = dict({"ext4": ext4, "xfs": xfs, "btrfs": btrfs}[to](size, "dddddddd-dddd-4ddd-8ddd-dddddddddddd"), label="fedora")
     p["mounted_at"] = ["/"]
     st["fstab"] = [e for e in st["fstab"] if e["file"] != "/home"]
     st["fstab"][0].update(type=to, options="noatime", passno=1 if to == "ext4" else 0)
     st["mounts"] = [m for m in st["mounts"] if m["target"] != "/home"]
-    st["mounts"][0].update(fstype=to, root="/", super_options="rw")
+    # A new btrfs: load mounts its top level, subvol=/ (no subvolumes).
+    st["mounts"][0].update(fstype=to, root="/", super_options="rw,space_cache=v2,subvolid=5,subvol=/" if to == "btrfs" else "rw")
     st["backup_sources"] = [b for b in st["backup_sources"] if b["path"] != "/home"]
-    st["backup_sources"][0].update(fstype=to, subvol=None)
-    st["btrfs"] = []
+    st["backup_sources"][0].update(fstype=to, subvol="/" if to == "btrfs" else None)
+    st["btrfs"] = [] if to != "btrfs" else [{"uuid": "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "label": "fedora", "devices": ["vda3"],
+                                             "mounted_subvolumes": [{"target": "/", "subvol": "/"}], "subvolumes": []}]
     u = "UUID=dddddddd-dddd-4ddd-8ddd-dddddddddddd"
     line = f"root={u} ro console=ttyS0"
     b = d["boot"]
@@ -2226,6 +2228,23 @@ class Reformat(unittest.TestCase):
     def test_onto_xfs(self):
         src = btrfs_root_guest()
         self.good(src, reformatted(src, "xfs"), "--reformat", "/=xfs")
+
+    def test_onto_btrfs(self):
+        """A new btrfs's / (no subvolumes, its top level mounted): its
+        backup source's subvol is "/", as the dump of any plain btrfs root
+        says (subvol=/ in its mount's options), the source's null or /@."""
+        src = btrfs_root_guest()
+        self.good(src, reformatted(src, "btrfs"), "--reformat", "/=btrfs")
+        dst = reformatted(src, "btrfs")
+        dst["storage"]["backup_sources"][0]["subvol"] = None
+        self.assertIn("DIFF storage.backup_sources.0.subvol", self.bad(src, dst, "--reformat", "/=btrfs"))
+        dst = reformatted(src, "btrfs")
+        dst["storage"]["backup_sources"][0]["subvol"] = "/@"
+        self.assertIn("DIFF storage.backup_sources.0.subvol", self.bad(src, dst, "--reformat", "/=btrfs"))
+        # Off btrfs a backup source has no subvol.
+        dst = reformatted(src)
+        dst["storage"]["backup_sources"][0]["subvol"] = "/"
+        self.assertIn("DIFF storage.backup_sources.0.subvol", self.bad(src, dst, "--reformat", "/=ext4"))
 
     def test_without_the_flag_it_differs(self):
         src = btrfs_root_guest()

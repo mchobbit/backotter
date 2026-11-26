@@ -68,6 +68,31 @@ unit table, "NAME<TAB>COMPONENT<TAB>MINUTES<TAB>KIND<TAB>NEEDS<TAB>CHECKS".
 
 Exit 0; 2 on bad usage, and when a shipped unit has no host that meets its
 requirement (the reason names every host and what it lacks).
+
+Image units (stick/img-round.sh plan, docs/design/img-speed.md §5.2 step 3).  A platform the
+plan builds is one unit: img-one.sh's release and test builds and its boot tests, under one
+img-lanes.sh reservation.  Measured minutes (§1.2, the second set of 2026-11-26 on Chopin,
+compression left out) and est. 4 for a refresh (§5.2: 3-5):
+
+    platform   full  refresh      platform   full  refresh
+    linux       8.5    4          openbsd     5.0    4
+    freebsd    10.1    4          illumos    16.8    4
+    dragonfly   8.2    4          haiku       3.0    4
+    netbsd      3.8    4
+
+A big host runs two image units at once, a small host one (memory 10 of 10.1; D4), and no
+host more than one FreeBSD unit (its builder's port 2400).  A host's estimated finish is its
+units' minutes over its lanes (never less than its longest), times 1 + its load a core as
+pick-host rates it (Chopin's load counts 4 higher: pick-host's LOAD_PENALTY), plus 5 minutes
+when a unit's reservation doesn't fit its room now (a small host's 10 GiB waits for all of
+its memory).  Units go longest first (ties by platform) to the host that would then finish
+earliest, ties to the first in the order given (img_round.py gives hosts.py's tie order); a
+unit only to the hosts the plan found able (its inputs, C7; its room's ceiling; for a
+refresh, the parent).  A unit no host can take is left out and said: the plan names it.
+
+    deal-units.py img-units            NAME<TAB>FULL<TAB>REFRESH per platform
+    deal-units.py img-deal < JSON      {"hosts": [{name, class, load_per_core, fits_now: {P: bool}}],
+                                        "units": [{platform, action, able: [host]}]} -> the deal as JSON
 """
 
 import collections
@@ -235,7 +260,85 @@ def parse_host(arg):
     return Host(name, cls or "small", [c for c in caps.split(",") if c])
 
 
+# --- Image units (img-round.sh plan) ------------------------------------------------------------
+
+# platform: (full minutes, refresh minutes).  Full: §1.2's release build + test build + boot
+# tests; refresh: est. (§5.2).
+IMG_MINUTES = {"linux": (8.5, 4.0), "freebsd": (10.1, 4.0), "dragonfly": (8.2, 4.0), "netbsd": (3.8, 4.0),
+               "openbsd": (5.0, 4.0), "illumos": (16.8, 4.0), "haiku": (3.0, 4.0)}
+IMG_ACTIONS = ("full", "refresh")
+IMG_LANES = {"big": 2, "small": 1}
+# The minutes a unit is taken to wait when its reservation doesn't fit the host's room now.
+IMG_WAIT_MIN = 5.0
+# At most one unit of these per host: FreeBSD's builder listens on port 2400.
+IMG_ONE_PER_HOST = ("freebsd",)
+
+
+def img_minutes(platform, action):
+    if platform not in IMG_MINUTES or action not in IMG_ACTIONS:
+        raise DealError(f"no image unit {platform} {action}")
+    return IMG_MINUTES[platform][IMG_ACTIONS.index(action)]
+
+
+class ImgHost:
+    """A build host in an image deal: its class's lanes, its load a core (pick-host's, with
+    Chopin's penalty), which platforms' reservations fit its room now, and its units."""
+
+    def __init__(self, name, cls="small", load_per_core=0.0, fits_now=None):
+        self.name, self.cls = name, cls or "small"
+        self.lanes = IMG_LANES.get(self.cls, IMG_LANES["small"])
+        lpc = float(load_per_core) if load_per_core is not None else 0.0
+        self.factor = 1.0 + (lpc if lpc != float("inf") else 1.0)
+        self.fits_now = dict(fits_now or {})
+        self.units = []   # [(platform, action, minutes)]
+
+    def minutes(self, extra=None):
+        got = self.units + ([extra] if extra else [])
+        if not got:
+            return 0.0
+        mins = [u[2] for u in got]
+        out = max(sum(mins) / float(self.lanes), max(mins)) * self.factor
+        if any(not self.fits_now.get(u[0], True) for u in got):
+            out += IMG_WAIT_MIN
+        return out
+
+
+def deal_images(hosts, units):
+    """Deal image UNITS ([{platform, action, able}]) over HOSTS (ImgHost, in tie order).
+    Returns (hosts, placed {platform: host}, left [(platform, why)])."""
+    order = sorted(units, key=lambda u: (-img_minutes(u["platform"], u["action"]), u["platform"]))
+    placed, left = {}, []
+    for u in order:
+        p, a = u["platform"], u["action"]
+        m = img_minutes(p, a)
+        able = [h for h in hosts if h.name in (u.get("able") or ())
+                and not (p in IMG_ONE_PER_HOST and any(x[0] == p for x in h.units))]
+        if not able:
+            left.append((p, "no able host" if not u.get("able") else "its able hosts are full"))
+            continue
+        best = min(able, key=lambda h: (h.minutes((p, a, m)), hosts.index(h)))
+        best.units.append((p, a, m))
+        placed[p] = best.name
+    return hosts, placed, left
+
+
+def img_deal_json(doc):
+    hosts = [ImgHost(h["name"], h.get("class"), h.get("load_per_core"), h.get("fits_now")) for h in doc.get("hosts") or ()]
+    hosts, placed, left = deal_images(hosts, doc.get("units") or ())
+    return {"placed": placed, "left": [list(x) for x in left],
+            "hosts": [{"name": h.name, "class": h.cls, "lanes": h.lanes, "est_min": round(h.minutes(), 1),
+                       "units": [{"platform": u[0], "action": u[1], "minutes": u[2]} for u in h.units]} for h in hosts]}
+
+
 def main(argv):
+    if argv and argv[0] == "img-units":
+        for p, (full, ref) in IMG_MINUTES.items():
+            print(f"{p}\t{full:g}\t{ref:g}")
+        return 0
+    if argv and argv[0] == "img-deal":
+        import json
+        print(json.dumps(img_deal_json(json.load(sys.stdin)), indent=1, sort_keys=True))
+        return 0
     if not argv or argv[0] not in ("deal", "table", "units"):
         raise DealError("usage: deal-units.py deal|table|units [--arch LIST] [--only LIST] [--legacy] "
                         "HOST=CLASS=CAPS...")

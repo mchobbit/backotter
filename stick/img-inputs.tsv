@@ -64,3 +64,6 @@ all	stick/*/build-rustic.sh	none	builds rustic-bko, which the bins digest covers
 -	stick/img-lanes.sh	none	runs img-one.sh under reservations
 -	stick/img-xcopy.sh	none	copies a built image to another host
 -	stick/img-refresh-holt.sh	none	installs holt-bin, which the bins digest covers
+-	stick/img-round.sh	none	the round's dealer, on the Mac: plans, builds nothing itself
+-	stick/img_round.py	none	the round's planner, on the Mac
+-	stick/img_round_facts.py	none	the planner's facts on a host: reads digests and images, writes nothing

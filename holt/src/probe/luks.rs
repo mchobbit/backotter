@@ -2,6 +2,14 @@
 //! same container again (cipher, key size, sector size, KDF, data offset,
 //! label, UUID); never salts, digests or key material.
 
+// A parser of on-disk bytes: here a panic is a damaged disk crashing a restore (RA3).
+#![warn(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::unwrap_used
+)]
+
 use super::Content;
 use crate::bytes::{ByteSource, be16, be32, be64, sub};
 use crate::json::{self, Obj, Value};

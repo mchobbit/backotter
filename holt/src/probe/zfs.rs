@@ -2,6 +2,14 @@
 //! XDR-encoded nvlist (the format of /etc/zfs/zpool.cache too), parsed here
 //! into JSON so a pool's layout shows even when it isn't imported.
 
+// A parser of on-disk bytes: here a panic is a damaged disk crashing a restore (RA3).
+#![warn(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::unwrap_used
+)]
+
 use super::Content;
 use crate::bytes::{ByteSource, be32, be64};
 use crate::json::{Obj, Value};

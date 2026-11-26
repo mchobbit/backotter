@@ -1,6 +1,14 @@
 //! What boot code sits in a disk's first sector (the MBR's 440 bytes of
 //! code), and, for GRUB, where its core image is and whether it's there.
 
+// A parser of on-disk bytes: here a panic is a damaged disk crashing a restore (RA3).
+#![warn(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::unwrap_used
+)]
+
 use crate::bytes::{ByteSource, contains, hex, is_zero, le64, sub, u8_at};
 use crate::json::{Obj, Value};
 

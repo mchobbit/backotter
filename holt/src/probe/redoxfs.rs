@@ -1,5 +1,13 @@
 //! RedoxFS (Redox): its header block, "RedoxFS\0", the version and the UUID.
 
+// A parser of on-disk bytes: here a panic is a damaged disk crashing a restore (RA3).
+#![warn(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::unwrap_used
+)]
+
 use super::Content;
 use crate::bytes::{ByteSource, le64, sub, uuid};
 use crate::json::Obj;

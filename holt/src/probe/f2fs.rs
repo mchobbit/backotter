@@ -1,5 +1,13 @@
 //! F2FS: its superblock, at 1 KiB (and a backup copy one block later).
 
+// A parser of on-disk bytes: here a panic is a damaged disk crashing a restore (RA3).
+#![warn(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::unwrap_used
+)]
+
 use super::Content;
 use crate::bytes::{ByteSource, le16, le32, le64, sub, uuid};
 use crate::json::Obj;

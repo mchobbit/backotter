@@ -2,6 +2,14 @@
 //! it.  The options that `bcachefs format` takes are bit fields in the
 //! superblock's flags words (bcachefs_format.h's LE64_BITMASKs).
 
+// A parser of on-disk bytes: here a panic is a damaged disk crashing a restore (RA3).
+#![warn(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::unwrap_used
+)]
+
 use super::Content;
 use crate::bytes::{ByteSource, label, le16, le32, le64, sub, u8_at, uuid};
 use crate::json::Obj;

@@ -2,6 +2,14 @@
 //! chain of EBRs) and GPT (both headers, CRCs checked, and the protective or
 //! hybrid MBR in front of it).
 
+// A parser of on-disk bytes: here a panic is a damaged disk crashing a restore (RA3).
+#![warn(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::unwrap_used
+)]
+
 use crate::bytes::{ByteSource, crc32, guid, is_zero, le32, le64, sub, utf16le};
 use crate::json::{Obj, Value};
 

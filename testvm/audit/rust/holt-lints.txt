@@ -1,8 +1,8 @@
 # holt's lint set for RustAudit1 (docs/design/rust-audit.md, RA3, decision
-# D3), as rust-lint.sh's runs pass it: holt has no [lints] table yet, so the
-# flags go on clippy's command line (after --), and [clippy.toml] is written
-# to the run's CLIPPY_CONF_DIR.  RA6 turns this file into holt's own
-# Cargo.toml [lints] and clippy.toml; until then, change the policy here.
+# D3), as rust-lint.sh's runs pass it.  Since RA6 holt carries the same policy
+# itself (holt/Cargo.toml [lints], holt/clippy.toml, and a #![warn] at the top
+# of each parser file), but for missing_docs, which only these runs pass
+# until the docs are written; change the policy in both places.
 #
 # The default clippy groups are errors under RA3, but run here as warnings
 # (clippy::all, below): a lint error in the lib would stop clippy before the

@@ -3,6 +3,14 @@
 //! looks for it.  newfs's parameters themselves come from the system's own
 //! dumpfs (`other`); this names the filesystem and tells its version.
 
+// A parser of on-disk bytes: here a panic is a damaged disk crashing a restore (RA3).
+#![warn(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::unwrap_used
+)]
+
 use super::Content;
 use crate::bytes::{ByteSource, label, le32, sub};
 use crate::json::Obj;

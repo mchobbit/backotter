@@ -1,6 +1,14 @@
 //! XFS superblocks: geometry and the features mkfs.xfs would need to make the
 //! same filesystem again.
 
+// A parser of on-disk bytes: here a panic is a damaged disk crashing a restore (RA3).
+#![warn(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::unwrap_used
+)]
+
 use super::Content;
 use crate::bytes::{ByteSource, be16, be32, be64, sub, u8_at, uuid};
 use crate::json::Obj;

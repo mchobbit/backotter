@@ -1155,6 +1155,17 @@ pub const CONFIG_BYTES: u64 = 256 << 20;
 pub const LOG_MAX: u64 = 2 << 20;
 pub const LOGS_KEPT: u64 = 10;
 
+/// bko-rescue's bug reports on the stick (rescue/src/app/report.rs;
+/// holt-json.md's open question 17): it keeps the REPORTS_KEPT newest in
+/// `backotter/reports`, each with its `-UNREDACTED` twin as one pair, each
+/// file at most REPORT_MAX, and refuses a save that would leave the
+/// partition under (LOGS_KEPT + 1) x LOG_MAX free.  So reports never take
+/// the room a machine's logs need, and room_check keeps no room for
+/// reports to come: those it finds are in `free` already, and its words
+/// say how much copying them off would give back.
+pub const REPORTS_KEPT: u64 = 5;
+pub const REPORT_MAX: u64 = 64 << 20;
+
 /// The config partition as the backup tool finds it before it writes one
 /// machine's system.json (stick-config.md, "How it writes"): mounted, with
 /// no `system.json.new` left in that machine's folder.
@@ -1180,6 +1191,10 @@ pub struct Room {
     /// Whether other machines have folders on the stick: the words say to
     /// remove them only then.
     pub others: bool,
+    /// The size of each of bko-rescue's bug reports in `backotter/reports`
+    /// (`bko-report-*.txt`, at most REPORTS_KEPT pairs): the words say to
+    /// copy them off only when there are some, and how much room they take.
+    pub reports: Vec<u64>,
 }
 
 /// Why the backup tool can't write a system.json to the stick (`stick_write`
@@ -1226,9 +1241,12 @@ fn mib_tenths(n: u128, up: bool) -> String {
 /// while the old two stand, then system.json becomes system.prev.json
 /// (freeing the old one and its `.sha256`), then the new `.sha256` is
 /// written.  Each file and folder takes whole clusters, each `.sha256`
-/// one.  The backup tool isn't built: `stick_write` is what it calls, which
-/// calls this for the whole file and, on a refusal, for the file without
-/// its layout (holt-json.md's open question 16).
+/// one.  The words say what makes room: other machines' folders and
+/// bko-rescue's bug reports (with the room they take), when there are
+/// some; else free room on the partition; and a newer image, on an older
+/// image's smaller partition.  The backup tool isn't built: `stick_write` is
+/// what it calls, which calls this for the whole file and, on a refusal,
+/// for the file without its layout (holt-json.md's open question 16).
 pub fn room_check(
     m: &Marker,
     system_len: u64,
@@ -1242,10 +1260,23 @@ pub fn room_check(
     } else {
         String::new()
     };
-    let base = if r.others {
-        "remove other machines' folders from the stick"
+    let cl = u128::from(r.cluster.max(1));
+    let up = |n: u64| u128::from(n).div_ceil(cl) * cl;
+    let reports: u128 = r.reports.iter().map(|&n| up(n)).sum();
+    let mut ways = Vec::new();
+    if r.others {
+        ways.push("remove other machines' folders from the stick".to_string());
+    }
+    if !r.reports.is_empty() {
+        ways.push(format!(
+            "copy the bug reports in backotter/reports off the stick, then remove them (they take {})",
+            mib_tenths(reports, true)
+        ));
+    }
+    let base = if ways.is_empty() {
+        "free room on the stick's config partition".to_string()
     } else {
-        "free room on the stick's config partition (old bug reports in backotter/reports can go)"
+        ways.join(", or ")
     };
     let remedy = format!("{base}{image}");
     if system_len > SYSTEM_MAX {
@@ -1259,8 +1290,6 @@ pub fn room_check(
             remedy: String::new(),
         });
     }
-    let cl = u128::from(r.cluster.max(1));
-    let up = |n: u64| u128::from(n).div_ceil(cl) * cl;
     let free = u128::from(r.free);
     let dir = if r.folder { 0 } else { cl };
     let new = dir + up(system_len);
@@ -2588,6 +2617,7 @@ mod tests {
                 prev_sum: prev.is_some(),
                 logs,
                 others: true,
+                reports: vec![],
             };
         let codes = |r: Result<Vec<StickWarning>, StickRefusal>| match r {
             Ok(w) => w.iter().map(|w| w.code).collect::<Vec<_>>().join(","),
@@ -2640,7 +2670,30 @@ mod tests {
         };
         assert_eq!(
             room_check(&big, 2 * MIB, &alone).unwrap_err().remedy,
-            "free room on the stick's config partition (old bug reports in backotter/reports can go)"
+            "free room on the stick's config partition"
+        );
+        // bko-rescue's reports there: copying them off is named, with their
+        // room in whole clusters, rounded up (holt-json.md's open question 17).
+        let reported = Room {
+            reports: vec![MIB, 1],
+            ..alone.clone()
+        };
+        assert_eq!(
+            room_check(&big, 2 * MIB, &reported).unwrap_err().remedy,
+            "copy the bug reports in backotter/reports off the stick, then remove them (they take 1.1 MiB)"
+        );
+        assert_eq!(
+            room_check(
+                &small,
+                2 * MIB,
+                &Room {
+                    others: true,
+                    ..reported
+                }
+            )
+            .unwrap_err()
+            .remedy,
+            "remove other machines' folders from the stick, or copy the bug reports in backotter/reports off the stick, then remove them (they take 1.1 MiB), or write a newer image to it (this one's config partition is 32.0 MiB, a newer one's 256 MiB)"
         );
         // The new file is written while the old two stand: the old prev's
         // room comes too late for it, and the words give the room it has then.
@@ -2785,6 +2838,7 @@ mod tests {
             prev_sum: false,
             logs: Some(vec![]),
             others: true,
+            reports: vec![],
         };
         assert_eq!(codes(room_check(&big, 10, &bytes)), "stick_room_short");
         assert_eq!(
@@ -2836,6 +2890,7 @@ mod tests {
             prev_sum: prev.is_some(),
             logs: Some(vec![]),
             others,
+            reports: vec![],
         };
         // It fits: the whole file, with room_check's warnings.
         assert_eq!(
@@ -2981,7 +3036,7 @@ mod tests {
         assert!(crate::json::parse(&body).unwrap().get(LAYOUT_KEY).is_none());
         assert_eq!(
             text,
-            "this machine's system.json needs 20.0 MiB while the stick still holds its two older copies, and the stick's config partition has 0.0 MiB free. Even without its disk layout, this machine's system.json needs 0.1 MiB while the stick still holds its two older copies, and the stick's config partition has 0.0 MiB free. So this machine's older copies (system.json and system.prev.json) are removed from the stick first, then the stick gets this machine's system.json without its disk layout: the stick still finds the backup, but it can't restore this machine's disks until the layout comes from the backup, which bko-rescue can't do yet. The backup keeps the whole file. To keep the layout on the stick: free room on the stick's config partition (old bug reports in backotter/reports can go), then back the machine up again."
+            "this machine's system.json needs 20.0 MiB while the stick still holds its two older copies, and the stick's config partition has 0.0 MiB free. Even without its disk layout, this machine's system.json needs 0.1 MiB while the stick still holds its two older copies, and the stick's config partition has 0.0 MiB free. So this machine's older copies (system.json and system.prev.json) are removed from the stick first, then the stick gets this machine's system.json without its disk layout: the stick still finds the backup, but it can't restore this machine's disks until the layout comes from the backup, which bko-rescue can't do yet. The backup keeps the whole file. To keep the layout on the stick: free room on the stick's config partition, then back the machine up again."
         );
         // Only a system.prev.json (a write that failed half-way): named alone.
         let w = stick_write(&big, &sys, 20 * MIB, &room(0, None, Some(1), true));

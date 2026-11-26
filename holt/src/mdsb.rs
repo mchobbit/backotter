@@ -4,6 +4,14 @@
 //! then refuse the member ("does not have a valid v1.2 superblock").  An
 //! array made by a newer rescue system's kernel gets the source's value back.
 
+// A parser of on-disk bytes: here a panic is a damaged disk crashing a restore (RA3).
+#![warn(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::unwrap_used
+)]
+
 use crate::bytes::{le16, le32};
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};

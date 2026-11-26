@@ -1,6 +1,14 @@
 //! Linux md RAID member superblocks: 1.x (at the start, 4 KiB in, or the
 //! end) and 0.90 (at the end).
 
+// A parser of on-disk bytes: here a panic is a damaged disk crashing a restore (RA3).
+#![warn(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::unwrap_used
+)]
+
 use super::Content;
 use crate::bytes::{ByteSource, hex, le16, le32, le64, sub, uuid};
 use crate::json::Obj;

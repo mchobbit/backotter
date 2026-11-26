@@ -31,11 +31,28 @@ path = "src/bin/bko-recovery-words.rs"
 lto = true
 strip = true
 
+# The lint policy (RustAudit1 RA3, decision D3; docs/design/rust-audit.md).
+# The parser modules add their own restriction lints at the top of each file.
 [lints.rust]
 unsafe_op_in_unsafe_fn = "warn"
+unreachable_pub = "warn"
+# missing_docs (RA3) waits for the docs RA7 writes: 723 items today, and as a
+# rustc lint it would print on every build; the audit's runs pass it.
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_qualifications = "warn"
 
 [lints.clippy]
+# The default groups stay at their own level; pedantic read finding by finding.
+pedantic = { level = "warn", priority = -1 }
+# Nearly every getter; noise for a CLI's library.
+must_use_candidate = "allow"
+# probe::luks::LuksHeader and the like read well.
+module_name_repetitions = "allow"
+# On-disk field names (s_blocks, s_block) mirror the formats.
+similar_names = "allow"
+# Each unsafe block a SAFETY comment, one unsafe operation per block.
 undocumented_unsafe_blocks = "warn"
+multiple_unsafe_ops_per_block = "warn"
 dbg_macro = "warn"
 todo = "warn"
 unimplemented = "warn"

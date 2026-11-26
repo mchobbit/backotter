@@ -4,6 +4,14 @@
 //! are read (offsets 0..47); the salt, the encrypted master keys and the
 //! MD5 hash after them never leave this function.
 
+// A parser of on-disk bytes: here a panic is a damaged disk crashing a restore (RA3).
+#![warn(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::unwrap_used
+)]
+
 use super::Content;
 use crate::bytes::{ByteSource, le16, le32, le64};
 use crate::json::{Obj, Value};

@@ -3,6 +3,14 @@
 //! structures.  Every getter returns 0 / empty past the end of its slice
 //! instead of panicking: on-disk data is never trusted.
 
+// A parser of on-disk bytes: here a panic is a damaged disk crashing a restore (RA3).
+#![warn(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::unwrap_used
+)]
+
 use std::cell::OnceCell;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};

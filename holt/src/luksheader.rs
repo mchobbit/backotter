@@ -10,6 +10,14 @@
 //! On by default for an Ubuntu Core's encrypted partitions; elsewhere asked
 //! for with `bko-holt dump --keep-luks-header DEV`.
 
+// A parser of on-disk bytes: here a panic is a damaged disk crashing a restore (RA3).
+#![warn(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::unwrap_used
+)]
+
 use crate::json::{Obj, Value};
 use crate::sys::Sys;
 

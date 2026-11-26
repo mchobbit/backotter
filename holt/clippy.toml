@@ -1,0 +1,5 @@
+# Clippy's settings for holt (RustAudit1 RA3); the lints are in Cargo.toml.
+msrv = "1.85"
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true

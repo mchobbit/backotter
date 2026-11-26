@@ -15,6 +15,14 @@
 //! close leaves the volume attached (bioctl -d would clear its bootable
 //! flag).  Other levels and key-disk volumes are dumped but refused.
 
+// A parser of on-disk bytes: here a panic is a damaged disk crashing a restore (RA3).
+#![warn(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::unwrap_used
+)]
+
 use super::Family;
 use super::labelled::disk_names;
 use crate::json::{Obj, Value};

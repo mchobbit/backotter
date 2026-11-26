@@ -1,0 +1,3 @@
+# Commits that only reformat code (git config blame.ignoreRevsFile .git-blame-ignore-revs)
+# holt: cargo fmt, the default style (RustAudit1 RA6.1)
+7b05c32996fe2de15d3e11b5fba528ca343bcc38

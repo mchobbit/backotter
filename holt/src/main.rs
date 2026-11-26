@@ -14,6 +14,7 @@ const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
        bko-holt stick --json
        bko-holt stick --copy INSTALL_ID OUT --json
        bko-holt recovery-words OUT --json
+       bko-holt luks-headers LAYOUT DIR --repo REPO [--password-file FILE] [--json] ...
        bko-holt -h | --help | -V | --version | --license
 
   dump        writes a JSON description of this system's disk layout
@@ -31,6 +32,9 @@ const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
               checks a BackOtter recovery key (its words on standard input)
               and writes the repository password it stands for, for
               bko-rescue
+  luks-headers
+              fetches the LUKS2 headers a dump kept from the backup into a
+              new private directory, for load's --luks-header-dir
 
 `bko-holt dump --help`, `bko-holt load --help` and `bko-holt report-bug --help`
 say more.
@@ -75,7 +79,9 @@ records and says so under \"warnings\".
                   encrypted partitions
   --luks-header-dir DIR
                   where those header files go (default /run/bko-holt/luks-headers);
-                  keep them beside the dump: load looks for them there
+                  keep them with the dump: load looks beside it, or in its
+                  --luks-header-dir; the backup keeps them in the snapshot at
+                  /.bko-holt/luks-headers, where `bko-holt luks-headers` reads them
   -h, --help      show this help
 
 Exit status: 0 on success, 2 for bad arguments, 3 when the system isn't
@@ -113,6 +119,7 @@ fn main() -> ExitCode {
         Some("recovery-key-file") => ExitCode::from(bko_holt::snapcore::recovery_key_main(&args[1..])),
         Some("stick") => ExitCode::from(bko_holt::stick::main(&args[1..])),
         Some("recovery-words") => ExitCode::from(bko_holt::recoverycmd::main(&args[1..])),
+        Some("luks-headers") => ExitCode::from(bko_holt::luksfetch::main(&args[1..])),
         // Not in the usage: run by load's close, partition and boot stages.
         Some("snapcore-boot-areas") => ExitCode::from(bko_holt::load::snapcore::boot_areas_main(&args[1..])),
         Some("md-lbs") => ExitCode::from(bko_holt::mdsb::main(&args[1..])),

@@ -393,13 +393,14 @@ pub fn copy_layout(sys: &Sys, fam: Option<Family>, id: &str, out: &std::path::Pa
         return Err((E::LayoutRefused, say(format!("{path}'s {LAYOUT_KEY} isn't a layout bko-holt load takes: {e}"))));
     }
     // A dump that kept LUKS2 headers (an Ubuntu Core's encryption, or dump
-    // --keep-luks-header) needs their files beside it, and the stick
-    // carries none (holt-json.md's open question 12): said now, not by
-    // the first plan.
-    let headers = layout.at(&["storage", "luks_headers"]).and_then(Value::as_array).map_or(0, Vec::len);
-    if headers > 0 {
-        return Err((E::LayoutRefused, say(format!("{path}'s {LAYOUT_KEY} kept {headers} LUKS2 header(s) as files beside the dump (storage.luks_headers), and the stick carries no such files: it can't be restored from the stick alone"))));
-    }
+    // --keep-luks-header) needs their files, which the backup holds and
+    // `bko-holt luks-headers` fetches once the repository's password is in
+    // (holt-json.md's open question 12): the document counts them, and a
+    // list that couldn't be fetched is refused now, not by the first plan.
+    let headers = match crate::luksfetch::entries(layout) {
+        Ok(l) => l.len(),
+        Err(e) => return Err((E::LayoutRefused, say(format!("{path}'s {LAYOUT_KEY} kept LUKS2 headers bko-holt can't fetch from the backup: {e}")))),
+    };
     let text = layout.pretty();
     if let Err(e) = crate::recoverycmd::write_new(out, text.as_bytes()) {
         // O_EXCL: a file there now isn't this one's, and is left as it is.
@@ -413,6 +414,7 @@ pub fn copy_layout(sys: &Sys, fam: Option<Family>, id: &str, out: &std::path::Pa
         .set("bytes", text.len())
         .set("sha256", crate::bytes::sha256_hex(text.as_bytes()))
         .set("system_sha256", crate::bytes::sha256_hex(&body))
+        .set("luks_headers", headers)
         .build())
 }
 
@@ -1488,7 +1490,7 @@ mod tests {
         assert_eq!(v.get_str("system_sha256"), Some(crate::bytes::sha256_hex(b.as_bytes()).as_str()));
         assert_eq!(v.get_str("out"), Some(out.to_str().unwrap()));
         let keys: Vec<&str> = v.as_object().unwrap().iter().map(|(k, _)| k.as_str()).collect();
-        assert_eq!(keys, ["format", "schema", "version", "generated", "dry_run", "install_id", "path", "out", "bytes", "sha256", "system_sha256"]);
+        assert_eq!(keys, ["format", "schema", "version", "generated", "dry_run", "install_id", "path", "out", "bytes", "sha256", "system_sha256", "luks_headers"]);
         let mut g = v.clone();
         g.put("out", "OUT");
         crate::testutil::golden_json("stick-copy-json", "ok", &g);
@@ -1557,18 +1559,28 @@ mod tests {
         let (_, line) = refused(copy_layout(&sys_of(&t), None, BABBAGE, &out), E::LayoutRefused);
         assert!(line.contains("plan9"), "{line}");
         gone(&out);
-        // A dump that kept a LUKS2 header: its file isn't on the stick.
-        let kept = DUMP.replace("\"fstab\":", "\"luks_headers\": [{\"device\": \"vda1\", \"file\": \"luks-header-1111.img\", \"sha256\": \"00\"}],\n    \"fstab\":");
+        // A dump that kept LUKS2 headers: copied, the document counting
+        // them, for bko-rescue to fetch from the backup (open question 12).
+        let one = format!("{{\"device\": \"vda1\", \"file\": \"luks2-header-1111.img\", \"bytes\": 16777216, \"sha256\": \"{}\"}}", "ab".repeat(32));
+        let kept = DUMP.replace("\"fstab\":", &format!("\"luks_headers\": [{one}],\n    \"fstab\":"));
         assert!(crate::load::layout::Layout::from_json(crate::json::parse(&kept).unwrap()).is_ok());
         let none = DUMP.replace("\"fstab\":", "\"luks_headers\": [],\n    \"fstab\":");
         let a = system(LOVELACE, "lovelace", "", &with_layout(&kept));
         let b = system(BABBAGE, "babbage", "", &with_layout(&none));
         let t = linux_tree(&config(vec![machine_dir(LOVELACE, &a, Some(&sum(&a))), machine_dir(BABBAGE, &b, Some(&sum(&b)))]), None);
-        let (_, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), E::LayoutRefused);
-        assert!(line.contains("kept 1 LUKS2 header") && line.contains("can't be restored from the stick alone"), "{line}");
-        gone(&out);
-        copy_layout(&sys_of(&t), None, BABBAGE, &out).expect("no header kept: copied");
+        let v = copy_layout(&sys_of(&t), None, LOVELACE, &out).expect("a kept header: copied");
+        assert_eq!(v.get_u64("luks_headers"), Some(1));
         std::fs::remove_file(&out).unwrap();
+        let v = copy_layout(&sys_of(&t), None, BABBAGE, &out).expect("none kept: copied");
+        assert_eq!(v.get_u64("luks_headers"), Some(0));
+        std::fs::remove_file(&out).unwrap();
+        // One that couldn't be fetched (a file name dump never makes): said now.
+        let bad = DUMP.replace("\"fstab\":", &format!("\"luks_headers\": [{}],\n    \"fstab\":", one.replace("luks2-header-1111.img", "../../etc/shadow")));
+        let c = system(LOVELACE, "lovelace", "", &with_layout(&bad));
+        let t = linux_tree(&config(vec![machine_dir(LOVELACE, &c, Some(&sum(&c)))]), None);
+        let (_, line) = refused(copy_layout(&sys_of(&t), None, LOVELACE, &out), E::LayoutRefused);
+        assert!(line.contains("can't fetch from the backup") && line.contains("isn't a header file's name"), "{line}");
+        gone(&out);
         // The config partition itself: missing, or reformatted.
         let t = Tree::new("stick");
         t.file("/proc/self/mountinfo", "");

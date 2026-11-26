@@ -479,7 +479,9 @@ golden plans make the gadget's table exact, `mkfs.fat -i` the seed, and
 mount the four roots at `/mnt/bko-target/run/mnt` (no `/`: Ubuntu Core's
 root is the base snap); uc24-fde's put both headers back with
 `luksHeaderRestore` and open them with `--key-file` (no luksFormat, no
-luksAddKey).  At boot they regenerate nothing: the check of modeenv against
+luksAddKey), and its restore leaves the backup's copies of the headers out
+of the tree (`!/.bko-holt/luks-headers/**`, re-blessed 2026-11-26 for
+holt-json.md's open question 12).  At boot they regenerate nothing: the check of modeenv against
 the restored trees, `bko-holt snapcore-boot-areas`, the log and the atimes;
 no grub-install, update-grub, chroot or NVRAM entry.  The kept headers' key
 files and header files are the golden plans' own (common/mod.rs, "The

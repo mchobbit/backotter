@@ -9,7 +9,7 @@ can't drift from bko-holt.
 Each PATH is a file or a directory:
 
   - a document (`bko-holt-plan`, `-status`, `-stick`, `-stick-copy`,
-    `-recovery`, `-error`, `-api`): one JSON
+    `-luks-headers`, `-recovery`, `-error`, `-api`): one JSON
     value, on one line or pretty-printed (a golden's `version` VERSION lets
     GENERATED and PLAN_SHA256 stand in for the run's own);
   - an events stream (a file named `events` or `*.events`/`*.ndjson`): one
@@ -45,7 +45,9 @@ STAGES = ("partition", "assemble", "format", "mount", "restore", "boot", "close"
 ERROR_CODES = ("bad_args", "no_commit", "layout_unreadable", "layout_not_json", "layout_refused",
                "arch_mismatch", "schema_unknown", "json_not_here", "out_unsafe",
                # stick --copy's refusals (exit 1; holt-json.md, open question 8)
-               "config_not_ok", "no_such_machine", "two_machines", "machine_not_ok", "no_layout", "copy_failed")
+               "config_not_ok", "no_such_machine", "two_machines", "machine_not_ok", "no_layout", "copy_failed",
+               # luks-headers' (exit 1; open question 12)
+               "header_fetch_failed", "header_mismatch")
 FAILURE_CODES = ("cmd_failed", "wrong_passphrase", "archiver_failed", "efi_vars", "readback_failed",
                  "not_done_after", "no_restored_tree", "commit_refused", "write_failed", "lock_held", "internal")
 STATES = ("done", "partly", "not_done", "nothing", "unknown")
@@ -298,9 +300,18 @@ STICK = header(
 
 # bko-holt stick --copy INSTALL_ID OUT --json (open question 8): the layout
 # system.json carries, written to OUT (a golden's out is "OUT").
+# luks_headers: Opt, as recordings from before open question 12 don't carry it.
 STICK_COPY = header(
     "bko-holt-stick-copy",
-    install_id=STR, path=STR, out=STR, bytes=INT, sha256=SHA, system_sha256=SHA)
+    install_id=STR, path=STR, out=STR, bytes=INT, sha256=SHA, system_sha256=SHA, luks_headers=Opt(INT))
+
+# bko-holt luks-headers LAYOUT DIR --repo REPO ... --json (open question 12):
+# the LUKS2 headers the dump kept, fetched from the backup into DIR.
+HEADER_FILE = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._-]*")
+LUKS_HEADERS = header(
+    "bko-holt-luks-headers",
+    layout=STR, dir=STR, snapshot=STR, repo_dir=STR,
+    headers=List(Obj({"device": STR, "label": S_, "file": STR, "path": STR, "from": STR, "bytes": INT, "sha256": SHA})))
 
 # bko-holt recovery-words OUT --json (RT10p): the words' verdict, never the words.
 RECOVERY = header(
@@ -310,7 +321,7 @@ RECOVERY = header(
     checksum_ok=B_, written=BOOL, error=S_)
 
 DOCUMENTS = {"bko-holt-plan": PLAN, "bko-holt-status": STATUS, "bko-holt-stick": STICK, "bko-holt-stick-copy": STICK_COPY,
-             "bko-holt-recovery": RECOVERY,
+             "bko-holt-luks-headers": LUKS_HEADERS, "bko-holt-recovery": RECOVERY,
              "bko-holt-error": ERROR, "bko-holt-api": API}
 
 # ---- the events -------------------------------------------------------------
@@ -378,6 +389,18 @@ def check_document(v, where):
             errs.append("%s: install_id %s, path %s" % (where, json.dumps(v["install_id"]), json.dumps(v["path"])))
         if not (v["out"].startswith("/") or v["out"] == "OUT"):
             errs.append("%s: out %s isn't absolute" % (where, json.dumps(v["out"])))
+    if fmt == "bko-holt-luks-headers" and not errs:
+        if not v["dir"].startswith("/") or v["repo_dir"] != "/.bko-holt/luks-headers":
+            errs.append("%s: dir %s, repo_dir %s" % (where, json.dumps(v["dir"]), json.dumps(v["repo_dir"])))
+        files = [h["file"] for h in v["headers"]]
+        if len(set(files)) != len(files):
+            errs.append("%s: a header file named twice" % where)
+        for i, h in enumerate(v["headers"]):
+            # One file of DIR, from REPO_DIR in the snapshot asked for.
+            if not HEADER_FILE.fullmatch(h["file"]) or h["path"] != v["dir"].rstrip("/") + "/" + h["file"]:
+                errs.append("%s: headers[%d]: file %s, path %s" % (where, i, json.dumps(h["file"]), json.dumps(h["path"])))
+            if not h["from"].endswith(v["repo_dir"] + "/" + h["file"]) or not h["from"].startswith(v["snapshot"]):
+                errs.append("%s: headers[%d]: from %s, not %s's %s" % (where, i, json.dumps(h["from"]), v["snapshot"], v["repo_dir"]))
     if fmt == "bko-holt-recovery" and not errs:
         if v["ok"] != (v["problem"] is None) or (v["ok"] and v["checksum_ok"] is not True):
             errs.append("%s: ok %s with problem %s, checksum_ok %s" % (where, v["ok"], json.dumps(v["problem"]), v["checksum_ok"]))

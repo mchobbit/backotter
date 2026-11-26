@@ -785,6 +785,39 @@ def lovelace_trouble():
         f.write("Hand-written by ../../make-disk-fixtures.py: lovelace's problems on the way to Review.\n")
 
 
+def lovelace_luks():
+    """app-lovelace, its layout's copy saying it kept two LUKS2 headers
+    (hand-made from stick-layouts' recorded copy), luks-headers' recorded
+    fetch (scenarios/luks-headers/02-fetch, any snapshot), and every load
+    given --luks-header-dir (open question 12)."""
+    scen = "app-lovelace-luks"
+    lovelace(scen)
+    p = os.path.join(SC, scen, "03-copy", "stdout")
+    doc = json.loads(open(p).read())
+    doc["luks_headers"] = 2
+    with open(p, "w") as f:
+        f.write(json.dumps(doc, separators=(",", ":")) + "\n")
+    copy_call("luks-headers", "02-fetch", scen, "04-luks-headers")
+    a = os.path.join(SC, scen, "04-luks-headers", "argv")
+    words = open(a).read().split("\n")
+    words[words.index("--snapshot") + 1] = "*"
+    with open(a, "w") as f:
+        f.write("\n".join(words))
+    for c in sorted(os.listdir(os.path.join(SC, scen))):
+        a = os.path.join(SC, scen, c, "argv")
+        if not os.path.exists(a):
+            continue
+        words = open(a).read().rstrip("\n").split("\n")
+        if words[0] == "load":
+            at = words.index("--snapshot") + 2
+            words[at:at] = ["--luks-header-dir", "*"]
+            with open(a, "w") as f:
+                f.write("\n".join(words) + "\n")
+    with open(os.path.join(SC, scen, "README"), "w") as f:
+        f.write("Hand-written by ../../make-disk-fixtures.py: app-lovelace, its layout keeping two LUKS2 headers\n"
+                "(the copy's luks_headers 2), fetched by luks-headers' recorded call before the first plan.\n")
+
+
 def plan_changed(doc):
     doc["problems"].append({"code": "plan_changed", "text": "--expect-plan %s: this run's plan is %s: a command or a disk's identity changed since the plan was reviewed" % (sha(1), sha(2)),
                             "expected": sha(1), "got": sha(2), "targets": None})
@@ -804,6 +837,7 @@ if __name__ == "__main__":
     lovelace_trouble()
     lovelace("app-lovelace-changed", review=plan_changed)
     lovelace("app-lovelace-unshown", review=unshown)
+    lovelace_luks()
     rec_again()
     restores()
     moved()

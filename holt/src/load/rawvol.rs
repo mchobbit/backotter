@@ -57,7 +57,7 @@ pub(crate) fn pool_use_note(vg: &str, p: &ThinPool, problems: &mut Vec<String>) 
 /// How a raw volume's image is read back from the repository: the
 /// archiver's `dump` of one file, to standard output.  rustic takes
 /// SNAPSHOT:PATH; restic takes SNAPSHOT and PATH.
-fn dump_argv(prefix: &[String], archiver: &str, snapshot: &str, path: &str) -> Vec<String> {
+pub(crate) fn dump_argv(prefix: &[String], archiver: &str, snapshot: &str, path: &str) -> Vec<String> {
     let mut a = prefix.to_vec();
     let base = archiver.rsplit('/').next().unwrap_or(archiver);
     a.push("dump".into());

@@ -19,6 +19,7 @@ pub(crate) mod efi;
 pub mod fatfs;
 pub mod json;
 pub mod load;
+pub mod luksfetch;
 pub mod luksheader;
 pub mod lzma;
 pub mod mdsb;

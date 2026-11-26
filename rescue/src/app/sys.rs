@@ -856,9 +856,9 @@ pub fn wipe_dir(dir: &Path) {
         for e in rd.flatten() {
             let p = e.path();
             match fs::symlink_metadata(&p) {
-                Ok(m) if m.is_dir() => {
-                    let _ = fs::remove_dir(&p);
-                }
+                // A directory of ours (the LUKS2 headers', `h`): its files
+                // wiped too.  symlink_metadata: a link is never followed.
+                Ok(m) if m.is_dir() => wipe_dir(&p),
                 _ => wipe_file(&p),
             }
         }
@@ -900,9 +900,18 @@ mod tests {
         // Typed again: the old one wiped, a new one made.
         let p2 = s.secret_file("password", &Secret::from_bytes(b"x")).unwrap();
         assert_eq!((p.clone(), fs::read(&p2).unwrap()), (p2, b"x".to_vec()));
+        // A directory of its own (the LUKS2 headers', h): its files too,
+        // and a link in it is removed, not followed.
+        let h = s.path("h");
+        fs::DirBuilder::new().mode(0o700).create(&h).unwrap();
+        fs::write(h.join("luks2-header-a.img"), b"LUKS header").unwrap();
+        let outside = base.join("outside");
+        fs::write(&outside, b"not ours to wipe").unwrap();
+        std::os::unix::fs::symlink(&outside, h.join("link")).unwrap();
         let dir = s.dir.clone();
         drop(s);
         assert!(!dir.exists(), "removed with every file");
+        assert_eq!(fs::read(&outside).unwrap(), b"not ours to wipe", "a link's target is left as it is");
         // A base others can read is refused.
         fs::set_permissions(&base, fs::Permissions::from_mode(0o755)).unwrap();
         assert!(Session::new(&base).is_err());

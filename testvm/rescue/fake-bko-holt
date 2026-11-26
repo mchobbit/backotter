@@ -36,6 +36,15 @@ whose `argv` matches answers:
              right password and a wrong one (a later call without this
              file); the fake as rustic-bko (`fake-rustic-bko`) uses it
 
+A `luks-headers LAYOUT DIR ...` call (holt-json.md's open question 12)
+that answers with exit 0 makes DIR as bko-holt does: a new directory
+(mode 0700) in one of ours with mode 0700, else a failed check; and in it
+each header its stdout document lists, `bytes` bytes of a test pattern
+(never a real header), mode 0600.  The document's `dir` and each `path`
+are the recording's, and are written with DIR in their place.  The files
+are watched as key files are (below): bko-rescue keeps them for the
+session, and wipes them with it.
+
 With $FAKE_BKO_HOLT_STATE naming a file, the calls of a whole run are
 answered in order, as a recorded run (scenarios/rec-*) needs, where one
 argv is asked again and the answer moved on (status after each stage, the
@@ -458,13 +467,41 @@ def main():
         keys.append({"path": target, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(), "out": True})
         if argv[:1] != ["stick"]:
             watched.append(target)
+    out = read(d, "stdout")
+    code = read(d, "exit")
+    if argv[:1] == ["luks-headers"] and out and not (code and code.strip() != b"0"):
+        target = argv[2] if len(argv) > 2 else ""
+        bad = check_out(target)
+        if bad:
+            bad = [b.replace("OUT ", "DIR ") for b in bad]
+            entry.update(ok=False, checks=checks + bad)
+            log(entry)
+            for c in bad:
+                print("fake-bko-holt: CHECK FAILED: %s" % c, file=sys.stderr)
+            return 97
+        doc = json.loads(out)
+        was = doc["dir"]
+        os.mkdir(target, 0o700)
+        os.chmod(target, 0o700)
+        for h in doc["headers"]:
+            h["path"] = os.path.join(target, h["file"])
+            fd = os.open(h["path"], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                pattern = b"fake LUKS2 header %s\n" % h["file"].encode()
+                os.write(fd, (pattern * (h["bytes"] // len(pattern) + 1))[:h["bytes"]])
+            finally:
+                os.close(fd)
+            keys.append({"path": h["path"], "bytes": h["bytes"], "sha256": None, "out": True})
+            watched.append(h["path"])
+        doc["dir"] = target
+        entry["headers_dir_was"] = was
+        out = (json.dumps(doc, separators=(",", ":")) + "\n").encode()
     if STDIN:
         entry["stdin_sha256"] = hashlib.sha256(STDIN[0]).hexdigest()
     entry.update(keys=keys)
     log(entry)
     watch(watched, os.getpid())
     run_dir = os.environ.get("FAKE_BKO_HOLT_RUN_DIR")
-    out = read(d, "stdout")
     if out:
         if run_dir:
             try:
@@ -496,7 +533,6 @@ def main():
         sys.stderr.flush()
     if stopped is not None:
         return stopped
-    code = read(d, "exit")
     return int(code.decode().strip()) if code else 0
 
 

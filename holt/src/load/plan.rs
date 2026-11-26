@@ -310,7 +310,7 @@ pub fn args_redacted(args: &[String]) -> Vec<String> {
 /// The first of the key-file checks PATH fails (holt-json.md, "Secrets"
 /// 4): its name and why, or None.  Never reads the key, but for the last
 /// byte of one a passphrase is TYPED into (a newline there).
-fn key_file_unsafe(sys: &Sys, path: &str, typed: bool) -> Option<(&'static str, String)> {
+pub(crate) fn key_file_unsafe(sys: &Sys, path: &str, typed: bool) -> Option<(&'static str, String)> {
     use std::os::unix::fs::{FileExt, MetadataExt};
     if !path.starts_with('/') {
         return Some(("absolute", "not an absolute path".into()));

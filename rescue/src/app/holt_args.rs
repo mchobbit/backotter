@@ -8,7 +8,9 @@
 //!
 //! RT11 runs `--version --json`, `stick --json`, `recovery-words OUT
 //! --json` and `report-bug`; RT12 `stick --copy INSTALL_ID OUT --json`
-//! (the layout, holt-json.md's open question 8), the plans and status of Disks,
+//! (the layout, holt-json.md's open question 8), `luks-headers LAYOUT DIR
+//! --repo URL --password-file FILE --snapshot ID --json` (the LUKS2
+//! headers a dump kept, from the backup: open question 12), the plans and status of Disks,
 //! Passphrases, Resume and Review, and builds Restore's run from Review's
 //! (rescue-screens.md, "The full argument list": the plan reviewed is the
 //! run made, with `--through close --commit --expect-plan` in its stage's
@@ -44,6 +46,9 @@ pub struct Load {
     pub map: Vec<(String, String)>,
     pub erase: Vec<String>,
     pub snapshot: Option<String>,
+    /// `--luks-header-dir DIR`: the LUKS2 headers the dump kept, fetched
+    /// from the backup into the session's directory (layout.rs).
+    pub luks_header_dir: Option<PathBuf>,
     pub expect_plan: Option<String>,
     /// `--fit-largest PCT`: a shrink or grow the user agreed to on Disks.
     pub fit_largest: Option<u64>,
@@ -65,6 +70,7 @@ impl Load {
             map: Vec::new(),
             erase: Vec::new(),
             snapshot: None,
+            luks_header_dir: None,
             expect_plan: None,
             fit_largest: None,
             reformat: Vec::new(),
@@ -94,6 +100,15 @@ pub enum HoltCmd<'a> {
         install_id: &'a str,
         out: &'a Path,
     },
+    /// The LUKS2 headers the layout kept, from the backup's snapshot, to
+    /// the new directory `dir`.
+    LuksHeaders {
+        layout: &'a Path,
+        dir: &'a Path,
+        repo: &'a str,
+        password_file: &'a Path,
+        snapshot: Option<&'a str>,
+    },
     /// The words go on standard input; the password to `out`.
     RecoveryWords {
         out: &'a Path,
@@ -117,6 +132,14 @@ pub fn argv(cmd: &HoltCmd, dry_run: bool) -> Vec<OsString> {
         HoltCmd::Version => vec![os("--version"), os("--json")],
         HoltCmd::Stick => vec![os("stick"), os("--json")],
         HoltCmd::StickCopy { install_id, out } => vec![os("stick"), os("--copy"), os(install_id), out.as_os_str().to_owned(), os("--json")],
+        HoltCmd::LuksHeaders { layout, dir, repo, password_file, snapshot } => {
+            let mut v = vec![os("luks-headers"), layout.as_os_str().to_owned(), dir.as_os_str().to_owned(), os("--repo"), os(repo), os("--password-file"), password_file.as_os_str().to_owned()];
+            if let Some(s) = snapshot {
+                v.extend([os("--snapshot"), os(s)]);
+            }
+            v.push(os("--json"));
+            v
+        }
         HoltCmd::RecoveryWords { out } => vec![os("recovery-words"), out.as_os_str().to_owned(), os("--json")],
         HoltCmd::ReportBug { out, no_redact, strip, attach } => {
             let mut v = vec![os("report-bug"), os("--output"), out.as_os_str().to_owned()];
@@ -160,6 +183,9 @@ pub fn argv(cmd: &HoltCmd, dry_run: bool) -> Vec<OsString> {
             if let Some(s) = &l.snapshot {
                 v.extend([os("--snapshot"), os(s)]);
             }
+            if let Some(d) = &l.luks_header_dir {
+                v.extend([os("--luks-header-dir"), d.as_os_str().to_owned()]);
+            }
             if let Some(h) = &l.expect_plan {
                 v.extend([os("--expect-plan"), os(h)]);
             }
@@ -200,6 +226,7 @@ mod tests {
             HoltCmd::Version,
             HoltCmd::Stick,
             HoltCmd::StickCopy { install_id: "0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90", out: p },
+            HoltCmd::LuksHeaders { layout: p, dir: p, repo: "sftp://nas.local/backotter/lovelace", password_file: p, snapshot: Some("1a2b3c4d") },
             HoltCmd::RecoveryWords { out: p },
             HoltCmd::ReportBug { out: p, no_redact: false, strip: Some(p), attach: &[] },
             HoltCmd::ReportBug { out: p, no_redact: true, strip: None, attach: &[] },
@@ -218,6 +245,8 @@ mod tests {
             l.key_files.push(("cryptroot".into(), "/run/bko-rescue/s-1-0/k0".into()));
             l.map.push(("sda".into(), "nvme0n1".into()));
             l.erase.push("nvme0n1".into());
+            l.snapshot = Some("1a2b3c4d".into());
+            l.luks_header_dir = Some("/run/bko-rescue/s-1-0/h".into());
             l.expect_plan = Some("ab".repeat(32));
             l.fit_largest = Some(5);
             l.reformat.push(("/srv".into(), "xfs".into()));
@@ -281,7 +310,8 @@ mod tests {
             format!(
                 "load /run/bko-rescue/layout.json --json --through close --repo sftp://nas.local/backotter/lovelace \
                  --password-file /run/bko-rescue/s-1-0/password --key-file cryptroot=/run/bko-rescue/s-1-0/k0 \
-                 --map sda=nvme0n1 --erase nvme0n1 --expect-plan {} --fit-largest 5 --reformat /srv=xfs --removable --no-nvram",
+                 --map sda=nvme0n1 --erase nvme0n1 --snapshot 1a2b3c4d --luks-header-dir /run/bko-rescue/s-1-0/h \
+                 --expect-plan {} --fit-largest 5 --reformat /srv=xfs --removable --no-nvram",
                 "ab".repeat(32)
             )
         );
@@ -295,6 +325,12 @@ mod tests {
         assert_eq!(s(HoltCmd::Stick), "stick --json");
         assert_eq!(s(HoltCmd::StickCopy { install_id: "0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90", out: p }), "stick --copy 0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90 /r/o --json");
         assert_eq!(s(HoltCmd::RecoveryWords { out: p }), "recovery-words /r/o --json");
+        let (l, h, pw) = (Path::new("/r/layout.json"), Path::new("/r/h"), Path::new("/r/password"));
+        assert_eq!(
+            s(HoltCmd::LuksHeaders { layout: l, dir: h, repo: "sftp://nas/bko", password_file: pw, snapshot: Some("1a2b3c4d") }),
+            "luks-headers /r/layout.json /r/h --repo sftp://nas/bko --password-file /r/password --snapshot 1a2b3c4d --json"
+        );
+        assert_eq!(s(HoltCmd::LuksHeaders { layout: l, dir: h, repo: "/srv/r", password_file: pw, snapshot: None }), "luks-headers /r/layout.json /r/h --repo /srv/r --password-file /r/password --json");
         assert_eq!(s(HoltCmd::ReportBug { out: p, no_redact: false, strip: Some(Path::new("/r/s")), attach: &[] }), "report-bug --output /r/o --strip-file /r/s");
         assert_eq!(s(HoltCmd::ReportBug { out: p, no_redact: true, strip: Some(Path::new("/r/s")), attach: &[] }), "report-bug --output /r/o --no-redact", "--strip-file means nothing there");
     }

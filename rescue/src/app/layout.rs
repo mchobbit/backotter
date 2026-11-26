@@ -14,18 +14,54 @@
 //! location has no system.json on the stick: the backup's own copy waits
 //! on the backup tool (rescue-screens.md, "4. Snapshot"), so then there is
 //! no layout, and a screen says so.
+//!
+//! A layout that kept LUKS2 headers (`dump --keep-luks-header`, Ubuntu
+//! Core's encryption always: the copy document's `luks_headers` counts
+//! them) needs their files, which the backup holds (holt-json.md's open
+//! question 12, approved 2026-11-26).  Once the password is in and the
+//! snapshot chosen, before the first plan, `bko-holt luks-headers LAYOUT
+//! DIR --repo URL --password-file FILE --snapshot ID --json` fetches them
+//! into DIR, `h` in the session's directory: bko-holt makes it 0700, each
+//! header 0600, checked against the dump's size and SHA-256.  Every load
+//! then gets `--luks-header-dir DIR`.  Another snapshot fetches them
+//! again; the session's end wipes them with the rest (key material).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::holt_args::HoltCmd;
+use super::strings as s;
 use super::sys;
-use super::{document, raw_lines, same_version, wait, App};
+use super::{document, raw_lines, same_version, wait, App, Go, Problem};
+use crate::text::{cap, Clean};
+use crate::ui::Ui;
 
 /// Its name in the session's directory.
 pub const NAME: &str = "layout.json";
 
 /// The `bko-holt-stick-copy` schema read.
 pub const COPY_SCHEMA: u64 = 1;
+
+/// The headers' directory's name in the session's directory.
+pub const HEADERS_DIR: &str = "h";
+
+/// The `bko-holt-luks-headers` schema read.
+pub const HEADERS_SCHEMA: u64 = 1;
+
+/// How long a fetch may take: two Ubuntu Core headers are 13 MiB, a big
+/// keyslots area 128 MiB each, over the network.
+pub const HEADERS_MS: u64 = 600_000;
+
+/// Whether the document V names COUNT headers, each a plain file in DIR.
+fn headers_there(v: &crate::json::Value, dir: &Path, count: u64) -> bool {
+    let rows = v.get_arr("headers").map(Vec::as_slice).unwrap_or(&[]);
+    rows.len() as u64 == count
+        && rows.iter().all(|r| {
+            let file = r.get_str("file").unwrap_or("");
+            let plain = !file.is_empty() && !file.starts_with('.') && !file.contains('/');
+            let p = dir.join(file);
+            plain && r.get_str("path") == p.to_str() && std::fs::symlink_metadata(&p).is_ok_and(|m| m.is_file() && Some(m.len()) == r.get_u64("bytes"))
+        })
+}
 
 /// An install ID as bko-holt names a machine: a UUID's shape, so nothing
 /// else ever reaches its argument list.
@@ -61,6 +97,9 @@ impl App {
             // bko-holt's word for it, and the file it says it wrote.
             Ok(v) if x.code == Some(0) && v.get_str("install_id").is_some_and(|i| i.eq_ignore_ascii_case(&m.install_id)) && size.is_some() && v.get_u64("bytes") == size => {
                 self.layout = Some(out.clone());
+                // A bko-holt from before open question 12 says none: it
+                // refused such a layout.
+                self.layout_headers = v.get_u64("luks_headers").unwrap_or(0);
                 Ok(out)
             }
             Ok(_) => {
@@ -74,6 +113,74 @@ impl App {
                 Err(super::strings::layout_refused(why))
             }
         }
+    }
+}
+
+impl App {
+    /// The headers' directory gone, its files zeroed first.
+    pub(crate) fn forget_headers(&mut self) {
+        if let Some((d, _)) = self.headers.take() {
+            sys::wipe_dir(&d);
+        }
+    }
+
+    /// The directory of the LUKS2 headers the layout kept, fetched from
+    /// the chosen snapshot the first time (None: it kept none).  Err is
+    /// where to go, its problem screen shown.
+    pub(crate) fn header_dir(&mut self, ui: &mut dyn Ui) -> Result<Option<PathBuf>, Go> {
+        if self.layout_headers == 0 {
+            return Ok(None);
+        }
+        if let Some((d, from)) = &self.headers {
+            if *from == self.snap && d.is_dir() {
+                return Ok(Some(d.clone()));
+            }
+        }
+        self.forget_headers();
+        let (Some(layout), Some(t), Some(pw)) = (self.layout.clone(), self.target(), self.password.clone()) else {
+            return Err(self.headers_failed(ui, s::HEADERS_NO_REPO));
+        };
+        let dir = self.session.path(HEADERS_DIR);
+        sys::wipe_dir(&dir);
+        let snap = self.snap.clone();
+        let Some(mut cmd) = self.holt_cmd(&HoltCmd::LuksHeaders { layout: &layout, dir: &dir, repo: &t.place.url, password_file: &pw, snapshot: snap.as_deref() }) else {
+            return Err(Go::Back);
+        };
+        cmd.timeout_ms = HEADERS_MS;
+        let x = self.run_job(ui, s::SCR_DISKS, s::HEADERS_TITLE, Clean::ours(s::HEADERS_TEXT), cmd)?;
+        let version = self.version.clone();
+        let doc = document(&x, "bko-holt-luks-headers").and_then(|v| same_version(v, HEADERS_SCHEMA, version.as_deref()));
+        match doc {
+            Ok(v) if x.code == Some(0) && v.get_str("dir") == dir.to_str() && headers_there(&v, &dir, self.layout_headers) => {
+                self.headers = Some((dir.clone(), snap));
+                Ok(Some(dir))
+            }
+            Ok(_) => {
+                sys::wipe_dir(&dir);
+                Err(self.headers_failed(ui, s::HEADERS_NOT_WRITTEN))
+            }
+            Err(why) => {
+                sys::wipe_dir(&dir);
+                let why = why.strip_prefix("bko-holt luks-headers: ").unwrap_or(&why).to_string();
+                Err(self.headers_failed(ui, &why))
+            }
+        }
+    }
+
+    /// The headers couldn't be fetched: why, Try again, Back, Report.
+    fn headers_failed(&mut self, ui: &mut dyn Ui, why: &str) -> Go {
+        let p = Problem {
+            code: "headers_failed",
+            screen: s::SCR_DISKS,
+            title: s::HEADERS_FAILED_TITLE.to_string(),
+            what: s::headers_failed(Clean::line(why, cap::PROBLEM).as_str()),
+            why: s::HEADERS_FAILED_WHY.to_string(),
+            todo: s::HEADERS_FAILED_TODO.to_string(),
+            fixes: Vec::new(),
+            again: true,
+            back: Some(Go::Back),
+        };
+        self.problem(ui, p)
     }
 }
 

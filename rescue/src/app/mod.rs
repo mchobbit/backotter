@@ -225,6 +225,11 @@ pub struct App {
     pub(crate) raw: Vec<Clean>,
     /// The layout file load reads (layout.rs).
     pub(crate) layout: Option<PathBuf>,
+    /// The LUKS2 headers that layout kept (its copy document's count):
+    /// fetched from the backup before the first plan (layout.rs).
+    pub(crate) layout_headers: u64,
+    /// Their directory in the session's, and the snapshot they are from.
+    pub(crate) headers: Option<(PathBuf, Option<String>)>,
     /// The last plan bko-holt made.
     pub(crate) plan: Option<plan::Plan>,
     /// Each old disk put on a disk here: (old disk, node, what `--map`
@@ -305,6 +310,8 @@ impl App {
             snap: None,
             raw: Vec::new(),
             layout: None,
+            layout_headers: 0,
+            headers: None,
             plan: None,
             map: Vec::new(),
             fit: Vec::new(),
@@ -611,6 +618,7 @@ impl App {
         if let Some(p) = self.layout.take() {
             sys::wipe_file(&p);
         }
+        self.layout_headers = 0;
     }
 
     /// Another snapshot or machine: the disks' choices and the keys go.
@@ -618,6 +626,8 @@ impl App {
         for (_, _, p) in self.keys.drain(..) {
             sys::wipe_file(&p);
         }
+        // Another snapshot's headers may differ: fetched again.
+        self.forget_headers();
         self.plan = None;
         self.map.clear();
         self.fit.clear();

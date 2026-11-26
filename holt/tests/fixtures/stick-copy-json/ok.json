@@ -9,6 +9,7 @@
   "out": "OUT",
   "bytes": 1250,
   "sha256": "abee0322b1415e54cd20abc136c5a9cbdfbc4072fa35715501ec79cff8e70ab6",
-  "system_sha256": "4709ca18a7ad39770d78e6ef04eddcf79b5bfbc2aff98b55b71c8daefc477f5d"
+  "system_sha256": "4709ca18a7ad39770d78e6ef04eddcf79b5bfbc2aff98b55b71c8daefc477f5d",
+  "luks_headers": 0
 }
 

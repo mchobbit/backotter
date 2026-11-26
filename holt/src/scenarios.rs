@@ -7927,7 +7927,7 @@ fn snapcore_fde_guest() {
     let pc = snapcore_plan(&v, &["--luks-header-dir", &hdir]).coded_problems();
     assert!(pc.iter().any(|x| x.code == crate::load::codes::ProblemCode::KeptHeaderKeyNeeded && x.str_field("name") == Some("ubuntu-data-enc")), "{pc:?}");
     let p = snapcore_plan(&v, &kf[2..]).problems;
-    assert!(p.iter().any(|x| x.starts_with("vda5: the LUKS2 header the dump kept: /run/x/luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img")), "{p:?}");
+    assert!(p.iter().any(|x| x.starts_with("vda5: the LUKS2 header the dump kept: /run/x/luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img") && x.contains("`bko-holt luks-headers` fetches it from the backup")), "{p:?}");
     std::fs::write(format!("{hdir}/luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img"), b"LUKS").unwrap();
     let p = snapcore_plan(&v, &kf).problems;
     assert!(p.iter().any(|x| x.contains("isn't the header the dump kept (its SHA-256 differs)")), "{p:?}");

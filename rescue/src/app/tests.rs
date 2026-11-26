@@ -68,6 +68,8 @@ struct Seen {
     exists: Vec<PathBuf>,
     /// Restarts and power offs run.
     offs: Vec<String>,
+    /// Each load's --luks-header-dir, in order (None: it had none).
+    header_dirs: Vec<Option<String>>,
 }
 
 struct Fake {
@@ -91,6 +93,16 @@ struct Fake {
     /// `stick --copy`'s exit and document, when not the scenario's (its
     /// OUT is still written, with stick-layouts' dump).
     copy: Option<(i32, String)>,
+    /// `luks-headers`' answer: these files written to DIR as bko-holt
+    /// writes them, and its document; or an exit and a document of its
+    /// own (DIR not made).
+    luks: Option<Luks>,
+}
+
+#[derive(Clone)]
+enum Luks {
+    Files(Vec<(String, Vec<u8>)>),
+    Says(i32, String),
 }
 
 /// A scenario's events file as fake-bko-holt streams it: its lines but
@@ -250,13 +262,39 @@ impl Fake {
                     }
                     Output { code: Some(2), stderr: b"no such words".to_vec(), ..Output::default() }
                 }
+                "luks-headers" => match self.luks.clone() {
+                    Some(Luks::Files(files)) => {
+                        let dir = PathBuf::from(&a[2]);
+                        assert!(!dir.exists(), "DIR is new: {a:?}");
+                        fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
+                        let version = crate::json::parse(&String::from_utf8(fixture(&format!("scenarios/{}/01-version/stdout", self.holt))).unwrap()).unwrap().get_str("version").unwrap().to_string();
+                        let snap = a.iter().position(|x| x == "--snapshot").map(|i| a[i + 1].clone()).unwrap_or_else(|| "latest".into());
+                        let rows: Vec<String> = files
+                            .iter()
+                            .map(|(f, b)| {
+                                let p = dir.join(f);
+                                write_new(&p, b).unwrap();
+                                format!(r#"{{"device":"vda5","label":null,"file":"{f}","path":"{}","from":"{snap}:/.bko-holt/luks-headers/{f}","bytes":{},"sha256":"{}"}}"#, p.display(), b.len(), "ab".repeat(32))
+                            })
+                            .collect();
+                        let doc = format!(
+                            r#"{{"format":"bko-holt-luks-headers","schema":1,"version":"{version}","generated":"2026-11-26T10:00:00Z","dry_run":false,"layout":"{}","dir":"{}","snapshot":"{snap}","repo_dir":"/.bko-holt/luks-headers","headers":[{}]}}"#,
+                            a[1],
+                            a[2],
+                            rows.join(",")
+                        );
+                        ok(format!("{doc}\n").into_bytes())
+                    }
+                    Some(Luks::Says(code, doc)) => Output { code: Some(code), stdout: doc.into_bytes(), ..Output::default() },
+                    None => panic!("a luks-headers call for a layout that kept none: {a:?}"),
+                },
                 "report-bug" => {
                     let unredacted = a.contains(&"--no-redact".to_string());
                     let text = if unredacted { "NOT redacted\n" } else { "a redacted report\nhost-1\n" };
                     write_new(Path::new(&a[2]), text.as_bytes()).unwrap();
                     ok(b"Wrote it.\n".to_vec())
                 }
-                "load" => match self.call(&a) {
+                "load" => match self.call_seen(&a) {
                     Some(c) => {
                         let code = fs::read_to_string(c.join("exit")).ok().and_then(|x| x.trim().parse().ok()).unwrap_or(0);
                         Output { code: Some(code), stdout: fs::read(c.join("stdout")).unwrap_or_default(), ..Output::default() }
@@ -311,6 +349,18 @@ impl Fake {
         }
     }
 
+    /// call(), its --luks-header-dir left out of the match and kept as
+    /// seen.
+    fn call_seen(&mut self, a: &[String]) -> Option<PathBuf> {
+        let mut a = a.to_vec();
+        let at = a.iter().position(|x| x == "--luks-header-dir");
+        self.seen.borrow_mut().header_dirs.push(at.map(|i| a[i + 1].clone()));
+        if let Some(i) = at {
+            a.drain(i..i + 2);
+        }
+        self.call(&a)
+    }
+
     /// The scenario's call that answers load's argv `a`.
     fn call(&mut self, a: &[String]) -> Option<PathBuf> {
         let dir = format!("{FIX}/scenarios/{}", self.disks);
@@ -341,7 +391,7 @@ impl Sys for Fake {
     fn start_load(&mut self, c: Cmd, how: sys::How, _events: &Path, _stderr: &Path) -> Result<Box<dyn sys::Running>, String> {
         self.seen.borrow_mut().started.push((c.line(), c.env.clone(), how));
         let a: Vec<String> = c.args.iter().map(|x| x.to_string_lossy().to_string()).collect();
-        let call = self.call(&a);
+        let call = self.call_seen(&a);
         let (lines, exit, stderr) = match &call {
             Some(d) => {
                 let lines = event_lines(&fs::read(d.join("events")).unwrap_or_default());
@@ -456,6 +506,7 @@ fn t_with(holt: &str, rustic: &str, wh: Where, dry_run: bool, f: impl FnOnce(&mu
         disks: "app-lovelace".into(),
         in_turn: false,
         copy: None,
+        luks: None,
     };
     f(&mut fake);
     let session = Session::new(&base).unwrap();
@@ -792,7 +843,7 @@ fn rustics_failures_each_have_their_help() {
             }
         }
         let base = t.base.0.clone();
-        let fake = Fake { base: base.clone(), holt: "stick-three".into(), version: None, stick: None, rustic: "lovelace".into(), disks: "app-lovelace".into(), config: None, seen: t.seen.clone(), tools: vec!["bko-holt", "rustic-bko"], in_turn: false, copy: None };
+        let fake = Fake { base: base.clone(), holt: "stick-three".into(), version: None, stick: None, rustic: "lovelace".into(), disks: "app-lovelace".into(), config: None, seen: t.seen.clone(), tools: vec!["bko-holt", "rustic-bko"], in_turn: false, copy: None, luks: None };
         t.app = App::new(Box::new(Failing(fake, stderr)), Session::new(&base).unwrap(), Opts { holt: None, rustic: "rustic-bko".into(), dry_run: false }, LINUX);
         let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, B(B_RAW), Reply::Ok, Back, Reply::Quit]]));
         assert_eq!(t.app.run(&mut ui), Exit::Quit, "{title}");
@@ -1653,6 +1704,96 @@ fn a_copy_that_isnt_as_bko_holt_says_is_wiped() {
     let mut ui = Shots::new(script(&[&to_disks(), &[Reply::Quit]]));
     t.app.run(&mut ui);
     assert!(t.app.layout.is_some() && t.app.session.path("layout.json").exists());
+}
+
+/// stick-layouts' copy document saying its layout kept N LUKS2 headers.
+fn copy_with_headers(n: u64) -> String {
+    let good = String::from_utf8(fixture("scenarios/stick-layouts/03-copy/stdout")).unwrap();
+    assert!(!good.contains("luks_headers"), "recorded before open question 12");
+    good.replace("\"system_sha256\"", &format!("\"luks_headers\":{n},\"system_sha256\""))
+}
+
+fn headers_t(luks: Luks) -> T {
+    t_with("stick-three", "lovelace", LINUX, false, |f| {
+        f.disks = "app-lovelace".into();
+        f.copy = Some((0, copy_with_headers(2)));
+        f.luks = Some(luks);
+    })
+}
+
+const HEADER_FILES: [&str; 2] = ["luks2-header-bc000000-0000-4000-8000-00000000000a.img", "luks2-header-bc000000-0000-4000-8000-00000000000c.img"];
+
+#[test]
+fn kept_headers_are_fetched_before_the_first_plan() {
+    let files: Vec<(String, Vec<u8>)> = HEADER_FILES.iter().map(|f| (f.to_string(), format!("LUKS header {f}").into_bytes())).collect();
+    let mut t = headers_t(Luks::Files(files.clone()));
+    // The fetch's gauge, the plan's; then Back to Snapshot, another
+    // backup: its headers fetched again.
+    let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, P, Pick(0), P, P, Back, Pick(1), P, Reply::Quit]]));
+    assert_eq!(t.app.run(&mut ui), Exit::Quit);
+    let dir = t.app.session.dir.clone();
+    let (layout, h, pw) = (dir.join("layout.json"), dir.join("h"), dir.join("password"));
+    let r = ran(&t);
+    let fetches: Vec<&String> = r.iter().filter(|l| l.contains(" luks-headers ")).collect();
+    assert_eq!(fetches.len(), 2, "{r:#?}");
+    let first = format!("/fake/bin/bko-holt luks-headers {} {} --repo sftp://nas.local/backotter/lovelace --password-file {} --snapshot ", layout.display(), h.display(), pw.display());
+    assert!(fetches[0].starts_with(&first) && fetches[0].ends_with(" --json"), "{}", fetches[0]);
+    assert!(fetches[0].contains("--snapshot a7f3c901"), "the newest backup's: {}", fetches[0]);
+    assert!(fetches[1].starts_with(&first) && fetches[0] != fetches[1], "another snapshot's: {}", fetches[1]);
+    // Before the first plan, which (as every load) names the directory.
+    let at = |pat: &str| r.iter().position(|l| l.contains(pat)).unwrap();
+    assert!(at(" luks-headers ") < at("bko-holt load"), "{r:#?}");
+    let dirs = t.seen.borrow().header_dirs.clone();
+    assert!(!dirs.is_empty() && dirs.iter().all(|d| d.as_deref() == Some(h.to_str().unwrap())), "{dirs:?}");
+    let l = t.app.full_load(holt_args::Stage::Plan, true).unwrap();
+    assert_eq!(l.luks_header_dir.as_deref(), Some(h.as_path()));
+    // bko-holt's files, private, kept for the session; then wiped with it.
+    assert_eq!(fs::metadata(&h).unwrap().permissions().mode() & 0o777, 0o700);
+    for (f, b) in &files {
+        assert_eq!(&fs::read(h.join(f)).unwrap(), b);
+        assert_eq!(fs::metadata(h.join(f)).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    // Another machine or snapshot: gone, fetched again when needed.
+    t.app.forget_disks();
+    assert!(!h.exists() && t.app.headers.is_none());
+    assert_eq!(t.app.full_load(holt_args::Stage::Plan, true).unwrap().luks_header_dir, None);
+    drop(t.app);
+    assert!(!dir.exists(), "the session's directory is gone, the headers' with it");
+}
+
+#[test]
+fn headers_that_cant_be_fetched_stop_on_disks() {
+    // bko-holt's refusal, in its words; nothing planned, nothing left.
+    let refusal = r#"{"format":"bko-holt-error","schema":1,"version":"VERSION","generated":"2026-11-26T10:00:00Z","dry_run":false,"exit":1,"code":"header_mismatch","text":"bko-holt luks-headers: vda5's LUKS2 header (a7f3c901:/.bko-holt/luks-headers/x.img) isn't the header the dump kept: its SHA-256 isn't the one the dump recorded"}"#;
+    let version = crate::json::parse(&String::from_utf8(fixture("scenarios/stick-three/01-version/stdout")).unwrap()).unwrap().get_str("version").unwrap().to_string();
+    for (luks, words) in [
+        (Luks::Says(1, format!("{}\n", refusal.replace("VERSION", &version))), "vda5's LUKS2 header (a7f3c901:/.bko-holt/luks-headers/x.img) isn't the header the dump kept"),
+        // One header where two were kept: not as the layout says.
+        (Luks::Files(vec![(HEADER_FILES[0].to_string(), b"LUKS".to_vec())]), super::strings::HEADERS_NOT_WRITTEN),
+    ] {
+        let mut t = headers_t(luks);
+        let mut ui = Shots::new(script(&[&start(), &[Pick(0), Sec(PASSWORD.to_vec()), P, P, Pick(0), P, Reply::Quit]]));
+        assert_eq!(t.app.run(&mut ui), Exit::Quit);
+        let p = ui.flat("Problem: the encryption headers couldn't be fetched", 0);
+        assert!(p.contains("bko-holt was asked for the old disks' encryption headers, and said:") && p.contains(words), "{p}");
+        assert!(!p.contains("bko-holt luks-headers:"), "bko-holt named once: {p}");
+        assert!(p.contains("choose the newest backup"), "{p}");
+        assert!(!t.app.session.path("h").exists() && t.app.headers.is_none(), "nothing left");
+        assert!(!ran(&t).iter().any(|l| l.contains("bko-holt load")), "no plan without the headers");
+    }
+}
+
+#[test]
+fn a_layout_that_kept_none_fetches_nothing() {
+    let mut t = t_with("stick-three", "lovelace", LINUX, false, |f| {
+        f.disks = "app-lovelace".into();
+        f.copy = Some((0, copy_with_headers(0)));
+    });
+    let mut ui = Shots::new(script(&[&to_disks(), &[Reply::Quit]]));
+    t.app.run(&mut ui);
+    assert!(t.app.layout.is_some() && t.app.layout_headers == 0);
+    assert!(!ran(&t).iter().any(|l| l.contains(" luks-headers ")), "the fake panics on one");
+    assert!(t.seen.borrow().header_dirs.iter().all(Option::is_none));
 }
 
 #[test]

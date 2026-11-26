@@ -1,0 +1,2 @@
+Hand-written by ../../make-disk-fixtures.py: app-lovelace, its layout keeping two LUKS2 headers
+(the copy's luks_headers 2), fetched by luks-headers' recorded call before the first plan.

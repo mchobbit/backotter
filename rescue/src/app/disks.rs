@@ -153,6 +153,7 @@ impl App {
         l.repo = self.target().map(|t| t.place.url);
         l.password_file = self.password.clone();
         l.snapshot = self.snap.clone();
+        l.luks_header_dir = self.headers.as_ref().filter(|(_, from)| *from == self.snap).map(|(d, _)| d.clone());
         for (group, names, path) in &self.keys {
             let _ = group;
             for n in names {
@@ -271,6 +272,11 @@ impl App {
     pub(crate) fn disks(&mut self, ui: &mut dyn Ui) -> Go {
         if let Err(why) = self.layout_file() {
             return self.no_layout(ui, &why);
+        }
+        // The LUKS2 headers the layout kept, from the backup, before the
+        // first plan (holt-json.md's open question 12).
+        if let Err(g) = self.header_dir(ui) {
+            return g;
         }
         let Some(l) = self.full_load(Stage::Plan, true) else { return Go::Back };
         let p = match self.plan_run(ui, &l, s::PLANNING) {

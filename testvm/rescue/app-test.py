@@ -460,6 +460,37 @@ def test_disks_dry_run():
     check(review != [], "dry run: Review's plan passes --erase (J6)")
 
 
+def test_disks_kept_headers():
+    """A layout that kept LUKS2 headers (open question 12): bko-holt
+    luks-headers fetches them into the session's h/ after the password and
+    the backup, before the first plan; every load gets --luks-header-dir;
+    the headers (watched by the fake as key files are) go with the session."""
+    r = Run("disks-luks", holt="app-lovelace-luks", fake_mount=True)
+    d = r.d
+    to_password(r)
+    password(r, PASSWORD, "Which backup?")
+    d.keys("Enter")
+    d.wait("Where each disk goes")
+    r.d.signal(signal.SIGTERM)
+    r.finish(143)
+    calls = r.secrets_checked(None)
+    fetch = [c for c in calls if c["argv"][:1] == ["luks-headers"]]
+    check(len(fetch) == 1 and fetch[0]["call"] == "04-luks-headers", "headers: one fetch (%s)" % [c["argv"][:3] for c in fetch])
+    if not fetch:
+        return
+    a = fetch[0]["argv"]
+    hdir = a[2]
+    check(hdir.startswith(r.run_dir + "/") and hdir.endswith("/h") and a[1] == os.path.join(os.path.dirname(hdir), "layout.json"),
+          "headers: DIR the session's h/, beside its layout (%s)" % a[:3])
+    check(a[a.index("--snapshot") + 1] != "latest" and "--json" in a, "headers: the backup chosen, as JSON (%s)" % a)
+    check(len([k for k in fetch[0]["keys"] if k.get("out")]) == 2, "headers: both files written by the fake (%s)" % fetch[0]["keys"])
+    loads = [c for c in calls if c["argv"][:1] == ["load"]]
+    check(loads != [] and all(c["argv"][c["argv"].index("--luks-header-dir") + 1] == hdir for c in loads if "--luks-header-dir" in c["argv"])
+          and all("--luks-header-dir" in c["argv"] for c in loads), "headers: every load given --luks-header-dir %s" % hdir)
+    check(loads != [] and calls.index(fetch[0]) < calls.index(loads[0]), "headers: fetched before the first plan")
+    check(not os.path.exists(hdir), "headers: gone with the session")
+
+
 def test_network():
     r = Run("network", reach=False)
     d = r.d
@@ -698,7 +729,7 @@ def test_restore_plain():
 
 
 TESTS = [test_shell_and_back, test_full_utf8_colour, test_full_ascii_vt220, test_recovery_key, test_plain, test_plain_signals,
-         test_mismatch_and_report, test_location_with_no_stick, test_dry_run, test_network, test_disks_to_review, test_disks_dry_run,
+         test_mismatch_and_report, test_location_with_no_stick, test_dry_run, test_network, test_disks_to_review, test_disks_dry_run, test_disks_kept_headers,
          test_restore_to_done, test_restore_dry_run, test_restore_fail_help_try_again, test_restore_stop, test_restore_plain]
 
 

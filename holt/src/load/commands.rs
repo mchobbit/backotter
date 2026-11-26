@@ -1961,7 +1961,7 @@ impl Builder<'_> {
         }
         let file = crate::luksheader::path_at_load(self.opts.luks_header_dir.as_deref(), &self.opts.layout, &s(h, "file").unwrap_or_default());
         if let Some(e) = crate::luksheader::check_file(&file, h) {
-            self.problems.push(format!("{under}: the LUKS2 header the dump kept: {e} (dump wrote it to {}; give its directory with --luks-header-dir)", s(h, "written_to").unwrap_or_default()));
+            self.problems.push(format!("{under}: the LUKS2 header the dump kept: {e} (dump wrote it to {}; give its directory with --luks-header-dir, where `bko-holt luks-headers` fetches it from the backup)", s(h, "written_to").unwrap_or_default()));
         }
         // The data segment must fit the partition it's restored to.
         // A segment of a fixed size must fit whole; a `dynamic` one (Ubuntu
@@ -3846,12 +3846,18 @@ impl Builder<'_> {
         let pool_globs = self.left_out_pool_globs();
         let reformat_globs: Vec<String> = self.layout.arr(&["load_reformat", "restore_globs"]).iter().filter_map(Value::as_str).map(str::to_string).collect();
         let raw_globs = self.raw_globs();
+        // The kept LUKS2 headers' copies in the backup (luksfetch.rs): key
+        // material, fetched by `bko-holt luks-headers`, never put in the tree.
+        let header_globs: Vec<String> = if self.layout.arr(&["storage", "luks_headers"]).is_empty() { Vec::new() } else { vec![format!("!{}/**", crate::luksfetch::REPO_DIR)] };
+        let only_headers = globs.is_empty() && pool_globs.is_empty() && reformat_globs.is_empty() && raw_globs.is_empty() && !header_globs.is_empty();
+        let headers_too = !header_globs.is_empty();
         let only_raw = globs.is_empty() && pool_globs.is_empty() && reformat_globs.is_empty() && !raw_globs.is_empty();
         let only_pools = globs.is_empty() && !pool_globs.is_empty() && reformat_globs.is_empty();
         let only_reformat = globs.is_empty() && pool_globs.is_empty();
         globs.extend(pool_globs);
         globs.extend(reformat_globs);
         globs.extend(raw_globs);
+        globs.extend(header_globs);
         let aliases = self.btrfs.values().any(|p| !p.aliases.is_empty());
         let mut pre = Vec::new();
         // What the archiver must have: --exact for shared snapshots,
@@ -3893,14 +3899,20 @@ impl Builder<'_> {
             if need.is_empty() {
                 pre.push(Cmd::new(&["mkdir", "-p", "-m", "700", RUN_DIR]));
             }
-            let why = if only_raw {
-                "left out of the restore: the raw volumes' images, written to their LVs after it"
-            } else if only_pools {
-                "left out of the restore: the files of the pools --pools leaves untouched"
-            } else if only_reformat {
-                "left out of the restore (--reformat): btrfs subvolumes mounted elsewhere, seen again (aliases), and btrfs snapshots, which the new type can't hold as snapshots"
+            const HEADERS_WHY: &str = "the copies of the LUKS2 headers the dump kept, which `bko-holt luks-headers` fetches for load to write back: key material, kept out of the tree";
+            let why = if only_headers {
+                format!("left out of the restore: {HEADERS_WHY}")
             } else {
-                "left out of the restore: btrfs subvolumes mounted elsewhere, seen again (aliases), and the contents of the shared snapshots, made after it"
+                let base = if only_raw {
+                    "left out of the restore: the raw volumes' images, written to their LVs after it"
+                } else if only_pools {
+                    "left out of the restore: the files of the pools --pools leaves untouched"
+                } else if only_reformat {
+                    "left out of the restore (--reformat): btrfs subvolumes mounted elsewhere, seen again (aliases), and btrfs snapshots, which the new type can't hold as snapshots"
+                } else {
+                    "left out of the restore: btrfs subvolumes mounted elsewhere, seen again (aliases), and the contents of the shared snapshots, made after it"
+                };
+                if headers_too { format!("{base}; and {HEADERS_WHY}") } else { base.to_string() }
             };
             pre.push(Cmd::write_file(&file, globs.iter().map(|g| format!("{g}\n")).collect()).why(why));
             a.extend(["--glob-file".into(), file]);

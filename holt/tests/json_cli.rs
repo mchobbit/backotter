@@ -27,7 +27,11 @@ fn run(args: &[&str], env: &[(&str, &str)], stdin: Option<&str>) -> Output {
     c.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
     let mut child = c.spawn().unwrap();
     if let Some(s) = stdin {
-        child.stdin.take().unwrap().write_all(s.as_bytes()).unwrap();
+        // A refusal may exit before it reads its standard input: a broken
+        // pipe then is the program's answer, not the test's failure.
+        if let Err(e) = child.stdin.take().unwrap().write_all(s.as_bytes()) {
+            assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "{e}");
+        }
     }
     child.wait_with_output().unwrap()
 }
@@ -102,11 +106,12 @@ fn version_json_is_the_api_document() {
         assert_eq!(v.get_str("version"), Some(env!("CARGO_PKG_VERSION")));
         assert_eq!(v.get_bool("no_commit"), Some(false));
         assert_eq!(v.get_bool("dry_run"), Some(false));
-        for d in ["plan", "status", "events", "stick", "recovery", "stick_copy", "error"] {
+        for d in ["plan", "status", "events", "stick", "recovery", "stick_copy", "luks_headers", "error"] {
             assert!(v.get("documents").and_then(|x| x.get(d)).is_some(), "{d}");
         }
         assert!(v.get_arr("features").unwrap().iter().any(|f| f.as_str() == Some("no_commit_env")));
         assert!(v.get_arr("features").unwrap().iter().any(|f| f.as_str() == Some("stick_copy")));
+        assert!(v.get_arr("features").unwrap().iter().any(|f| f.as_str() == Some("luks_headers")));
         // What an image build copies into the stick's marker (open question 11).
         assert_eq!(v.get_arr("dump_schemas").map(|a| a.iter().filter_map(|x| x.as_u64()).collect::<Vec<_>>()), Some(bko_holt::load::layout::DUMP_SCHEMAS.to_vec()));
         assert!(v.str_at(&["platform", "os"]).is_some() && v.str_at(&["platform", "arch"]).is_some());
@@ -559,4 +564,133 @@ fn recovery_words_is_a_document() {
     assert!(v.get_str("text").unwrap().contains("absolute"));
     assert!(!out(&o).contains("legal") && !err(&o).contains("legal"), "{}", err(&o));
     assert!(!std::path::Path::new(&pw1).exists());
+}
+
+/// `bko-holt luks-headers LAYOUT DIR --repo REPO --password-file FILE
+/// --json` (open question 12): the headers uc24-fde's dump kept, read from
+/// the backup by the archiver's dump of /.bko-holt/luks-headers/FILE (here
+/// a script serving test files, never a real header), each checked and
+/// put in a new private DIR, which load's --luks-header-dir then takes.
+#[test]
+fn luks_headers_fetches_what_load_reads() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = Tree::new("json-cli-luks");
+    let k = t.p("/k");
+    std::fs::create_dir(&k).unwrap();
+    std::fs::set_permissions(&k, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let path = |n: &str| k.join(n).to_string_lossy().into_owned();
+    std::fs::write(path("pw"), "repository password").unwrap();
+    std::fs::set_permissions(path("pw"), std::fs::Permissions::from_mode(0o600)).unwrap();
+    // The snapshot's files, and an archiver that serves them by the dump
+    // argument's last part, logging its argv.
+    let snap = t.p("/snap");
+    std::fs::create_dir(&snap).unwrap();
+    let arch = t.p("/rustic-bko");
+    std::fs::write(
+        &arch,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{}'\nfor a; do last=$a; done\nf='{}'/\"${{last##*/}}\"\n[ -f \"$f\" ] || {{ echo 'error: Path not found' >&2; exit 1; }}\ncat \"$f\"\n",
+            t.p("/argv").display(),
+            snap.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&arch, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let arch = arch.to_string_lossy().into_owned();
+    // uc24-fde's dump, its two headers' sizes and SHA-256 the test files'.
+    let mut v = json::parse(include_str!("corpus/uc24-fde/src.json")).unwrap();
+    let mut files = Vec::new();
+    for h in v.at_mut(&["storage", "luks_headers"]).unwrap().as_array_mut().unwrap() {
+        let file = h.get_str("file").unwrap().to_string();
+        let body = format!("LUKS\u{ba}json_cli test header {file}\n").into_bytes();
+        h.put("bytes", body.len());
+        h.put("sha256", bko_holt::bytes::sha256_hex(&body));
+        std::fs::write(snap.join(&file), &body).unwrap();
+        files.push((file, body));
+    }
+    assert_eq!(files.len(), 2);
+    let layout = t.p("/layout.json").to_string_lossy().into_owned();
+    std::fs::write(&layout, v.pretty()).unwrap();
+    let fetch = |dir: &str, extra: &[&str], env: &[(&str, &str)]| {
+        let mut a = vec!["luks-headers", layout.as_str(), dir, "--repo", "sftp://nas.local/bko", "--password-file", "PW", "--archiver", arch.as_str(), "--json"];
+        let pw = path("pw");
+        a.iter_mut().filter(|x| **x == "PW").for_each(|x| *x = pw.as_str());
+        let mut a: Vec<String> = a.iter().map(|x| x.to_string()).collect();
+        a.extend(extra.iter().map(|x| x.to_string()));
+        let a: Vec<&str> = a.iter().map(String::as_str).collect();
+        run(&a, env, None)
+    };
+    // Under the dry-run lock too: it reads the repository only.
+    let o = fetch(&path("h"), &["--snapshot", "1a2b3c4d"], &[("BKO_HOLT_NO_COMMIT", "1")]);
+    assert_eq!(o.status.code(), Some(0), "{}{}", out(&o), err(&o));
+    assert!(err(&o).is_empty(), "{}", err(&o));
+    let d = doc(&o);
+    assert_eq!((d.get_str("format"), d.get_u64("schema"), d.get_bool("dry_run")), (Some("bko-holt-luks-headers"), Some(1), Some(true)));
+    assert_eq!((d.get_str("dir"), d.get_str("snapshot"), d.get_str("repo_dir")), (Some(path("h").as_str()), Some("1a2b3c4d"), Some("/.bko-holt/luks-headers")));
+    let keys: Vec<&str> = d.as_object().unwrap().iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(keys, ["format", "schema", "version", "generated", "dry_run", "layout", "dir", "snapshot", "repo_dir", "headers"]);
+    assert_eq!(std::fs::metadata(path("h")).unwrap().permissions().mode() & 0o7777, 0o700);
+    let rows = d.get_arr("headers").unwrap();
+    assert_eq!(rows.len(), 2);
+    for (r, (file, body)) in rows.iter().zip(&files) {
+        assert_eq!(r.get_str("file"), Some(file.as_str()));
+        let p = r.get_str("path").unwrap();
+        assert_eq!(&std::fs::read(p).unwrap(), body);
+        assert_eq!(std::fs::metadata(p).unwrap().permissions().mode() & 0o7777, 0o600);
+        assert_eq!(r.get_str("from"), Some(format!("1a2b3c4d:/.bko-holt/luks-headers/{file}").as_str()));
+        let keys: Vec<&str> = r.as_object().unwrap().iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["device", "label", "file", "path", "from", "bytes", "sha256"]);
+    }
+    let argv = std::fs::read_to_string(t.p("/argv")).unwrap();
+    assert!(argv.starts_with(&format!("--repository\nsftp://nas.local/bko\n--password-file\n{}\n--no-progress\ndump\n1a2b3c4d:/.bko-holt/luks-headers/", path("pw"))), "{argv}");
+    assert!(!argv.contains("repository password") && !out(&o).contains("repository password"));
+    // load takes DIR: no problem with the headers there (the missing
+    // header's problem, naming this command, is scenarios.rs's, on mapped
+    // disks); and the restore leaves the backup's copies out.
+    let lt = Tree::new("json-cli-luks-load");
+    lt.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n").file("/proc/sys/kernel/arch", "x86_64\n");
+    let lroot = lt.root().to_string_lossy().into_owned();
+    let plan = |extra: &[&str]| {
+        let mut a = vec!["load", layout.as_str(), "--json", "--through", "plan", "--sysroot", lroot.as_str(), "--repo", "/srv/r"];
+        a.extend(extra);
+        let o = run(&a, &[], None);
+        let v = doc(&o);
+        assert_eq!(v.get_str("format"), Some("bko-holt-plan"), "{}{}", out(&o), err(&o));
+        v
+    };
+    let header_problems = |v: &Value| v.get_arr("problems").unwrap().iter().filter_map(|p| p.get_str("text")).filter(|t| t.contains("LUKS2 header the dump kept")).map(str::to_string).collect::<Vec<_>>();
+    let with = plan(&["--luks-header-dir", &path("h")]);
+    assert!(header_problems(&with).is_empty(), "{:?}", header_problems(&with));
+    assert!(with.get_str("text").unwrap().contains("!/.bko-holt/luks-headers/**"), "{}", with.get_str("text").unwrap());
+    // Refusals: DIR there already; nothing asks for the password under
+    // --json; a password in the URL; a header the snapshot doesn't hold, or
+    // another one (the layout's and the snapshot's differ): nothing left.
+    let v = assert_error(&fetch(&path("h"), &[], &[]), 2, "out_unsafe");
+    assert!(v.get_str("text").unwrap().contains("DIR must be a new directory"), "{}", v.pretty());
+    assert_error(&run(&["luks-headers", &layout, &path("h2"), "--repo", "/srv/r", "--json"], &[], None), 2, "bad_args");
+    assert_error(&run(&["luks-headers", &layout, &path("h2"), "--repo", "sftp://u:secret@nas/r", "--password-file", &path("pw"), "--json"], &[], None), 2, "bad_args");
+    assert_error(&run(&["luks-headers", &layout, "h2", "--repo", "/srv/r", "--password-file", &path("pw"), "--json"], &[], None), 2, "out_unsafe");
+    std::fs::set_permissions(path("pw"), std::fs::Permissions::from_mode(0o644)).unwrap();
+    let v = assert_error(&fetch(&path("h2"), &[], &[]), 2, "bad_args");
+    assert!(v.get_str("text").unwrap().contains("mode 644"), "{}", v.pretty());
+    std::fs::set_permissions(path("pw"), std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::write(snap.join(&files[1].0), b"LUKS\xba another snapshot's header, the same size?").unwrap();
+    let v = assert_error(&fetch(&path("h2"), &[], &[]), 1, "header_mismatch");
+    assert!(v.get_str("text").unwrap().contains("isn't the header the dump kept"), "{}", v.pretty());
+    assert!(!k.join("h2").exists());
+    std::fs::remove_file(snap.join(&files[1].0)).unwrap();
+    let v = assert_error(&fetch(&path("h2"), &[], &[]), 1, "header_fetch_failed");
+    assert!(v.get_str("text").unwrap().ends_with("exited 1: error: Path not found"), "{}", v.pretty());
+    assert!(!k.join("h2").exists());
+    let v = assert_error(&run(&["luks-headers", &path("nope.json"), &path("h2"), "--repo", "/srv/r", "--password-file", &path("pw"), "--json"], &[], None), 1, "layout_unreadable");
+    assert!(v.get_str("text").unwrap().contains("nope.json"));
+    // Text mode: the same fetch, a line a header; nothing asked here (a
+    // password file), and the help.
+    std::fs::write(snap.join(&files[1].0), &files[1].1).unwrap();
+    let o = run(&["luks-headers", &layout, &path("h3"), "--repo", "/srv/r", "--password-file", &path("pw"), "--archiver", &arch], &[], None);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert_eq!(out(&o).lines().count(), 2, "{}", out(&o));
+    assert!(out(&o).contains("vda5's LUKS2 header"), "{}", out(&o));
+    let o = run(&["luks-headers", "--help"], &[], None);
+    assert!(o.status.success() && out(&o).starts_with("Usage: bko-holt luks-headers"));
 }

@@ -276,7 +276,8 @@ Rebuilds the disks LAYOUT.json (from `bko-holt dump`) describes, in stages:
                     where the LUKS2 headers the dump kept are (bko-holt dump
                     --keep-luks-header; Ubuntu Core's always): written back
                     with luksHeaderRestore and opened with --key-file, no new
-                    volume key.  Default: the layout's own directory
+                    volume key.  Default: the layout's own directory.
+                    `bko-holt luks-headers` fetches them from the backup
   --new-machine     Ubuntu Core with FDE onto another machine (another TPM,
                     or other Secure Boot variables): its first boot is recover
                     mode, which asks for the recovery key and unlocks the

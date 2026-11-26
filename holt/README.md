@@ -32,6 +32,14 @@ Haiku; Redox and Sculpt OS from Linux):
   words on standard input, and writes the repository password it stands
   for to a new private file OUT, for bko-rescue (`src/recoverycmd.rs`;
   holt-json.md, "bko-holt-recovery").
+- `bko-holt luks-headers LAYOUT DIR --repo REPO --password-file FILE
+  [--snapshot ID] [--json]` fetches the LUKS2 headers a dump kept
+  (`storage.luks_headers`) from the backup, where the backup tool keeps
+  them (`/.bko-holt/luks-headers/FILE` in the snapshot), into a new 0700
+  DIR, each 0600 and checked against the dump's size and SHA-256, for
+  `load --luks-header-dir DIR` (`src/luksfetch.rs`; holt-json.md,
+  "bko-holt-luks-headers", open question 12).  load's restore leaves that
+  directory out of the tree.
 
 ```
 sudo bko-holt dump > layout.json

@@ -33,12 +33,13 @@ pub const NO_COMMIT_VAR: &str = "BKO_HOLT_NO_COMMIT";
 /// What `features` in the api document names: the parts of the protocol
 /// this bko-holt has, so a screen needing a later one can say "not on this
 /// stick".  Grows with RT10's steps.
-pub const FEATURES: &[&str] = &["no_commit_env", "stop", "progress", "candidates", "sizes", "stick", "recovery_words", "stick_copy"];
+pub const FEATURES: &[&str] = &["no_commit_env", "stop", "progress", "candidates", "sizes", "stick", "recovery_words", "stick_copy", "luks_headers"];
 
 /// The documents this bko-holt writes, each with the schemas it writes.
 /// Grows with RT10's steps (plan: RT10c, status: RT10e, events: RT10f,
-/// stick: RT10k, recovery: RT10p, stick_copy: open question 8).
-pub const DOCUMENTS: &[(&str, &[u64])] = &[("plan", &[SCHEMA]), ("status", &[SCHEMA]), ("events", &[SCHEMA]), ("stick", &[SCHEMA]), ("recovery", &[SCHEMA]), ("stick_copy", &[SCHEMA]), ("error", &[SCHEMA])];
+/// stick: RT10k, recovery: RT10p, stick_copy: open question 8,
+/// luks_headers: open question 12).
+pub const DOCUMENTS: &[(&str, &[u64])] = &[("plan", &[SCHEMA]), ("status", &[SCHEMA]), ("events", &[SCHEMA]), ("stick", &[SCHEMA]), ("recovery", &[SCHEMA]), ("stick_copy", &[SCHEMA]), ("luks_headers", &[SCHEMA]), ("error", &[SCHEMA])];
 
 /// `bko-holt-error`'s codes (holt-json.md, "bko-holt-error").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,10 +64,15 @@ pub enum ErrorCode {
     MachineNotOk,
     NoLayout,
     CopyFailed,
+    /// `luks-headers`' refusals (exit 1, open question 12): the archiver
+    /// couldn't read a header from the backup; one it read isn't the
+    /// header the dump kept (its size or SHA-256).
+    HeaderFetchFailed,
+    HeaderMismatch,
 }
 
 impl ErrorCode {
-    pub const ALL: [ErrorCode; 15] = [
+    pub const ALL: [ErrorCode; 17] = [
         ErrorCode::BadArgs,
         ErrorCode::NoCommit,
         ErrorCode::LayoutUnreadable,
@@ -82,6 +88,8 @@ impl ErrorCode {
         ErrorCode::MachineNotOk,
         ErrorCode::NoLayout,
         ErrorCode::CopyFailed,
+        ErrorCode::HeaderFetchFailed,
+        ErrorCode::HeaderMismatch,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -101,6 +109,8 @@ impl ErrorCode {
             ErrorCode::MachineNotOk => "machine_not_ok",
             ErrorCode::NoLayout => "no_layout",
             ErrorCode::CopyFailed => "copy_failed",
+            ErrorCode::HeaderFetchFailed => "header_fetch_failed",
+            ErrorCode::HeaderMismatch => "header_mismatch",
         }
     }
 }
@@ -1112,7 +1122,7 @@ mod tests {
     #[test]
     fn error_document() {
         let codes: Vec<&str> = ErrorCode::ALL.iter().map(|c| c.as_str()).collect();
-        assert_eq!(codes, ["bad_args", "no_commit", "layout_unreadable", "layout_not_json", "layout_refused", "arch_mismatch", "schema_unknown", "json_not_here", "out_unsafe", "config_not_ok", "no_such_machine", "two_machines", "machine_not_ok", "no_layout", "copy_failed"]);
+        assert_eq!(codes, ["bad_args", "no_commit", "layout_unreadable", "layout_not_json", "layout_refused", "arch_mismatch", "schema_unknown", "json_not_here", "out_unsafe", "config_not_ok", "no_such_machine", "two_machines", "machine_not_ok", "no_layout", "copy_failed", "header_fetch_failed", "header_mismatch"]);
         let d = error_doc(2, ErrorCode::BadArgs, "bko-holt load: unknown argument \"--frob\"\n");
         assert!(d.ends_with('\n') && d.matches('\n').count() == 1, "{d}");
         let v = crate::json::parse(&d).unwrap();

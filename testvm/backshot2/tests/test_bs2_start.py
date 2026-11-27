@@ -26,7 +26,11 @@ WAIT = 10   # seconds any wait here may take before it is a failure (none should
 
 
 def lead_of(can):
-    return B.leads(can)
+    """The fixture's leads, pinned: HOME's host when it holds the source, else the first that
+    does (chopin leads alpine324 and -uefi, cinqcent -lvm and -luks).  These tests are about
+    start_hosts(), which takes the leads it is given; how bs2 chooses them (leads(), each host
+    its share since img-speed F18) is test_bs2_hosts' Leads."""
+    return {s: B.HOME[s] if B.HOME.get(s) in hs else hs[0] for s, hs in can.items()}
 
 
 def placed(held=HELD, n=N):

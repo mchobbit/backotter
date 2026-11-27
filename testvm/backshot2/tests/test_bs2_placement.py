@@ -61,7 +61,7 @@ class Bs2Sources(unittest.TestCase):
         self.assertEqual({s: B.HOME[s] for s in B.SOURCES[:6]},
                          {"alpine324": "chopin", "alpine324-uefi": "chopin", "alpine324-lvm": "cinqcent",
                           "alpine324-luks": "cinqcent", "guix15": "chopin", "guix15-bios": "cinqcent"})
-        self.assertEqual({s: B.HOME[s] for s in B.OTHER_SOURCES}, B.deal(B.OTHER_SOURCES, B.LEAD_HOSTS))
+        self.assertEqual({s: B.HOME[s] for s in B.OTHER_SOURCES}, B.deal(B.OTHER_SOURCES, B.HOME_HOSTS))
         self.assertEqual(set(B.HOME), set(B.SOURCES))
         self.assertEqual(B.assign(B.SOURCES), B.HOME)
         self.assertEqual(B.UEFI, {s for s in B.SOURCES if S.uefi(s)})

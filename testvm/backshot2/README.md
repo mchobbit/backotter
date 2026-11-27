@@ -21,12 +21,21 @@ From the Mac, in a checkout of this branch:
 `bs2` rsyncs `testvm/` and `holt/` to `~/backotter-work/bs2-wt` on the hosts
 it uses (their ssh from testvm/hosts.json; never the shared `testvm/`) and
 runs `bs2-host` there.  A BackShot2 run uses every enabled host that holds
-the sources (`--hosts` narrows it): chopin, cinqcent and copland hold all
-four, cage only `alpine324`.
+the sources (`--hosts` narrows it): on 2026-11-27 chopin, cinqcent,
+copland, cage and czerny held all 54, choubox 36 (Alpine's `alpine324`
+alone of its four).
 
-How a run spreads.  Each source has a lead: its `HOME` host (chopin for
-`alpine324` and `alpine324-uefi`, cinqcent for `alpine324-lvm` and
-`alpine324-luks`) when that is in the run, else the first that holds it.
+How a run spreads.  Each source has a lead, any host of the run that holds
+it, and each host leads its share (`leads()`, `assign()`'s deal: the
+sources over the hosts that hold any, rounded up): its `HOME` host (chopin
+for `alpine324` and `alpine324-uefi`, cinqcent for `alpine324-lvm` and
+`alpine324-luks`; `HOME_HOSTS`, the big default hosts) while that one has
+room in its share, else the one that leads the fewest so far (`tie_key` on
+a tie), the sources on the fewest hosts first.  Since img-speed F18
+(2026-11-27) a small host leads too: BackShot2All's 54 leads went from 27
+each on chopin and cinqcent to 9 on each of the six hosts, and each big
+host's tier 0 sweeps from ~135 to ~45 min est.  Before it the lead was
+`HOME`'s host whenever it held the source, so only the big pair led.
 The lead draws the source's tier 1 and 2 cases (`bs2-host enqueue --to`),
 exactly as one host alone would, and runs its tier 0 sweep.  bs2 then
 spreads the cases (`split()`), not the sources: each goes to the host
@@ -191,7 +200,9 @@ lines (how often each falls back), and phases.tsv's seconds.
 Restores in a fixed order onto ONE disk (spec: "Leftovers"): the user's
 trio first (alpine324-uefi, alpine324-lvm, alpine324-uefi), then LUKS,
 md 1.2, md 1.0, ZFS and btrfs, each followed by the plain layout.  It
-runs on one host that has all three UEFI sources (chopin by default), one
+runs on one host that has all three UEFI sources (the first in `tie_key`
+order, a big host before a small one, of the run's hosts that hold them;
+with `--hosts`, the first of those that does; img-speed F18: any class), one
 step at a time, each a tier 1 (`bs2-host tier1`) under its own
 `cmp-run.sh --reserve 6 3`.  Each step's restored disk is copied, as load
 left it, to `/mnt/bko-ram/backshot2/leftovers-RUN/STEP.qcow2` and is the
@@ -365,8 +376,9 @@ md, more than one disk: derived from the dump), A4 (the BSDs), A5
 touch an ESP or the NVRAM, `case.touches_esp`); `secs(source, tier)` is a
 case's seconds: measured for Alpine's four and Guix's two, else 0.7 of
 HoltTest1's `wall_s` (`testvm/test2/estimates.tsv`), at least 120 s, est.
-Alpine's and Guix's HOME stay as they were; the rest are dealt over the
-lead hosts after them.
+Alpine's and Guix's HOME stay as they were; the rest are dealt over
+`HOME_HOSTS` after them.  HOME is a preference, not a pin (`leads()`,
+`assign()`: a host keeps its HOME sources while it has room in its share).
 
 **RAM or SSD** (`room.scratch()`): a source's cases work in the RAM disk on
 the hosts whose `cmp-run.sh --ceiling` holds its room (HoltTest1's D and

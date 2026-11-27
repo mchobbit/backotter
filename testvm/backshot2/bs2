@@ -36,8 +36,9 @@ names another, so two sessions' runs never share a copy).
   bs2 soak CASE N                   CASE N times at tier 1 (reported as K of N); replay and soak
                                     run no word: no ledger rows unless BS2_LEDGER=1 (passed on)
   bs2 leftovers [SET] [plan]        the leftovers set (bs2lib/leftovers.py): its restores in order
-                                    onto one disk, on one host (chopin; --hosts H names another
-                                    that has all three UEFI sources), detached; log in
+                                    onto one disk, on one host (the first in tie order that
+                                    holds all three UEFI sources; with --hosts, the first of
+                                    those that does), detached; log in
                                     /bkoscratch/backshot2/logs/RUN.log, rows in RUN/leftovers.jsonl
   bs2 bin FROM                      copy FROM's /bkoscratch/backshot2/bin (the bko-holt, planner
                                     and caps.json under test) to the other hosts (--hosts: those)
@@ -64,8 +65,9 @@ names another, so two sessions' runs never share a copy).
                                     some of its tier 1 cases whose backup is the
                                     preparation's (SHARED_ONLY, wide_of(), deal_source())
 
-How a BackShot2 run spreads (split()): each source has a lead, its HOME host when that's
-in the run, else the first that holds it.  The lead runs the source's tier 0 sweep and
+How a BackShot2 run spreads (split()): each source has a lead, any host of the run that
+holds it, each leading its share (leads(): its HOME host while that one has room, else the
+one that leads the fewest, a small host too: img-speed F18).  The lead runs the source's tier 0 sweep and
 draws its tier 1 and 2 cases (bs2-host enqueue --to), exactly as one host alone would;
 bs2 spreads the cases over every host that holds the source, each to the one that would
 finish it soonest for its slots (hosts.json's bs2_slots: big 5, small 2), so the hosts
@@ -115,8 +117,9 @@ from bs2lib import allrun as AR, case as C, room as RM, sources as SRC, space as
 # (bs2lib/families/guix.py), then every other built one of the corpus (one disk, Linux, no
 # ZFS or md: OTHER_SOURCES, sorted; sources.classify() says why the rest are skipped and
 # which piece takes each).  Each one's lead draws its cases, runs its tier 0, and is where
-# replay, shrink and the corpus run; HOME deals each group in even turns over the lead
-# hosts (Alpine's as before Guix's: two each; then the others'), group by group.
+# replay, shrink and the corpus run; HOME deals each group in even turns over HOME_HOSTS
+# (Alpine's as before Guix's: two each; then the others'), group by group: the preference
+# leads() and assign() keep to while the host has room in its share.
 ALPINE_SOURCES = SRC.ALPINE_SOURCES
 GUIX_SOURCES = SRC.GUIX_SOURCES
 OTHER_SOURCES = SRC.others()
@@ -144,16 +147,16 @@ HOSTS_TABLE = _host_table()
 # The hosts of this command: every enabled amd64 one (BackShot2's sources, its rescuer and
 # bko-holt are amd64: an arm64 host such as bigfoot is never one), or --hosts' (use_hosts()).
 RUN_HOSTS = {h: HOSTS_TABLE.ssh(h) for h in HOSTS_TABLE.names(arch="amd64")}
-# The lead hosts, from the host table: its default amd64 hosts of the first class (the big
-# ones).  Only they hold every source: BackShot2's sources are not published to the store,
-# so a small host's cache has at most alpine324 (bs2 ls says which host has what), and a
-# source is placed on a host that lacks it by no path here.  A table with none of them is a
-# table to mend, not a run to deal to the small hosts: they would take sources whose cases
-# they can't hold, and every case would then die on its host.
-LEAD_HOSTS = [h for h in HOSTS_TABLE.names(default=True, arch="amd64") if HOSTS_TABLE.class_rank(h) == 0]
-if not LEAD_HOSTS:
-    sys.exit(f"bs2: testvm/hosts.json names no default amd64 host of class {list(HOSTS_TABLE.load()['classes'])[0]}: "
-             "BackShot2's leads hold every source, and a small host's cache holds at most alpine324")
+# The hosts HOME deals over, from the host table: its default amd64 hosts of the first class
+# (the big ones), or every default amd64 host when it has none of them.  HOME is only a
+# preference (leads(), assign()): any host of the run that holds a source may lead it, and
+# each leads its share (img-speed F18, 2026-11-27).  Before F18 only the big ones led, since
+# BackShot2's sources are not published to the store and a small host's cache held at most
+# alpine324; copland, cage and czerny now hold all 54, choubox 36 (bs2 plan says who has what).
+HOME_HOSTS = [h for h in HOSTS_TABLE.names(default=True, arch="amd64") if HOSTS_TABLE.class_rank(h) == 0] or \
+    list(HOSTS_TABLE.names(default=True, arch="amd64"))
+if not HOME_HOSTS:
+    sys.exit("bs2: testvm/hosts.json names no default amd64 host: BackShot2's sources and its rescuer are amd64")
 
 
 def deal(sources, hosts):
@@ -163,8 +166,8 @@ def deal(sources, hosts):
     return {s: hosts[min(i // share, len(hosts) - 1)] for i, s in enumerate(sources)}
 
 
-HOME = dict(deal(ALPINE_SOURCES, LEAD_HOSTS), **deal(GUIX_SOURCES, LEAD_HOSTS), **deal(OTHER_SOURCES, LEAD_HOSTS))
-CHOSEN = False   # --hosts given: replay and the corpus go only where vms/SOURCE is
+HOME = dict(deal(ALPINE_SOURCES, HOME_HOSTS), **deal(GUIX_SOURCES, HOME_HOSTS), **deal(OTHER_SOURCES, HOME_HOSTS))
+CHOSEN = False   # --hosts given (its hosts are RUN_HOSTS; the leftovers set takes the first of them that holds it)
 ALPINE = list(ALPINE_SOURCES)
 ROOT = "/bkoscratch/backshot2"
 HOST_WT = f"~/backotter-work/{WT}"
@@ -356,8 +359,16 @@ def holders(sources, have, hosts=None):
 
 
 def leads(can):
-    """{source: host}: its HOME host when that holds it here, else the first that does."""
-    return {s: HOME[s] if HOME.get(s) in hs else hs[0] for s, hs in can.items()}
+    """{source: host}: each source's lead, of the hosts that hold it (CAN: {source: [host...]}),
+    as assign() deals: its HOME host while that one leads no more than its share (the sources
+    over the hosts that hold any, rounded up), else the one that leads the fewest so far
+    (hosts.tie_key on a tie), the sources on the fewest hosts first.  So the tier 0 sweeps and
+    the draws spread over every host that holds the sources, a small one too (img-speed F18;
+    before it, HOME's host, a big one, whenever it held the source, else the first that did)."""
+    hosts = [h for h in RUN_HOSTS if any(h in hs for hs in can.values())]
+    hosts += [h for hs in can.values() for h in hs if h not in hosts]   # (a caller's hosts outside RUN_HOSTS)
+    have = {h: {s for s, hs in can.items() if h in hs} for h in hosts}
+    return assign(list(can), hosts=list(dict.fromkeys(hosts)), have=have)
 
 
 def tier2_of(source, sources):
@@ -1272,8 +1283,7 @@ def corpus(plan, tier, stamp=None, have=None, only=None):
         return
     srcs = {f: src for f, _, src in corpus_cases() if f in cases}
     ss = sorted(set(srcs.values()))
-    where = (assign(ss, hosts=list(RUN_HOSTS), have=have) if have is not None else
-             assign(ss, have=held(ss) if CHOSEN else None))
+    where = assign(ss, hosts=list(RUN_HOSTS), have=have if have is not None else held(ss))
     sync(sorted(set(where.values())))
     by = {}
     for f in cases:
@@ -1302,10 +1312,12 @@ def assign(sources, hosts=None, have=None):
     while that host has no more than its share (len(sources) / len(hosts), rounded up), else
     the host with the fewest sources so far (hosts.tie_key on a tie, F13); HAVE ({host: sources
     there}, None: all) limits each source to the hosts that have it, and the sources on the
-    fewest hosts are placed first.  A source no host has: sys.exit.  Without --hosts (and
-    no HOSTS given): HOME's host, the first lead host for a source it doesn't name."""
-    if hosts is None and not CHOSEN:
-        return {s: HOME.get(s, LEAD_HOSTS[0]) for s in sources}
+    fewest hosts are placed first.  A source no host has: sys.exit.  With no --hosts and
+    neither HOSTS nor HAVE: HOME's host, the first of HOME_HOSTS for a source it doesn't name,
+    unchecked (the callers that run something pass held()'s HAVE: since F18 HOME may name a
+    host without the source)."""
+    if hosts is None and have is None and not CHOSEN:
+        return {s: HOME.get(s, HOME_HOSTS[0]) for s in sources}
     hosts = list(hosts or RUN_HOSTS)
     share = -(-len(sources) // len(hosts))
     load, out = {h: 0 for h in hosts}, {}
@@ -1381,17 +1393,24 @@ def all_counts(run):
 def all_later(have):
     """What an All run runs once its queues finish: (the corpus cases [(file, name, source)]
     whose source a host of the run holds; the ones left out, {name: why}; the leftovers
-    set's host, the first lead host (then the rest of the run's), in tie_order, that holds its sources, or
-    None; its steps)."""
+    set's host, the first host of the run in tie_order (F13: a big one before a small one) that
+    holds all its sources, or None; its steps)."""
     from bs2lib import leftovers as LO
     cs = corpus_cases()
     ok = [c for c in cs if any(c[2] in have.get(h, ()) for h in RUN_HOSTS)]
     out = {c[1]: f"its source {c[2]} is on no host of the run" for c in cs if c not in ok}
     need = set(LO.sources(LEFTOVERS_SET))
-    order = HOSTS_TABLE.tie_order([h for h in LEAD_HOSTS if h in RUN_HOSTS]) + \
-        HOSTS_TABLE.tie_order([h for h in RUN_HOSTS if h not in LEAD_HOSTS])
-    host = next((h for h in order if need <= set(have.get(h, ()))), None)
+    host = leftovers_host(need, have)
     return ok, out, host, len(LO.steps(LEFTOVERS_SET))
+
+
+def leftovers_host(need, have, order=None):
+    """The host a leftovers set runs on: the first of ORDER (default RUN_HOSTS in tie_order)
+    whose HAVE (held()'s) holds all of NEED, its sources (the chain's steps share one disk,
+    so one host holds all three UEFI sources), or None.  Any class (F18): a small host that
+    holds them takes it when no big one of the run does."""
+    order = list(order) if order is not None else HOSTS_TABLE.tie_order(list(RUN_HOSTS))
+    return next((h for h in order if set(need) <= set(have.get(h, ()))), None)
 
 
 def all_then(run):
@@ -1637,7 +1656,16 @@ def main():
         return all_plan() if plan else all_start()
     elif w == "leftovers":
         name = a[1] if len(a) > 1 else "leftovers"
-        h = next(iter(RUN_HOSTS)) if CHOSEN else LEAD_HOSTS[0]
+        from bs2lib import leftovers as LO
+        try:
+            need = LO.sources(name)
+        except KeyError as e:
+            sys.exit(f"bs2: {e.args[0]}")
+        # (--hosts' order when given, the first that holds the set's sources; else tie_order's)
+        h = leftovers_host(need, held(need), order=list(RUN_HOSTS) if CHOSEN else None)
+        if not h:
+            sys.exit(f"bs2: leftovers {name}: no host of {', '.join(RUN_HOSTS)} holds all of {', '.join(need)}: "
+                     + "; ".join(f"{s}: {missing_why(s)}" for s in need))
         sync([h])
         run = time.strftime("lo-%Y%m%d-%H%M")
         if plan:
@@ -1649,7 +1677,7 @@ def main():
         with open(path) as f:
             c = json.load(f)
         src = c["source"].split("@")[0]
-        h = assign([src], have=held([src]) if CHOSEN else None)[src]
+        h = assign([src], have=held([src]))[src]
         rp = f"{HOST_WT}/testvm/backshot2/{os.path.relpath(os.path.abspath(path), HERE)}"
         stamp = time.strftime(f"{w}-%Y%m%d-%H%M")
         if plan:

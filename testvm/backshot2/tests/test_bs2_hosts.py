@@ -109,8 +109,8 @@ class GuixSources(unittest.TestCase):
 
     def test_home_and_firmware(self):
         self.assertEqual(B.ALPINE, list(B.ALPINE_SOURCES))
-        self.assertEqual({s: B.HOME[s] for s in B.GUIX_SOURCES}, dict(zip(B.GUIX_SOURCES, B.LEAD_HOSTS[:2] * 2)))
-        self.assertEqual(B.deal(B.ALPINE_SOURCES, B.LEAD_HOSTS), {s: B.HOME[s] for s in B.ALPINE})
+        self.assertEqual({s: B.HOME[s] for s in B.GUIX_SOURCES}, dict(zip(B.GUIX_SOURCES, B.HOME_HOSTS[:2] * 2)))
+        self.assertEqual(B.deal(B.ALPINE_SOURCES, B.HOME_HOSTS), {s: B.HOME[s] for s in B.ALPINE})
         self.assertIn("guix15", B.UEFI)
         self.assertNotIn("guix15-bios", B.UEFI)
         self.assertNotIn("alpine324", B.UEFI)
@@ -158,15 +158,53 @@ class GuixSources(unittest.TestCase):
 
 
 class Leads(unittest.TestCase):
-    def test_home_when_held_else_the_first(self):
-        self.assertEqual(B.leads(can_of(HELD)), {s: B.HOME[s] for s in B.ALPINE})
-        self.assertEqual(B.leads({"alpine324": ["copland", "cage"], "alpine324-lvm": ["copland"]}),
-                         {"alpine324": "copland", "alpine324-lvm": "copland"})
+    """img-speed F18: any host that holds a source may lead it, each its share (assign()'s
+    deal): HOME's host while it has room, else the one that leads the fewest so far."""
 
-    def test_no_big_default_host_refuses_the_run(self):
-        """The leads hold every source: a table with no default amd64 host of the first class is
-        a table to mend, not a run to deal to the small hosts (their caches hold alpine324 at
-        most, so every case of another source would die on its host)."""
+    def test_home_within_its_share_else_the_least_loaded(self):
+        # 4 sources over 4 holders: a share of 1.  The three on 3 hosts go first: alpine324-uefi
+        # and -lvm home (chopin, cinqcent), -luks's home is full, so copland; then alpine324,
+        # whose home chopin is full: cage, the one that leads none (cage holds it alone).
+        self.assertEqual(B.leads(can_of(HELD)), {"alpine324": "cage", "alpine324-uefi": "chopin",
+                                                 "alpine324-lvm": "cinqcent", "alpine324-luks": "copland"})
+        self.assertEqual(B.leads({"alpine324": ["copland", "cage"], "alpine324-lvm": ["copland"]}),
+                         {"alpine324": "cage", "alpine324-lvm": "copland"})
+
+    def test_the_big_pair_alone_leads_as_home_says(self):
+        """With only the big pair holding them, the leads are HOME's, as before F18."""
+        self.assertEqual(B.leads({s: ["chopin", "cinqcent"] for s in B.ALPINE}), {s: B.HOME[s] for s in B.ALPINE})
+
+    def test_small_hosts_lead_when_they_hold_the_sources(self):
+        """Every default host holding every source (the farm since F3): the leads of
+        BackShot2All's 54 spread over all six, at most the share each, small hosts included."""
+        hosts = list(B.HOSTS_TABLE.names(default=True, arch="amd64"))
+        lead = B.leads({s: list(hosts) for s in B.SOURCES})
+        share = -(-len(B.SOURCES) // len(hosts))
+        n = {h: list(lead.values()).count(h) for h in hosts}
+        self.assertEqual(set(lead), set(B.SOURCES))
+        self.assertTrue(all(0 < k <= share for k in n.values()), n)
+        self.assertTrue(any(B.HOSTS_TABLE.class_rank(h) > 0 for h in lead.values()))
+        # and no lead is a host that lacks its source
+        some = {s: ["copland", "cage"] if i % 2 else ["czerny"] for i, s in enumerate(B.SOURCES[:10])}
+        self.assertTrue(all(h in some[s] for s, h in B.leads(some).items()))
+
+    def test_a_split_led_from_a_small_host(self):
+        """The plan's split with leads on small hosts: every job placed once, the sweeps on
+        their leads."""
+        held = {h: set(B.ALPINE) for h in ("cinqcent", "copland", "cage")}
+        can = {s: list(held) for s in B.ALPINE}
+        lead = B.leads(can)
+        self.assertEqual(sorted(set(lead.values())), ["cage", "cinqcent", "copland"])
+        start = B.sweep_secs(B.ALPINE, 20, lead)
+        self.assertEqual(set(start), {"cage", "cinqcent", "copland"})
+        jobs = B.jobs_of(B.ALPINE, 20)
+        parts = B.split(jobs, can, {h: SLOTS[h] for h in held}, start)
+        self.assertEqual(sorted(j for js in parts.values() for j in js), sorted(jobs))
+
+    def test_no_big_default_host_still_runs(self):
+        """A table with no default amd64 host of the first class: HOME deals over the small
+        default hosts, and the run goes on (before F18 it was refused: the small hosts' caches
+        then held alpine324 at most)."""
         with open(TABLE) as f:
             t = json.load(f)
         for r in t["hosts"]:
@@ -176,11 +214,14 @@ class Leads(unittest.TestCase):
             p = os.path.join(d, "hosts.json")
             with open(p, "w") as f:
                 json.dump(t, f)
-            r = subprocess.run([sys.executable, os.path.join(BS2_DIR, "bs2"), "ls"], capture_output=True, text=True,
-                               env=dict(os.environ, BKO_HOSTS_JSON=p))
-        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        self.assertIn("no default amd64 host of class big", r.stderr)
-        self.assertNotIn("copland", r.stdout)
+            r = subprocess.run([sys.executable, "-c", "import importlib.machinery as M, importlib.util as U, sys; "
+                                f"l = M.SourceFileLoader('b', {os.path.join(BS2_DIR, 'bs2')!r}); "
+                                "m = U.module_from_spec(U.spec_from_loader('b', l)); l.exec_module(m); "
+                                "print(m.HOME_HOSTS); print(sorted(set(m.HOME.values())))"],
+                               capture_output=True, text=True, env=dict(os.environ, BKO_HOSTS_JSON=p))
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertNotIn("chopin", r.stdout)
+            self.assertIn("copland", r.stdout.splitlines()[0])
 
     def test_holders_refuses_a_source_nobody_has(self):
         with self.assertRaises(SystemExit):
@@ -194,6 +235,43 @@ class Leads(unittest.TestCase):
         self.assertEqual(B.picks_of(text, ["alpine324", "alpine324-uefi"]),
                          [("alpine324", 1, "/r/cases/alpine324-b.case"), ("alpine324-uefi", 1, "/r/cases/alpine324-uefi-a.case"),
                           ("alpine324-uefi", 1, "/r/cases/alpine324-uefi-d.case"), ("alpine324-uefi", 2, "/r/cases/alpine324-uefi-c.case")])
+
+
+class LeftoversHost(unittest.TestCase):
+    """img-speed F18: the leftovers chain stays on one host (its steps share one disk), but
+    any host of the run that holds all three of its UEFI sources takes it: tie order (a big
+    one first), else --hosts' order."""
+    NEED = ("alpine324-luks", "alpine324-lvm", "alpine324-uefi")
+
+    def test_a_big_host_first_then_a_small_one(self):
+        full = set(self.NEED)
+        self.assertEqual(B.leftovers_host(self.NEED, {"chopin": full, "cinqcent": full, "copland": full}), "cinqcent")
+        self.assertEqual(B.leftovers_host(self.NEED, {"chopin": {"alpine324-lvm"}, "cage": full, "copland": full}),
+                         "copland")
+        self.assertIsNone(B.leftovers_host(self.NEED, {"chopin": {"alpine324-lvm"}, "choubox": {"alpine324"}}))
+        self.assertEqual(B.leftovers_host(self.NEED, {"cinqcent": full, "cage": full}, order=["cage", "cinqcent"]), "cage")
+
+    def test_all_later_names_a_small_host(self):
+        full = set(B.SOURCES)
+        _, _, host, steps = B.all_later({"chopin": {"alpine324"}, "cinqcent": set(), "czerny": full, "cage": full})
+        self.assertEqual(host, "cage")
+        self.assertGreater(steps, 0)
+
+    def test_the_word_takes_the_holder(self):
+        got = {}
+        with mock.patch.object(B, "held", lambda ss, hosts=None: {"chopin": set(), "cinqcent": set(),
+                                                                  "czerny": set(self.NEED)}), \
+                mock.patch.object(B, "sync", lambda hs: got.update(sync=hs)), \
+                mock.patch.object(B, "leftovers_start", lambda h, name, run: got.update(h=h, name=name)), \
+                mock.patch.object(sys, "argv", ["bs2", "leftovers"]):
+            B.main()
+        self.assertEqual(got, {"sync": ["czerny"], "h": "czerny", "name": "leftovers"})
+        with mock.patch.object(B, "held", lambda ss, hosts=None: {"chopin": {"alpine324-lvm"}}), \
+                mock.patch.object(B, "LISTED", {"chopin": {"alpine324-lvm"}}), \
+                mock.patch.object(sys, "argv", ["bs2", "leftovers"]), self.assertRaises(SystemExit) as e:
+            B.main()
+        self.assertIn("no host of", str(e.exception))
+        self.assertIn("holds all of alpine324-luks, alpine324-lvm, alpine324-uefi", str(e.exception))
 
 
 class Slots(unittest.TestCase):

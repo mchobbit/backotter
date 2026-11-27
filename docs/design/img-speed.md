@@ -1550,6 +1550,39 @@ this spec's speedups 2 and 7.
   vm-store. *Stays:* the leftovers chain on one host (it needs all three
   UEFI sources on one disk), and the SSD lane until the per-host test-disk
   plan (Dec 2026).
+  *Built 2026-11-27:* the leads, not the publish. The store is not needed:
+  the sources now sit in every host's cache (copland, cage and czerny hold
+  all 54 built sources, choubox 36), and bs2's `LEAD_HOSTS` (the big default
+  hosts, which bs2 refused to run without) was the only rule keeping the
+  leads there. `leads()` is now `assign()`'s deal over the hosts that hold
+  the sources: each host leads its share (the sources over those hosts,
+  rounded up), its HOME sources while it has room, else the one leading the
+  fewest (`tie_key` on a tie), so the tier 0 sweeps, draws and tools spread
+  over the farm. HOME is a preference over `HOME_HOSTS` (the big default
+  hosts, else every default amd64 host: no more refusal); Alpine's and
+  Guix's HOME are unchanged. Corpus, replay, shrink and soak now always ask
+  `held()` before placing, since HOME may name a host without the source.
+  The leftovers chain stays on one host, but any class: `leftovers_host()`
+  takes the first in tie order (a big host first) of the run's hosts that
+  holds all three, `--hosts`' order when given, and `bs2 leftovers` no longer
+  goes to chopin unasked or to a host that lacks them (it names what is
+  missing). The SSD lane is not pinned any more: F3 (FD3) already gave it to
+  every `disk_scratch` host, one case at a time per host; what waits for the
+  per-host test-disk plan is only which disk it writes. *Proof* (this entry
+  named none, so F18 set its own): test_bs2_hosts' Leads (5) and
+  LeftoversHost (3), test_bs2_start's fixtures pinned to their own leads,
+  `t2 self-test` all ok. `bs2 BackShot2All plan`, same farm, same minute:
+  before, 27 leads each on chopin and cinqcent (their tier 0 sweeps ~135
+  min est.); after, 9 on each of the six hosts (~45 min each), the queues'
+  estimate 7.0 to 6.5 h, the leftovers set on cinqcent in both.
+  `bs2 BackShot2 alpine324-uefi alpine324-lvm alpine324-luks 2 --sweep 2
+  --tier2 1 --hosts cinqcent,copland,cage` (bs2a-20261127-0757; before F18
+  cinqcent would have led all three) was led by copland (uefi), cinqcent
+  (lvm) and cage (luks): each drew and swept on its own host, the cases
+  were copied from those leads, and all 9 tier 1 and 2 cases PASSed, 4 of
+  them on copland and cage. `bs2 leftovers plan --hosts copland,czerny`
+  planned on copland, and `bs2 leftovers --hosts czerny` ran the 9-step
+  chain on a small host (lo-20261127-0757): every step PASS.
 - **F19. BackShot1 QEMU rehearsals "on both hosts" (yes).** A docs and
   habit change: place them with `pick-host`, check the guest source is in
   the cache, and note that void's rootfs check needs minisign or signify on
@@ -1622,8 +1655,8 @@ this spec's speedups 2 and 7.
 | The fleet lock and the commit of updated guests | Chopin | One committer per guest generation. F1 moves only the update work |
 | qubes43's Stic and Holt cells | big hosts | M 12 GiB is over a small host's 10.1 |
 | uc24-fde | hosts with swtpm | a host capability, not a placement habit |
-| The BS2 leftovers chain | one host | needs all three UEFI sources on one disk |
-| The BS2 SSD lane | holt_disk_mode hosts | waits for the per-host test-disk plan (Dec 2026) |
+| The BS2 leftovers chain | one host, any class (F18) | needs all three UEFI sources on one disk |
+| The BS2 SSD lane: one case at a time | each `disk_scratch` host (F3) | which disk it writes waits for the per-host test-disk plan (Dec 2026) |
 | One builder per platform, then copy | wherever it was built | builds are not reproducible, so a second build is not the same binary |
 | `--split legacy`, ROUND_BUILDERS | chopin, cinqcent | exist to reproduce rounds built before 2026-11-14 |
 | HoltTest2's single queue host | one host per run | one queue is the design; F15 only changes which host |

@@ -493,7 +493,8 @@ in the library). Nothing committed.
 
 ## BackShot1 on LUKS: family P (2026-11-27)
 
-Built, unit-tested, not yet rehearsed or run on the Thinkpad.
+Built, unit-tested and rehearsed in QEMU (below, "Rehearsed"); not yet run
+on the Thinkpad.
 
 - **The install:** `pika-bootstrap.sh --luks SERIAL ISO INSTALL_SH KEYS_DIR
   HOSTNAME` runs install.sh's `btrfs-luks` layout (the GTK installer's
@@ -525,10 +526,33 @@ Built, unit-tested, not yet rehearsed or run on the Thinkpad.
   needs; `refind_linux.conf` gets `rdinit=`, `rd.luks.key=` and, on `quiet`
   lines, `booster.log=warning`. The restore needs no change: it restores
   those files and runs `booster build` in its chroot.
-- **Next:** `pika-bootstrap-qemu.sh` with `--luks` (the install, a boot with
-  the passphrase typed, `bs1-adopt`, a boot with a fake `mybig512` carrying
-  the key), `bs1-qemu.py --virtio` on `pikaos4-luks` (BOOTX64 mode: its
-  `refind_linux.conf` has the same lines), then BackShot1 on the Thinkpad.
+- **Rehearsed (2026-11-27), no change to the scripts under test:**
+  `pika-bootstrap-qemu.sh --luks` **PASS on Cinqcent** (84718f8). The
+  install took 59 s (install.sh), LUKS2, crypttab as above; a watcher on the
+  stick saw the passphrase in no process's command line or environment, and
+  it is in neither install log. The disk then booted four ways from rEFInd's
+  NVRAM entry with `refind_linux.conf`'s own lines: the passphrase typed
+  blind through QEMU's monitor (SSH after 51 s; booster's prompt was text on
+  the screen, not Plymouth's); `bs1-adopt` said family P, `crypt_root:UUID:P`,
+  the key on the fake `mybig512`'s XFS, all three lines got `rdinit=` and
+  `rd.luks.key=`, a second adopt changed nothing; with the drive and nothing
+  typed SSH after 35 s, `bs1-verify --unlock` `UNLOCK=drive`, and the kernel's
+  log has "Run /usr/local/lib/backshot1/booster-preinit as init process" and
+  the helper's "crypt_root: the backup drive's key, handed to booster"
+  (`rdinit=` through `/usr/local/lib` -> `../lib` works, as does `mknod` of
+  `/dev/null` as PID 1); without it the helper waited 30 s, said "no backup
+  drive mybig512; asking instead", booster asked, and `--unlock` said
+  typed; the passphrase is in no file of `/etc`, `/root`, `/var/log` or
+  `/boot`. geoclue's start timed out once on a typed first boot and once on
+  a drive boot (the VM; noted, not failed). `bs1-qemu.py --virtio
+  --luks-typed --luks-off` on `pikaos4-luks` **PASS on Chopin**, run
+  `pika-4-20261127-064355`: adopt (family P), adopt again unchanged,
+  `--luks-off` put the files back as they were, the drive boot
+  `UNLOCK=drive`, the boot without it typed, the preflight `UNLOCK=drive`,
+  backup 3.3 GiB, restore (one `booster build` per kernel in the chroot)
+  PASS, the restored system unlocked by the drive with nothing typed, verify
+  261,296 files with 0 unexpected, and the restored system without the drive
+  asked. **Next:** BackShot1 on the Thinkpad.
 
 ## Pieces to build (ordered, est.)
 

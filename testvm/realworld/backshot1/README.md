@@ -336,6 +336,16 @@ The first boot asks for the passphrase (booster's prompt, Plymouth's with
 `splash`); `bs1-adopt` then sets up family P (below, "Unlocking from the
 drive"), and the next boot, with `mybig512` plugged in, must unlock with
 nothing typed before the backup (`backshot1 unlock` says `UNLOCK=drive`).
+`pika-bootstrap-qemu.sh --luks TEST_IMG ISO WORK_DIR` rehearses all of that
+(the install, a typed boot, `bs1-adopt`, a boot with a fake XFS `mybig512`
+and nothing typed, a boot without it), typing the passphrase blind through
+QEMU's monitor; PASS on Cinqcent 2026-11-27, as did `bs1-qemu.py --virtio
+--luks-typed --luks-off` on `pikaos4-luks` (Chopin, a whole backup and
+restore with family P).  In QEMU booster asked in text on the screen
+("Enter passphrase for crypt_root:"), not through Plymouth's splash, even
+on the `quiet splash` line; without the drive it asked about 35 s into the
+boot, after the helper's "waiting up to 30 s for the backup drive
+mybig512" and "no backup drive mybig512; asking instead".
 
 ## AnduinOS: the MOK-signed GRUB and its snapshots
 

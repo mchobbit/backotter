@@ -925,6 +925,10 @@ refind_linux.conf edits, `lk_p_volume`'s cases, adopt, rerun and
 preinit putting everything back, a busybox without an applet, the
 helper's FIFOs with and without the drive, `release` waking a waiting
 reader, a key booster never reads, `--booster-run` with and without the
-drive and with a mount that hangs past the deadline, the evidence, install.sh's key-file lines).  Not yet rehearsed in
-QEMU (`pika-bootstrap-qemu.sh` with `--luks`, then `bs1-qemu.py`), nor run on
-the Thinkpad.
+drive and with a mount that hangs past the deadline, the evidence, install.sh's key-file lines).  Rehearsed in QEMU
+2026-11-27: `pika-bootstrap-qemu.sh --luks` PASS on Cinqcent (the install,
+a typed boot, adopt, `UNLOCK=drive` with a fake XFS `mybig512` and nothing
+typed, typed without it) and `bs1-qemu.py --virtio --luks-typed --luks-off`
+on `pikaos4-luks` PASS on Chopin (run `pika-4-20261127-064355`, the
+restored system unlocked by the drive, verify 0 unexpected)
+(docs/design/pikaos.md, "Rehearsed").  Not yet run on the Thinkpad.

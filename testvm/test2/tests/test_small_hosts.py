@@ -238,6 +238,37 @@ class Placement(unittest.TestCase):
         self.assertEqual({h: oe[h] for h in big}, {h: [] for h in big})
         self.assertEqual({h: oe[h] for h in small}, {h: ["ubuntu24"] for h in small})
 
+    def test_the_zfs_and_long_sources_reach_the_small_hosts(self):
+        """F5 of docs/design/img-speed.md: every amd64 host runs ZFS 2.4.4 (the small ones since
+        2026-11-14), so with each host's guests in its cache a host-ZFS source (truenas25,
+        void-zbm) and a long one (slackware15, D 16) are keyed on the small hosts too: D over
+        their RAM-disk ceiling goes to the SSD under overflow, and nothing keeps them big-only."""
+        hosts = list(t2lib.DEFAULT_HOSTS)
+        small = [h for h in hosts if hosts_table.host_class(h) == "small"]
+        self.assertTrue(small, hosts)
+        fx = self.facts(hosts, {h: (SMALL if h in small else BIG) for h in hosts})
+        uefi = next(f["rescuers"]["images"]["rescuer-uefi.qcow2"] for f in fx.values()
+                    if "rescuer-uefi.qcow2" in f["rescuers"]["images"])
+        for h in hosts:   # as the farm's facts say: OpenZFS and both rescuers on every host
+            fx[h]["caps"] = {"zfs": True, "zpool": "/usr/sbin/zpool", "zfs_module": True,
+                             "holt_rescuer": True, "holt_debs": True}
+            fx[h]["rescuers"]["images"]["rescuer-uefi.qcow2"] = uefi
+        p = self.w.plan("HoltTest2 truenas25 void-zbm slackware15 plan", facts=fx, hosts=hosts)
+        for g in ("truenas25", "void-zbm", "slackware15"):
+            c = p.cell("holt:" + g)
+            self.assertEqual((c.status, sorted(c.keys)), ("due", sorted(hosts)), (g, c.reasons))
+            self.assertNotIn("no host OpenZFS", "; ".join(c.reasons))
+        self.assertEqual({h: v for h, v in holt.only_elsewhere(p.due(), hosts, {}).items() if v}, {})
+
+    def test_the_zfs_why_names_no_host_without_zfs(self):
+        """classes.json's needs_host_zfs_why said "copland and cage have no OpenZFS" long after
+        both had it (F5): the text names no host of the table as lacking it."""
+        with open(os.path.join(TEST2, "classes.json")) as f:
+            why = json.load(f)["holt"]["needs_host_zfs_why"]
+        for h in hosts_table.names(all_=True):
+            self.assertNotRegex(why, rf"\b{h}\b[^.]*\bno OpenZFS\b")
+        self.assertIn("caps.zfs", why)
+
     def test_holt_only_elsewhere_from_ceilings(self):
         with scratch_mode("ram"):
             p = self.plan("HoltTest2 mint22 debian13 plan", ["chopin", "copland"], {"chopin": BIG, "copland": SMALL})

@@ -381,9 +381,10 @@ plan says so. A cell is kept off a host for any of these reasons:
   cell boots. A fleet host is assumed to hold every guest.
 - **No host ZFS.** The cell's source is in `classes.json` `holt.needs_host_zfs`:
   cachyos-zfs, chimera-zfs, debian13-zfs, proxmox9, proxmox9-mirror, truenas25,
-  truenas25-mirror, ubuntu24, ubuntu26-zfs, ubuntu26-zfsmirror, void-zbm,
-  void-zbm-enc. This
-  applies to every variant, `+img` included.
+  ubuntu24, ubuntu26-zfs, ubuntu26-zfsmirror, void-zbm, void-zbm-enc
+  (truenas25-mirror is no HoltTest2 source: HoltTest1 1D runs it). This
+  applies to every variant, `+img` included. Every amd64 host runs OpenZFS
+  2.4.4 today, so this keeps no cell off a host of the farm.
 - **No rescuer or debs.** A holt cell needs HoltTest's rescuer, its debs, or
   both, and the host lacks one it needs. A Linux source needs both, unless it
   is UEFI and the host has rescuer-uefi.qcow2, when it needs only the debs.

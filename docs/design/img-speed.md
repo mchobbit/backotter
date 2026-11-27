@@ -1021,6 +1021,27 @@ this spec's speedups 2 and 7.
   hosts. One HoltTest2 line of truenas25 and one of slackware15 PASS on a
   small host. *Gain:* medium-large: about 11 guests gain 3-4 hosts, among
   them long lines (truenas D 25-27, slackware 16).
+  *As built (2026-11-27):* the store already held the tested leap16, qubes43,
+  truenas25, uc24, uc24-fde, void-zbm and -enc (published 2026-11-18, their
+  disks unchanged since): the caches had simply never linked them. Chopin
+  published the 2026-11-25 slackware15 and -uefi rebuilds (holt PASS on
+  Chopin and Cinqcent 2026-11-26) with `--set-latest` (a rebuild without
+  image-state never moves latest on its own), and truenas25-mirror for the
+  first time (the HoltTest1 tn6-5/tn6-6 PASS build), all with `--no-relink`,
+  then `relink-caches` linked the nine on copland, cage and czerny, and
+  void-zbm, -enc and truenas25 on choubox (its SSD holds truenas's D 27
+  above its floor, M 4 is under its 6.0). Not on choubox: slackware (its
+  cache_skip) and truenas25-mirror (HoltTest1 only).
+  Nothing was pushed to Bigfoot: the next weekly `publish --changed --push`
+  takes the three new versions. swtpm is on every amd64 host, so uc24-fde
+  needs no new capability. The small hosts' class row already has
+  `scratch_mode` overflow, so no code change was needed for D 16-27: the
+  only change is the text. truenas25-mirror is no HoltTest2 source, so its
+  links serve HoltTest1 only. *Proof:* `pick-host --guest G` lists copland, cage and
+  czerny for all nine (choubox for all but slackware and truenas25-mirror;
+  qubes43 Chopin only, as meant); HoltTest2 slackware15 PASS on czerny (run
+  t2h-20261127T0155-f190, 12.2 GB on its SSD) and truenas25 PASS on cage
+  (t2h-20261127T0206-8fb4, 26.6 GB on its SSD).
 
 ### Medium gains
 

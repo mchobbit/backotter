@@ -76,9 +76,15 @@ def dig(p, bins="n1", tests="t1", **over):
             "tests": {"digest": sha("tests " + tests), "files": {}, "modes": ["bios", "uefi"]}}
 
 
-def provenance(p, d, epoch="2026-11-26", when="2026-11-26T10:00:00Z", tag="x"):
-    """A provenance whose digests are D's (what the image was built from)."""
+ROOM = {"free_kib": 65536, "total_kib": 491520, "bins_kib": 87648, "headroom_kib": 65536}   # netbsd's, I4
+SIZES = {"restic-bko": 50745525, "rustic-bko": 34294624, "bko-holt": 4573704}
+
+
+def provenance(p, d, epoch="2026-11-26", when="2026-11-26T10:00:00Z", tag="x", room=ROOM):
+    """A provenance whose digests are D's (what the image was built from); a VM platform's
+    records each image's room (§4.2)."""
     return {"schema": 1, "platform": p, "mode": "full",
+            "room": None if p == "linux" or room is None else {"release": dict(room), "test": dict(room)},
             "built": {"host": "chopin", "when": when},
             "release": {"file": f"rel-{tag}.img", "sha256": sha(f"rel {p} {tag}"), "image_id": f"id-{tag}"},
             "test": {"file": f"test/test-{tag}.img", "sha256": sha(f"test {p} {tag}")},
@@ -99,9 +105,10 @@ def probe(ceiling=(9.0, 18.5), free=(9.0, 18.5), load=0.0, nproc=16):
             "waiting": 0, "load": load, "nproc": nproc, "caps": [], "vms": []}
 
 
-def host(digests=None, images=None, sets=None, pr=None, refresh=None, errors=None):
+def host(digests=None, images=None, sets=None, pr=None, refresh=None, errors=None, sizes=None):
     return {"probe": pr or probe(),
             "facts": {"digests": digests if digests is not None else {p: dig(p) for p in PLATS},
+                      "bin_sizes": sizes if sizes is not None else {p: dict(SIZES) for p in PLATS},
                       "images": images or {}, "sets": dict(sets or SETS), "errors": errors or [],
                       "refresh": refresh if refresh is not None else {p: True for p in PLATS}}}
 
@@ -155,6 +162,45 @@ class Table(unittest.TestCase):
         self.assertEqual(r["able"]["cage"], "it doesn't hold the parent image")
         self.assertIn(r["host"], set(BUILDERS) - {"cage"})
         self.assertEqual(r["minutes"], 4.0)
+
+    def test_new_binaries_that_dont_fit_the_parent_are_a_full_build(self):
+        # §4.2 step 4: the parent's recorded room (free_kib + bins_kib) against the reference's sizes,
+        # by refresh-lib.sh's sum.  Linux re-packs its layer and always fits.
+        g, rows, _ = fresh_world()
+        for h in BUILDERS:
+            for x in ("netbsd", "linux"):
+                g[h]["facts"]["digests"][x] = dig(x, bins="n2")
+        big = dict(SIZES, **{"restic-bko": 200 << 20})
+        g["chopin"]["facts"]["bin_sizes"]["netbsd"] = big
+        g["chopin"]["facts"]["bin_sizes"]["linux"] = big
+        p = plan(g, rows)
+        r = p["platforms"]["netbsd"]
+        self.assertEqual(r["action"], "full")
+        self.assertRegex(r["why"], r"^bins changed; the new binaries need \d+ KiB, and the parent's release image "
+                                   r"has 153184 \(§4.2\)$")
+        self.assertEqual(r["minutes"], D.img_minutes("netbsd", "full"))
+        self.assertEqual(p["platforms"]["linux"]["action"], "refresh")
+        # the sum: what fits exactly still refreshes, a KiB more doesn't
+        need = sum(R.kib(v) + R.kib(v) // 50 + 256 for v in SIZES.values()) + 257
+        pv = {"room": {w: {"free_kib": need - ROOM["bins_kib"], "bins_kib": ROOM["bins_kib"]} for w in ("release", "test")}}
+        self.assertIsNone(R.room_why("netbsd", pv, SIZES))
+        pv["room"]["test"]["free_kib"] -= 1
+        self.assertIn("the parent's test image has", R.room_why("netbsd", pv, SIZES))
+        self.assertIsNone(R.room_why("linux", {}, None))
+
+    def test_a_parent_with_no_room_record_or_no_sizes_is_a_full_build(self):
+        g, rows, _ = fresh_world()
+        old = provenance("netbsd", dig("netbsd"), room=None)       # built before I4's room
+        for h in BUILDERS:
+            g[h]["facts"]["digests"]["netbsd"] = dig("netbsd", bins="n2")
+            g[h]["facts"]["digests"]["haiku"] = dig("haiku", bins="n2")
+            g[h]["facts"]["images"]["netbsd"] = image(old)
+        rows.append(pass_row("netbsd", old["test"]["sha256"]))
+        del g["chopin"]["facts"]["bin_sizes"]["haiku"]
+        p = plan(g, rows)
+        self.assertEqual(p["platforms"]["netbsd"]["action"], "full")
+        self.assertIn("records no room for its release image", p["platforms"]["netbsd"]["why"])
+        self.assertEqual(p["platforms"]["haiku"]["why"], "bins changed; the reference gave no sizes of the new binaries")
 
     def test_bins_changed_with_tests_changed_is_still_a_refresh(self):
         g, rows, _ = fresh_world()
@@ -508,7 +554,8 @@ class FactsScript(TI.EnvCase):
         self.assertEqual(f["images"]["haiku"]["why"], "no test image (a build moved it away)")
         self.assertEqual(f["sets"]["bko-bin"], sha("sums\n"))
         self.assertIsNone(f["sets"]["holt-bin"])
-        self.assertEqual(f["refresh"], {p: p == "linux" for p in PLATS})   # I3: Linux refreshes
+        self.assertEqual(f["refresh"], {p: p in ("linux", "netbsd") for p in PLATS})   # I3, I4: Linux, NetBSD
+        self.assertEqual(f["bin_sizes"]["netbsd"], {"restic-bko": 14, "rustic-bko": 14, "bko-holt": 12})
         self.assertEqual(before, sorted(os.path.join(a, x) for a, _, fs in os.walk(imgs) for x in fs))
 
     def test_no_img_inputs_is_said(self):

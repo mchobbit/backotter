@@ -27,6 +27,8 @@ netbsd	root	/usr/local/bin/restic-bko	bin
 netbsd	root	/usr/local/bin/rustic-bko	bin	optional
 netbsd	root	/usr/local/bin/bko-holt	bin
 netbsd	root	/.disk/backotter.json	marker
+netbsd	layout	/gpt/part/2	rewritten
+netbsd	layout	/gpt/part/3	rewritten
 openbsd	root	/usr/local/bin/restic-bko	bin
 openbsd	root	/usr/local/bin/rustic-bko	bin	optional
 openbsd	root	/usr/local/bin/bko-holt	bin

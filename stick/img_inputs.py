@@ -618,11 +618,12 @@ def catalog_view(data):
     return bytes(b)
 
 
-def layout(img, rewritten=(), xorriso=None):
+def layout(img, rewritten=(), xorriso=None, eltorito=True):
     """IMG's layout as listing lines (tree `layout`, PATH, VALUE), sorted: the MBR's entries and
     signature; the GPT's header and entries, each partition's bytes but for REWRITTEN's
     (partition numbers); the system area (boot code) with the partition tables masked; and
-    the El Torito boot images, the catalog with its positions masked.  Positions (start
+    with ELTORITO (Linux's hybrid ISO; the VM platforms' images have none) the El Torito boot
+    images, the catalog with its positions masked.  Positions (start
     and end LBAs) and the random ids (GUIDs) are never listed: a refresh that rewrites one
     partition moves those after it, and draws new ids (C2, D2)."""
     out = []
@@ -662,6 +663,8 @@ def layout(img, rewritten=(), xorriso=None):
                     line += f" size={size} sha256={_range_sha(f, first * SECTOR, size)}"
                 out.append(f"/gpt/part/{i + 1}\t{line}")
         out.append(f"/system-area\tsha256={_sha(bytes(sysarea))}")
+    if not eltorito:
+        return sorted("layout\t" + x for x in out)
     xorriso = xorriso or env("BKO_XORRISO", "xorriso")
     with tempfile.TemporaryDirectory(prefix="bko-layout.") as t:
         try:
@@ -785,6 +788,10 @@ def parent_check(platform, pdir, today=None, cadence=None):
     cadence = CADENCE_DAYS if cadence is None else cadence
     if age > cadence:
         raise Refused(f"the parent's OS epoch {epoch} is {age} days old, past the cadence (D3: {cadence}): build it in full")
+    if platform != "linux":
+        why = room_why(pv, bin_sizes(platform))
+        if why:
+            raise Refused(why)
     out.update(os_epoch=epoch, os_manifest=base.get("os_manifest"), age_days=age,
                bins_digest=(pv.get("bins") or {}).get("digest"))
     return out
@@ -801,6 +808,33 @@ def find_parent(dirs, test_sha256=None):
         if ((read_json(os.path.join(d, "provenance.json")) or {}).get("test") or {}).get("sha256") == test_sha256:
             return d
     raise Refused(f"no set here has a provenance whose test image is {test_sha256[:12]}")
+
+
+def kib(n):
+    return (int(n) + 1023) // 1024
+
+
+def bin_sizes(platform):
+    """The sizes of the binaries this build would swap in ({name: bytes}), as bins_of finds them."""
+    b = env("BKO_BIN", os.path.join(work(), "bko-bin"))
+    h = env("BKO_HOLT_BIN", os.path.join(work(), "holt-bin"))
+    return {n: os.path.getsize(x) for n, x in (
+        ("restic-bko", os.path.join(b, platform, "restic-bko")), ("rustic-bko", os.path.join(b, platform, "rustic-bko")),
+        ("bko-holt", os.path.join(h, platform, "bko-holt"))) if os.path.isfile(x)}
+
+
+def room_why(pv, sizes):
+    """Why binaries of SIZES don't fit the parent whose provenance is PV, by its recorded room, or
+    None (§4.2 step 4; img_round.py's room_why and stick/bsd/refresh-lib.sh's bko_fit, the same
+    sum).  A parent that records no room is left to the VM's own check."""
+    need = sum(kib(v) + kib(v) // 50 + 256 for v in sizes.values()) + 257
+    for which in ("release", "test"):
+        r = ((pv or {}).get("room") or {}).get(which)
+        if isinstance(r, dict) and isinstance(r.get("free_kib"), int) and isinstance(r.get("bins_kib"), int) \
+                and need > r["free_kib"] + r["bins_kib"]:
+            return (f"the new binaries need {need} KiB, and the parent's {which} image has "
+                    f"{r['free_kib'] + r['bins_kib']} (§4.2): build it in full")
+    return None
 
 
 def _bad_paths(a, b, n=8):
@@ -827,7 +861,7 @@ def refresh_check(platform, pdir, cdir, layouts=None):
     swaps = swap_rows(platform)
     rewritten = layout_rewritten(platform)
     pv = read_json(os.path.join(pdir, "provenance.json")) or {}
-    lay = layouts or (lambda img: layout(img, rewritten))
+    lay = layouts or (lambda img: layout(img, rewritten, eltorito=platform == "linux"))
     rep, sets = [], {}
     for which, sub in (("release", ""), ("test", "test")):
         pl = read_listing(os.path.join(pdir, sub, "os-tree.txt"))
@@ -969,6 +1003,11 @@ def provenance(a):
         man, missing, names = os_manifest(lines, swaps)
         trees[which] = {"os_manifest": man, "entries": len(lines), "trees": names, "swap_missing": missing}
     test["os_manifest"] = trees["test"]["os_manifest"]
+    # A VM platform's room (make-img-bsd.sh's room.json beside each image, §4.2): the free space a
+    # refresh of this image could swap new binaries into.
+    room = None
+    if a.platform != "linux":
+        room = {w: read_json(os.path.join(d, sub, "room.json")) for w, sub in (("release", ""), ("test", "test"))}
     hb = env("BKO_HOLT_BIN", os.path.join(work(), "holt-bin"))
     bb = env("BKO_BIN", os.path.join(work(), "bko-bin"))
     holt_commit = None
@@ -1027,6 +1066,7 @@ def provenance(a):
                      holt_build=hbuild),
         "tests": dict(now["tests"], boot=boot, tools=dpkg_versions(TEST_TOOLS)),
         "parent": parent,
+        "room": room,
     }
     out = os.path.join(d, "provenance.json")
     tmp = out + ".part"

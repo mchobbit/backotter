@@ -169,7 +169,7 @@ the last `boot-*.out`; compress = `compress.log`. Minutes:
 |---|---|---|---|
 | linux | layer squashfs `/usr/local/bin/{restic-bko,rustic-bko,bko-holt}`; copies of bko-holt and rustic-bko in config.img | squashfs in the ISO 9660 tree | `/.disk/backotter.json`, config.img |
 | freebsd | `root.ufs: /usr/local/bin/*` | FFS2 made by `makefs` with no free-space option (sized to fit) | the UFS label `BACKOTTER-<8 hex>`, `/etc/fstab` **and** `conf/base/etc/fstab` (a hard link made by `pax -l`: rewrite in place, never by rename), `/.disk/backotter.json`, config.img |
-| netbsd | the root's `/usr/local/bin/*` | FFS2 made by `makefs -b 10% -f 10%` | `/.disk/backotter.json`, config.img; random GPT disk and partition GUIDs (`gpt create`/`add`) |
+| netbsd | the root's `/usr/local/bin/*` | FFS2 made by `makefs -b 10% -f 10%`, since I4 plus the headroom rule's shortfall (§4.2) | `/.disk/backotter.json`, config.img; random GPT disk and partition GUIDs (`gpt create`/`add`) |
 | openbsd | the root's `/usr/local/bin/*` | FFS (`newfs -m 0 -o space` on a vnd), partition `kb + kb/8 + 32 MiB` | `/.disk/backotter.json`, config.img; **the disklabel's random DUID, which `/etc/fstab` mounts root by** |
 | dragonfly | `usr/local/bin/*` | UFS (`newfs -m 0`), sized from the binaries (`ours_kb`) +10 % + `ROOM_MB` 256 | the disklabel64 label `BKO_<32 hex>` (slice 2's label, not the file system's), `etc/fstab` and `boot/loader.conf`'s `vfs.root.mountfrom`, both by that label, `/.disk/backotter.json`, config.img |
 | illumos | `usr/local/bin/*` **inside** `boot_archive.gz` (gzipped UFS miniroot, +10 % + 48 MiB) on the V_ROOT UFS | UFS in UFS, s2 sized +25 % +16 MB | `.volsetid` (on s2 only: the archive has none, I1's listing), the marker in the archive and on s2, `boot_archive.hash` (SHA-1 of the uncompressed archive, always present), config.img; random GPT GUIDs (`mkgpt.py`) |
@@ -635,6 +635,69 @@ some images, the one change to full builds that this spec makes.
 Est. per platform: 1-2 min of VM boot, under a minute of swap and fsck per
 copy, and no media fetch or OS updates. That is 3-5 min against 2.3-15.0 min
 of building today.
+
+*As built (I4, NetBSD first, 2026-11-27).* What every VM platform's refresh
+shares, so that the other five add only their attach, fsck and id sites:
+
+- **The contract.** `make-img-bsd.sh --refresh-from PARENT_IMG [--test] P`
+  refuses a platform whose `build.sh` has no `refresh)`; img_round_facts.py's
+  `refresh` (the dealer's "refresh-ready") greps the same, so a platform
+  becomes refresh-ready by having it. vm-run's `--snapshot` covers every disk,
+  so the parent is not a second disk: it is copied in with `in/` (tar `-h`)
+  and moved to `out/image.img`, which `build.sh refresh` changes in place, and
+  copied out as a full build's image is. No media are fetched. Before the
+  refresh the host lists the parent with `build.sh list` and, given
+  `BKO_TREE_PARENT` (img-one.sh passes the parent's `os-tree.txt`), refuses a
+  parent whose listing differs: the "listing before the change". The
+  parent's `/.disk/backotter.json` comes from that tar, and marker.py gets its
+  base, release, kernel and ZFS fields from it; `build.sh refresh` checks them
+  against the parent's tree (NetBSD: `/netbsd`'s version string; a ZFS
+  platform adds its `compatibility.d` file). The listing after is
+  `BKO_TREE_OUT`, as for a full build. On the host, the new config.img goes
+  into partition `CONFIG_PART` with dd at the offset the GPT gives
+  (`stick/img_gpt.py part`, which checks the size), and with platform.conf's
+  `GPT_IDS=random` (NetBSD; illumos to come) `img_gpt.py new-ids` draws a new
+  disk GUID and new partition GUIDs into both tables, CRCs checked before and
+  rewritten after. img_gpt.py is a base input of the VM platforms
+  (img-inputs.tsv).
+- **stick/bsd/refresh-lib.sh** (sourced in the VM): `bko_fit` (the sum below,
+  exit 3), `bko_swap` (each binary's bytes rewritten into the parent's file,
+  so its inode, owner, mode and flags stay; a binary the set lacks removed; a
+  new one 0555, the marker 0444; each compared after), `bko_room` (the
+  `BKO-ROOM free_kib total_kib bins_kib` line).
+- **Room.** `build.sh room` (after `assemble` or `refresh`) gives the swap
+  file system's free space (size less used: root writes past minfree) and
+  the binaries' blocks; make-img-bsd.sh writes it to `BKO_ROOM_OUT`
+  (img-one.sh: `room.json` beside each image), and the provenance records it
+  as `room: {release, test}`. A full build whose free space is under the
+  headroom rule is refused there. The fit is one sum in three places: the new
+  files' KiB, plus 2 % and 256 KiB each, and 257 KiB for the marker, out of
+  `free_kib + bins_kib`. The planner (img_round.py `room_why`, the
+  reference's `bin_sizes` from the facts against the parent's recorded room)
+  makes a refresh that can't fit, or whose parent records no room, a full
+  build; img-one.sh's parent check refuses it (exit 4, nothing moved); and in
+  the VM `bko_fit` refuses (build.sh 3, make-img-bsd.sh and img-one.sh 6,
+  done.exit 1, so the next plan builds it in full).
+- **C2.** `refresh-check` runs for the VM platforms as for Linux; their
+  layout has no El Torito (`layout(eltorito=False)`). The swap list names the
+  partitions a refresh rewrites (`netbsd layout /gpt/part/2`, `/gpt/part/3`):
+  the ESP and the boot code are compared byte for byte, and stay the
+  parent's (two NetBSD full builds' ESPs differ: makefs's FAT volume id).
+  img-one.sh refreshes each image from the parent's of its kind.
+
+NetBSD: `build.sh refresh` attaches the image on a vnd, finds the
+"BackOtter root" wedge, runs `fsck_ffs -n -f` (must be clean), mounts it
+read-write, checks the kernel, fits and swaps, unmounts and runs fsck again.
+The id sites are the marker and the GPT GUIDs (`ROOT.` in fstab names the
+boot device, no label). The read-write mount sets the superblock's
+last-mounted path and time, inside the rewritten root. Headroom: today's
+image had 59590 KiB free in its root (58 MiB, under the rule's 64 MiB), so
+`assemble` now measures the root.img makefs made (vnd, df) and, when short,
+makes it again with the shortfall as a second `-b SIZE` (makefs adds it before
+the 10 %): 67710 KiB free, the image 810 MiB against 802. Measured on
+cinqcent: a refresh of one copy 1.1-1.4 min (VM boot, the parent in and out,
+two listings), the whole unit with its boot tests 3.9 min against 4.3 min for
+the full build before it: NetBSD's full build is short, so the gain is small.
 
 ### 4.3 Secure Boot
 
@@ -2159,7 +2222,7 @@ Each step is done when its proof passes. Figures are rough (est.).
 | **I1** | `stick/img-inputs.tsv`, `img-digest.sh`, the tsv lint (§3.2). `img-one.sh` writes `provenance.json` (full builds) with the tree listing (`os_manifest`), the per-platform swap and id-site lists checked against §1.3, the FreeBSD builder's fingerprint, and the build-time identity recheck and guest lock (C7). (~1 d) | Unit tests in a fixture world (BKO_IMG_DIR and a test T2_HOST_ROOT): digests stable across two runs, and each input class moves only its own digest. Two hosts with the same inputs give the same base digest. The lint fails on a new unlisted stick/ file. Two FreeBSD builds on one host with no builder change give the same base digest. A vm-update of a builder guest during a fixture build makes the build refuse. A full set built with I1 matches its pre-I1 counterpart in every image file but the provenance |
 | **I2** | `img-round.sh plan` (§3.3, §5.2 steps 1-3), with no execution. Image units in `deal-units.py`. (~1 d) | Table tests over fixture facts: every row of §3.3, a host with a mismatched holt-bin refused, a stale slim refused. On the farm, `plan` right after a fresh set says reuse ×7 |
 | **I3** | Linux refresh: `build-backotter-layer.sh --refresh-from`, `img-one.sh --refresh-from`, C2 and C3 checks. (~1 d) | **E1**: on one day, two full builds with the same bins (A, A') give the noise floor; then, with new bins, a full build B and a refresh R from A. diff(B, R) must fall within diff(A, A'): ids, times, nothing else. A, A' and B run within one hour, and a package list (manifest) that differs between them voids the trial, since -updates may have moved. R passes all 4 boot modes, then ImgTest2 and the +img panel. A deliberate extra change in the layer makes C2 refuse |
-| **I4** | `build.sh refresh` for netbsd, then freebsd, openbsd, dragonfly, illumos, haiku. The headroom rule in their full builds, where §4.2's measure says it is short. (~0.5-1 d each) | E1 per platform. fsck clean before and after. The id sites rewritten (the label checked from the booted image), OpenBSD's DUID and the GPT GUIDs new. With parent and child attached to one guest, each boots its own root. The marker's kernel and ZFS fields equal the parent's. A too-large binary set makes the refresh refuse and the planner fall back to a full build |
+| **I4** | `build.sh refresh` for netbsd, then freebsd, openbsd, dragonfly, illumos, haiku. The headroom rule in their full builds, where §4.2's measure says it is short. (~0.5-1 d each) As built for **netbsd** (2026-11-27; §4.2 as built, with the shared parts: make-img-bsd.sh `--refresh-from`, stick/bsd/refresh-lib.sh, stick/img_gpt.py, `build.sh room`, provenance's `room`, img-one.sh's VM refresh and exit 6, the planner's `room_why` and the facts' `bin_sizes`). Proof, from private dirs (`/bkoscratch/imgspeed/I4-netbsd`, the stick/ synced there, private images): bins X (rel14's restic-bko and rustic-bko, bko-holt d66770a) and Y (rel16's, the same bko-holt). E1: A (cinqcent), A' (czerny), full with X; B (copland), full with Y; R (cinqcent), a refresh of A with Y; 11:03-11:17Z, one base digest (1f7ba9abf033). diff(A, A') was 4 entries in each of the release and test images (the marker, and the ESP, root and config partitions); diff(B, R) the same 4, none outside; diff(A, R) the marker, rustic-bko, the root and the config partitions. A's first try failed one boot check (uefi remote-access timed out at 120 s; its bios passed) and was built again. R passed both boot modes, then `t2 ImgTest2 netbsd --hosts cinqcent` under a private T2_MAC_ROOT, T2_HOST_ROOT and ledger seeded from the real ones, T2_IMAGES at R's set: PASS, panel not needed (storage pieces unchanged). fsck_ffs -n -f clean before and after each copy (build.log). GPT GUIDs: R's disk and three partitions all new against A's (img_gpt.py ids). Parent and child test images as two USB sticks on one guest, each first in turn, BIOS and UEFI: each booted its own root (kern.root_device dk1 at sd0, its marker's image_id, and `gpt show`'s GUIDs of sd0 and sd1 as the host reads them). The marker's base, release and kernel came from A's (`build.sh refresh` checked the kernel against `/netbsd`; NetBSD has no ZFS). A binary set made too large (restic-bko padded to 170 MB): make-img-bsd.sh refused in the VM (need 209819 KiB of 155351, exit 6); img-one.sh refused it from the parent's recorded room before anything moved (exit 4); the planner, on cinqcent's real facts with the parent's proof row, said refresh for Y and full for Z ("the new binaries need 209819 KiB, and the parent's release image has 155350"). Tests: test_img_refresh_bsd (18 new: refresh-lib.sh, img_gpt.py, the layout without El Torito, img-one.sh netbsd refreshes with a stub builder), test_img_round (2 new, the facts' sizes), test_img_refresh's two netbsd assertions | E1 per platform. fsck clean before and after. The id sites rewritten (the label checked from the booted image), OpenBSD's DUID and the GPT GUIDs new. With parent and child attached to one guest, each boots its own root. The marker's kernel and ZFS fields equal the parent's. A too-large binary set makes the refresh refuse and the planner fall back to a full build |
 | **I5** | `BKO_IMG_COMPRESS=0` in img-one.sh and img-xcopy.sh, `img-one.sh` writing `SHA256SUMS`, and `img-publish.sh`. The retention rule only after D6. (~0.5 d) | A set builds with no xz process (sampled ps and wear tags). Facts give the same release SHA-256 as before, and ImgTest2's keys for an unchanged image are unchanged. Publish's decompress-and-hash matches the raw SHA-256 of every image, and publish refuses a set past the cadence |
 | **I6** | Parallel modes in img-one.sh and ImgTest2's boot.sh, the image copied into the RAM disk, reservations sized by width. (~0.5 d) | The same image tested serial and parallel gives the same per-check verdicts on 3 sets. No reservation goes over its ceiling (cmp-run logs). The flakes.json match rate is unchanged |
 | **I7** | `img-seed.sh`, and Linux inputs on copland, cage and czerny. (~0.5 d) As built (2026-11-27), with the media and copland's builder mended (§5.1). Proof: the slim manifests match on all three (e19af22fa576, ISO c8e9d797f718); full Linux builds at 05:05Z on Chopin and copland (private image dirs, the shared sets) gave the same base, bins and tests digests in the provenance, the same base squashfs (65bc6e21) and layer manifest (2c9863ec) in both images of each, layer squashfs bytes that differ only within E1's noise floor (114 tree-listing entries, none outside I3's diff(A, A')), and ImgTest2 `linux` PASS on each (private T2 roots, `T2_IMAGES` at each set; panel not needed). 13 new tests (test_img_seed, a fixture farm behind a fake ssh); the t2 suite passes (3310) | The slim manifests match. A full Linux build on copland and one on Chopin from the same inputs, the same day, have the same layer manifest (package list), the same base squashfs bytes, and both PASS ImgTest2 |

@@ -7,9 +7,13 @@
 #
 # PLATFORM: linux, freebsd, netbsd, openbsd, dragonfly, illumos or haiku.
 #
-# --refresh-from PARENT (docs/design/img-speed.md §4.1, Linux only until I4):
-# the two images are made from PARENT's layer with only the binaries swapped
-# (build-backotter-layer.sh --refresh-from), not built in full.  PARENT is a
+# --refresh-from PARENT (docs/design/img-speed.md §4.1, §4.2): the two images
+# are made from PARENT's, with only the binaries, the marker and the id sites
+# changed, not built in full: on Linux from PARENT's layer
+# (build-backotter-layer.sh --refresh-from), on a VM platform whose build.sh
+# has a refresh in place in each of PARENT's two images (make-img-bsd.sh
+# --refresh-from: the release from its release, the test from its test).
+# PARENT is a
 # set's directory (images/P itself means the set this build moves to
 # prev-STAMP), or the SHA-256 of its test image (the plan's parent): the first
 # of images/P and its prev-*, newest first, whose provenance names it.  The
@@ -41,7 +45,9 @@
 # directory is the real one, 3 when a build of this platform is already under
 # way, 4 when a refresh's parent is refused (nothing moved, no done.exit
 # written), 5 when the host's bko-bin or holt-bin set is not the plan's
-# (BKO_PLAN_BKO_BIN, BKO_PLAN_HOLT_BIN below; nothing moved either).
+# (BKO_PLAN_BKO_BIN, BKO_PLAN_HOLT_BIN below; nothing moved either), 6 when a
+# VM platform's refresh found that the new binaries don't fit the parent's
+# free space (done.exit 1: the planner then builds the platform in full).
 #
 # The boot tests (stick/boot-modes.sh, img-speed.md §9): BKO_BOOT_WIDTH modes at
 # once (default 1, one after another; img-lanes.sh gives as many as its
@@ -80,7 +86,9 @@ REFRESH=""
 if [[ ${1:-} == --refresh-from ]]; then REFRESH=${2:-}; shift 2 || exit 2; fi
 P=${1:-}
 case $P in linux|freebsd|netbsd|openbsd|dragonfly|illumos|haiku) ;; *) echo "img-one: usage: img-one.sh [--refresh-from PARENT] PLATFORM" >&2; exit 2 ;; esac
-if [[ -n $REFRESH && $P != linux ]]; then echo "img-one: no refresh of $P yet (img-speed.md I4)" >&2; exit 2; fi
+if [[ -n $REFRESH && $P != linux ]] && ! grep -Eq '^[[:space:]]*refresh\)' "${S:-${BKO_WORK:-/home/m/backotter-work}/stick}/$P/build.sh" 2>/dev/null; then
+    echo "img-one: no refresh of $P yet (img-speed.md I4)" >&2; exit 2
+fi
 W=${BKO_WORK:-/home/m/backotter-work}
 S=${S:-$W/stick}
 I=${BKO_IMG_DIR:-$W/images}
@@ -120,7 +128,8 @@ if [[ -n $REFRESH ]]; then
         { echo "img-one: no refresh from $REFRESH: $(sed 's/^img_inputs: //' "$I/.parent-$P.err")" >&2; rm -f "$I/.parent-$P.err"; exit 4; }
     rm -f "$I/.parent-$P.err"
     pj() { python3 -c 'import json, sys; d = json.loads(sys.argv[1]); print(eval(sys.argv[2]))' "$pjson" "$1"; }
-    pdir=$(pj 'd["dir"]') && prel=$(pj 'd["release"]["file"]') || { echo "img-one: can't read the parent check: $pjson" >&2; exit 4; }
+    pdir=$(pj 'd["dir"]') && prel=$(pj 'd["release"]["file"]') && ptst=$(pj 'd["test"]["file"]') ||
+        { echo "img-one: can't read the parent check: $pjson" >&2; exit 4; }
 fi
 # C10: a round's unit is built from the round's sets.  BKO_PLAN_BKO_BIN and
 # BKO_PLAN_HOLT_BIN (the SHA-256 of the plan's bko-bin and holt-bin SHA256SUMS,
@@ -143,7 +152,7 @@ if [[ -n $(find . -maxdepth 1 -mindepth 1 ! -name 'prev-*') ]]; then
 fi
 mkdir test
 r=$D/result.txt; : >"$r"
-fail() { echo "$P FAIL: $*" | tee -a "$r"; echo 1 >"$D/done.exit"; exit 1; }
+fail() { echo "$P FAIL: $*" | tee -a "$r"; echo 1 >"$D/done.exit"; exit "${fail_rc:-1}"; }
 if [[ -n $pdir ]]; then
     [[ $pdir == "$(realpath "$D")" ]] && pdir=$D/prev-$stamp
     [[ -f $pdir/provenance.json && -f $pdir/$prel ]] || fail "the parent set is gone from $pdir"
@@ -213,6 +222,14 @@ tree_linux() {
     if [[ $rc -eq 0 ]]; then mv "$2.part" "$2"; else rm -f "$2.part"; fi
     return $rc
 }
+# C2 and C3: a refresh's two images against the parent's, once both are listed and
+# before anything boots them.
+refresh_check() {
+    [[ -n $pdir ]] || return 0
+    dig refresh-check --platform "$P" --parent "$pdir" --dir "$D" >refresh-check.txt 2>&1 ||
+        fail "the refresh is refused: $(tail -n 1 refresh-check.txt | sed 's/^img_inputs: //') (refresh-check.txt)"
+    echo "refresh check: $(tr '\n' ' ' <refresh-check.txt)" >>"$r"
+}
 # (Signals ignored first: a second one must not cut the builder's shutdown.)
 trap 'trap "" TERM INT HUP; stop_builder 15; exit 143' TERM
 trap 'trap "" TERM INT HUP; stop_builder 15; exit 130' INT
@@ -235,12 +252,7 @@ if [[ $P == linux ]]; then
     for i in ./*.img test/*.img; do
         tree_linux "$i" "${i%/*}/os-tree.txt" || echo "tree listing: FAILED for $i" >>"$r"
     done
-    # C2 and C3: the two images against the parent's, before anything boots them.
-    if [[ -n $pdir ]]; then
-        dig refresh-check --platform "$P" --parent "$pdir" --dir "$D" >refresh-check.txt 2>&1 ||
-            fail "the refresh is refused: $(tail -n 1 refresh-check.txt | sed 's/^img_inputs: //') (refresh-check.txt)"
-        echo "refresh check: $(tr '\n' ' ' <refresh-check.txt)" >>"$r"
-    fi
+    refresh_check
     modes=$MODES_linux
 else
     if [[ $P == freebsd ]]; then
@@ -260,14 +272,22 @@ else
         builder_id=$(dig identity "$P" 2>>inputs.log) || { stop_builder 60; fail "no identity for freebsd15-builder (inputs.log)"; }
     fi
     dig digest "$P" >.inputs-start.json 2>>inputs.log || { stop_builder 60; fail "no input digest (inputs.log)"; }
-    BKO_BUILDER_ID=$builder_id BKO_TREE_OUT=$D/os-tree.txt "$S/make-img-bsd.sh" "$P" . >build.log 2>&1; rc=$?
-    [[ $rc -eq 0 ]] && { BKO_BUILDER_ID=$builder_id BKO_TREE_OUT=$D/test/os-tree.txt "$S/make-img-bsd.sh" --test "$P" test >test/build.log 2>&1; rc=$?; }
+    # A refresh: each image from the parent's of its kind, its root listed first
+    # against the parent's listing; room.json records each image's free space (§4.2).
+    rf=() rft=()
+    [[ -z $pdir ]] || rf=(--refresh-from "$pdir/$prel") rft=(--refresh-from "$pdir/$ptst")
+    BKO_BUILDER_ID=$builder_id BKO_TREE_OUT=$D/os-tree.txt BKO_ROOM_OUT=$D/room.json BKO_TREE_PARENT=${pdir:+$pdir/os-tree.txt} \
+        "$S/make-img-bsd.sh" ${rf[@]+"${rf[@]}"} "$P" . >build.log 2>&1; rc=$?
+    [[ $rc -eq 0 ]] && { BKO_BUILDER_ID=$builder_id BKO_TREE_OUT=$D/test/os-tree.txt BKO_ROOM_OUT=$D/test/room.json \
+        BKO_TREE_PARENT=${pdir:+$pdir/test/os-tree.txt} "$S/make-img-bsd.sh" --test ${rft[@]+"${rft[@]}"} "$P" test >test/build.log 2>&1; rc=$?; }
     if [[ $P == freebsd && $rc -eq 0 ]]; then
         [[ $(fb_fingerprint) == "$fp" ]] || { stop_builder 60; fail "freebsd15-builder's fingerprint changed during the build"; }
     fi
     stop_builder 60
     exec 8>&-
+    [[ $rc -ne 6 || -z $pdir ]] || fail_rc=6 fail "the new binaries don't fit the parent's free space (§4.2): build $P in full (build.log, test/build.log)"
     [[ $rc -eq 0 ]] || fail "make-img-bsd (build.log, test/build.log)"
+    refresh_check
     modes=$MODES_other
 fi
 bins | cmp -s - bko-bin.sha256 || fail "bko-bin/$P or holt-bin/$P changed during the build"

@@ -131,7 +131,7 @@ class Layout(RepoCase):
 
     def test_the_swap_list_names_linux_partitions(self):
         self.assertEqual(II.layout_rewritten("linux"), {1, 3})
-        self.assertEqual(II.layout_rewritten("netbsd"), set())
+        self.assertEqual(II.layout_rewritten("netbsd"), {2, 3})     # I4: the root and the config
         # Layout rows never enter the OS manifest (and are never "missing" from a listing).
         _, missing, _ = II.os_manifest(["iso\t/x\tf\t0644\t-\t1\taa\t-"], II.swap_rows("linux"))
         self.assertFalse([m for m in missing if m.startswith("layout:")])
@@ -429,10 +429,10 @@ mkdir -p "$d" && tail -c +32769 "$i" | tar -xf - -C "$d"
         self.full()
         self.refused_before_the_move("--refresh-from", "ab" * 32, "linux", why="no set here has a provenance")
 
-    def test_only_linux_refreshes_yet(self):
-        r = self.run_one("--refresh-from", "ab" * 32, "netbsd")
+    def test_a_platform_whose_build_sh_has_no_refresh_is_refused(self):
+        r = self.run_one("--refresh-from", "ab" * 32, "haiku")    # (netbsd refreshes since I4)
         self.assertEqual(r.returncode, 2)
-        self.assertIn("no refresh of netbsd yet", r.stderr)
+        self.assertIn("no refresh of haiku yet", r.stderr)
 
 
 class SameBase(T.EnvCase):

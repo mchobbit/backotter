@@ -24,8 +24,10 @@ platform's action, deals the build units and writes RUN/plan.json.
    committed ImgTest2 PASS of its test image's SHA-256 in the Mac's ledger whose +img panel
    passed or wasn't needed, with no FAIL of it since) is compared with the reference's
    digests, by §3.3's table: base changed (its inputs less the media, base_view) or os_epoch past the 14-day cadence (D3) -> full;
-   bins changed -> refresh (full under --no-refresh, or while stick/ has no refresh of the
-   platform: I3, I4); tests changed -> retest; else reuse.  No proven image, or none with a
+   bins changed -> refresh (full under --no-refresh, while stick/ has no refresh of the
+   platform: I3, I4, or on a VM platform when the reference's new binaries don't fit the
+   parent's free space as its provenance's room records it: room_why, §4.2 step 4); tests
+   changed -> retest; else reuse.  No proven image, or none with a
    provenance (an image from before I1) -> full.  --full P forces one.
 4. Deal.  A full or refresh unit goes to a host whose inputs for it are the plan's (C7: its
    base, tests and bins digests equal the reference's; a stale slim, another builder
@@ -296,7 +298,33 @@ def current_images(gathered, plat):
     return out
 
 
-def decide(plat, ref, gathered, rows, opts, today, refresh_ready):
+def kib(n):
+    return (int(n) + 1023) // 1024
+
+
+def room_why(plat, pv, sizes):
+    """Why PLAT's binaries of SIZES ({name: bytes}, the reference's) can't be swapped into the
+    parent whose provenance is PV, or None (§4.2 step 4).  Linux re-packs its layer, so always
+    fits.  A VM platform's provenance records each image's room (make-img-bsd.sh's BKO-ROOM:
+    free_kib, the file system's free space, and bins_kib, the binaries' blocks now); the new
+    files need their KiB, 2 % and 256 KiB each, and the marker's 257, out of free_kib + bins_kib:
+    stick/bsd/refresh-lib.sh's bko_fit, which refuses in the VM by the same sum."""
+    if plat == "linux":
+        return None
+    if not isinstance(sizes, dict) or not sizes:
+        return "the reference gave no sizes of the new binaries"
+    need = sum(kib(v) + kib(v) // 50 + 256 for v in sizes.values()) + 257
+    for which in ("release", "test"):
+        r = ((pv or {}).get("room") or {}).get(which)
+        if not isinstance(r, dict) or not isinstance(r.get("free_kib"), int) or not isinstance(r.get("bins_kib"), int):
+            return f"the parent's provenance records no room for its {which} image (built before I4's)"
+        have = r["free_kib"] + r["bins_kib"]
+        if need > have:
+            return f"the new binaries need {need} KiB, and the parent's {which} image has {have} (§4.2)"
+    return None
+
+
+def decide(plat, ref, gathered, rows, opts, today, refresh_ready, bin_sizes=None):
     """PLAT's row of the plan: {action, why, parent, holders, epoch, age_days, proven}."""
     out = {"action": None, "why": None, "parent": None, "holders": [], "epoch": None, "age_days": None}
     cands = current_images(gathered, plat)
@@ -354,6 +382,8 @@ def decide(plat, ref, gathered, rows, opts, today, refresh_ready):
             out.update(action="full", why="bins changed, and --no-refresh")
         elif not refresh_ready.get(plat):
             out.update(action="full", why=f"bins changed; stick/ has no refresh of {plat} yet (I3, I4)")
+        elif room_why(plat, pv, (bin_sizes or {}).get(plat)):
+            out.update(action="full", why="bins changed; " + room_why(plat, pv, (bin_sizes or {}).get(plat)))
         else:
             out.update(action="refresh", why="bins changed")
         return out
@@ -440,7 +470,7 @@ def plan_round(gathered, builders, ref, rows, opts, today, table=None):
         ref_dig = (rf.get("digests") or {}).get(p)
         row = decide(p, ref_dig,
                      {h: gathered[h] for h in gathered if (gathered[h].get("facts") is not None)},
-                     rows, opts, today, refresh_ready)
+                     rows, opts, today, refresh_ready, rf.get("bin_sizes"))
         row["able"] = {}
         if row["action"] in ("full", "refresh"):
             for h in usable:

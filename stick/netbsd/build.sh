@@ -5,6 +5,11 @@
 #
 #   build.sh info       KERNEL=, the kernel's release as uname -r prints it
 #   build.sh assemble   out/image.img
+#   build.sh list       out/image.img's root, read-only, as a tar on stdout
+#   build.sh room       out/image.img's root: its free space (BKO-ROOM)
+#   build.sh refresh    out/image.img, the parent, with the binaries and
+#                       the marker swapped in place (docs/design/img-speed.md
+#                       §4.2): exit 3 when they don't fit
 #
 # Follows NetBSD's own recipe for its USB images
 # (src/distrib/common/bootimage/Makefile.bootimage): the sets extracted into a
@@ -31,6 +36,8 @@ ESP_MIB=64                      # FAT32 needs 65525 clusters: 33 MiB of 512 byte
 CONFIG_PART=3                   # as platform.conf says
 CONFIG_SECTORS=524288           # marker.py's, 256 MiB
 RW=/.backotter-rw               # the tmpfs behind /etc, /var, /root and /home
+BINS="restic-bko rustic-bko bko-holt"   # in /usr/local/bin
+HEADROOM_MIN_KIB=65536          # the root's free space: at least this (img-speed.md §4.2)
 
 # kernel_release KERNEL: "11.1" from "NetBSD 11.1 (GENERIC) #0: ..." in its
 # version string, as uname -r prints it.
@@ -215,8 +222,19 @@ assemble() {
 
     echo "Making the file systems"
     # 10% free blocks and inodes: room for nothing in particular, as / is
-    # read-only, but makefs's minimum is too tight for fsck's liking.
+    # read-only, but makefs's minimum is too tight for fsck's liking.  And
+    # the headroom a refresh needs to swap the binaries in place
+    # (img-speed.md §4.2, D1): max(64 MiB, half the binaries' size) free,
+    # the shortfall added (makefs adds a -b SIZE to the size before the 10%).
     makefs -t ffs -o version=2 -b 10% -f 10% "$top/root.img" "$r" >/dev/null
+    want=$(headroom)
+    free=$(fs_free "$top/root.img")
+    if [ "$free" -lt "$want" ]; then
+        makefs -t ffs -o version=2 -b 10% -b $((want - free + 1024))k -f 10% "$top/root.img" "$r" >/dev/null
+        free=$(fs_free "$top/root.img")
+        [ "$free" -ge "$want" ] || die "the root has $free KiB free, under the headroom rule's $want"
+    fi
+    echo "Headroom: $free KiB free in the root (the rule: $want)"
     installboot -m amd64 "$top/root.img" "$r/usr/mdec/bootxx_ffsv2"
     cp "$r/usr/mdec/bootx64.efi" "$top/esp/EFI/BOOT/BOOTX64.EFI"
     cp "$r/usr/mdec/bootia32.efi" "$top/esp/EFI/BOOT/BOOTIA32.EFI"
@@ -244,20 +262,50 @@ assemble() {
     rm -rf "$r" "$top/esp" "$top/root.img" "$top/esp.img"
 }
 
-# list: out/image.img's root (the GPT partition "BackOtter root"), read-only, as a tar.
-list() {
+# headroom: the root's free space the headroom rule asks, in KiB: max(64 MiB,
+# half the binaries' size).
+headroom() {
+    b=0
+    for n in $BINS; do
+        [ ! -f "$in/$n" ] || b=$((b + ($(wc -c <"$in/$n") + 1023) / 1024))
+    done
+    [ $((b / 2)) -gt $HEADROOM_MIN_KIB ] && echo $((b / 2)) || echo $HEADROOM_MIN_KIB
+}
+
+# fs_free FFS_IMAGE: the free KiB (its size less what is used) of the file system in a file.
+fs_free() {
+    v=
+    for u in 0 1 2 3 4 5 6 7; do
+        if vndconfig -c -r "vnd$u" "$1" 2>/dev/null; then v=vnd$u; break; fi
+    done
+    [ -n "$v" ] || die "no free vnd device"
+    mkdir -p "$top/hr"
+    mount -r -t ffs "/dev/${v}a" "$top/hr" || { vndconfig -u "$v"; die "can't mount $1"; }
+    df -k "$top/hr" | awk 'NR == 2 { print $2 - $3 }'
+    umount "$top/hr"
+    vndconfig -u "$v"
+}
+
+# attach IMG [-r]: IMG on a free vnd ($vnd), and its root wedge ($wedge, the
+# GPT partition "BackOtter root").
+attach() {
     vnd= wedge=
     for u in 0 1 2 3 4 5 6 7; do
-        if vndconfig -c -r "vnd$u" "$out/image.img" 2>/dev/null; then vnd=vnd$u; break; fi
+        if vndconfig -c ${2:-} "vnd$u" "$1" 2>/dev/null; then vnd=vnd$u; break; fi
     done
     [ -n "$vnd" ] || die "no free vnd device"
-    trap 'umount "$top/lst/root" 2>/dev/null; vndconfig -u "$vnd" 2>/dev/null' EXIT
     for _ in 1 2; do
         wedge=$(dkctl "$vnd" listwedges 2>/dev/null | sed -n 's/^\(dk[0-9]*\): BackOtter root,.*/\1/p')
         [ -n "$wedge" ] && break
         dkctl "$vnd" makewedges >/dev/null 2>&1 || true
     done
-    [ -n "$wedge" ] || die "no BackOtter root wedge on $vnd"
+    [ -n "$wedge" ] || { vndconfig -u "$vnd"; die "no BackOtter root wedge on $vnd"; }
+}
+
+# list: out/image.img's root, read-only, as a tar.
+list() {
+    attach "$out/image.img" -r
+    trap 'umount "$top/lst/root" 2>/dev/null; vndconfig -u "$vnd" 2>/dev/null' EXIT
     mkdir -p "$top/lst/root"
     mount -r -t ffs "/dev/$wedge" "$top/lst/root"
     tar -C "$top/lst" -cf - root
@@ -266,9 +314,74 @@ list() {
     trap - EXIT
 }
 
+# room: out/image.img's root, read-only: its free space and the binaries' blocks,
+# as refresh-lib.sh's BKO-ROOM line.
+room() {
+    . "$in/refresh-lib.sh"
+    attach "$out/image.img" -r
+    trap 'umount "$top/rm/root" 2>/dev/null; vndconfig -u "$vnd" 2>/dev/null' EXIT
+    mkdir -p "$top/rm/root"
+    mount -r -t ffs "/dev/$wedge" "$top/rm/root"
+    # shellcheck disable=SC2046
+    set -- $(df -k "$top/rm/root" | awk 'NR == 2 { print $2 - $3, $2 }')
+    # shellcheck disable=SC2086
+    bko_room "$top/rm/root" /usr/local/bin "$1" "$2" $BINS
+    umount "$top/rm/root"
+    vndconfig -u "$vnd"
+    trap - EXIT
+}
+
+# fsck_clean WEDGE WHEN: fsck_ffs -n -f of the root, which must find nothing.
+fsck_clean() {
+    fsck_ffs -n -f "/dev/r$1" >"$top/fsck.out" 2>&1 ||
+        { cat "$top/fsck.out" >&2; die "fsck_ffs $2 the swap: the root is not clean"; }
+    echo "fsck $2: $(tail -n 1 "$top/fsck.out")"
+}
+
+# refresh: out/image.img, the parent (make-img-bsd.sh puts it there), with the
+# binaries and the marker swapped in place in its root (img-speed.md §4.2).  The ESP, the boot code and
+# the GPT stay as they are; the host writes config.img into its partition and
+# gives the GPT new GUIDs.  The release and the test copy are each refreshed
+# from their own parent, so TEST plays no part.
+refresh() {
+    for f in backotter.json bko-holt refresh-lib.sh; do
+        [ -e "$in/$f" ] || die "no in/$f"
+    done
+    [ -f "$out/image.img" ] || die "no out/image.img, the parent"
+    . "$in/refresh-lib.sh"
+    mkdir -p "$top/mnt"
+    attach "$out/image.img"
+    trap 'umount "$top/mnt" 2>/dev/null; vndconfig -u "$vnd" 2>/dev/null' EXIT
+    fsck_clean "$wedge" before
+    mount -t ffs "/dev/$wedge" "$top/mnt"
+    # The marker's kernel is the parent's (marker.py was given it): it must
+    # still be the parent's /netbsd.
+    k=$(kernel_release "$top/mnt/netbsd")
+    m=$(sed -n 's/.*"kernel": "\([^"]*\)".*/\1/p' "$in/backotter.json")
+    [ -n "$k" ] && [ "$k" = "$m" ] || die "the parent's /netbsd is NetBSD '$k', its marker says '$m'"
+    echo "kernel: $k, as the parent's marker says"
+    # shellcheck disable=SC2046
+    set -- $(df -k "$top/mnt" | awk 'NR == 2 { print $2 - $3 }')
+    rc=0
+    # shellcheck disable=SC2086
+    bko_fit "$top/mnt" /usr/local/bin "$1" $BINS || rc=$?
+    if [ $rc -ne 0 ]; then
+        umount "$top/mnt"; vndconfig -u "$vnd"; trap - EXIT
+        exit $rc
+    fi
+    # shellcheck disable=SC2086
+    bko_swap "$top/mnt" /usr/local/bin $BINS || die "the swap failed"
+    umount "$top/mnt"
+    fsck_clean "$wedge" after
+    vndconfig -u "$vnd"
+    trap - EXIT
+}
+
 case ${1:-} in
 info) info ;;
 assemble) assemble ;;
 list) list ;;
-*) die "usage: build.sh info|assemble|list" ;;
+room) room ;;
+refresh) refresh ;;
+*) die "usage: build.sh info|assemble|list|room|refresh" ;;
 esac

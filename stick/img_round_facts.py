@@ -10,7 +10,8 @@ builder, host tools, ISO and slim), the host's current image (images/P, not prev
 provenance, done.exit, the test image's SHA-256 (its ImgTest2 pin's while the pin is the
 image's, else hashed through the cache) and the release's SHA256SUMS line, the RAM-disk
 reservation img-lanes.sh would ask (images/P/peak-kib), and whether this stick/ can refresh the
-platform yet (I3, I4).  And the host's bko-bin and holt-bin SHA256SUMS digests (C1, C10).
+platform yet (I3, I4).  And the host's bko-bin and holt-bin SHA256SUMS digests (C1, C10), and
+each platform's binaries' sizes (bin_sizes: whether a VM platform's refresh fits, §4.2).
 
 From outside: S (the stick/ to read, default BKO_WORK/stick), BKO_WORK, BKO_IMG_DIR (default
 BKO_WORK/images), BKO_BIN, BKO_HOLT_BIN, T2_HOST_ROOT (the pins, default /bkoscratch/test2),
@@ -167,7 +168,7 @@ def main():
          "sets": {"bko-bin": file_sha(os.path.join(env("BKO_BIN", os.path.join(work, "bko-bin")), "SHA256SUMS")),
                   "holt-bin": file_sha(os.path.join(env("BKO_HOLT_BIN", os.path.join(work, "holt-bin")),
                                                     "SHA256SUMS"))},
-         "digests": {}, "images": {}, "refresh": refresh_ready(stick)}
+         "digests": {}, "images": {}, "refresh": refresh_ready(stick), "bin_sizes": {}}
     os.environ["S"] = stick
     try:
         spec = importlib.util.spec_from_file_location("img_inputs", os.path.join(stick, "img_inputs.py"))
@@ -178,7 +179,11 @@ def main():
         print("facts " + json.dumps(f, sort_keys=True))
         return 0
     cache = II.Cache()
+    bb, hb = env("BKO_BIN", os.path.join(work, "bko-bin")), env("BKO_HOLT_BIN", os.path.join(work, "holt-bin"))
     for p in II.PLATFORMS:
+        f["bin_sizes"][p] = {n: os.path.getsize(x) for n, x in (
+            ("restic-bko", os.path.join(bb, p, "restic-bko")), ("rustic-bko", os.path.join(bb, p, "rustic-bko")),
+            ("bko-holt", os.path.join(hb, p, "bko-holt"))) if os.path.isfile(x)}
         try:
             f["digests"][p] = II.digest(p, cache)
         except Exception as e:   # (one platform's failure leaves the others standing)

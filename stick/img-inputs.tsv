@@ -13,6 +13,7 @@ all	stick/boot-modes.sh	tests
 vm	stick/make-img-bsd.sh	base
 vm	stick/bsd/*	base
 vm	testvm/vm-run	base
+vm	stick/img_gpt.py	base
 freebsd	stick/freebsd/**	base
 netbsd	stick/netbsd/**	base
 openbsd	stick/openbsd/**	base

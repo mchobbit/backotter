@@ -686,6 +686,95 @@ then `phase1` (it prints `RUN=NAME`) and
 `void-20261119-133257`: unattended (`UNLOCK=drive`), the round in 7 min,
 115,399 files compared, 0 unexpected.
 
+## Gentoo on the A100: systemd, LVM on LUKS2 (family S)
+
+Gentoo on the A100 has the `gentoo-systemd` guest's shape, at real sizes:
+UEFI, GPT, a 1 GiB ESP that is `/boot` (the kernels, dracut's initramfs,
+GRUB in `EFI/gentoo` with an NVRAM entry `gentoo`, and `EFI/BOOT/BOOTX64.EFI`),
+then LUKS2 (`cryptroot`, cryptsetup's defaults) holding LVM `vg0`: `root`
+64 GiB ext4, `swap` 4 GiB, the rest free.  systemd, dracut's
+`systemd-cryptsetup` opening the volume (crypttab's key field `none`,
+`rd.luks.uuid` on GRUB's command line), `gentoo-kernel-bin` by
+`installkernel[dracut,grub]`, binary packages from the 23.0 binhost.  So
+`bs1-adopt` sets up family S (below, "Unlocking from the drive") with no
+Gentoo code of its own.  The first Thinkpad's Gentoo (OpenRC, no LUKS,
+2026-11-12) is the `gentoo` guest's shape; this one had never run on the
+A100.  `testvm/realworld/gentoo-bootstrap.sh` installs it from the stick by
+running the guest's own build script, `testvm/bootstrap/gentoo.sh`, with
+`GENTOO_METAL=yes` (docs/design/gentoo.md, "Gentoo on the A100"): the stage3
+from the drive, `linux-firmware` (r8169's `rtl_nic`, i915's), dbus and
+avahi besides, and no key file anywhere: the volume asks for its passphrase
+until adopt.
+
+**The drive's `backshot1/gentoo/`** holds five files: the script, the
+guest's build script beside it as `gentoo.sh`, and the systemd stage3 the
+guest is built from with its signature and Gentoo's Release Engineering
+key, which the script pins by SHA-256 and checks with `gpgv`.  Gentoo
+prunes autobuilds after about two months; the three are in Chopin's
+`/bkoscratch/rebuild-inputs/gentoo-systemd` (280,639,788, 525 and 10,155
+bytes):
+
+    8007e84c9190485a25f79f93d0c9438edbdc63d7b76d4462cb80ab9672af72ef  stage3-amd64-systemd-20261108T170107Z.tar.xz
+    c77d8b28093f8bb05bb8ab9ce9cdf584828b5fe57511b16c5b433aff098edcb4  stage3-amd64-systemd-20261108T170107Z.tar.xz.asc
+    af00969b4ed25c80615c023d6228721a02cf630383a4f959d3950a1815db333e  gentoo-release-key.gpg
+
+With the drive mounted at `/mnt/bs1-backup` on the stick (`STICK` the
+address `find-rescue` saved), from the Mac's checkout:
+
+    ssh m@chopin.local 'tar -C /bkoscratch/rebuild-inputs/gentoo-systemd -cf - stage3-amd64-systemd-20261108T170107Z.tar.xz{,.asc} gentoo-release-key.gpg' |
+      ssh backotter@STICK 'sudo mkdir -p /mnt/bs1-backup/backshot1/gentoo && sudo tar --no-same-owner -C /mnt/bs1-backup/backshot1/gentoo -xf -'
+    COPYFILE_DISABLE=1 tar -cf - -C testvm/realworld gentoo-bootstrap.sh -C ../bootstrap gentoo.sh |
+      ssh backotter@STICK 'sudo tar --no-same-owner -C /mnt/bs1-backup/backshot1/gentoo -xf - && cd /mnt/bs1-backup/backshot1/gentoo && sha256sum * && sync'
+
+(`gentoo.sh` must be the same commit's as the script: the script refuses
+one that doesn't know `GENTOO_METAL`.)  The keys are BackShot1's own
+`backshot1/keys/` (`disk-passphrase`, `authorized_keys`, the fixed host
+key).  Then on the stick, detached, since it takes a while (a source
+build of systemd for `USE=cryptsetup`, and the binhost's packages over the
+wired network: the tree, the binary packages and the few source builds'
+distfiles are Gentoo's live ones, as the guest's are, since the binhost
+follows the live tree):
+
+    sudo bash /mnt/bs1-backup/backshot1/gentoo/gentoo-bootstrap.sh --detach S7XMNF0Y787118 thinkpad
+
+It refuses a SERIAL that isn't exactly one whole disk, a USB disk, the
+drive's or the stick's disk; a stick booted without UEFI or with Secure
+Boot on (its GRUB is unsigned); a passphrase file that isn't 8 to 512
+printable ASCII bytes with no newline; inputs whose SHA-256 or signature
+don't match; and no DNS for `distfiles.gentoo.org`.  Everything it mounts
+is under `/run/bko-gentoo/mnt` (a private tmpfs), never `/mnt`.  The
+passphrase is read only by `cryptsetup --key-file` from the drive.  Wait
+for `/run/bko-gentoo/exit` (a dropped SSH connection doesn't stop the
+run): success is `0` and the last line of `/run/bko-gentoo/install.log`
+`BKO-GENTOO-INSTALL-OK`; the log is also copied to
+`backshot1/gentoo/install-DATE-exitRC.log`.  A failed run can just be run
+again: every run starts from the wipe.  It deletes NVRAM entries labelled
+`gentoo` or naming the wiped disk's old partitions, and leaves `gentoo`
+first in BootOrder.
+
+**The person types the passphrase once**, at the first boot: systemd asks
+`Please enter passphrase for disk cryptroot` on the screen, the passphrase
+in `keys/disk-passphrase`, on the US layout (no keymap is set: on the
+A100's French keyboard, type where the US keys would be).  Then `backshot1
+wait-host`, `adopt` (family S: crypttab's key field the drive's key, a
+dracut drop-in, the initramfs remade), reboot with `mybig512` plugged in
+and nothing typed, `unlock` (it must say `drive`), `preflight`, `phase1`
+(it prints `RUN=NAME`) and `cycle NAME 1 --erase-serial S7XMNF0Y787118`.
+Root's password is locked (`*`): the way in is SSH by key.
+
+`testvm/realworld/gentoo-bootstrap-qemu.sh TEST_IMG INPUTS_DIR WORK_DIR`
+rehearses all of it in QEMU: the drive (a fake XFS `mybig512`) staged over
+SSH as above, the same command line with the rehearsal's serial, a watcher
+for the passphrase in any process's command line or environment, the
+teardown, then a typed boot (`bs1-adopt` twice), a boot with the drive and
+nothing typed (`UNLOCK=drive`) and one without it (asked after the 30 s
+wait).  PASS on Chopin 2026-11-27 (rescue image `20261126.d66770a`'s test
+build): the install took 1105 s with 4 CPUs (gentoo.sh 1073 s, the
+systemd build most of it; the tree of 2026-11-27, gentoo-kernel-bin
+6.18.65), the typed boot answered SSH 41 s after power-on, the drive boot
+20 s with nothing typed (`UNLOCK=drive`), the boot without the drive 71 s
+(asked after the wait).  Not yet run on the A100.
+
 ## BigLinux: Timeshift's snapshots and systemd-swap
 
 BigLinux (Manjaro stable underneath; docs/design/biglinux.md) installs with

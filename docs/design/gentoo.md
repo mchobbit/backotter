@@ -416,6 +416,94 @@ the shipped rustic-bko, the pinned Test2 rescue image `rescuer.img`
   vdb before phase 1, so the manifest saw it as source state, as
   "What already works" says of an emerge.
 
+## Gentoo on the A100
+
+2026-11-27.  The Thinkpad is now a Lenovo A100 (Intel graphics, r8169
+wired NIC, NVMe serial `S7XMNF0Y787118`), and Decision 7's install (the
+user's own OpenRC one, no LUKS) went with the old laptop.  The user asked
+for Gentoo on LUKS on the A100, installed remotely from the rescue stick,
+then BackShot1.  The shape is `gentoo-systemd`'s, the guest that already
+passed BackShot1's family S in QEMU (backshot1/README.md, "Rehearsal",
+2026-11-13, with `--strip-embedded-key`): UEFI, the ESP as /boot, LUKS2
+holding vg0 (root ext4, swap), systemd's dracut, `rd.luks.uuid` on GRUB's
+command line.  At real sizes: root 64 GiB, swap 4 GiB, the rest of vg0
+free.
+
+**One build script for both.** `testvm/realworld/gentoo-bootstrap.sh` does
+what `bootstrap/common.sh` does for the guest (the disk, by serial;
+LUKS2 from the drive's `keys/disk-passphrase` with `--key-file`; vg0; the
+functions gentoo.sh calls), then sources `bootstrap/gentoo.sh` itself with
+`GENTOO_METAL=yes` and `ROOT_MNT=/run/bko-gentoo/mnt/root` (a private
+tmpfs, so nothing reaches other mount namespaces and `/mnt/bs1-backup`
+stays visible, as d9c9f0e learned on Guix).  gentoo.sh's own changes, all
+inert for make-bootstrap.sh (`GENTOO_METAL` defaults to `no`, `ROOT_MNT` to
+`/mnt`): its target is `$ROOT_MNT`; with `GENTOO_METAL=yes` the stage3 is
+the checked tarball on the drive (GNU tar: the stick has no bsdtar),
+`PACKAGES` gains `sys-kernel/linux-firmware sys-apps/dbus net-dns/avahi`
+(`METAL_SOURCE_OK` allows linux-firmware's source build: its ebuild only
+copies files), `MAKEOPTS` is `nproc`, avahi-daemon is enabled with
+resolved's mDNS off, and crypttab says `cryptroot UUID=... none
+luks,discard` with no key file in the system or the initramfs (the
+initramfs check looks for crypttab's `none` instead of the key).  GRUB is
+installed `--no-nvram` as for the guest; the script then makes the NVRAM
+entry `gentoo` (`\EFI\gentoo\grubx64.efi`) with the stick's efibootmgr,
+after deleting entries labelled `gentoo` or naming the wiped disk's old
+partitions.  `SOURCE_OK` and its sed are unchanged (test_vm_update.py
+still checks them against in-guest.sh).
+
+**Inputs.**  Pinned and staged on `mybig512`'s `backshot1/gentoo/`: the
+systemd stage3 `20261108T170107Z` (make-bootstrap.sh's `GENTOO_STAGE3`),
+its `.asc` and `gentoo-release-key.gpg`, from Chopin's
+`/bkoscratch/rebuild-inputs/gentoo-systemd`, each by SHA-256 in the
+script, the stage3 by `gpgv` too.  Not pinned, as for the guest, and taken
+from the stick's wired network: the tree (emerge-webrsync's newest
+snapshot), the binhost's packages and the distfiles of the source builds.
+The binhost follows the live tree, so pinning an old tree would turn
+binary packages into source builds; a binhost change that needs a build
+outside the allowlist stops the plan by name, before anything is merged.
+
+**The passphrase** is read only by cryptsetup, by path; never printed,
+logged, on a command line or in an environment (the rehearsal's watcher
+greps every process's for it while the install runs), never in the
+installed system.  The first boot asks for it on the screen
+(systemd-ask-password, US layout); `bs1-adopt`'s family S then writes
+crypttab's key field `/backshot1/keys/disk-passphrase:LABEL=mybig512` with
+`keyfile-timeout=30s` and a dracut drop-in, and remakes the initramfs
+(`dracut --force /boot/initramfs-K.img K`, its Gentoo arm).
+
+**The rehearsal**, `gentoo-bootstrap-qemu.sh TEST_IMG INPUTS_DIR
+WORK_DIR`: the test rescue image, a 100 GiB sparse NVMe disk, a fake XFS
+`mybig512` staged over SSH exactly as the README says, the Thinkpad's
+command line (`--detach`, serial and host name the rehearsal's), then a
+typed boot with `bs1-adopt` twice, a drive boot (`UNLOCK=drive`) and a
+boot without the drive (typed after the 30 s wait).
+
+**What the rehearsal found** (Chopin, 2026-11-27, the test build of rescue
+image `20261126.d66770a`; the tree of `Fri, 27 Nov 2026 00:45:00 +0000`):
+
+- **dracut's host-only crypttab** names the device `/dev/disk/by-uuid/UUID`,
+  not crypttab's `UUID=` (its crypt module rewrites the field), so the
+  initramfs check takes either.  The first run stopped there, after a
+  clean teardown.
+- **Source builds:** `linux-firmware` (20261019) is one, as on the first
+  Thinkpad (hence `METAL_SOURCE_OK`), besides the guest's: `systemd`
+  (USE=cryptsetup), `grub` 2.16-r2, `dracut` 112, `installkernel` 70-r1,
+  `gentoo-kernel-bin` 6.18.65 with `virtual/dist-kernel`, and `avahi`.
+- **Times, 4 CPUs:** the install 1105 s (gentoo.sh 1073 s); SSH 41 s after
+  power-on with the passphrase typed, 20 s with the drive and nothing
+  typed, 71 s without the drive (systemd waits the 30 s, then asks).
+- **Every check held:** nothing of the target mounted or open after the
+  run, nothing of the chroot in any process's mount namespace, the
+  passphrase in no process's command line or environment and in neither
+  log nor any file of the installed /etc, /root, /var/log or /boot; the
+  firmware booted `\EFI\gentoo\grubx64.efi` by its NVRAM entry each time;
+  adopt recorded `family=S generator=dracut`, and a second adopt changed
+  nothing.
+- **The guests are unchanged:** `make-bootstrap.sh gentoo` (OpenRC), the
+  path the rehearsal doesn't take, rebuilt with the new gentoo.sh the same
+  day (`BACKOTTER-INSTALL-OK`, ping setuid root as before); the image was
+  deleted, not published.
+
 ## Pieces to build (ordered, est.)
 
 | # | Piece | Effort |

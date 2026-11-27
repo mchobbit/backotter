@@ -10238,6 +10238,7 @@ const DUMPS: &[Dump] = &[
     ("vanilla", || {
         run(&vanilla_tree(true), true, vanilla_runner())
     }),
+    ("kdelinux", kdelinux_dump),
     ("vanilla_fresh", || {
         run(&vanilla_tree(false), true, vanilla_runner())
     }),
@@ -15156,6 +15157,12 @@ fn btrfs_top_level_that_cant_fit() {
 /// false leaves /boot as the autofs alone (the automount expired and
 /// listing it didn't mount it).
 fn kdelinux_tree(esp_mounted: bool) -> Tree {
+    kdelinux_tree_with(esp_mounted, false)
+}
+
+/// KDE Linux, its btrfs in a LUKS2 volume (the installer's "Encrypt
+/// system": opened by gpt-auto as `root`, no crypttab) when LUKS.
+fn kdelinux_tree_with(esp_mounted: bool, luks: bool) -> Tree {
     use crate::efi::LOADER;
     use crate::sysupdate::tests as kde;
     let t = Tree::new("scn-kdelinux");
@@ -15179,7 +15186,15 @@ fn kdelinux_tree(esp_mounted: bool) -> Tree {
         },
     );
     put(&mut img, 2048, &fat::sample::fat32(71680, 0x1234_abcd, ""));
-    put(&mut img, 73728, &btrfs::sample::image("", 0x1 | 0x20 | 0x40 | 0x100 | 0x200));
+    // Simple quotas (incompat 0x10000), as KDE Linux's installer and
+    // kde-linux-btrfs.service turn them on.
+    let fs = btrfs::sample::image("", 0x1 | 0x20 | 0x40 | 0x100 | 0x200 | 0x10000);
+    let luks_uuid = "5d1e0000-0000-4000-8000-00000000c0de";
+    if luks {
+        put(&mut img, 73728, &luks::sample::luks2(luks_uuid, ""));
+    } else {
+        put(&mut img, 73728, &fs);
+    }
     let utf16 = |s: &str| {
         let mut b = vec![6u8, 0, 0, 0];
         for u in s.encode_utf16().chain([0]) {
@@ -15189,11 +15204,12 @@ fn kdelinux_tree(esp_mounted: bool) -> Tree {
     };
     let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{LOADER}");
     kde::kde_files(&t);
+    let root = if luks { "/dev/mapper/root" } else { "/dev/nvme0n1p2" };
     let mountinfo = if esp_mounted {
-        kde::KDE_MOUNTINFO.replace("/dev/mapper/root", "/dev/nvme0n1p2")
+        kde::KDE_MOUNTINFO.replace("/dev/mapper/root", root)
     } else {
         kde::KDE_MOUNTINFO
-            .replace("/dev/mapper/root", "/dev/nvme0n1p2")
+            .replace("/dev/mapper/root", root)
             .lines()
             .filter(|l| !l.contains(" vfat "))
             .fold(String::new(), |mut a, l| {
@@ -15217,6 +15233,17 @@ fn kdelinux_tree(esp_mounted: bool) -> Tree {
         .file(&var("LoaderSystemToken"), [6u8, 0, 0, 0, 1, 2, 3])
         .symlink("/dev/disk/by-partuuid/1b5f04ed-e731-4ac6-933e-83ff25657722", "../../nvme0n1p1")
         .file("/proc/self/mountinfo", mountinfo);
+    if luks {
+        t.file("/sys/block/nvme0n1/nvme0n1p2/holders/dm-0", "")
+            .disk("dm-0", "253:0", &fs, 512)
+            .file("/sys/block/dm-0/dm/name", "root\n")
+            .file(
+                "/sys/block/dm-0/dm/uuid",
+                format!("CRYPT-LUKS2-{}-root\n", luks_uuid.replace('-', "")),
+            )
+            .file("/sys/block/dm-0/slaves/nvme0n1p2", "")
+            .symlink("/dev/mapper/root", "../dm-0");
+    }
     t
 }
 
@@ -15543,4 +15570,288 @@ fn raw_gpt_partitions() {
         "{:?}",
         b.problems
     );
+}
+
+/// btrfs's view of KDE Linux's top level (docs/design/kde-linux.md, "What
+/// KDE Linux is"): `@system`, its `/etc` subvolume and the first
+/// migration's `.etc.<epoch>` snapshot of it, each version's
+/// `etc_V.mstack` (V2's snapshotted forward from V1's), a home with
+/// snapper's `.snapshots` and one read-only snapshot; simple quotas with
+/// snapper's 1/0 over the home's snapshot.
+fn kdelinux_runner() -> FakeRunner {
+    let v1 = crate::sysupdate::tests::V1;
+    let v2 = crate::sysupdate::tests::V2;
+    let u = |n: u32| format!("4b0e0000-0000-4000-8000-{n:012}");
+    let line = |id: u32, g: u32, parent: u32, puuid: Option<u32>, path: &str| {
+        format!(
+            "ID {id} gen {g} parent {parent} top level {parent} parent_uuid {} uuid {} path <FS_TREE>/{path}\n",
+            puuid.map_or_else(|| "-".to_string(), u),
+            u(id)
+        )
+    };
+    let list = [
+        line(256, 10, 5, None, "@system"),
+        line(257, 11, 256, None, "@system/etc"),
+        line(258, 20, 5, None, &format!("etc.mstack.v/etc_{v1}.mstack")),
+        line(259, 21, 256, Some(257), "@system/.etc.1763990000"),
+        line(260, 30, 256, None, "@system/home/tester"),
+        line(261, 31, 260, None, "@system/home/tester/.snapshots"),
+        line(262, 32, 261, Some(260), "@system/home/tester/.snapshots/1/snapshot"),
+        line(263, 40, 5, Some(258), &format!("etc.mstack.v/etc_{v2}.mstack")),
+    ]
+    .concat();
+    let ro = line(262, 32, 261, Some(260), "@system/home/tester/.snapshots/1/snapshot");
+    FakeRunner::default()
+        .with("btrfs subvolume list -a -p -u -q /", &list)
+        .with("btrfs subvolume list -a -r /", &ro)
+        .with("btrfs subvolume get-default /", "ID 5 (FS_TREE)\n")
+        .with(
+            "btrfs qgroup show -p -r -e --raw /",
+            "qgroupid rfer excl max_rfer max_excl parent\n-------- ---- ---- -------- -------- ------\n0/256 16384 16384 none none -\n0/260 16384 16384 none none 1/0\n0/262 16384 16384 none none 1/0\n1/0 32768 32768 1073741824 none -\n",
+        )
+}
+
+/// KDE Linux's guest with its subvolumes, simple quotas on (sysfs).
+fn kdelinux_full_tree() -> Tree {
+    let t = kdelinux_tree(true);
+    let fs = "/sys/fs/btrfs/b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
+    t.file(&format!("{fs}/features/simple_quota"), "1\n")
+        .dir(&format!("{fs}/qgroups"));
+    t
+}
+
+fn kdelinux_dump() -> Value {
+    run(&kdelinux_full_tree(), true, kdelinux_runner())
+}
+
+fn kdelinux_plan(v: &Value, extra: &[&str]) -> crate::load::commands::Built {
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
+    let l = Layout::from_json(v.clone()).unwrap();
+    let mut a = vec!["l.json".to_string()];
+    a.extend(extra.iter().map(ToString::to_string));
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
+        unreachable!()
+    };
+    commands::build(
+        &l,
+        &o,
+        &Mapping {
+            pairs: vec![("nvme0n1".into(), "vdb".into())],
+            ..Mapping::default()
+        },
+    )
+}
+
+fn kdelinux_set(v: &mut Value, path: &[&str], key: &str, x: Value) {
+    v.at_mut(path).unwrap_or_else(|| panic!("{path:?}")).put(key, x);
+}
+
+/// KDE Linux planned (K3): mkfs keeps simple quotas and nothing turns on
+/// full qgroups; every subvolume is made, nested ones after the ones they
+/// are in, snapper's read-only snapshot shared after the restore; the tree
+/// is the top level at the target and the ESP at @system/boot; the boot
+/// stage regenerates nothing (no chroot, bootctl or initramfs), checks
+/// the tree, makes the UEFI entries and logs into @system/var/log.
+#[test]
+fn kdelinux_load_plan() {
+    use crate::load::{Stage, commands::Cmd};
+    let v = kdelinux_dump();
+    assert_eq!(crate::sysupdate::refusal(&v), None);
+    let subs = arr(&v, &["storage", "btrfs", "0", "subvolumes"]);
+    assert_eq!(subs.len(), 8, "{subs:?}");
+    assert_eq!(crate::other::restored_marker(&v), "etc.mstack.v");
+    let b = kdelinux_plan(&v, &["--repo", "/r"]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let text = |st: Stage| b.stage(st).iter().map(Cmd::shell).collect::<String>();
+    let format = text(Stage::Format);
+    assert!(format.contains(",squota,"), "{format}");
+    assert!(!format.contains("^squota"), "{format}");
+    assert!(!format.contains("quota enable"), "{format}");
+    assert!(!format.contains("quota rescan"), "{format}");
+    // Simple quotas: snapper's 1/0 and its limit in format; the home's
+    // qgroup assigned there, the shared snapshot's after the restore.
+    assert!(format.contains("btrfs qgroup create 1/0 "), "{format}");
+    assert!(format.contains("btrfs qgroup assign --no-rescan 0/260 1/0 "), "{format}");
+    assert!(format.contains("btrfs qgroup limit 1073741824 1/0 "), "{format}");
+    assert!(!format.contains("0/262"), "{format}");
+    let restore = text(Stage::Restore);
+    assert!(restore.contains("btrfs qgroup assign --no-rescan 0/262 1/0 "), "{restore}");
+    assert!(!restore.contains("quota enable") && !restore.contains("quota rescan"), "{restore}");
+    assert!(!restore.contains("qgroup create"), "{restore}");
+    // Subvolumes in ID order, each parent before what is nested in it;
+    // the snapshots of another (the /etc layers' and snapper's) shared,
+    // after the restore.
+    let top = format!("{}/btrfs/b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf", crate::load::RUN_DIR);
+    let at: Vec<usize> = [
+        "@system",
+        "@system/etc",
+        "etc.mstack.v/etc_202611240254.mstack",
+        "@system/home/tester",
+        "@system/home/tester/.snapshots",
+    ]
+    .iter()
+    .map(|p| {
+        let c = format!("btrfs subvolume create {top}/{p}\n");
+        format.find(&c).unwrap_or_else(|| panic!("{c}: {format}"))
+    })
+    .collect();
+    assert!(at.windows(2).all(|w| w[0] < w[1]), "{at:?} {format}");
+    assert!(!format.contains(".bko-holt-nested-"), "{format}");
+    for p in [
+        "@system/.etc.1763990000",
+        "etc.mstack.v/etc_202611270255.mstack",
+        "@system/home/tester/.snapshots/1/snapshot",
+    ] {
+        assert!(!format.contains(&format!("{top}/{p}")), "{p}: {format}");
+        assert!(restore.contains(p), "{p}: {restore}");
+    }
+    // The tree: the top level, then the ESP inside @system.
+    let mount = text(Stage::Mount);
+    let top = mount
+        .find("mount -t btrfs -o subvol=/,compress=zstd:-4 /dev/vdb2 /mnt/bko-target\n")
+        .unwrap_or_else(|| panic!("{mount}"));
+    let esp = mount
+        .find("mount -t vfat -o ")
+        .unwrap_or_else(|| panic!("{mount}"));
+    assert!(top < esp, "{mount}");
+    assert!(mount.contains("/dev/vdb1 /mnt/bko-target/@system/boot"), "{mount}");
+    assert!(mount.contains("mkdir -p /mnt/bko-target/@system/boot"), "{mount}");
+    // Boot: nothing regenerated; the check; the log in @system.
+    let boot = text(Stage::Boot);
+    for no in ["chroot ", "bootctl ", "mkinitcpio", "dracut", "grub-"] {
+        assert!(!boot.lines().any(|l| l.starts_with(no)), "{no}: {boot}");
+    }
+    assert!(boot.contains("kdelinux: $nuki UKIs"), "{boot}");
+    assert!(boot.contains("mkdir -p /mnt/bko-target/@system/var/log/bko-holt"), "{boot}");
+    // Snapper's snapshot read-only again, by the restore stage that made it.
+    assert!(restore.contains("snapshot ro true"), "{restore}");
+    for n in [
+        "LoaderConfigTimeout (the hidden boot menu) isn't restored",
+        "LoaderSystemToken isn't restored",
+        "the ESP, the UKIs, loader.conf, the image files and the /etc layers are restored as they were",
+    ] {
+        assert!(b.notes.iter().any(|x| x.contains(n)), "{n}: {:?}", b.notes);
+    }
+    assert!(!b.notes.iter().any(|x| x.contains("LoaderEntryDefault")), "{:?}", b.notes);
+    assert!(!b.notes.iter().any(|x| x.contains("with a boot counter")), "{:?}", b.notes);
+}
+
+/// The plan problems of version 1 (spec, "Plan problems on KDE Linux"),
+/// and the `LoaderEntryDefault` and boot-counter notes.
+#[test]
+fn kdelinux_load_problems() {
+    let base = kdelinux_dump();
+    let k = ["boot", "sysupdate", "kdelinux"];
+    let has = |b: &crate::load::commands::Built, w: &str| b.problems.iter().any(|p| p.contains(w));
+    let b = kdelinux_plan(&base, &["--new-uuids"]);
+    assert!(has(&b, "KDE Linux with --new-uuids isn't restored"), "{:?}", b.problems);
+    let b = kdelinux_plan(&base, &["--fit-largest", "50"]);
+    assert!(has(&b, "KDE Linux with --fit-largest isn't restored"), "{:?}", b.problems);
+    let mut v = base.clone();
+    kdelinux_set(&mut v, &k, "variant_id", Value::from("stable"));
+    assert!(has(&kdelinux_plan(&v, &[]), "restores the testing edition only; this is \"stable\""));
+    let mut v = base.clone();
+    kdelinux_set(&mut v, &k, "layout", Value::Null);
+    assert!(has(&kdelinux_plan(&v, &[]), "RootFSv3 layout with etc-mstack only"));
+    let mut v = base.clone();
+    kdelinux_set(&mut v, &k, "refusals", Value::Arr(vec![Value::from("an older layout")]));
+    assert!(has(&kdelinux_plan(&v, &[]), "the dump refused this system: an older layout"));
+    let mut v = base.clone();
+    kdelinux_set(&mut v, &["firmware"], "mode", Value::from("bios"));
+    kdelinux_set(&mut v, &["boot", "loader"], "firmware", Value::from("bios"));
+    assert!(has(&kdelinux_plan(&v, &[]), "KDE Linux with BIOS boot isn't restored"));
+    // A half version: the booted one is a problem, another a note.
+    let half = |booted: bool| {
+        crate::json::parse(&format!(
+            r#"[{{"version": "{}", "has": "uki", "missing": "x.erofs", "booted": {booted}}}]"#,
+            crate::sysupdate::tests::V1
+        ))
+        .unwrap()
+    };
+    let mut v = base.clone();
+    kdelinux_set(&mut v, &k, "half_versions", half(true));
+    assert!(has(&kdelinux_plan(&v, &[]), "the booted version 202611240254 was half there"));
+    let mut v = base.clone();
+    kdelinux_set(&mut v, &k, "half_versions", half(false));
+    let b = kdelinux_plan(&v, &[]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    assert!(b.notes.iter().any(|n| n.contains("version 202611240254 was half there on the source")), "{:?}", b.notes);
+    // An image bigger than the btrfs's partition.
+    let mut v = base.clone();
+    kdelinux_set(&mut v, &["boot", "sysupdate", "kdelinux", "images", "1"], "size", Value::UInt(1 << 40));
+    assert!(has(&kdelinux_plan(&v, &[]), "the image files take"));
+    // An active systemd-homed home.
+    let mut v = base.clone();
+    let mut ms = arr(&v, &["storage", "mounts"]).to_vec();
+    ms.push(crate::json::parse(r#"{"target": "/home/alice", "source": "/dev/mapper/home-alice", "fstype": "btrfs", "root": "/"}"#).unwrap());
+    kdelinux_set(&mut v, &["storage"], "mounts", Value::Arr(ms));
+    assert!(has(&kdelinux_plan(&v, &[]), "/home/alice is an active systemd-homed home"));
+    // LoaderEntryDefault: a note, not restored.
+    let mut v = base.clone();
+    kdelinux_set(&mut v, &["boot", "efi", "loader_interface"], "loader_entry_default", Value::from("kde-linux_202611240254.efi"));
+    let b = kdelinux_plan(&v, &[]);
+    assert!(b.notes.iter().any(|n| n.contains("systemd-boot default was set to kde-linux_202611240254.efi (LoaderEntryDefault")), "{:?}", b.notes);
+    // The booted version's UKI still counted: a note.
+    let mut v = base.clone();
+    kdelinux_set(&mut v, &k, "booted_version", Value::from(crate::sysupdate::tests::V1));
+    let b = kdelinux_plan(&v, &[]);
+    assert!(b.notes.iter().any(|n| n.contains("the booted version's UKI is still kde-linux_202611240254+3.efi, with a boot counter")), "{:?}", b.notes);
+}
+
+/// KDE Linux in LUKS2 (spec, "LUKS"): no crypttab; the generic LUKS path
+/// makes a new header with the source's UUID and parameters, opens it as
+/// gpt-auto's `root`, and the tree is mounted from it.
+#[test]
+fn kdelinux_luks_plan() {
+    use crate::load::{Stage, commands::Cmd};
+    let t = kdelinux_tree_with(true, true);
+    let v = run(&t, true, kdelinux_runner());
+    assert_eq!(crate::sysupdate::refusal(&v), None);
+    assert!(v.at(&["storage", "crypttab"]).is_none_or(|c| c.is_null() || c.as_array().is_some_and(Vec::is_empty)));
+    assert_eq!(s(&v, &["boot", "sysupdate", "kdelinux", "top_device"]), "dm-0");
+    let b = kdelinux_plan(&v, &["--key-file", "root=/k"]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let text = |st: Stage| b.stage(st).iter().map(Cmd::shell).collect::<String>();
+    let asm = text(Stage::Assemble);
+    assert!(asm.contains("cryptsetup luksFormat"), "{asm}");
+    assert!(asm.contains("--uuid=5d1e0000-0000-4000-8000-00000000c0de"), "{asm}");
+    assert!(asm.contains("--sector-size=4096"), "{asm}");
+    assert!(asm.contains(" root"), "{asm}");
+    let mount = text(Stage::Mount);
+    assert!(mount.contains("mount -t btrfs -o subvol=/,compress=zstd:-4 /dev/mapper/root /mnt/bko-target\n"), "{mount}");
+    assert!(b.notes.iter().any(|n| n.contains("KDE Linux: the LUKS volume (gpt-auto's root, no crypttab)")), "{:?}", b.notes);
+}
+
+/// A subvolume nested in one with a larger ID (moved into it on the
+/// source) is made under a temporary name and moved into place once its
+/// parent is made: the source's IDs kept, nothing a plain directory.
+#[test]
+fn nested_subvolume_older_than_its_parent() {
+    use crate::load::{Stage, commands::Cmd};
+    let mut v = kdelinux_dump();
+    let subs = crate::json::parse(
+        r#"[{"id": 256, "gen": 10, "path": "<FS_TREE>/@system", "uuid": "4b0e0000-0000-4000-8000-000000000256", "parent_uuid": null, "readonly": false},
+            {"id": 257, "gen": 11, "path": "<FS_TREE>/@system/srv/a", "uuid": "4b0e0000-0000-4000-8000-000000000257", "parent_uuid": null, "readonly": false},
+            {"id": 258, "gen": 12, "path": "<FS_TREE>/@system/srv", "uuid": "4b0e0000-0000-4000-8000-000000000258", "parent_uuid": null, "readonly": false},
+            {"id": 259, "gen": 13, "path": "<FS_TREE>/@system/srv/a/b", "uuid": "4b0e0000-0000-4000-8000-000000000259", "parent_uuid": null, "readonly": false}]"#,
+    )
+    .unwrap();
+    kdelinux_set(&mut v, &["storage", "btrfs", "0"], "subvolumes", subs);
+    kdelinux_set(&mut v, &["storage", "btrfs", "0"], "qgroups", Value::Arr(vec![]));
+    let b = kdelinux_plan(&v, &[]);
+    let f = b.stage(Stage::Format).iter().map(Cmd::shell).collect::<String>();
+    let top = format!("{}/btrfs/b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf", crate::load::RUN_DIR);
+    let want = [
+        format!("btrfs subvolume create {top}/@system\n"),
+        format!("btrfs subvolume create {top}/.bko-holt-nested-257\n"),
+        format!("btrfs subvolume create {top}/@system/srv\n"),
+        format!("btrfs subvolume create {top}/.bko-holt-nested-257/b\n"),
+        format!("mv -T {top}/.bko-holt-nested-257 {top}/@system/srv/a\n"),
+    ];
+    let at: Vec<usize> = want
+        .iter()
+        .map(|w| f.find(w.as_str()).unwrap_or_else(|| panic!("{w}: {f}")))
+        .collect();
+    assert!(at.windows(2).all(|w| w[0] < w[1]), "{at:?}: {f}");
+    assert!(!f.contains(&format!("mkdir -p {top}/@system/srv/a\n")), "{f}");
 }

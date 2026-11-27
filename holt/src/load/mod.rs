@@ -21,6 +21,7 @@ pub mod fatset;
 pub mod fit;
 pub mod grubprefix;
 pub mod jsonout;
+pub mod kdelinux;
 pub mod layout;
 pub mod luks1digest;
 pub mod ostree;

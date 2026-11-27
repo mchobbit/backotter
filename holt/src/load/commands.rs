@@ -4567,7 +4567,18 @@ impl Builder<'_> {
         let mut snapped: Vec<(String, String)> = Vec::new();
         let mut made_paths: Vec<String> = Vec::new();
         let plan = self.btrfs.get(uuid).cloned().unwrap_or_default();
-        for (path, v) in &list {
+        // Nested subvolumes in path order: one made (by ID) before the
+        // subvolume it is nested in (moved there after it was made, on the
+        // source) is made at the top level under a temporary name and moved
+        // into place once all are made, parents first.  (its temporary
+        // path, its path.)
+        let made_here: Vec<String> = list
+            .iter()
+            .map(|(p, _)| p.clone())
+            .filter(|p| !plan.is_shared(p))
+            .collect();
+        let mut nested_later: Vec<(String, String)> = Vec::new();
+        for (i, (path, v)) in list.iter().enumerate() {
             // A shared snapshot is made after the restore (restore stage).
             if plan.is_shared(path) {
                 continue;
@@ -4584,10 +4595,37 @@ impl Builder<'_> {
                 }
                 next = next.max(id + 1);
             }
-            let full = format!("{top}/{path}");
-            if let Some((parent, _)) = path.rsplit_once('/') {
-                out.push(Cmd::new(&["mkdir", "-p", &format!("{top}/{parent}")]));
-            }
+            // Where PATH is now: below a subvolume still at its temporary
+            // name, there.
+            let now_at = |p: &str, later: &[(String, String)]| -> String {
+                later
+                    .iter()
+                    .filter(|(_, q)| p == q || p.starts_with(&format!("{q}/")))
+                    .max_by_key(|(_, q)| q.len())
+                    .map_or_else(
+                        || format!("{top}/{p}"),
+                        |(tmp, q)| format!("{tmp}{}", &p[q.len()..]),
+                    )
+            };
+            let early = made_here
+                .iter()
+                .any(|a| path.starts_with(&format!("{a}/")) && !made_paths.contains(a));
+            let full = if early {
+                let tmp = format!(
+                    "{top}/.bko-holt-nested-{}",
+                    v.get("id").and_then(Value::as_u64).unwrap_or(i as u64)
+                );
+                nested_later.push((tmp.clone(), path.clone()));
+                tmp
+            } else {
+                let full = now_at(path, &nested_later);
+                if let Some((parent, _)) = full.rsplit_once('/') {
+                    if parent != top {
+                        out.push(Cmd::new(&["mkdir", "-p", parent]));
+                    }
+                }
+                full
+            };
             // Inside a subvolume made as a snapshot of one that has a
             // subvolume here too (transactional-update's /etc in each slot):
             // the snapshot has an empty directory in its place, which goes.
@@ -4618,7 +4656,7 @@ impl Builder<'_> {
                         "btrfs",
                         "subvolume",
                         "snapshot",
-                        &format!("{top}/{o}"),
+                        &now_at(o, &nested_later),
                         &full,
                     ])
                     .why(format!("a snapshot of {o}, as on the source")),
@@ -4652,6 +4690,17 @@ impl Builder<'_> {
                 self.notes.push(format!("btrfs {uuid}: {path} was a snapshot of a subvolume that's gone; it's made as a plain subvolume"));
             }
         }
+        // The nested subvolumes made early, into place: parents first.
+        nested_later.sort_by_key(|(_, p)| (p.matches('/').count(), p.clone()));
+        for (tmp, path) in &nested_later {
+            let full = format!("{top}/{path}");
+            if let Some((parent, _)) = full.rsplit_once('/') {
+                out.push(Cmd::new(&["mkdir", "-p", parent]));
+            }
+            out.push(Cmd::new(&["mv", "-T", tmp, &full]).why(format!(
+                "{path}, made before the subvolume it is nested in (its ID is smaller: it was moved there on the source), into place"
+            )));
+        }
         if !placeholders.is_empty() {
             let mut a = vec![
                 "btrfs".to_string(),
@@ -4679,34 +4728,73 @@ impl Builder<'_> {
         } else if flag_only {
             out.push(Cmd::new(&["btrfs", "subvolume", "set-default", &top]).why(format!("btrfs {uuid}: the default stays the top level (ID 5), set as on the source, whose superblock has the default_subvol flag that only set-default sets")));
         }
-        // With shared snapshots, quotas go on after the restore, which they
-        // would slow down, with the IDs those got.
-        if quota && plan.shared.is_empty() {
-            self.btrfs_quota(fs, &top, &plan, out);
+        // With shared snapshots, full qgroups go on after the restore,
+        // which they would slow down, with the IDs those got.  Simple
+        // quotas are on from mkfs (-O squota) and count only extents
+        // written while on: nothing of them waits for the restore but the
+        // shared snapshots' own qgroups (btrfs_quota).
+        if quota && (plan.shared.is_empty() || self.btrfs_squota(fs)) {
+            self.btrfs_quota(fs, &top, &plan, false, out);
         }
         out.push(Cmd::new(&["umount", &top]));
+    }
+
+    /// The btrfs FS has simple quotas (`simple_quota`, mkfs's `squota`):
+    /// in sysfs's feature list or its superblock's.
+    pub(crate) fn btrfs_squota(&self, fs: &Value) -> bool {
+        let has = |v: Option<&Value>| {
+            v.and_then(Value::as_array)
+                .is_some_and(|f| f.iter().any(|x| x.as_str() == Some("simple_quota")))
+        };
+        has(fs.get("features"))
+            || fs
+                .get("devices")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter_map(|d| self.layout.content(d))
+                .any(|c| has(c.get("features")))
     }
 
     /// Quotas, as the source had them: on, the higher-level qgroups
     /// (snapper's 1/0), their members and limits.  A shared snapshot's
     /// level-0 qgroup is by the ID it has here.
+    ///
+    /// Simple quotas (docs/design/kde-linux.md, "Simple quotas") are on
+    /// from `mkfs -O squota` and count only the extents written while they
+    /// are: never a full `quota enable` (which would turn on full
+    /// qgroups) and no rescan (simple quotas have none).  Their
+    /// higher-level qgroups, members and limits are made in the format
+    /// stage (AFTER false), but for the shared snapshots' level-0 qgroups,
+    /// which don't exist until the restore stage makes them (AFTER true).
     fn btrfs_quota(
         &self,
         fs: &Value,
         top: &str,
         plan: &crate::load::shared::Plan,
+        after: bool,
         out: &mut Vec<Cmd>,
     ) {
         let top = top.to_string();
+        let squota = self.btrfs_squota(fs);
         let here = |id: &str| -> String {
             id.strip_prefix("0/")
                 .and_then(|n| n.parse::<u64>().ok())
                 .and_then(|n| plan.new_id_of(n))
                 .map_or_else(|| id.to_string(), |n| format!("0/{n}"))
         };
+        // A shared snapshot's level-0 qgroup (made by the restore stage).
+        let late = |id: &str| {
+            id.strip_prefix("0/")
+                .and_then(|n| n.parse::<u64>().ok())
+                .is_some_and(|n| plan.new_id_of(n).is_some())
+        };
         {
-            out.push(Cmd::new(&["btrfs", "quota", "enable", &top]));
-            out.push(Cmd::new(&["btrfs", "quota", "rescan", "-w", &top]));
+            if !squota {
+                out.push(Cmd::new(&["btrfs", "quota", "enable", &top]));
+                out.push(Cmd::new(&["btrfs", "quota", "rescan", "-w", &top]));
+            }
             let mut qgroups = fs
                 .get("qgroups")
                 .and_then(Value::as_array)
@@ -4722,11 +4810,14 @@ impl Builder<'_> {
             // Higher-level qgroups (snapper's 1/0), their members, and limits.
             for q in &qgroups {
                 let Some(id) = s(q, "qgroupid") else { continue };
-                if !id.starts_with("0/") {
+                if !id.starts_with("0/") && !(squota && after) {
                     out.push(Cmd::new(&["btrfs", "qgroup", "create", &id, &top]));
                 }
             }
             for q in &qgroups {
+                if squota && s(q, "qgroupid").is_some_and(|i| late(&i)) != after {
+                    continue;
+                }
                 let Some(id) = s(q, "qgroupid").map(|i| here(&i)) else {
                     continue;
                 };
@@ -4759,11 +4850,13 @@ impl Builder<'_> {
                     }
                 }
             }
-            if qgroups.iter().any(|q| {
-                q.get("parents")
-                    .and_then(Value::as_array)
-                    .is_some_and(|p| !p.is_empty())
-            }) {
+            if !squota
+                && qgroups.iter().any(|q| {
+                    q.get("parents")
+                        .and_then(Value::as_array)
+                        .is_some_and(|p| !p.is_empty())
+                })
+            {
                 out.push(Cmd::new(&["btrfs", "quota", "rescan", "-w", &top]));
             }
         }
@@ -4855,6 +4948,11 @@ impl Builder<'_> {
                 if let Some(subvol) = subvol {
                     mounts.push(Mount { target, subvol });
                 }
+            }
+            // KDE Linux has no fstab: its tree is the top level at /
+            // (load/kdelinux.rs).
+            if mounts.is_empty() {
+                mounts = self.kdelinux_btrfs_mounts(&devs, &subs);
             }
             // Timeshift's snapshots: not in the backup, so neither made by
             // format nor planned as shared snapshots.  Their IDs are burnt
@@ -5183,12 +5281,15 @@ impl Builder<'_> {
         {
             return;
         }
+        // KDE Linux's ESP is @system/boot in the tree, /boot on the source.
+        let src_at = self.kdelinux_source_at(at);
+        let src_at = src_at.as_deref().unwrap_or(at);
         let source: Option<String> = self
             .layout
             .arr(&["storage", "mounts"])
             .iter()
             .find(|m| {
-                s(m, "target").as_deref() == Some(at)
+                s(m, "target").as_deref() == Some(src_at)
                     && s(m, "fstype").is_some_and(|t| matches!(t.as_str(), "vfat" | "msdos"))
             })
             .map(|m| {
@@ -5456,6 +5557,12 @@ impl Builder<'_> {
         if let Some(a) = super::abroot::of(&self.layout.v) {
             let have: Vec<String> = ms.iter().map(|(p, _)| p.clone()).collect();
             let extra = self.abroot_mounts(&a.clone(), &have);
+            ms.extend(extra);
+        }
+        // KDE Linux (load/kdelinux.rs): no fstab; the btrfs top level at /
+        // and the ESP at @system/boot, the backup's tree.
+        if let Some(k) = super::kdelinux::of(&self.layout.v) {
+            let extra = self.kdelinux_mounts(&k.clone());
             ms.extend(extra);
         }
         // Ubuntu Core (load/snapcore.rs): the four partitions at
@@ -6007,7 +6114,7 @@ impl Builder<'_> {
                 ]));
             }
             if fs.get("quota_enabled").and_then(Value::as_bool) == Some(true) {
-                self.btrfs_quota(&fs, &top, &plan, out);
+                self.btrfs_quota(&fs, &top, &plan, true, out);
             }
             out.push(Cmd::new(&["umount", &top]));
         }
@@ -6114,6 +6221,9 @@ impl Builder<'_> {
         }
         if let Some(x) = super::transactional::of(&self.layout.v) {
             return self.transactional_boot(&x.clone());
+        }
+        if let Some(k) = super::kdelinux::of(&self.layout.v) {
+            return self.kdelinux_boot(&k.clone());
         }
         let t = self.opts.target.clone();
         let mut out = Vec::new();

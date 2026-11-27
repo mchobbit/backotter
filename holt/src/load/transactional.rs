@@ -233,9 +233,14 @@ fn s(v: &Value, k: &str) -> Option<String> {
 
 /// A BLS entry file's name split as systemd-boot's boot counting has it:
 /// `ID+LEFT-DONE.conf` (or `ID+LEFT.conf`) is the entry `ID` with LEFT
-/// tries left and DONE done; `ID.conf` has no counter.
+/// tries left and DONE done; `ID.conf` has no counter.  A Type #2 entry,
+/// a UKI, counts the same way in its name: `ID+LEFT-DONE.efi`
+/// (sysupdate's `kde-linux_V+2-0.efi`, the installer's `kde-linux_V+3.efi`).
 pub fn bls_counter(file: &str) -> (String, Option<(u64, u64)>) {
-    let stem = file.strip_suffix(".conf").unwrap_or(file);
+    let stem = file
+        .strip_suffix(".conf")
+        .or_else(|| file.strip_suffix(".efi"))
+        .unwrap_or(file);
     let parsed = stem.rsplit_once('+').and_then(|(id, c)| {
         let (left, done) = c.split_once('-').unwrap_or((c, "0"));
         let n = |x: &str| {
@@ -2436,6 +2441,23 @@ mod tests {
             ("aeon-7.3.3-1-default-1".into(), Some((0, 3)))
         );
         assert_eq!(bls_counter("x+y.conf"), ("x+y".into(), None));
+        // UKIs (Type #2 entries) count in their names too (docs/design/kde-linux.md).
+        assert_eq!(
+            bls_counter("kde-linux_202611240254+3.efi"),
+            ("kde-linux_202611240254".into(), Some((3, 0)))
+        );
+        assert_eq!(
+            bls_counter("kde-linux_202611270255+2-0.efi"),
+            ("kde-linux_202611270255".into(), Some((2, 0)))
+        );
+        assert_eq!(
+            bls_counter("kde-linux_202611270255+0-3.efi"),
+            ("kde-linux_202611270255".into(), Some((0, 3)))
+        );
+        assert_eq!(
+            bls_counter("kde-linux_202611270255.efi"),
+            ("kde-linux_202611270255".into(), None)
+        );
         assert_eq!(bls_counter("+3.conf"), ("+3".into(), None));
         assert_eq!(
             entry_slot("root=UUID=x rootflags=subvol=/@/.snapshots/2/snapshot/ quiet").as_deref(),

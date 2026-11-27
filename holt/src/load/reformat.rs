@@ -526,6 +526,8 @@ fn layout_refusal(v: &Value) -> Option<Problem> {
         Some("an ostree system".to_string())
     } else if crate::load::abroot::of(v).is_some() {
         Some("an ABRoot system".to_string())
+    } else if crate::load::kdelinux::of(v).is_some() {
+        Some("KDE Linux".to_string())
     } else {
         crate::store::system(id).map(|st| st.name.to_string())
     };
@@ -1508,6 +1510,14 @@ mod tests {
         .unwrap();
         let (r, m, ..) = one(&nixos, &[("/", "xfs")]);
         assert_eq!((r.as_str(), m), ("own_tools", None));
+        // KDE Linux: its tree is the btrfs top level, no fstab (load/kdelinux.rs).
+        let kde = crate::json::parse(&eos().compact().replace(
+            r#""boot":{"#,
+            r#""boot":{"sysupdate":{"kdelinux":{"layout":"rootfsv3-etc-mstack"}},"#,
+        ))
+        .unwrap();
+        let p = &work_out(&kde, &re(&[("/", "xfs")])).problems[0];
+        assert!(p.text.contains("--reformat isn't built for KDE Linux"), "{}", p.text);
         // Not about one mount: mount and type are there, null.
         let p = &work_out(&nixos, &re(&[("/", "xfs")])).problems[0];
         assert_eq!(

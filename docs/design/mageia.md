@@ -33,7 +33,8 @@ In that file and below, "fsedit.pm:24" means drakx's
 `perl-install/fsedit.pm` at master. A cite with an RPM's name ("dracut
 `usr/bin/dracut:1241`", "dxb `bootloader.pm:2161`" for drakxtools-backend's
 `/usr/lib/libDrakX/`, "msec `network.py:76`") means that file in the Mageia 10
-RPM, unpacked in the session scratchpad (temporary). No ISO has been
+RPM, unpacked in the session scratchpad (temporary). M1 fetched the ISOs
+(2026-11-27; "What M1 found" below); before that no ISO had been
 downloaded. Code references are to local `main` at d4aea22 plus the
 uncommitted tree of the same day.
 
@@ -100,6 +101,191 @@ drakx's numeric `security` and the profile's USB medium are corrected.
 - ~5.2 d (est.), plus BackShot1 on the A100 (~0.5 d and about an hour of the
   user's time).
 
+## What M1 found (2026-11-27, the ISOs read offline)
+
+**The inputs** are in Chopin's `/bkoscratch/rebuild-inputs/mageia10/`:
+
+| File | Bytes | Check |
+|---|---|---|
+| `Mageia-10-x86_64.iso` (classic DVD) | 5697957888 | sha512 `e02d5930…a26fd270`: `sha512sum -c` OK |
+| `Mageia-10-Live-Xfce-x86_64.iso` | 4584060928 | sha512 `11ffc1b2…10ca24d1`: `sha512sum -c` OK |
+| `*.iso.sha512`, `*.iso.sha512.gpg` | 151/161, 768/776 | `gpgv --keyring ./mageia-release.gpg --output -`: "Good signature from Mageia Release <release@mageia.org>", made 2026-06-28 12:17:49 CEST, using RSA key B21076A0CBE4D93D66A9D08D835E41F4EDCA7A90; the output is byte-identical to the plain `.sha512`, and the literal packet's file name is `Mageia-10-x86_64.iso.sha512` (`…Live-Xfce…` for the other) |
+| `mageia-release-key.asc` | 11799 | from keyserver.ubuntu.com by fingerprint |
+| `mageia-release.gpg` | 8622 | that key alone, exported as a binary keyring for gpgv (fpr B21076A0CBE4D93D66A9D08D835E41F4EDCA7A90, rsa4096, created 2012-04-18, expires 2029-12-31; sha256 `149afd66…a341311b`) |
+
+The pinned fingerprint is checked by building the keyring from that one key
+(`gpg --export B21076A0…`) and verifying with gpgv against it alone.
+Downloads ran at about 1-2 MB/s for the whole house link (a ranged fetch over
+five mirrors, ~2 h for both), so a refetch on another host costs as much: copy
+from Chopin instead.
+
+**The DVD's boot layout (correction).** The DVD has **no `isolinux/`**:
+the kernel and installer initrd are **`/boot/vmlinuz`** (15274496 B) and
+**`/boot/all.rdz`** (143533364 B), booted by GRUB 2 for both BIOS (eltorito)
+and UEFI. `EFI/BOOT/grub.cfg` searches the label `Mageia-10-x86_64` (the
+volume id) and sources `/boot/grub2/grub.cfg`, whose "Install Mageia" entry
+is `$linux $boot/vmlinuz lang=$lang kbd=$kbd automatic=method:cdrom audit=0
+noiswmd vga=791 splash quiet` plus `$initrd $boot/all.rdz` (linuxefi/linux16).
+So `automatic=method:cdrom` is in the stock entry, as the notes said of
+isolinux.cfg. The `isolinux/x86_64/` paths in the facts notes are the mirror's
+`distrib/10/x86_64/isolinux/`, not the DVD. Stage 2 is
+`/x86_64/install/stage2/mdkinst.sqfs` (also `rescue.sqfs`); the media are
+`/x86_64/media/{core,nonfree}`, named in media.cfg **`Core Release
+(Installer)`** and **`Nonfree Release (Installer)`** (`askmedia=1`,
+`suppl=1`; the non-interactive auto install never asks for supplementary
+media, install/steps.pm:358). The DVD ships drakxtools-backend **18.80**.
+
+`all.rdz` is an early microcode cpio followed by a zstd cpio: **stage 1 is now
+dracut-based** (dracut `init`, `initqueue`, hook
+`cmdline/29-parse-mgainstaller.sh` setting `root=mgainstaller`, and the
+`/sbin/stage1` newt binary with its AUTOMATIC/KICKSTART code). How it treats
+`console=ttyS0` stays M2's *Check*.
+
+**auto_inst keys, from the DVD's stage 2** (`usr/lib/libDrakX/install/`):
+
+- The template's keys (any.pm:957): `locale authentication mouse net timezone
+  superuser keyboard users partitioning isUpgrade manualFstab nomouseprobe
+  crypto security security_user autoExitInstall X services postInstall
+  postInstallNonRooted`, plus `default_packages` (:948), `partitions`
+  (:950-955, fields `fs_type hd level mntpoint options parts size VG_name`)
+  and `enabled_media` (:967). Any other key of `$o` is read too, since the
+  file is `eval`ed into the installer's hash (any.pm:1108-1131) and the
+  command line's values only fill keys the profile lacks (`add2hash_`).
+- **`firewall_ports`** is not in the template but is read directly:
+  `configure_firewall` (steps.pm:814-826) sets it to `''` when
+  `security >= 1` and the key doesn't exist, then calls
+  `drakfirewall::set_ports(…, 0, $ports, 'log_net_drop')` and turns on
+  mandi-ifw `psd`. The format is space-separated `PORT/PROTO`
+  (network/shorewall.pm:139-146), so **`firewall_ports => '22/tcp'`** opens
+  SSH. `security` is numeric, as the spec says.
+- **`enabled_media`**: a list of media **names** (any.pm:536-540), so
+  `[ 'Core Release (Installer)' ]` on the DVD.
+- **Package selection.** In the non-interactive auto install,
+  `install::steps::choosePackages` selects from rpmsrate **only when
+  `compssListLevel` exists** (steps.pm:376-377); without it the install gets
+  only basesystem, the bootloader, the kernel and `default_packages()`'s
+  hardware list (any.pm:579-592, 789-845), which is not a desktop and
+  probably has no openssh-server. So the profile sets **`compssListLevel =>
+  5`** (the interactive default, `pkgs::rpmsrate_rate_default`, as
+  steps_interactive.pm:379) and **`compssUsersChoice => { … }`**: a hash of
+  rpmsrate flags, which any.pm:1157-1169 renames to `rpmsrate_flags_chosen`,
+  prefixing `CAT_` to each when none has it and adding `CAT_SYSTEM`. Without
+  it, the compssUsers groups' `default_selected` decide
+  (any.pm:693-704). The flags are compssUsers.pl's, e.g. `PLASMA X
+  ACCESSIBILITY THEMES` (Plasma Workstation), `XFCE X THEMES ACCESSIBILITY`,
+  `NETWORKING_REMOTE_ACCESS_SERVER` (SSH Server), `CONFIG`, `EDITORS
+  TERMINALS TEXT_TOOLS SHELLS FILE_TOOLS` (Console Tools). Also read:
+  `default_packages` (a list of names, any.pm:848), `skipped_packages`,
+  `keep_unrequested_dependencies`, `kernel_extension`, `meta_class`
+  (install2.pm:597, 678), `media` (any.pm:517).
+- **No LUKS key** anywhere in the auto path: `dmcrypt_key` is set only by
+  diskdrake's interactive dialogs (diskdrake/interactive.pm:519-533,
+  979-989, 1309) and read by fs/dmcrypt.pm:106-117. Decision 4's install.sh
+  path stands. The DVD's luksFormat is as the notes said
+  (`--cipher=aes-xts-benbi --key-size=512 luksFormat --batch-mode`, no
+  `--type`), and `defaultFS` is ext4 (fs/type.pm:305).
+- **Don't pass `text` with kickstart.** `text`/`newt` sets `interactive =>
+  'curses'` at parse time (install2.pm:699); the auto install then runs
+  steps_curses with `installPackages` and `configureNetwork` pushed into
+  `interactiveSteps` (steps_auto_install.pm:29-37), so it may stop and ask.
+  Without `text`, it runs `steps_auto_install_non_interactive`, which
+  prints "Entering step …" to stdout and needs no UI. A profile can also
+  force it with `interactive => ''`. M2 boots without `text`.
+
+**What `isKeyUsb` tests** (detect_devices.pm:201): `usb_media_type` begins
+with `Mass Storage` and `media_type eq 'hd'`. `media_type` is `hd` for an
+`sd*` SCSI disk (getSCSI, :243-312); `usb_media_type` is copied from the
+`usb_probe()` entry whose vendor and product ids match the disk's USB parent
+(complete_usb_storage_info, :161-180), and `usb_probe()` reads
+**`/sys/kernel/debug/usb/devices`** (debugfs; :1039-1049), which
+modules.pm:276-283 mounts when a `bus/usb` driver is loaded. So the profile
+stick must be a real USB mass-storage `sd` disk: QEMU
+`-device qemu-xhci -device usb-storage,…` (class 08, so ldetect says "Mass
+Storage|…") qualifies; a virtio disk doesn't. `removable_media__early_in_install`
+(any.pm:1373-1381) takes the key's partitions (`hds_fstab`) **and** raw disks
+that are keys or `media_type 'fd'`, so a whole-disk FAT image works, and an
+`fd` (legacy or USB UFI floppy) does too. Whether debugfs is mounted in time
+when xhci is built into the installer kernel is M2's *Check*; the fallback is
+an `isa-fdc` floppy.
+
+**Decision 11 settled: install.sh re-runs on every GRUB update, BIOS and
+UEFI.** From the DVD's RPM headers (same versions as core/release):
+
+- `grub2-2.12-15` **%post**: `if [ $1 -eq 2 ]; then touch
+  /boot/grub2/updtrans; fi`; `grub2-efi-2.12-15` %post does the same, after
+  `ln -fs EFI /boot/efi` when `/boot/efi` is absent and `/boot/EFI`
+  exists. So every upgrade of either package makes `updtrans` (not %pre).
+- `grub2-common` **%posttrans**: when `updtrans` exists, `/boot/grub2/install.sh` is a file,
+  `/usr/sbin/detectloader` is executable and `DURING_INSTALL != 1`: `LOADER=$(/usr/sbin/detectloader)`; `[ "$LOADER" =
+  "GRUB2" ] && /boot/grub2/install.sh ||:`; then `rm -f updtrans`. Its
+  trigger on grub2/grub2-efi only reruns `grub2-mkconfig`.
+- `detectloader` (bootloader-utils) is `bootloader-config --action
+  detectloader`, which prints `uc(main_method)` of `bootloader::read`
+  (dxb bootloader-config:348-350). On **UEFI** read says `grub2` when
+  `/boot/EFI/EFI/mageia/grubx64.efi` exists (bootloader.pm:301-309), so a
+  restored UEFI system re-runs plain `grub2-install` on the next update,
+  which rewrites `EFI/mageia/grubx64.efi` and the NVRAM entry: self-healing.
+  On **BIOS** it reads the MBR of the `/dev/…` named in install.sh
+  (`read_grub2_install_sh`, :414-423; `typeOfMBR`, :316). After a restore to
+  a disk with another name, that device is missing or another disk, so
+  detectloader prints nothing and **install.sh silently doesn't run**: the
+  MBR's boot code stays old while `/boot/grub2/i386-pc` is updated, the
+  mismatch the scriptlet's own comment warns of. If the old name is another
+  disk with a GRUB MBR, GRUB goes there. **Decision 11's recommended rewrite
+  is needed.**
+- drakx writes install.sh with `renamef(install.sh, install.sh.old)` first
+  (bootloader.pm:2161-2177), so installs carry an `install.sh.old` too.
+- **How Mageia's grub2-install finds the ESP:** it has no Mageia patch for
+  it (its strings have no `/boot/EFI`); upstream grub-install tries
+  `BOOTDIR/efi`, and grub2-efi's %post symlink **`/boot/efi -> EFI`** makes
+  that the ESP. So an installed system has a `/boot/efi` symlink beside
+  `/boot/EFI`, and dump and load must keep it (load still passes
+  `--efi-directory` explicitly, Decision 5).
+
+**remove-old-kernels 1.0.6** (`/usr/sbin/remove-old-kernels`, `rok` a
+symlink; bash):
+
+- Flags: `-a` automatic (root, no questions); `-n N` keep N this time only
+  (**minimum 2**, default 3; `NBK < 2` becomes 2); `-N N` writes NBK to the
+  cfg; `-t` test (urpme simulated); `-p` preview the `urpme` commands; `-c`
+  automatic only if `CRON=1`; `-A 0|1` the weekly cron on/off; `-f`/`-F`
+  alternative cfg; `-q`/`-Q` advanced mode (keeps VirtualBox and xtables
+  kernels and -devel of kept kernels); `-m` no colours; `-l` log; `-v`.
+- vm-update's call: **`remove-old-kernels -a -m -n 2`**. It refuses to run
+  (FATAL) when `/lib/modules/$(uname -r)` is missing; never removes the
+  running kernel (flag U) or the `*-latest` metapackages (excluded from the
+  list); counts `/boot` files matching `vmlinuz.*\.mga[0-9]{1,2}` (so not the
+  `vmlinuz-desktop` symlinks); keeps the newest N per flavour in
+  `rpm -qa --last` order and removes the rest with `echo y | urpme --auto`.
+  In `-a` mode it exits at once when fewer kernels than N are in /boot.
+- dnf's `installonly_limit` in `/etc/dnf/dnf.conf` raises N when larger;
+  Mageia's dnf.conf (lib64dnf5_2-5.4.0.0-3) has only a comment and `[main]`, so it doesn't.
+- Side effects: every root run `sed -i`s `/etc/remove-old-kernels.cfg` (a new
+  inode and mtime even when unchanged).
+  `/etc/cron.weekly/remove-old-kernels.cron` runs `-c -m` (cfg `NBK=3`,
+  `CRON=1`), logging to `/var/log/remove-old-kernels.log`.
+- **`dnf` exists:** `/usr/bin/dnf -> dnf5` (dnf5-5.4.0.0-3), which settles
+  the Packages row's *Check*.
+
+**The Live Xfce ISO** (volume id `Mageia-10-Live-Xfce-x86_64`):
+
+- The root squashfs is **`/loopbacks/distrib.sqfs`** (4351066112 B, a
+  multi-extent ISO file: Linux's iso9660 loop mount reads it whole;
+  isoinfo shows two extents). Kernel and initrd `/boot/vmlinuz`,
+  `/boot/initrd.img`; boot argument `root=mgalive:LABEL=Mageia-10-Live-Xfce-x86_64`
+  (the "Install Mageia Live" entry adds `install`).
+- In it: Mageia 10, kernel `6.18.35-desktop-1.mga10` (`/boot/initrd-….img`),
+  `urpmi`, `urpmi.update`, `draklive-install`, `bootloader-config`, dracut,
+  cryptsetup, parted, sgdisk, efibootmgr, mke2fs, mkfs.fat.
+- **No GRUB in the live root** (no `grub2-install`). GRUB comes from the
+  ISO's own media, `/var/local/mga_rpms/{core,nonfree}` (547 MiB),
+  configured in urpmi.cfg as **`Live Core`** and **`Live Nonfree`** (key id
+  80420f66): grub2, grub2-common, grub2-efi (x86_64 and i686),
+  grub2-mageia-theme, refind, kernel-desktop-devel, dkms, the NVIDIA and
+  Broadcom drivers. So mageia-bootstrap.sh (M8) installs GRUB into the
+  target from that medium (urpmi's `--media 'Live Core'`) or from the
+  online mirror.
+
 ## Why
 
 - **DistroWatch #32** (*Check*: not from Mageia's sources), and the largest
@@ -130,15 +316,15 @@ drakx's numeric `security` and the profile's USB medium are corrected.
 | Release | 10, 2026-06-30; EOL 2028-03-31 (at least 18 months, or 3 months after the next release). 9 has been EOL since 2026-09-30. Upgrading 9 to 10 is supported; upgrading with a Live image is not (the release notes' "Not supported" list, which also rules out 8 to 10 and BIOS to UEFI). The support page's "3 months after the next release" line for 9 is stale | Rocky (point releases) |
 | os-release | `ID=mageia`, `VERSION_ID=10` (an integer, no minor), `ID_LIKE="mandriva fedora"`, `PRETTY_NAME="Mageia 10"`, no `VERSION_CODENAME`. `/etc/os-release` links to `../usr/lib/os-release` (mageia-release-common-10-4). Also `/etc/mageia-release`, `/etc/version` and `/etc/product.id`, plus the Mandriva and Red Hat compatibility names | — |
 | Media | Classic DrakX DVD `Mageia-10-x86_64.iso`: 5,697,957,888 bytes (5.7 GB, 5.3 GiB), sha512 `e02d5930…a26fd270`. Live Plasma, GNOME and Xfce: 4.6-5.2 GB (decimal). Netinstall: 114 MB, in a tree rebuilt with updates (VERSION "Mageia 10 Official-x86_64-Download 20261126"), so pin it by hash. Each ISO under `iso/10/` has `.md5`, `.sha3` and `.sha512`, each with a **`.gpg` that is an inline-signed message, not a detached signature**. The netinstall ISOs and `distrib/10/x86_64/install/images/*.img` have the sums but **no `.gpg`**: only HTTPS and a pinned hash protect them. Check a signed sum with `gpgv --keyring ./rel.gpg --output - X.sha512.gpg` (prints the sum, exit 0; tested), check the literal file name in it, then `sha512sum -c`. The download page's own `gpg --verify X.sha512.gpg X.sha512` is the detached form and wrong. The ISO key is "Mageia Release" B21076A0CBE4D93D66A9D08D835E41F4EDCA7A90, printed on the download page; it gave a good signature, made 2026-06-28, on the classic sha512. The package key is "Mageia Packages" 00EDB89585B012A8916F0DF8B742FA8B80420F66 | Solus (signed sums), Rocky (gpgv plus a pinned fingerprint, make-rocky.sh:89-94) |
-| ISO boot | `isolinux/x86_64/vmlinuz` and `isolinux/x86_64/all.rdz`; UEFI boots from `isolinux/efiboot.img` | — |
-| Installer | DrakX (Perl). Unattended by `kickstart=FILE` (the same option as `auto_install=`, install/install2.pm:713): a Perl hash `auto_inst.cfg.pl`. `kickstart=floppy` reads `auto_inst.cfg` or `.pl` from `removable_media__early_in_install()`: USB keys (`isKeyUsb`) or `media_type eq 'fd'` devices, trying ext4, vfat, then ntfs-3g (install/any.pm:1083-1102, 1373-1381). A virtio disk isn't one. `automatic=method:cdrom` answers stage 1, and the stock isolinux.cfg already passes it; stage 1 also takes `method:disk,…` and `method:http,network:dhcp,…` (techinfos.txt:9-21, 31, 74-80). Every install leaves a template in `/root/drakx/auto_inst.cfg.pl` (install/any.pm:930, 943-994). Its keys are at install/any.pm:957, plus `default_packages` (:947) and `enabled_media` (:967, used at :536-539). **The template has no LUKS key**: partitions keep only `fs_type hd level mntpoint options parts size VG_name` (install/any.pm:948-953), and the key goes to cryptsetup through a private `/tmp/.dmcrypt_key-PID` (fs/dmcrypt.pm:106-109). It does keep root's and the users' **password hashes**; only `oldu oldg password password2` are dropped (install/any.pm:970-974). A serial-only install (`console=ttyS0,115200n8 text`) is a *Check*. DrakX has a remote X display (`display=HOST:N`, install2.pm's parse_args) but no VNC or SSH mode (*Check*) | Rocky (kickstart), Leap (Agama JSON) |
+| ISO boot | **`/boot/vmlinuz` and `/boot/all.rdz`** on the DVD, booted by GRUB 2 for BIOS and UEFI (`/boot/grub2/grub.cfg`, `EFI/BOOT/grub.cfg`); the DVD has no `isolinux/` (that tree is only in the mirror's `distrib/`). Settled by M1 | — |
+| Installer | DrakX (Perl). Unattended by `kickstart=FILE` (the same option as `auto_install=`, install/install2.pm:713): a Perl hash `auto_inst.cfg.pl`. `kickstart=floppy` reads `auto_inst.cfg` or `.pl` from `removable_media__early_in_install()`: USB keys (`isKeyUsb`) or `media_type eq 'fd'` devices, trying ext4, vfat, then ntfs-3g (install/any.pm:1083-1102, 1373-1381). A virtio disk isn't one. `automatic=method:cdrom` answers stage 1, and the DVD's GRUB "Install Mageia" entry already passes it (M1); stage 1 also takes `method:disk,…` and `method:http,network:dhcp,…` (techinfos.txt:9-21, 31, 74-80). Every install leaves a template in `/root/drakx/auto_inst.cfg.pl` (install/any.pm:930, 943-994). Its keys are at install/any.pm:957, plus `default_packages` (:947) and `enabled_media` (:967, used at :536-539). **The template has no LUKS key**: partitions keep only `fs_type hd level mntpoint options parts size VG_name` (install/any.pm:948-953), and the key goes to cryptsetup through a private `/tmp/.dmcrypt_key-PID` (fs/dmcrypt.pm:106-109). It does keep root's and the users' **password hashes**; only `oldu oldg password password2` are dropped (install/any.pm:970-974). A serial-only install (`console=ttyS0,115200n8`, without `text`: What M1 found) is a *Check*. DrakX has a remote X display (`display=HOST:N`, install2.pm's parse_args) but no VNC or SSH mode (*Check*) | Rocky (kickstart), Leap (Agama JSON) |
 | Layout | ext4 by default (fs/type.pm:305); btrfs, xfs, f2fs, jfs and nilfs2 are offered. btrfs gets no subvolumes, as far as the code shows (*Check*). The "simple" layout is `/` plus swap of at most 4 GB, and a separate `/home` only on disks of 51,200 MB or more (fsedit.pm:24-28). **The ESP is at `/boot/EFI`**, 100-300 MB, made with `pt_type => 0xef`, the EFI System type (fsedit.pm:58-63, 61). The table is GPT on UEFI or disks over 2 TiB, else MBR (partition_table.pm:256-261); BIOS on GPT gets a BIOS_GRUB partition (fsedit.pm:575-590). LVM is offered but not the default | Fedora (GRUB 2, an ESP in fstab) |
 | Encryption | `cryptsetup --cipher=aes-xts-benbi --key-size=512 luksFormat` with no `--type`, so probably LUKS2 with argon2id on cryptsetup 2.8.3 (fs/dmcrypt.pm:108; the compiled-in default type is a *Check* with luksDump). An encrypted `/` without a separate `/boot` gets a `cdie` (fsedit.pm:472-475), a warning the user may be allowed to override (*Check*); an override gives a LUKS2 `/` behind `GRUB_ENABLE_CRYPTODISK=y` that GRUB 2.12 can't open if it is argon2id. Only an encrypted `/boot` is a hard `die` (:477-479). The release notes' encrypted-upgrade section describes LVM-on-LUKS with "/boot outside of the encrypted LVM" (*Check* that diskdrake offers it). drakx writes `/etc/crypttab` (fs/dmcrypt.pm:97-100) | Mint, Pop (plain /boot, LUKS2 root) |
 | Boot loader | grub2 and grub2-efi 2.12-15. The config is `/boot/grub2/grub.cfg`, made by `grub2-mkconfig` (bootloader.pm:2141-2146); `update-grub` is a wrapper for it. No BLS. `/etc/default/grub` has `ENABLE_CRYPTODISK=y`, and drakx adds `GRUB_DEFAULT=saved` and `GRUB_SAVEDEFAULT=true` (bootloader.pm:2082-2110). The ESP holds `EFI/mageia/grubx64.efi` (bootloader.pm:304); `EFI/BOOT/BOOTX64.EFI` exists only with `--removable` (:304-305), and there is no shim fallback (fbx64). drakx writes `/boot/grub2/install.sh` (dxb `bootloader.pm:2161-2177`): on BIOS `grub2-install DEVICE`; on UEFI plain `grub2-install` (or `--removable`, or `--bootloader-id=tmp --no-nvram` with no ESP). The UEFI default has no `--no-nvram`, so it makes the NVRAM entry; the ID `mageia` comes from `GRUB_DISTRIBUTOR=Mageia`. **grub2-common's scriptlet re-runs install.sh on a GRUB update** (`[ "$LOADER" = "GRUB2" ] && /boot/grub2/install.sh`, when `/boot/grub2/updtrans` exists; grub2-common-2.12-15's rpm header). Tool names are `grub2-*` plus `update-grub`/`update-grub2`: **no `grub-install`** (grub2-common `usr/sbin`, `usr/bin`). 10_linux searches `initrd.img-V`, then `initrd-V.img`, before `initramfs-V.img` (grub2-common `etc/grub.d/10_linux:262-265`). Fedora's patches are in: `gen_grub_cfgstub` (an ESP stub grub.cfg pointing at /boot/grub2 by UUID), `grub2-set-bootflag`, `grub2-get-kernel-settings`, `08_fallback_counting`, `10_reset_boot_success`, `12_menu_auto_hide`, `14_menu_show_once`, `grub2-systemd-integration.service`. Whether DrakX writes an `EFI/mageia/grub.cfg` stub is a *Check* (M2). rEFInd 0.14.2 is an installer option | Fedora (`/boot/grub2`), minus shim |
 | Secure Boot | **None.** There is no shim or mokutil in core, and the kernel has no module signing and no lockdown. OVMF and the A100 must run with Secure Boot off | PikaOS (`--no-secure-boot`) |
 | Kernel | kernel-desktop (the default; drakx always picks it on x86_64, install/pkgs.pm:153-181), kernel-server and kernel-linus, each with a `-latest` metapackage. 6.18.35 at release, 6.18.60 in updates. `/boot/vmlinuz-6.18.35-desktop-1.mga10`, `initrd-6.18.35-desktop-1.mga10.img`, `config-…`, `System.map-…` and `symvers-….xz`, plus the symlinks `vmlinuz`, `initrd.img`, `vmlinuz-desktop` and `initrd-desktop.img`; the kernel %post makes them only `if [ -e initrd-K.img ]`. Config: no module signing, no lockdown; `CONFIG_EFIVAR_FS=m`, `VIRTIO_BLK=m`, `VFAT_FS=m`, as on Leap, harmless with a generic image | Leap (`initrd-K`) |
 | Initramfs | dracut 109; `mkinitrd` is a link to dracut. The kernel's %post runs `/sbin/installkernel` (bootloader-utils), which runs `bootloader-config`, which runs `mkinitrd -f /boot/initrd-K.img K` (bootloader.pm:184-212) and adds the entry. **dracut itself defaults to `/boot/initrd-K.img`**: Mageia's patch sets `initrdname="initrd-${kernel}.img"` (dracut `usr/bin/dracut:1241-1244`) and uses `/boot/$initrdname` when `/boot/vmlinuz-K` exists and there is no BLS `loader/entries` and no `/lib/modules/K/initrd` (:1265-1268). `lsinitrd -k K` tries `initramfs-K.img` first, then `initrd-K.img` (`usr/bin/lsinitrd:140-143`), so a stray `initramfs-K.img` would win. **Generic, not host-only**: `hostonly=${hostonly-}` (dracut:1375), `/etc/dracut.conf` and `/usr/lib/dracut/dracut.conf.d` empty, bootloader-utils' `INITRDOPTS=""`. With swap, drakx writes **`/etc/dracut.conf.d/51-mageia-resume.conf`** (`add_device+=" <swap> "`) and adds `resume=<swap>` to the command line, the swap usually by `UUID=` (dxb `any.pm:169-178`; wild_device.pm:85-93) | Gentoo (dracut), Leap (`initrd-K`) |
-| Packages | rpm 4.20.1, sqlite, in **`/var/lib/rpm`** (not `/usr/lib/sysimage`). **urpmi** 8.13x is the primary tool (`/etc/urpmi/urpmi.cfg`, `/var/lib/urpmi`). **dnf5** 5.4 is installed beside it on fresh installs, with the core release and updates repos enabled (mageia-repos-10-2). Whether a `dnf` command (not only `dnf5`) exists is a *Check*. A DVD install leaves urpmi with only the DVD medium. Mageia's own `remove-old-kernels` 1.0.6 is in core and installed by default (rpmsrate:674, CAT_SYSTEM level 5). Core has `lib64nss-mdns2` 0.15.1 (+ `nss-mdns-data`), `avahi` 0.8, `openssh-server` 10.0p1, `python3` 3.13.13, `efibootmgr` 18, `shorewall` 5.2.8, `shorewall-ipv6` and `firewalld` 2.4.0 (core.txt) | Rocky (rpm) |
+| Packages | rpm 4.20.1, sqlite, in **`/var/lib/rpm`** (not `/usr/lib/sysimage`). **urpmi** 8.13x is the primary tool (`/etc/urpmi/urpmi.cfg`, `/var/lib/urpmi`). **dnf5** 5.4 is installed beside it on fresh installs, with the core release and updates repos enabled (mageia-repos-10-2). `/usr/bin/dnf` is a symlink to `dnf5` (M1). A DVD install leaves urpmi with only the DVD medium. Mageia's own `remove-old-kernels` 1.0.6 is in core and installed by default (rpmsrate:674, CAT_SYSTEM level 5). Core has `lib64nss-mdns2` 0.15.1 (+ `nss-mdns-data`), `avahi` 0.8, `openssh-server` 10.0p1, `python3` 3.13.13, `efibootmgr` 18, `shorewall` 5.2.8, `shorewall-ipv6` and `firewalld` 2.4.0 (core.txt) | Rocky (rpm) |
 | Init and security | systemd 258.7, usr-merged. SELinux is built in, but `CONFIG_LSM="yama,landlock,bpf"` leaves it off; there is no AppArmor. Presets enable sshd, chronyd, NetworkManager, dhcpcd, avahi-daemon, firewalld and shorewall (whichever is installed), crond, `plocate-updatedb.timer`, `dnf-makecache.timer` and rpmdb-rebuild. The "SSH Server" group is selected by default (compssUsers.pl:211-215). Classic installs use **shorewall** (with mandi-ifw); firewalld with manafirewall is the newer option | — |
 | msec | Security level "standard" (security/level.pm:8-25). `msec.service` runs at boot; `/etc/cron.hourly/msec` re-applies settings every hour; the daily and weekly checks write `/var/log/security*` and `/var/log/msec.log`. `CHECK_PERMS_ENFORCE=no` at "standard", so it reports file modes but doesn't change them; the only `force` entries in perm.standard are under /var/log. drakx's `security` is numeric: 0 none, 1 standard, 2 secure (security/level.pm:8-14, 39-45). `ALLOW_REMOTE_ROOT_LOGIN=without-password`, and **msec writes `/etc/ssh/sshd_config`**: its regex knows only `PermitRootLogin (no\|yes\|without-password\|forced-commands-only)` (msec `plugins/network.py:76`); with none of those uncommented in the main file (adopt's `prohibit-password`, or a drop-in), it appends `PermitRootLogin without-password` at the end (network.py:120-141; libmsec.py:535 `at_end_if_not_found=1`), at boot and hourly, once. sshd's first match keeps an earlier line, so login works, but the file changes | — |
 | Per-boot churn | `mandriva-everytime.service` (its script `/usr/libexec/mageia_everytime`, initscripts) rewrites `/etc/issue` when `SECURE_LEVEL<4`, and `/etc/issue.net` only when `SECURE_LEVEL<3`; the default is 3 when `/etc/sysconfig/msec` doesn't set it, so issue.net is probably not rewritten (*Check*). It also creates `/etc/resolv.conf` if missing, runs Globetrotter's `hwprofile` or `set-netprofile` if present, and runs harddrake's hardware check. **On new hardware harddrake can reconfigure X/KMS, the kernel command line and modules**, and shows dialogs with a 25 s timeout. It writes `/etc/sysconfig/harddrake2/{previous_hw,kernel,xorg}`. `mandriva-save-dmesg` rotates `/var/log/dmesg` | — |
@@ -352,7 +538,8 @@ WORK_DIR`, with `testvm/mageia/auto_inst.cfg.pl.in` and a post-install
 script. Its template is make-rocky.sh, with make-fedora.sh's UEFI half:
 
 - check the signed sums with gpgv as above (as testvm/make-rocky.sh:89-94);
-- extract `isolinux/x86_64/vmlinuz` and `all.rdz` with xorriso
+- extract `/boot/vmlinuz` and `/boot/all.rdz` with xorriso (the DVD has
+  no `isolinux/`; What M1 found)
   (make-rocky.sh:102);
 - fill the profile with `@HOSTNAME@`, `@ROOT_PASSWORD_HASH@` and
   `@AUTHORIZED_KEY@` (make-rocky.sh:119), then check its syntax with
@@ -364,8 +551,8 @@ script. Its template is make-rocky.sh, with make-fedora.sh's UEFI half:
   make-opensuse.sh:382-383 attaches its stick (*Check* what `isKeyUsb`
   tests). Not as a virtio disk, as make-qubes.sh does: drakx wouldn't look
   there. A floppy on q35 would need an explicit `isa-fdc` (*Check*). Boot
-  `-kernel … -initrd … -append "automatic=method:cdrom kickstart=floppy text
-  console=ttyS0,115200n8"` with `-no-reboot` (make-rocky.sh:163-164).
+  `-kernel … -initrd … -append "automatic=method:cdrom kickstart=floppy
+  console=ttyS0,115200n8"` (no `text`: it makes the auto install interactive, What M1 found) with `-no-reboot` (make-rocky.sh:163-164).
   Fetching the profile over HTTP from 10.0.2.2 is a *Check*: the file is
   relative to the stage2 medium (install/any.pm:1117-1119);
 - boot OVMF code with a **kept** variable store, written beside the disk as
@@ -389,10 +576,9 @@ The profile's keys are taken from a hand install's
 - **`firewall_ports => '22/tcp'`** (space-separated, e.g. `'22/tcp
   5353/udp'`): without it shorewall opens nothing in auto mode at level 1 or
   higher (install/steps.pm:814-824; drakx-net drakfirewall.pm:217-231);
-- **an explicit package selection** (`compssUsersChoice` or
-  `default_packages`, install/any.pm:947; names are a *Check*): without it
-  the auto install takes whatever the defaults give (*Check*; osinfo-db MR
-  !741 lists compssUsersChoice as an open TODO);
+- **an explicit package selection**: `compssListLevel => 5` and
+  `compssUsersChoice => { … }` (rpmsrate flags); without `compssListLevel`
+  the auto install selects nothing from rpmsrate (What M1 found);
 - `users` with the `tester` user;
 - `postInstall`, which sets root's key and generated password, adds
   `console=ttyS0,115200n8` to `GRUB_CMDLINE_LINUX`, sets text-mode boot
@@ -748,7 +934,7 @@ about an hour of their time, as Solus, Leap and Mint were done.
 `method:http,network:dhcp,server:…,directory:…` (techinfos.txt:9-21, 31,
 74-80); the updated `distrib/10/x86_64` tree on a mirror has
 `install/stage2/mdkinst.sqfs`; and `kickstart=floppy` reads any USB key, so
-mybig512 could hold the profile. Kexec-ing `isolinux/x86_64/vmlinuz` and
+mybig512 could hold the profile. Kexec-ing the DVD's `/boot/vmlinuz` and
 `all.rdz` from the rescue stick would then install with DrakX itself over
 SSH. But the stick has no kexec-tools (no hit under stick/), so that is a
 stick change, out of scope here (Decision 8). The profile wouldn't keep a

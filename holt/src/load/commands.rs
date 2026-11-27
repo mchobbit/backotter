@@ -7037,26 +7037,41 @@ impl Builder<'_> {
             let Some(sb) = self.btrfs_super(&fs) else {
                 continue;
             };
-            let first = fs
-                .at(&["devices", "0"])
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            let part = self
-                .layout
-                .disks
+            let devs: Vec<String> = fs
+                .get("devices")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect();
+            let first = devs.first().cloned().unwrap_or_default();
+            // bytes_used is the whole filesystem's: against all its devices
+            // (the superblock's own total_bytes, and every partition), not
+            // the first one's alone.
+            let parts: Vec<u64> = devs
                 .iter()
-                .flat_map(|d| d.parts.iter().map(move |p| (p, d.sector_size.max(512))))
-                .find(|(p, _)| p.name == first)
-                .map(|(p, ss)| p.sectors * ss);
-            let size = [
-                sb.at(&["device", "total_bytes"]).and_then(Value::as_u64),
-                part,
-            ]
-            .into_iter()
-            .flatten()
-            .filter(|&n| n > 0)
-            .min();
+                .filter_map(|n| {
+                    self.layout
+                        .disks
+                        .iter()
+                        .flat_map(|d| d.parts.iter().map(move |p| (p, d.sector_size.max(512))))
+                        .find(|(p, _)| &p.name == n)
+                        .map(|(p, ss)| p.sectors * ss)
+                })
+                .collect();
+            let part = (parts.len() == devs.len() && !parts.is_empty())
+                .then(|| parts.iter().sum::<u64>());
+            let fs_total = if devs.len() > 1 {
+                sb.get("total_bytes").and_then(Value::as_u64)
+            } else {
+                sb.at(&["device", "total_bytes"]).and_then(Value::as_u64)
+            };
+            let size = [fs_total, part]
+                .into_iter()
+                .flatten()
+                .filter(|&n| n > 0)
+                .min();
             let Some(size) = size else { continue };
             let compressed = self.btrfs_forces_zstd(&fs)
                 || Self::btrfs_has_compression_property(&fs)
@@ -7115,6 +7130,12 @@ impl Builder<'_> {
                 continue;
             };
             let top = format!("{RUN_DIR}/btrfs/{uuid}");
+            // The format stage makes TOP only for a btrfs with subvolumes
+            // (SteamOS's rootfs has none), and a fresh rescue boot before
+            // --only boot has none of it.
+            if top_ro {
+                out.push(Cmd::new(&["mkdir", "-p", &top]));
+            }
             out.push(Cmd::new(&[
                 "mount",
                 "-t",

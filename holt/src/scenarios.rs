@@ -15047,8 +15047,9 @@ fn btrfs_read_only_top_level() {
     let top = format!("{RUN_DIR}/btrfs/{root_uuid}");
     let n = boot.len();
     assert_eq!(
-        boot[n - 3..],
+        boot[n - 4..],
         [
+            format!("mkdir -p {top}\n"),
             format!("mount -t btrfs -o subvolid=5 /dev/vdb6 {top}\n"),
             format!(
                 "# the top level (subvolume 5) read-only, as the source's was\nbtrfs property set -ts {top} ro true\n"
@@ -15057,7 +15058,7 @@ fn btrfs_read_only_top_level() {
         ],
         "{boot:?}"
     );
-    assert!(boot[n - 4].contains("atimes"), "{}", boot[n - 4]);
+    assert!(boot[n - 5].contains("atimes"), "{}", boot[n - 5]);
 
     // fstab compresses: its options as they are, and ro still set.
     let (t, r) = btrfs_top_level("defaults,compress=zstd:1");

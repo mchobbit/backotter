@@ -16,7 +16,8 @@
 #       A guest without a dump is named and the exit is 1, after the others
 #       are collected.
 #   collect-dumps.sh --scan CORPUS [--collector H] [--out DIR] [--hosts H,H] [--vms DIR]
-#       leakscan.py over CORPUS (holt/tests/corpus's layout) on each host,
+#       leakscan.py over CORPUS (holt/tests/corpus's layout) on each host
+#       and on the collector (one of them or not),
 #       with that host's own strings (passphrase files, disk serials, LAN
 #       addresses, MACs, the git e-mail), which never leave it: on the
 #       collector in a strings file in OUT (0600, OUT 0700), and with each raw
@@ -28,7 +29,7 @@
 #       file, the JSON path and the class, never the text.
 #
 # OUT, --records and --vms are paths on the collector (--records and --vms on
-# every host too).  OUT defaults to T2_HOST_ROOT/h1-raw (T2_HOST_ROOT:
+# every host too; OUT absolute or ~/... with --collector).  OUT defaults to T2_HOST_ROOT/h1-raw (T2_HOST_ROOT:
 # /bkoscratch/test2) there.  The collector defaults to this host, which must
 # then be a host of testvm/hosts.json, so that raw dumps never land on the
 # Mac; any other collector (from the Mac, say) gets a private temporary copy
@@ -103,6 +104,8 @@ target() {
 if [[ $COLLECTOR != "$ME" ]]; then
     # Here is not the collector: the job runs there, from a private copy.
     [[ -z ${H1_COLLECTOR:-} ]] || { echo "collect-dumps.sh: this host is $ME, not the collector $COLLECTOR" >&2; exit 2; }
+    # A relative OUT would land in the private copy, deleted at the end.
+    [[ -z $OUT || $OUT == /* || $OUT == '~'/* ]] || { echo "collect-dumps.sh: --out with --collector: an absolute path (or ~/...) on $COLLECTOR" >&2; exit 2; }
     CT=$(target "$COLLECTOR")
     ST="" RT=""
     fwd_cleanup() {
@@ -180,7 +183,11 @@ if [[ -n $SCAN ]]; then
     trap cleanup EXIT
     trap 'exit 2' INT TERM HUP
     worst=0
-    for h in "${hs[@]}"; do
+    # The raw twins are on the collector: scan there too, even when it isn't
+    # one of HOSTS (no records of its own, or not given), or check (b) never runs.
+    sh=("${hs[@]}")
+    [[ " ${hs[*]} " == *" $ME "* ]] || { sh=("$ME" "${hs[@]}"); echo "collect-dumps.sh: $ME (the collector) is scanned too, for the raw dumps' identifiers" >&2; }
+    for h in "${sh[@]}"; do
         if [[ $h == "$ME" ]]; then
             STR=$(mktemp "$OUT/.h1-strings.XXXXXX") || exit 2
             python3 -I "$LEAKSCAN" strings --vms "$VMS" >"$STR" || { echo "collect-dumps.sh: strings on $h failed" >&2; exit 2; }

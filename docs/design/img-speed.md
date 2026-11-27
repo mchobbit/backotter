@@ -1258,7 +1258,11 @@ this spec's speedups 2 and 7.
   which must be in the table, so the raw dumps never land on the Mac) runs
   the job on H from a private temporary copy of the script, leakscan.py, the
   table, classes.json, `--sources` and `--scan`'s corpus, deleted at the
-  end. *Proof:* `test_collect_dumps.py` (10, on the Mac and on chopin); from
+  end. `--scan` also scans on the collector when it is none of the hosts
+  (review: else the raw twins' check (b) never ran), and `--collector` takes
+  only an absolute (or `~/`) `--out`, which a relative one, inside the
+  deleted copy, would lose. *Proof:* `test_collect_dumps.py` (10, on the Mac
+  and on chopin; 12 after the review, both again); from
   the Mac with `--collector cinqcent`, 88 of 88 sources collected from all
   six hosts (chopin 25, cinqcent 17, copland 15, cage 14, czerny 11, choubox
   6), and `--scan` of the corpus's 88 source dumps 0 findings on each of the

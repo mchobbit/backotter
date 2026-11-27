@@ -287,6 +287,28 @@ class Collect(unittest.TestCase):
         self.assertEqual(os.listdir(self.p("czerny", "tmp")), [])
         self.assertEqual(os.listdir(self.p("mymac", "tmp")), [])
 
+    def test_scan_on_a_collector_without_records(self):
+        """cage has no records, so it isn't a default host, but its raw twins are scanned all the same."""
+        self.standard()
+        out = self.p("cage", "out")
+        self.assertEqual(self.run_it("--out", out, "--collector", "cage", me="mymac").returncode, 0)
+        corpus = os.path.join(self.t, "corpus")
+        wr(os.path.join(corpus, "g1", "src.json"), "{}")
+        r = self.run_it("--out", out, "--collector", "cage", "--scan", corpus, me="mymac")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        log = rd(os.path.join(self.t, "leakscan.log")).splitlines()
+        scans = {l.split()[0]: l for l in log if l.split()[1] == "scan"}
+        self.assertEqual(sorted(scans), sorted(self.amd64))
+        self.assertIn("--raw " + out, scans["cage"])
+        self.assertEqual([h for h in scans if "--raw" in scans[h]], ["cage"])
+
+    def test_collector_elsewhere_refuses_a_relative_out(self):
+        self.standard()
+        r = self.run_it("--out", "raw", "--collector", "czerny", me="mymac")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("an absolute path", r.stderr)
+        self.assertEqual(rd(os.path.join(self.t, "ssh.log")), "")
+
 
 if __name__ == "__main__":
     unittest.main()

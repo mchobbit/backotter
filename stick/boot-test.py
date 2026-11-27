@@ -75,6 +75,18 @@ USB_CONTROLLER = {"dragonfly": "usb-ehci", "freebsd": "usb-ehci"}
 # speed of its own, and DragonFly's sio buffers only a few dozen characters
 # between interrupts at the 9600 baud it runs at.
 TYPING_RATE = {"dragonfly": 960}
+# What wakes a console that went quiet.  NetBSD 11.1's com(4) on QEMU's 16550 now and then
+# misses the port's interrupt (the netbsd-uefi flake, img-speed I4, 2026-11-27: about 1 boot
+# in 125 with four guests on a busy host, BIOS and UEFI alike): the guest's output, or the
+# rest of a line typed to it, then waits until another byte reaches the port, and the check
+# timed out with the guest idle.  After QUIET_S seconds of silence the console gets ^T, the
+# tty's status character: the kernel prints the foreground command (name, pid, wait channel:
+# a real hang is then named in the log) and the shell reads nothing.  While waiting for a
+# prompt it gets Enter instead: a fresh prompt, as when login's syslog line from ttyE1 lands
+# just after the shell's and the prompt is no longer the last thing printed.  Never before
+# BackOtter's menu: a key in the boot loader's countdown would stop it.
+NUDGE = {"netbsd": "\x14"}
+QUIET_S = 15
 # How the checks end, where "shutdown -p now" doesn't power off.
 POWEROFF = {"linux": "poweroff", "illumos": "poweroff", "haiku": "shutdown -q"}
 # Set by the casper.conf inside the server ISO's initrd (the installer layer's
@@ -109,26 +121,49 @@ DONE_LINE = "echo BKO-$((6 * 7))-DONE"
 class Console:
     """The guest's serial port, read through QEMU's stdout."""
 
-    def __init__(self, proc: subprocess.Popen[bytes], log, rate: int | None = None) -> None:
+    def __init__(self, proc: subprocess.Popen[bytes], log, rate: int | None = None,
+                 nudge: str | None = None) -> None:
         self.proc = proc
         self.log = log
         self.buf = b""
         self.rate = rate
+        self.nudge = nudge    # NUDGE's: sent after QUIET_S s of silence
+        self.notes: list[str] = []
 
-    def expect(self, *patterns: re.Pattern[bytes], timeout: float) -> int:
-        """Wait until one of the patterns matches; return its index."""
+    def expect(self, *patterns: re.Pattern[bytes], timeout: float, nudge: str | None = None) -> int:
+        """Wait until one of the patterns matches; return its index.  On a console with a
+        nudge (NUDGE's), each QUIET_S s of silence sends it (or this wait's NUDGE; "" none),
+        and self.notes says so."""
         deadline = time.monotonic() + timeout
         assert self.proc.stdout is not None
+        nudge = (self.nudge if nudge is None else nudge) if self.nudge else None
+        last = time.monotonic()   # the last byte heard, or the last nudge
+        nudged = 0
+        answered = True           # something heard since the first nudge
         while True:
             for i, pat in enumerate(patterns):
                 m = pat.search(self.buf)
                 if m:
                     self.buf = self.buf[m.end():]
+                    if nudged:
+                        self.notes.append(f"the console was quiet {QUIET_S:g} s waiting for {pat.pattern!r}: "
+                                          f"nudged {nudged} time(s) with {nudge!r}, then it answered")
                     return i
-            left = deadline - time.monotonic()
+            now = time.monotonic()
+            left = deadline - now
             if left <= 0:
-                raise TimeoutError(f"no match for {[p.pattern for p in patterns]}")
-            ready, _, _ = select.select([self.proc.stdout], [], [], min(left, 1.0))
+                why = f"no match for {[p.pattern for p in patterns]}"
+                if nudged and not answered:
+                    why += f"; the console stayed silent through {nudged} nudge(s) with {nudge!r}"
+                    self.notes.append(why)
+                raise TimeoutError(why)
+            if nudge and now - last >= QUIET_S:
+                self.send(nudge)
+                if not nudged:
+                    answered = False
+                nudged += 1
+                last = now
+            ready, _, _ = select.select([self.proc.stdout], [], [], max(0.01, min(left, 1.0, QUIET_S)))
             if ready:
                 chunk = os.read(self.proc.stdout.fileno(), 65536)
                 if not chunk:
@@ -136,6 +171,8 @@ class Console:
                 self.log.write(chunk)
                 self.log.flush()
                 self.buf = (self.buf + chunk)[-65536:]
+                last = time.monotonic()
+                answered = True
 
     def send(self, text: str) -> None:
         assert self.proc.stdin is not None
@@ -236,10 +273,10 @@ def run(img: str, platform: str, mode: str, media: str, log_path: str, timeout: 
     with tempfile.TemporaryDirectory() as tmp, open(log_path, "wb") as log:
         proc = subprocess.Popen(qemu_command(img, platform, mode, media, tmp, arch),
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-        con = Console(proc, log, TYPING_RATE.get(platform))
+        con = Console(proc, log, TYPING_RATE.get(platform), NUDGE.get(platform))
         start = time.monotonic()
         try:
-            got = con.expect(MENU, LOGIN, FAILURE, timeout=timeout)
+            got = con.expect(MENU, LOGIN, FAILURE, timeout=timeout, nudge="")
             if got == 2:
                 print(f"{mode}: boot FAILED (see {log_path})")
                 return False
@@ -248,13 +285,13 @@ def run(img: str, platform: str, mode: str, media: str, log_path: str, timeout: 
                 # Either agetty's "login: root (automatic login)" on the way
                 # to BackOtter's menu or a root shell, or a real login prompt.
                 try:
-                    got = con.expect(MENU, PROMPT, timeout=20)
+                    got = con.expect(MENU, PROMPT, timeout=20, nudge="")
                 except TimeoutError:
                     got = None
             as_root = True
             if got == 0:
                 con.send("1\n")   # BackOtter's console: "Shell"
-                con.expect(PROMPT, timeout=30)
+                con.expect(PROMPT, timeout=30, nudge="\r")
             elif got is None:
                 con.send(user + "\n")
                 if con.expect(re.compile(rb"Password: $"), PROMPT, timeout=30) == 0:
@@ -262,7 +299,7 @@ def run(img: str, platform: str, mode: str, media: str, log_path: str, timeout: 
                     con.expect(PROMPT, timeout=30)
                 as_root = False
             con.send("export TERM=dumb; stty -echo" + ("" if as_root else "; sudo -i") + "\n")
-            con.expect(PROMPT, timeout=30)
+            con.expect(PROMPT, timeout=30, nudge="\r")
             # A line at a time, and after a check only once it has printed its
             # result: the guest's tty buffers little input (4 KB on Linux, 1 KB
             # on NetBSD), and drops what's typed beyond that while a slow
@@ -291,6 +328,8 @@ def run(img: str, platform: str, mode: str, media: str, log_path: str, timeout: 
             for name, status, detail in results:
                 all_ok &= status == b"ok"
                 print(f"  {status.decode():4} {name.decode():20} {detail.decode(errors='replace').strip()}")
+            for note in con.notes:
+                print(f"  note: {note}")
             if manifest:
                 fields = manifest_fields(log_contents(log_path))
                 write_manifest(manifest, fields)
@@ -304,6 +343,9 @@ def run(img: str, platform: str, mode: str, media: str, log_path: str, timeout: 
                 pass
             return all_ok
         except (TimeoutError, EOFError) as e:
+            for note in con.notes:
+                if note != str(e):
+                    print(f"  note: {note}")
             print(f"{mode}: {e} (see {log_path})")
             return False
         finally:

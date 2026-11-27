@@ -1551,6 +1551,53 @@ this spec's speedups 2 and 7.
   the build host, and ship the finished image to Chopin for its vm-store
   publish. *Stays on Chopin:* the publish (D2). *Proof:* one make-*.sh build
   on copland, published from Chopin, then GuestTest2 PASS.
+  *Built 2026-11-27:* `testvm/rebuild-on` (on the Mac; its host half
+  `testvm/rebuild_on_host.py`, sent over ssh). The inputs are copied per
+  guest, when a build needs them, not as the whole tree: Chopin's is 98 GiB
+  (hard links counted once) and Copland had 124 GiB free. `rebuild-on inputs
+  GUEST --host H` copies what `rebuild-one.sh --inputs GUEST` names (a new
+  read-only mode: the guest's own folder or the one it shares, and each
+  folder its recipe or ISO check names), or, for a guest Chopin has no
+  folder for, the input files of Chopin's `vms/GUEST` (`--input-files`, the
+  build's own filter, symlinks followed) as H's `rebuild-inputs/GUEST`: host
+  to host by tar over ssh, into a part folder renamed at the end. A copied
+  file over 64 MiB that H holds already elsewhere there (size and SHA-256)
+  becomes a hard link to it. It refuses, before copying, a folder H holds
+  that differs from Chopin's (naming the files with other bytes, missing or
+  only there: move it aside, nothing is overwritten under a running build),
+  a folder the recipe names that Chopin lacks, and a copy that would leave
+  H under `BKO_REBUILD_FLOOR_GIB` (50) free; then every file's SHA-256 is
+  compared on both (C7's "same inputs"). `rebuild-on build GUEST --reserve D
+  M` takes the host `pick-host --reserve D M` chooses among the default
+  amd64 build hosts (not choubox), or `--host`, copies the inputs, and runs
+  `rebuild-one.sh` there from a fixed copy of testvm/ (the host's synced one,
+  or `--testvm` from the Mac) in `--dir` (default `/bkoscratch/rebuild`)
+  under its `cmp-run.sh` (GUEST=D%M, WEAR_TAG `rebuild:TAG`), detached, so a
+  lost ssh doesn't stop it; the copy is refused while a rebuild runs from
+  it (a lock the job holds shared). `rebuild-on ship GUEST --host H` takes
+  only a guest that built and booted (build.exit 0, rebuild-boot.json),
+  copies it to Chopin's `--to` folder (default `/bkoscratch/rebuild/vms`),
+  compares its disks' SHA-256 on both, and with `--publish` runs Chopin's
+  `vm-store publish --from` (a rebuild has no image-state: an `i` version,
+  latest moves only for a new guest or `--set-latest`). Cage's
+  `rebuild-inputs/qubes43` is not Chopin's (its own `-bko` ISO, the
+  release ISO missing), so `inputs qubes43 --host cage` refuses it, as built.
+  *Proof:* `rebuild-on build alpine324 --reserve 4 4 --host copland`
+  (private `--dir /bkoscratch/imgspeed/F12/rebuild`, `--testvm` this
+  commit's) copied Chopin's `alpine324` inputs to copland (7 files, 1.5 GiB,
+  SHA-256 equal), built in 71 s and booted (ssh, openrc, every service
+  started); `ship --publish` copied it to Chopin (disk sha256 f2eb4ee7 on
+  both) and published it there as `i1a4a05f3ae5b1fff`, into a private mirror
+  (`VM_STORE_ROOT=/bkoscratch/imgspeed/F12/store`, `--no-relink`: the real
+  store and its caches untouched). Then `t2 GuestTest2 alpine324 --hosts
+  chopin` in a private world (T2_WORK `/bkoscratch/imgspeed/F12/world`
+  holding the shipped guest and this commit's testvm/, private T2 roots)
+  PASSed (t2v-20261127T0854-2382; the disk the store's object). Its first
+  valid run failed only on 4 log lines a never-updated guest prints on
+  first boot and first update (new ssh host keys; apk's "Preupgrading" and
+  "Continuing with the main upgrade transaction"; "Caching service
+  dependencies"), accepted in the private baseline only. 23 tests
+  (test_rebuild_on: a fixture farm behind a fake ssh); t2 self-test all ok.
 - **F13. Ties go to Chopin (yes) (user: FD2).** The planners break ties by
   table order, and Chopin is row 1 (`run-all.sh` split_share,
   `gate.py host_for`, `plan.py` estimate's packing and its gate placement,

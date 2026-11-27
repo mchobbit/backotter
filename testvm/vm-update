@@ -2747,7 +2747,12 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
             # only with it.  The guest stands as it was: nothing to merge,
             # but what it is can still be recorded.
             generation = state_now["generation"]
-            if not sidecar_current(read_json(ref, name, FP_FILE), generation):
+            side_now = read_json(ref, name, FP_FILE)
+            if ship and sidecar_current(side_now, generation) and ((side_now.get("holt") or {}).get("digest")):
+                # --ship: the row reads the fingerprint from result.json (the
+                # cache's own sidecar can be of older rules), so name the fleet's.
+                res["fingerprint"] = side_now["holt"]["digest"]
+            if not sidecar_current(side_now, generation):
                 res["phase"] = "dump"
                 dump, why = vm.dump(uname)
                 if (rec := make_record(g, res, dump, why, listing_after)) is not None:

@@ -1365,7 +1365,14 @@ this spec's speedups 2 and 7.
   not. A `--ship` of alpine324 from cinqcent with the fix left no RAM folder
   on either host, and gave fingerprint b2df5cbe a third time. Tests: test_vm_update (TestShip,
   TestShipArguments, TestShipScripts, TestCheckHostsRef: 27), test_guest
-  (UpdateSpread: 9, and a shipped row's fingerprint and count). Rescue images built on all build hosts (yes).** This is speedup 2:
+  (UpdateSpread: 9, and a shipped row's fingerprint and count).
+  *Review (2026-11-27):* a shipped update with nothing to change, its fleet
+  sidecar already current, wrote no fingerprint to result.json, so the round
+  reported freebsd15-geli-bios "no fingerprint" where Chopin's own run says
+  "fingerprint unchanged"; vm-update --ship now names the fleet's digest
+  there (test_vm_update TestShip). A `--ship` of freebsd15-geli-bios from
+  cinqcent into the round's world gave 7b6439f4, its Chopin sidecar's.
+- **F2. Rescue images built on all build hosts (yes).** This is speedup 2:
   §5, steps I7 and I8.
 - **F3. BackShot2 tier 1 and 2 of the large desktop sources (partly)
   (user: FD3).** `bs2:285 disk_ok()` admits SSD cases only on

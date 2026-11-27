@@ -5719,6 +5719,20 @@ class TestShip(TestFlow):
         self.assertEqual(wrote, [("fleet.local", VU.FP_FILE)], "never this host's copy, a cache's")
         self.assertEqual(kept, ["fleet.local"])
 
+    def test_nothing_changed_with_the_fleets_sidecar_current_names_its_fingerprint(self):
+        # Seen 2026-11-27 (t2v-20261127T0946-bf41): freebsd15-geli-bios, shipped from cinqcent with
+        # nothing to change, reported "no fingerprint" where Chopin's own run says "unchanged"
+        FakeVM.listings = (BEFORE, BEFORE)
+        side = {"generation": self.state["generation"], "holt": {"digest": "d" * 64}}
+        wrote = []
+        with mock.patch.object(VU, "write_json", lambda h, n, name, data: wrote.append((h, name))), \
+                mock.patch.object(VU, "read_json", lambda h, n, name: dict(self.state) if name == VU.STATE_FILE
+                                  else dict(side) if name == VU.FP_FILE and h == "fleet.local" else None):
+            msg, res = self.run_ship()
+        self.assertIn("nothing changed", msg)
+        self.assertEqual(res["fingerprint"], "d" * 64)
+        self.assertEqual(wrote, [], "the fleet's sidecar is current: nothing rewritten")
+
     def test_no_architecture_on_the_fleet_is_refused(self):
         with mock.patch.object(VU, "arch_hosts", lambda name, hosts: []), self.assertRaisesRegex(VU.Failed, "nowhere to merge"):
             VU.update("g1", self.args(ship=True), ["fleet.local"])

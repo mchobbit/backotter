@@ -1,4 +1,4 @@
-"""img-speed.md I10: holt-cross.sh's refusals (a check build never lands in CODE/PLAT/, §8.2a)
+"""img-speed.md I10, I11: holt-cross.sh's refusals (a check build never lands in CODE/PLAT/, §8.2a)
 and holt_e2.py's E2 judges (§8.2), on fixture ELF files and documents.  No host needed; the
 shell tests need bash 4 with realpath and timeout (the test hosts')."""
 
@@ -32,9 +32,11 @@ def modern_bash():   # (test_holt's)
 
 
 def elf(path, interp="/libexec/ld-elf.so.1", needed=("libc.so.7",), rpath=None, flags_1=0x8000001,
-        notes=(("FreeBSD", 1, struct.pack("<I", 1405000)),), wx=False, etype=3):
+        notes=(("FreeBSD", 1, struct.pack("<I", 1405000)),), wx=False, etype=3, osabi=None, code=b"",
+        extra_ph=(), note_flags=2):
     """A small ELF64 file: PHDR-less, one LOAD over the whole file at vaddr 0, INTERP, DYNAMIC,
-    GNU_RELRO and a note section."""
+    GNU_RELRO, a note section, CODE in the file (the LOAD is R+E) and EXTRA_PH (types) as empty
+    segments."""
     strtab = b"\0"
     offs = []
     for n in list(needed) + ([rpath] if rpath else []):
@@ -46,7 +48,7 @@ def elf(path, interp="/libexec/ld-elf.so.1", needed=("libc.so.7",), rpath=None, 
         notes_b += struct.pack("<III", len(o), len(desc), typ) + o.ljust((len(o) + 3) & ~3, b"\0") + \
             desc.ljust((len(desc) + 3) & ~3, b"\0")
     shstr = b"\0.shstrtab\0.note.tag\0"
-    phnum = 4
+    phnum = 4 + len(extra_ph)
     a_interp = 64 + 56 * phnum
     ib = interp.encode() + b"\0"
     a_str = a_interp + len(ib)
@@ -56,12 +58,16 @@ def elf(path, interp="/libexec/ld-elf.so.1", needed=("libc.so.7",), rpath=None, 
     db = b"".join(struct.pack("<qQ", t, v) for t, v in dyn)
     a_note = a_dyn + len(db)
     a_shs = a_note + len(notes_b)
-    a_sh = (a_shs + len(shstr) + 7) & ~7
+    a_code = a_shs + len(shstr)
+    a_sh = (a_code + len(code) + 7) & ~7
     size = a_sh + 64 * 3
     lf = 7 if wx else 5
     ph = [(3, 4, a_interp, a_interp, a_interp, len(ib), len(ib), 1), (1, lf, 0, 0, 0, size, size, 0x1000),
           (2, 6, a_dyn, a_dyn, a_dyn, len(db), len(db), 8), (0x6474e552, 4, a_dyn, a_dyn, a_dyn, len(db), len(db), 1)]
-    hdr = b"\x7fELF" + bytes([2, 1, 1, 9 if "ld-elf" in interp else 0]) + b"\0" * 8 + \
+    ph += [(t, 4, 0, 0, 0, 0, 0, 1) for t in extra_ph]
+    if osabi is None:
+        osabi = 9 if "ld-elf" in interp else 0
+    hdr = b"\x7fELF" + bytes([2, 1, 1, osabi]) + b"\0" * 8 + \
         struct.pack("<HHIQQQIHHHHHH", etype, 62, 1, 0, 64, a_sh, 0, 64, 56, phnum, 64, 3, 1)
     b = bytearray(size)
     b[:64] = hdr
@@ -72,7 +78,8 @@ def elf(path, interp="/libexec/ld-elf.so.1", needed=("libc.so.7",), rpath=None, 
     b[a_dyn:a_dyn + len(db)] = db
     b[a_note:a_note + len(notes_b)] = notes_b
     b[a_shs:a_shs + len(shstr)] = shstr
-    sh = [(0,) * 10, (1, 3, 0, 0, a_shs, len(shstr), 0, 0, 1, 0), (11, 7, 2, a_note, a_note, len(notes_b), 0, 0, 4, 0)]
+    b[a_code:a_code + len(code)] = code
+    sh = [(0,) * 10, (1, 3, 0, 0, a_shs, len(shstr), 0, 0, 1, 0), (11, 7, note_flags, a_note, a_note, len(notes_b), 0, 0, 4, 0)]
     for i, s in enumerate(sh):
         b[a_sh + 64 * i:a_sh + 64 * (i + 1)] = struct.pack("<IIQQQQIIQQ", *s)
     with open(path, "wb") as f:
@@ -130,6 +137,53 @@ class E2Judges(unittest.TestCase):
         self.assertIn("explained rpath: VM ['/usr/pkg/lib/libatomic'] cross []", out)
         rc, out = self.run_cmd(["elf", "illumos", vm, x])
         self.assertEqual(rc, 1, out)
+
+    # --- I11: OpenBSD's IBT handling (§8.2 step 0, D11) ----------------------------------------------
+    OB = dict(interp="/usr/libexec/ld.so", needed=("libc.so.104.0",), osabi=12)
+    IBT_NOTE = ("GNU", 5, struct.pack("<IIII", 0xc0000002, 4, 1, 0))
+    PADS = holt_e2.ENDBR64 * 64 + b"\xc3" * 16
+
+    def ob(self, name, pads=True, note=True, nobtcfi=False):
+        return elf(self.p(name), notes=((("OpenBSD", 1, b"\0" * 4),) + ((self.IBT_NOTE,) if note else ())),
+                   code=self.PADS if pads else b"\x90" * 300, extra_ph=(0x65a3dbe8,) if nobtcfi else (), **self.OB)
+
+    def test_openbsd_ibt_is_read(self):
+        self.assertEqual(holt_e2.shape(self.ob("a"))["ibt"], "landing pads, GNU property IBT")
+        self.assertEqual(holt_e2.shape(self.ob("b", pads=False, note=False))["ibt"], "no landing pads, no GNU property IBT")
+        self.assertEqual(holt_e2.shape(self.ob("c", nobtcfi=True))["ibt"], "NOBTCFI (opted out)")
+        self.assertNotIn("ibt", holt_e2.shape(elf(self.p("f"))), "OpenBSD's alone (EI_OSABI 12)")
+
+    def test_openbsd_ibt_difference_fails(self):
+        vm = self.ob("vm")
+        rc, out = self.run_cmd(["elf", "openbsd", vm, self.ob("same")])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("same ibt: landing pads, GNU property IBT", out)
+        for name, kw in (("nopads", {"pads": False}), ("nonote", {"note": False}), ("nobtcfi", {"nobtcfi": True})):
+            rc, out = self.run_cmd(["elf", "openbsd", vm, self.ob(name, **kw)])
+            self.assertEqual(rc, 1, (name, out))
+            self.assertIn("DIFF ibt: VM landing pads, GNU property IBT cross ", out)
+
+    def test_xonly_marks_a_code_segment_alone(self):
+        x = elf(self.p("x"), note_flags=6, **self.OB)   # (its one LOAD holds an SHF_EXECINSTR section alone)
+        rc, out = self.run_cmd(["xonly", x])
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(holt_e2.shape(x)["load_flags"], ["E"])
+        d = elf(self.p("d"), **self.OB)   # (a data section in it: the code might read it)
+        with open(d, "rb") as f:
+            before = f.read()
+        rc, out = self.run_cmd(["xonly", d])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("not code alone", out)
+        with open(d, "rb") as f:
+            self.assertEqual(f.read(), before)
+
+    def test_version_needs_met_by_the_sysroot(self):
+        vm = elf(self.p("vm"))
+        x = elf(self.p("x"))
+        a, b = holt_e2.shape(vm), holt_e2.shape(x)
+        self.assertEqual(a, b)
+        # unmet_versions: a library the sysroot lacks, or one without the version, is unmet.
+        self.assertEqual(holt_e2.unmet_versions(["libc.so.8 DF506.0"], self.d), ["libc.so.8 DF506.0"])
 
     def test_api_ignores_the_build_fields_only(self):
         a = {"api": 3, "documents": {"dump": 4}, "features": ["zfs"], "image": {"dump_schemas": [1]}, "platform": "freebsd"}
@@ -257,10 +311,17 @@ class HoltCrossRefuses(unittest.TestCase):
         self.assertEqual(r.returncode, 2, r.stderr)
 
     def test_platforms_not_built_here(self):
-        for p, why in (("openbsd", "I11"), ("dragonfly", "I11"), ("haiku", "VM build"), ("linux", "freebsd, netbsd or illumos")):
+        for p, why in (("haiku", "VM build"), ("linux", "freebsd, netbsd, illumos, openbsd or dragonfly")):
             r = self.run_tool(p)
             self.assertEqual(r.returncode, 2, (p, r.stderr))
             self.assertIn(why, r.stderr)
+
+    def test_tier3_code_plat_is_refused(self):   # (I11: openbsd and dragonfly as the others)
+        code = os.path.join(self.d, "t2", "holt-bin", "c" * 64)
+        for p in ("openbsd", "dragonfly"):
+            r = self.run_tool(p, HOLT_OUT=os.path.join(code, p))
+            self.assertEqual(r.returncode, 2, (p, r.stderr))
+            self.assertIn(f"must end in cross/{p}", r.stderr)
 
 
 FLOCK = shutil.which("flock") and shutil.which("sha256sum") and BASH
@@ -315,6 +376,90 @@ class HoltCrossSysrootLock(unittest.TestCase):
         j = jload_file(info)
         self.assertEqual((j["build"], j["kind"]), ("cross:1.94.1:freebsd14@" + "ab" * 6, "cross"))
         self.assertTrue(j["clang"] and j["lld"], j)
+
+
+@unittest.skipUnless(FLOCK, "needs flock, sha256sum and GNU stat (the test hosts')")
+class HoltCrossTier3(unittest.TestCase):
+    """I11: openbsd and dragonfly build with the pinned nightly and -Zbuild-std (rustup has no std
+    for them), OpenBSD's with -Zcf-protection=branch, and OpenBSD's lld takes -lNAME as OpenBSD's
+    ld does (a fake world: rustup, cargo, clang and ld.lld stubs, a current sysroot)."""
+
+    def build(self, plat, vm, target, libs=()):
+        d = tempfile.mkdtemp(prefix="t2-i11-")
+        self.addCleanup(shutil.rmtree, d, True)
+        home, work, cache, bind = (os.path.join(d, x) for x in ("home", "work", "cache", "bin"))
+
+        def put(path, text, mode=0o644):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(text)
+            os.chmod(path, mode)
+        put(os.path.join(home, ".cargo", "bin", "rustup"),
+            '#!/bin/sh\ncase "$1 $4" in\n "run --print") echo /fake/sysroot ;;\n run*) echo "rustc 1.101.0-nightly (fake)" ;;\n'
+            ' component*) echo rust-src ;;\n target*) ;;\nesac\n', 0o755)
+        put(os.path.join(home, ".cargo", "bin", "cargo"),
+            '#!/usr/bin/env bash\nprintf "%s\\n" "$RUSTUP_TOOLCHAIN" "$RUSTFLAGS" "$*" >"$PROBE"\n'
+            f'mkdir -p "$CARGO_TARGET_DIR/{target}/release"\ncp "$FAKE_ELF" "$CARGO_TARGET_DIR/{target}/release/bko-holt"\n', 0o755)
+        put(os.path.join(bind, "clang"), '#!/bin/sh\necho "fake clang 1"\n', 0o755)
+        put(os.path.join(bind, "ld.lld"), '#!/bin/sh\nprintf "%s\\n" "$@"\n', 0o755)
+        img = os.path.join(work, "vms", vm, vm + ".qcow2")
+        put(img, "image")
+        put(os.path.join(work, "vms", vm, "id_ed25519"), "key")
+        st = os.stat(img)
+        sr = os.path.join(cache, "sysroot", vm)
+        put(os.path.join(sr, ".image"), f"vms/{vm}/{vm}.qcow2\n{vm}.qcow2 {st.st_size} {int(st.st_mtime)}\n")
+        put(os.path.join(sr, ".digest"), "cd" * 32 + "\n")
+        for lib in libs:
+            put(os.path.join(sr, "usr", "lib", lib), "")
+        src = os.path.join(d, "src")
+        for n in ("Cargo.toml", "Cargo.lock", "LICENSE", "src/main.rs", "tests/t.rs"):
+            put(os.path.join(src, n), "")
+        tmp = os.path.join(d, "tmp")
+        os.makedirs(tmp)
+        out, info, probe = os.path.join(d, "t2", "CODE", "cross", plat), os.path.join(d, "info.json"), os.path.join(d, "probe")
+        env = dict(os.environ, HOME=home, BKO_WORK=work, HOLT_CROSS_CACHE=cache, HOLT_SRC=src, HOLT_OUT=out,
+                   HOLT_LOGS=os.path.join(d, "logs"), HOLT_INFO=info, TMPDIR=tmp,
+                   PATH=bind + os.pathsep + os.environ["PATH"], PROBE=probe,
+                   FAKE_ELF=elf(os.path.join(d, "fake-elf"), note_flags=6, interp="/usr/libexec/ld.so", osabi=12))
+        r = subprocess.run([BASH, os.path.join(H1D, "holt-cross.sh"), plat], capture_output=True, text=True,
+                           env=env, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        with open(probe) as f:
+            tc, flags, args = f.read().split("\n")[:3]
+        return tc, flags, args, jload_file(info), tmp
+
+    def test_openbsd(self):
+        tc, flags, args, info, tmp = self.build("openbsd", "openbsd8", "x86_64-unknown-openbsd",
+                                                libs=("libc.so.103.0", "libc.so.104.0", "libc.so.97.2", "libc.a",
+                                                      "libc++abi.so.10.0", "libcompiler_rt.a", "libm.so"))
+        self.assertEqual(tc, "nightly-2026-10-31")
+        self.assertIn("-Zbuild-std=std,panic_unwind", args.split())
+        self.assertNotIn("--offline", args.split(), "std's crates may come from crates.io")
+        self.assertIn("--locked", args.split())
+        self.assertIn("-Zcf-protection=branch", flags.split(), "IBT landing pads, std's included (D11)")
+        self.assertIn("--remap-path-prefix=/fake/sysroot/lib/rustlib/src/rust=/rustc/src", flags.split())
+        self.assertEqual(holt_e2.shape(info["out"])["load_flags"], ["E"], "execute-only, as OpenBSD's lld links")
+        self.assertEqual((info["build"], info["toolchain"], info["tier"]),
+                         ("cross:nightly-2026-10-31:openbsd8@" + "cd" * 6, "nightly-2026-10-31", 3))
+        # The linker: -lNAME is the newest libNAME.so.MAJOR.MINOR (not libc.a), by name in DT_NEEDED.
+        r = subprocess.run([os.path.join(tmp, "holt-cross-ld"), "-o", "x", "-L/usr/lib", "-lc", "-lc++abi", "-lcompiler_rt", "-lm",
+                            "-lnone", "-l:libc.so.97.2"], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.split(), ["-o", "x", "-L" + os.path.join(os.path.dirname(tmp), "cache", "sysroot", "openbsd8", "usr", "lib"), "-l:libc.so.104.0", "-l:libc++abi.so.10.0", "-lcompiler_rt",
+                                            "-lm", "-lnone", "-l:libc.so.97.2"])
+
+    def test_dragonfly(self):
+        tc, flags, args, info, tmp = self.build("dragonfly", "dragonfly6", "x86_64-unknown-dragonfly")
+        self.assertEqual(tc, "nightly-2026-10-31")
+        self.assertIn("-Zbuild-std=std,panic_unwind", args.split())
+        self.assertNotIn("-Zcf-protection=branch", flags.split(), "DragonFly's VM build has no landing pads")
+        self.assertEqual(info["build"], "cross:nightly-2026-10-31:dragonfly6@" + "cd" * 6)
+        self.assertFalse(os.path.exists(os.path.join(tmp, "holt-cross-ld")))
+        self.assertEqual(holt_e2.shape(info["out"])["load_flags"], ["RE"], "xonly is OpenBSD's alone")
+        with open(os.path.join(tmp, "holt-cross-cc")) as f:
+            cc = f.read()
+        for w in ("-Wl,-pie", "-Wl,--dynamic-linker=/libexec/ld-elf.so.2", "-Wl,-rpath,/usr/lib/gcc80"):
+            self.assertIn(w, cc, "as DragonFly's gcc links")
 
 
 def jload_file(path):

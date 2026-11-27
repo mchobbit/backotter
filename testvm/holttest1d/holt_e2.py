@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""E2, a cross-built bko-holt against its VM build (docs/design/img-speed.md §8.2; I10).
+"""E2, a cross-built bko-holt against its VM build (docs/design/img-speed.md §8.2; I10, I11).
 
-  holt_e2.py elf PLATFORM VM_BIN CROSS_BIN      step 0: the ELF shape
+  holt_e2.py elf PLATFORM VM_BIN CROSS_BIN [SYSROOT]
+                                                step 0: the ELF shape (SYSROOT: the cross build's,
+                                                holt-cross.sh's cache, for the symbol versions)
   holt_e2.py api VM.json CROSS.json             step 1: `bko-holt --version --json`
   holt_e2.py tests NATIVE_DIR CROSS_DIR [PLAT]   step 2: the test binaries' results, cross against native
                                                 (each DIR: tests.tsv NAME RC SECS, NAME.log)
   holt_e2.py dumps PLATFORM VM_RECORDS CROSS_RECORDS GUEST...
                                                 step 3: two HoltTest runs' dumps, by judge.py
   holt_e2.py artifacts CARGO.json               the executables a cargo --message-format=json run made
+  holt_e2.py xonly FILE                         (holt-cross.sh, openbsd) mark FILE's code segment
+                                                execute-only, as OpenBSD's own lld links it
   holt_e2.py fetch DEST RUN GUEST...            (on the Mac) step 3's records: each GUEST's K of
                                                 HoltTest2 run RUN (or its rerun RUN-r2, when that
                                                 is the one that passed), report.txt and dumps/, from
@@ -24,7 +28,11 @@ the DT_NEEDED libraries in order, DT_RPATH and DT_RUNPATH, DT_FLAGS and DT_FLAGS
 the symbol versions each library must define (.gnu.version_r, which illumos's .SUNW_version
 is in the same format), and every note (owner, type, descriptor; a GNU build-id's descriptor
 is the build's own).  A difference is a FAIL unless EXPLAINED names it for the platform,
-with why it is no difference in behaviour; an explained one is printed as such.
+with why it is no difference in behaviour; an explained one is printed as such.  For OpenBSD
+(EI_OSABI 12) it also reads the IBT handling (D11), the only guard there is, since no farm CPU
+enforces IBT: PT_OPENBSD_NOBTCFI, the GNU property note's IBT bit (which lld and GNU ld write only
+when every object linked has it), and whether the executable segments are full of endbr64 landing
+pads (at least one per 4 KiB) or have none to speak of.
 
 Step 1 compares the two JSON documents, apart from the build fields (features,
 dump_schemas and platform, wherever they are) and generated (the time it was written).  Step 2:
@@ -46,10 +54,10 @@ import sys
 PT = {0: "NULL", 1: "LOAD", 2: "DYNAMIC", 3: "INTERP", 4: "NOTE", 5: "SHLIB", 6: "PHDR", 7: "TLS",
       0x6474e550: "GNU_EH_FRAME", 0x6474e551: "GNU_STACK", 0x6474e552: "GNU_RELRO", 0x6474e553: "GNU_PROPERTY",
       0x6464e550: "SUNW_UNWIND", 0x6ffffffa: "SUNWBSS", 0x6ffffffb: "SUNWSTACK",
-      0x65a3dbe6: "OPENBSD_RANDOMIZE", 0x65a3dbe7: "OPENBSD_WXNEEDED", 0x65a3dbe8: "OPENBSD_NOBTCFI",
+      0x65a3dbe5: "OPENBSD_MUTABLE", 0x65a3dbe6: "OPENBSD_RANDOMIZE", 0x65a3dbe7: "OPENBSD_WXNEEDED", 0x65a3dbe8: "OPENBSD_NOBTCFI",
       0x65a41be6: "OPENBSD_BOOTDATA", 0x65a3dbe9: "OPENBSD_SYSCALLS"}
 DT_NEEDED, DT_STRTAB, DT_RPATH, DT_TEXTREL, DT_RUNPATH, DT_FLAGS, DT_FLAGS_1, DT_BIND_NOW = 1, 5, 15, 22, 29, 30, 0x6ffffffb, 24
-DT_VERNEED, DT_VERNEEDNUM = 0x6ffffffe, 0x6fffffff
+DT_VERNEED, DT_VERNEEDNUM, DT_VERDEF, DT_VERDEFNUM = 0x6ffffffe, 0x6fffffff, 0x6ffffffc, 0x6ffffffd
 DF = {0x1: "ORIGIN", 0x2: "SYMBOLIC", 0x4: "TEXTREL", 0x8: "BIND_NOW", 0x10: "STATIC_TLS"}
 DF_1 = {0x1: "NOW", 0x8: "NODELETE", 0x20: "INTERPOSE", 0x8000000: "PIE", 0x4: "GROUP", 0x80: "NOOPEN",
         0x100: "ORIGIN", 0x800: "NODEFLIB", 0x1000: "NODUMP"}
@@ -151,6 +159,35 @@ class Elf:
         return out
 
 
+ENDBR64 = bytes.fromhex("f30f1efa")
+GNU_PROPERTY_X86_FEATURE_1_AND, X86_FEATURE_1_IBT = 0xc0000002, 1
+
+
+def ibt(e):
+    """OpenBSD's IBT handling (§8.2 step 0, D11): its kernel kills a binary that branches
+    indirectly to anything but an endbr64 on a CPU with IBT, unless PT_OPENBSD_NOBTCFI opts out."""
+    if any(t == 0x65a3dbe8 for t, *_ in e.ph):
+        return "NOBTCFI (opted out)"
+    prop = False
+    for owner, typ, desc in e.notes():
+        if owner == "GNU" and typ == 5:   # NT_GNU_PROPERTY_TYPE_0: (type, size, data) records, 8-aligned
+            p = 0
+            while p + 8 <= len(desc):
+                pt, ps = struct.unpack_from("<II", desc, p)
+                if pt == GNU_PROPERTY_X86_FEATURE_1_AND and ps >= 4:
+                    prop = prop or bool(struct.unpack_from("<I", desc, p + 8)[0] & X86_FEATURE_1_IBT)
+                p += 8 + ((ps + 7) & ~7)
+    size = pads = 0
+    for t, fl, off, *_r in e.ph:
+        if t == 1 and fl & 1:
+            filesz = _r[3]
+            size += filesz
+            pads += e.b.count(ENDBR64, off, off + filesz)
+    words = ["landing pads" if pads and pads * 4096 >= size else "no landing pads"]
+    words.append("GNU property IBT" if prop else "no GNU property IBT")
+    return ", ".join(words)
+
+
 def flags_words(v, table):
     return sorted(n for bit, n in table.items() if v & bit) + ([f"{v & ~sum(table):#x}"] if v & ~sum(table) else [])
 
@@ -176,6 +213,8 @@ def shape(path):
             segs.add(f"{PT.get(t, hex(t))} {fw}")
     d["segments"], d["load_flags"], d["wx"] = sorted(segs), sorted(loads), wx
     d["relro"] = any(t == 0x6474e552 for t, *_ in e.ph)
+    if e.osabi == 12:   # ELFOSABI_OPENBSD
+        d["ibt"] = ibt(e)
     if dyn:
         stro = e.vaddr_off(tags[DT_STRTAB][0])
         s = lambda o: e.cstr(stro + o)   # noqa: E731
@@ -214,7 +253,40 @@ def shape(path):
     return d
 
 
-def cmd_elf(plat, vm, cross):
+def version_defs(path):
+    """The symbol versions a shared library defines (.gnu.version_d), as "LIB VERSION"."""
+    e = Elf(path)
+    tags = {}
+    for t, v in e.dynamic():
+        tags.setdefault(t, []).append(v)
+    if DT_VERDEF not in tags or DT_STRTAB not in tags:
+        return set()
+    stro, o, out = e.vaddr_off(tags[DT_STRTAB][0]), e.vaddr_off(tags[DT_VERDEF][0]), set()
+    for _ in range((tags.get(DT_VERDEFNUM) or [0])[0]):
+        _v, flags, _ndx, _cnt, _h, aux, nxt = struct.unpack_from("<HHHHIII", e.b, o)
+        if not flags & 1:   # (VER_FLG_BASE: the file's own name)
+            out.add(e.cstr(stro + struct.unpack_from("<I", e.b, o + aux)[0]))
+        if not nxt:
+            break
+        o += nxt
+    return out
+
+
+def unmet_versions(needs, sysroot):
+    """Of NEEDS ("LIB VERSION"), those that the sysroot's LIB doesn't define (in lib/, usr/lib/)."""
+    defs, unmet = {}, []
+    for n in needs:
+        lib, ver = n.split(" ", 1)
+        if lib not in defs:
+            p = next((os.path.join(sysroot, d, lib) for d in ("lib", "usr/lib")
+                      if os.path.isfile(os.path.join(sysroot, d, lib))), None)
+            defs[lib] = version_defs(p) if p else None
+        if defs[lib] is None or ver not in defs[lib]:
+            unmet.append(n)
+    return unmet
+
+
+def cmd_elf(plat, vm, cross, sysroot=None):
     a, b = shape(vm), shape(cross)
     out, bad = [], []
     for k in sorted(set(a) | set(b)):
@@ -225,6 +297,11 @@ def cmd_elf(plat, vm, cross):
             out.append(f"explained {k}: the cross build needs a subset, it lacks {sorted(set(a[k]) - set(b[k]))} "
                        "(its std is the pinned toolchain's, older than the guest's packaged Rust: every "
                        "version it needs the VM build needs too, so it runs wherever the VM build runs)")
+            continue
+        if k == "version_needs" and sysroot and not unmet_versions(b.get(k) or (), sysroot):
+            out.append(f"explained {k}: VM {a.get(k)} cross {b.get(k)} (the two call different libc symbols, "
+                       "each std its own Rust's; every version the cross build needs is defined by its sysroot's "
+                       f"library, {sysroot}: the guest's own, of the release the images carry)")
             continue
         f = f"{k}: VM {a.get(k)} cross {b.get(k)}"
         why = next((w for pre, w in EXPLAINED.get(plat, ()) if f.startswith(pre)), None)
@@ -440,6 +517,34 @@ def cmd_fetch(dest, run, guests):
     return 1 if bad else 0
 
 
+def cmd_xonly(path):
+    """OpenBSD's lld links amd64 code execute-only (its LOAD is PF_X alone, where upstream lld 19,
+    which refuses --execute-only on x86-64, writes PF_R|PF_X).  Each R+X LOAD whose sections are all
+    code (SHF_EXECINSTR) is made PF_X alone, in place; a segment holding anything else (data the code
+    might read) refuses, exit 1, and FILE is left as it was."""
+    e = Elf(path)
+    phoff, phentsize = struct.unpack_from("<Q", e.b, 32)[0], struct.unpack_from("<H", e.b, 54)[0]
+    marks = []
+    for i, (t, fl, off, _va, _pa, filesz, _ms, _al) in enumerate(e.ph):
+        if t != 1 or fl != 5:   # PT_LOAD, PF_R|PF_X
+            continue
+        inside = [(n, sh) for n, sh in zip(e.sname, e.sh) if sh[5] and sh[1] != 8 and sh[2] & 2 and off <= sh[4] < off + filesz]
+        bad = [n for n, sh in inside if not sh[2] & 4]   # SHF_EXECINSTR
+        if bad or not inside:
+            print(f"xonly {path}: LOAD {i} holds {bad or 'no sections'}, not code alone: left as it is")
+            return 1
+        marks.append((i, [n for n, _ in inside]))
+    if not marks:
+        print(f"xonly {path}: no R+X LOAD")
+        return 1
+    with open(path, "r+b") as f:
+        for i, names in marks:
+            f.seek(phoff + i * phentsize + 4)
+            f.write(struct.pack("<I", 1))   # PF_X
+            print(f"xonly {path}: LOAD {i} ({' '.join(names)}) is now E")
+    return 0
+
+
 def cmd_artifacts(path):
     """cargo's --message-format=json: NAME<TAB>TEST<TAB>PATH for each executable it made (NAME: the
     target's kind and name, lib-bko_holt, test-cli, bin-bko-holt; TEST 1 for a test binary)."""
@@ -462,12 +567,14 @@ def cmd_artifacts(path):
 
 
 def main(argv):
-    if len(argv) == 4 and argv[0] == "elf":
+    if len(argv) in (4, 5) and argv[0] == "elf":
         return cmd_elf(*argv[1:])
     if len(argv) in (3, 4) and argv[0] == "api":
         return cmd_api(argv[1], argv[2], *(argv[3:]))
     if len(argv) in (3, 4) and argv[0] == "tests":
         return cmd_tests(argv[1], argv[2], *(argv[3:]))
+    if len(argv) == 2 and argv[0] == "xonly":
+        return cmd_xonly(argv[1])
     if len(argv) == 2 and argv[0] == "artifacts":
         return cmd_artifacts(argv[1])
     if len(argv) >= 4 and argv[0] == "fetch":

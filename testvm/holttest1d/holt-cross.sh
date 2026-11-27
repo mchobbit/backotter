@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Cross-build bko-holt for FreeBSD, NetBSD or illumos here on an amd64 Linux
-# host, with no guest booted once its sysroot is cached
-# (docs/design/img-speed.md §8.1, D9, D10; I10).  Run as m on a build host:
+# Cross-build bko-holt for FreeBSD, NetBSD, illumos, OpenBSD or DragonFly here
+# on an amd64 Linux host, with no guest booted once its sysroot is cached
+# (docs/design/img-speed.md §8.1, D9, D10; I10, I11).  Run as m on a build host:
 #
 #   holt-cross.sh PLATFORM                   build bko-holt (TMPDIR: cargo's target/, in the RAM disk)
 #   holt-cross.sh --reserved RUN PLATFORM    HoltTest2's: the same under a reservation of its own
@@ -10,13 +10,27 @@
 #
 # PLATFORM: freebsd (the sysroot of freebsd14, so that it runs on 14 and 15,
 # HardenedBSD and GhostBSD, as the VM build does), netbsd (netbsd11) or
-# illumos (omnios58).  openbsd and dragonfly are tier 3 (I11) and haiku
+# illumos (omnios58), openbsd (openbsd8) or dragonfly (dragonfly6).  haiku
 # stays a VM build (D9): refused, exit 2.
 #
-# Rust: rustup's pinned HOLT_RUST_TOOLCHAIN (default 1.94.1, the Linux
-# bko-holt's, D10), never the guest's packaged Rust nor the host's default;
-# its std for the target is rustup's (tier 2), added to that toolchain when
-# missing.  The link goes through clang and lld with --sysroot, as
+# Rust, never the guest's packaged Rust nor the host's default (D10): for the
+# tier-2 three, rustup's pinned HOLT_RUST_TOOLCHAIN (default 1.94.1, the Linux
+# bko-holt's), whose std for the target is rustup's, added to that toolchain
+# when missing; for openbsd and dragonfly (tier 3: rustup has no std for
+# them), the pinned nightly HOLT_RUST_NIGHTLY (default the one
+# stick/dragonfly/build-rustic.sh builds DragonFly's rustic-bko with), its
+# rust-src added when missing, and std built with the program
+# (-Zbuild-std=std,panic_unwind; std's own crates, which rust-src's Cargo.lock
+# pins, from cargo's cache or crates.io, so no --offline there).  OpenBSD's
+# VM build has IBT landing pads (endbr64, and lld's GNU property note, which
+# it writes only when every object carries one), so OpenBSD's code, std's
+# included, is built with -Zcf-protection=branch (§8.2 step 0, D11).  OpenBSD's
+# own lld does three things upstream lld does not, which this does instead:
+# -lNAME takes the newest libNAME.so.MAJOR.MINOR (a wrapper gives lld
+# -l:FILE), .openbsd.randomdata.* (the retguard cookies of the base's crt
+# objects) is gathered into .openbsd.randomdata and so PT_OPENBSD_RANDOMIZE
+# (an INSERT script), and the code segment is execute-only (holt_e2.py xonly,
+# once it holds code alone).  The link goes through clang and lld with --sysroot, as
 # stick/dragonfly/build-rustic.sh links DragonFly's rustic-bko: the host's
 # clang and ld.lld if it has them, else Debian's clang-N and lld-N (N the
 # host's newest libllvmN), downloaded with apt-get download and unpacked into
@@ -25,7 +39,7 @@
 # fetched for the build itself (cargo --offline --locked).
 #
 # The sysroot: /lib and /usr/lib (illumos: their amd64/ and gcc's runtime
-# and crt objects) copied once from a throwaway (-snapshot) boot of the
+# and crt objects; dragonfly: and /usr/lib/gcc80, gcc's crt objects and libgcc) copied once from a throwaway (-snapshot) boot of the
 # image the VM build builds in: stick/build-rustic-native.sh's build image
 # WORK/vms-bko-build/VM-rust.qcow2 when the host has one (build-holt.sh boots
 # it too; the test guests of NetBSD and OmniOS lack the comp set and the C
@@ -46,7 +60,7 @@
 # Default CACHE/out/cross/PLATFORM.  HOLT_LOGS (default
 # CACHE/logs/PLATFORM): build.log, the sysroot guest's logs.  HOLT_INFO=FILE
 # gets build-holt.sh's JSON (platform, sha256, rustc, host, time, src, out)
-# and kind "cross", build (the build kind), toolchain, target, sysroot,
+# and kind "cross", build (the build kind), toolchain, tier, target, sysroot,
 # sysroot_guest, sysroot_image, clang and lld (their --version lines: the
 # linker is not in the kind).  HOLT_SRC: the holt tree (default
 # WORK/holt-src).  HOLT_CROSS_CACHE: the cache (default WORK/holt-cross).
@@ -70,18 +84,21 @@ set -euo pipefail
 WORK=${BKO_WORK:-/home/m/backotter-work}
 HERE=$(dirname "$(realpath "$0")")
 CACHE=${HOLT_CROSS_CACHE:-$WORK/holt-cross}
-TC=${HOLT_RUST_TOOLCHAIN:-1.94.1}
 die() { echo "holt-cross: $*" >&2; exit "${2:-1}"; }
 
-plat_vars() {  # PLATFORM: TARGET CTARGET VM, or exit 2
+plat_vars() {  # PLATFORM: TARGET CTARGET VM TIER TC, or exit 2
+    TIER=2
     case $1 in
         freebsd) TARGET=x86_64-unknown-freebsd CTARGET=x86_64-unknown-freebsd14.0 VM=freebsd14 ;;
         netbsd) TARGET=x86_64-unknown-netbsd CTARGET=x86_64-unknown-netbsd11.0 VM=netbsd11 ;;
         illumos) TARGET=x86_64-unknown-illumos CTARGET=x86_64-pc-solaris2.11 VM=omnios58 ;;
-        openbsd|dragonfly) die "$1 is a tier-3 target (-Zbuild-std, a pinned nightly): I11, not built here" 2 ;;
+        openbsd) TARGET=x86_64-unknown-openbsd CTARGET=x86_64-unknown-openbsd VM=openbsd8 TIER=3 ;;
+        dragonfly) TARGET=x86_64-unknown-dragonfly CTARGET=x86_64-unknown-dragonfly VM=dragonfly6 TIER=3 ;;
         haiku) die "haiku stays a VM build (docs/design/img-speed.md D9)" 2 ;;
-        *) die "PLATFORM: freebsd, netbsd or illumos" 2 ;;
+        *) die "PLATFORM: freebsd, netbsd, illumos, openbsd or dragonfly" 2 ;;
     esac
+    # (stick/dragonfly/build-rustic.sh's TOOLCHAIN: rustc 1.101.0-nightly (92b5b8c87 2026-10-29))
+    if [[ $TIER == 3 ]]; then TC=${HOLT_RUST_NIGHTLY:-nightly-2026-10-31}; else TC=${HOLT_RUST_TOOLCHAIN:-1.94.1}; fi
 }
 
 # --- Where a build may land (§8.2a) ----------------------------------------------------
@@ -158,7 +175,12 @@ rustup=$HOME/.cargo/bin/rustup cargo=$HOME/.cargo/bin/cargo
 export RUSTUP_TOOLCHAIN=$TC RUSTUP_AUTO_INSTALL=0
 "$rustup" run "$TC" rustc -V >/dev/null 2>&1 ||
     die "no Rust $TC (HOLT_RUST_TOOLCHAIN): rustup toolchain install $TC --profile minimal"
-if ! "$rustup" target list --installed --toolchain "$TC" 2>/dev/null | grep -qxF "$TARGET"; then
+if [[ $TIER == 3 ]]; then
+    if ! "$rustup" component list --installed --toolchain "$TC" 2>/dev/null | grep -q '^rust-src'; then
+        [[ $mode == kind ]] || { echo "Adding rust-src to Rust $TC (rustup, in ~/.rustup)"
+            "$rustup" component add --toolchain "$TC" rust-src >&2; }
+    fi
+elif ! "$rustup" target list --installed --toolchain "$TC" 2>/dev/null | grep -qxF "$TARGET"; then
     [[ $mode == kind ]] || { echo "Adding $TARGET's std to Rust $TC (rustup, in ~/.rustup)"
         "$rustup" target add --toolchain "$TC" "$TARGET" >&2; }
 fi
@@ -188,6 +210,10 @@ sysroot_digest() {  # sha256 over the sysroot's sorted "path<TAB>sha256" lines (
 case $PLATFORM in
     freebsd|netbsd) LIST='cd / && for f in lib/* usr/lib/*; do [ -d "$f" ] || echo "$f"; done' ;;
     illumos) LIST='cd / && { for f in lib/amd64/* usr/lib/amd64/* usr/gcc/14/lib/amd64/*; do [ -d "$f" ] || echo "$f"; done; find opt/gcc-14/lib/gcc \( -name "*.o" -o -name "*.a" -o -name "*.so*" \) ! -path "*plugin*"; }' ;;
+    # OpenBSD has no /lib.  DragonFly's root shell is csh, which runs this line (no "!" in it):
+    # gcc80/ holds the crtbegin objects and libgcc_pic.a that clang's DragonFly driver links.
+    openbsd) LIST='cd / && for f in usr/lib/*; do if [ -f "$f" ]; then echo "$f"; fi; done' ;;
+    dragonfly) LIST='cd / && for f in lib/* usr/lib/* usr/lib/gcc80/*; do if [ -f "$f" ]; then echo "$f"; fi; done' ;;
 esac
 # What the throwaway guest needs first: illumos's crtbegin.o, crtend.o and libgcc.a are gcc's
 # (developer/gcc14 in /opt/gcc-14, which the VM build links with; the build image has it, and
@@ -233,6 +259,11 @@ make_sysroot() {
     case $PLATFORM in
         freebsd) need=(usr/lib/crt1.o usr/lib/crti.o usr/lib/crtbeginS.o lib/libc.so.7 usr/lib/libc.so lib/libgcc_s.so.1) ;;
         netbsd) need=(usr/lib/crt0.o usr/lib/crti.o usr/lib/crtbeginS.o lib/libc.so.12 usr/lib/libc.so usr/lib/libgcc_s.so) ;;
+        openbsd) need=(usr/lib/crt0.o usr/lib/crtbegin.o usr/lib/crtend.o usr/lib/libcompiler_rt.a)
+            for p in c pthread c++abi; do
+                compgen -G "$sysroot.part/usr/lib/lib$p.so.*" >/dev/null || die "the sysroot from $VM has no /usr/lib/lib$p.so.*"
+            done ;;
+        dragonfly) need=(usr/lib/crt1.o usr/lib/crti.o usr/lib/gcc80/crtbeginS.o usr/lib/gcc80/libgcc_pic.a lib/libc.so.8 usr/lib/libc.so usr/lib/libpthread.so) ;;
         illumos) need=(usr/lib/amd64/crt1.o usr/lib/amd64/crti.o usr/lib/amd64/values-Xa.o lib/amd64/libc.so.1)
             p=$(ls -d "$sysroot.part"/opt/gcc-14/lib/gcc/x86_64-pc-solaris2.11/*/crtbegin.o 2>/dev/null | head -n 1)
             [[ -n $p ]] || die "the sysroot from $VM has no gcc 14 crtbegin.o (/opt/gcc-14)"
@@ -300,6 +331,9 @@ fi
 # The linker driver: clang for the target, against the sysroot, through lld.
 ccw=$TMPDIR/holt-cross-cc ld=$lld cc_extra=
 case $PLATFORM in
+    # DragonFly's gcc (the VM build's) links PIE, names /libexec/ld-elf.so.2 and gcc80's runpath, and
+    # puts read-only data in the code segment; clang's DragonFly driver drops rustc's -pie.
+    dragonfly) cc_extra="-Wl,-pie -Wl,--dynamic-linker=/libexec/ld-elf.so.2 -Wl,-rpath,/usr/lib/gcc80 -Wl,--no-rosegment" ;;
     # NetBSD's gcc names /usr/libexec/ld.elf_so (the VM build's), clang /libexec's.
     netbsd) cc_extra=-Wl,--dynamic-linker=/usr/libexec/ld.elf_so ;;
     # gcc is in /opt/gcc-14, which clang's search for one (/usr/gcc/N) doesn't look in.
@@ -310,7 +344,37 @@ case $PLATFORM in
 esac
 libs_line=
 [[ -z $llvm_libs ]] || libs_line="LD_LIBRARY_PATH=$llvm_libs\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}; export LD_LIBRARY_PATH"
-if [[ $PLATFORM == illumos ]]; then
+if [[ $PLATFORM == openbsd ]]; then
+    # OpenBSD's libraries are libNAME.so.MAJOR.MINOR alone, and its own ld takes -lNAME for the
+    # newest; lld looks for libNAME.so only.  -l:FILE is that file, and names it in DT_NEEDED as
+    # OpenBSD's ld does (libc.so.104.0: ld.so takes that major and any minor at least as new).
+    # OpenBSD's lld also gathers .openbsd.randomdata.* (the retguard cookies of the base's crt
+    # objects) into .openbsd.randomdata, which gets PT_OPENBSD_RANDOMIZE, so that the kernel fills it
+    # with random bytes; upstream lld leaves them apart, unrandomised, unless a script says so.
+    cat >"$TMPDIR/holt-cross-openbsd.ld" <<'LDS'
+SECTIONS { .openbsd.randomdata : { *(.openbsd.randomdata .openbsd.randomdata.*) } }
+INSERT AFTER .dtors;
+LDS
+    cc_extra+=" -Wl,-T,$TMPDIR/holt-cross-openbsd.ld"
+    ld=$TMPDIR/holt-cross-ld
+    cat >"$ld" <<LDW
+#!/usr/bin/env bash
+# holt-cross.sh: OpenBSD's -lNAME, for $lld
+$libs_line
+a=()
+for x in "\$@"; do
+    # (rustc's openbsd target adds -L/usr/lib: the sysroot's, not this host's)
+    [[ \$x != -L/usr/lib ]] || x=-L$sysroot/usr/lib
+    if [[ \$x == -l[!:]* && ! -e $sysroot/usr/lib/lib\${x#-l}.so ]]; then
+        f=\$(cd $sysroot/usr/lib && ls -d lib\${x#-l}.so.[0-9]* 2>/dev/null | sort -t. -k3,3n -k4,4n | tail -n 1)
+        [[ -z \$f ]] || x=-l:\$f
+    fi
+    a+=("\$x")
+done
+exec $lld "\${a[@]}"
+LDW
+    chmod 755 "$ld"
+elif [[ $PLATFORM == illumos ]]; then
     # clang's Solaris driver speaks Solaris ld (-C, -z ignore and record, the
     # interpreter left to ld's default): lld gets those in its own words.
     ld=$TMPDIR/holt-cross-ld
@@ -343,20 +407,33 @@ lld_version=$(${llvm_libs:+env LD_LIBRARY_PATH=$llvm_libs} "$lld" --version | he
 
 # --- The build -------------------------------------------------------------------------------
 t=${TARGET//-/_}
-export "CARGO_TARGET_${t^^}_LINKER=$ccw"
+export "CARGO_TARGET_${t^^}_LINKER=$ccw" "CC_$t=$ccw"
+# Tier 3: std built here, for the target, with the program (rust-src's Cargo.lock: --locked).
+zstd=() offline=--offline flags=()
+if [[ $TIER == 3 ]]; then
+    zstd=(-Zbuild-std=std,panic_unwind) offline=""
+    rsrc=$("$rustup" run "$TC" rustc --print sysroot)/lib/rustlib/src/rust
+    flags+=("--remap-path-prefix=$rsrc=/rustc/src" "--remap-path-prefix=$HOME/.cargo/registry/src=/cargo/registry/src")
+fi
+[[ $PLATFORM != openbsd ]] || flags+=(-Zcf-protection=branch)
 if [[ $mode == tests ]]; then
     # E2 step 2: the tree where the guest will see it too (CARGO_MANIFEST_DIR).
     tree=$TMPDIR/e2/holt
     rm -rf "$TMPDIR/e2"; mkdir -p "$tree" "$TMPDIR/e2/docs/design"
     tar -C "$SRC" --exclude=./target -cf - . | tar -C "$tree" -xf -   # (the tests read README.md too)
     [[ ! -f $SRC/../docs/design/holt-json.md ]] || cp "$SRC/../docs/design/holt-json.md" "$TMPDIR/e2/docs/design/"
-    if ! (cd "$tree" && CARGO_TARGET_DIR=$TMPDIR/e2-target "$cargo" test --no-run --offline --locked \
-            --target "$TARGET" --message-format=json-render-diagnostics) >"$LOGS/tests.json" 2>"$LOGS/tests.log"; then
+    if ! (cd "$tree" && RUSTFLAGS="${flags[*]}" CARGO_TARGET_DIR=$TMPDIR/e2-target "$cargo" test --no-run $offline --locked \
+            "${zstd[@]}" --target "$TARGET" --message-format=json-render-diagnostics) >"$LOGS/tests.json" 2>"$LOGS/tests.log"; then
         grep -E "^(error|warning)" -A 6 "$LOGS/tests.log" | head -80 >&2
         exit 1
     fi
     mkdir -p "$TDIR"
     python3 -I "$HERE/holt_e2.py" artifacts "$LOGS/tests.json" >"$TDIR/artifacts.tsv"
+    if [[ $PLATFORM == openbsd ]]; then   # (as the build's, above)
+        while IFS=$'\t' read -r _ _ path; do
+            python3 -I "$HERE/holt_e2.py" xonly "$path" >>"$LOGS/tests.log" || { tail -n 1 "$LOGS/tests.log" >&2; exit 1; }
+        done <"$TDIR/artifacts.tsv"
+    fi
     echo "$tree" >"$TDIR/tree"
     echo "$KIND" >"$TDIR/kind"
     echo "$(grep -c "	1	" "$TDIR/artifacts.tsv") test binaries, listed in $TDIR/artifacts.tsv ($rustc_version, $KIND)"
@@ -366,8 +443,8 @@ tree=$TMPDIR/holt-src
 rm -rf "$tree"; mkdir -p "$tree"
 tar -C "$SRC" -cf - Cargo.toml Cargo.lock LICENSE src tests | tar -C "$tree" -xf -
 echo "$rustc_version, $clang_version, $KIND"
-if ! (cd "$tree" && RUSTFLAGS="--remap-path-prefix=$tree=/holt" CARGO_TARGET_DIR=$TMPDIR/holt-target \
-        nice "$cargo" build --release --offline --locked --bin bko-holt --target "$TARGET") >"$LOGS/build.log" 2>&1; then
+if ! (cd "$tree" && RUSTFLAGS="--remap-path-prefix=$tree=/holt${flags[*]:+ ${flags[*]}}" CARGO_TARGET_DIR=$TMPDIR/holt-target \
+        nice "$cargo" build --release $offline --locked "${zstd[@]}" --bin bko-holt --target "$TARGET") >"$LOGS/build.log" 2>&1; then
     grep -E "^(error|warning)" -A 6 "$LOGS/build.log" | head -80 >&2
     exit 1
 fi
@@ -375,18 +452,23 @@ b=$TMPDIR/holt-target/$TARGET/release/bko-holt
 mkdir -p "$OUT"
 check_out "$OUT" "$PLATFORM"   # (again, just before the write)
 cp "$b" "$OUT/bko-holt.part"
+# OpenBSD's lld links amd64 code execute-only (E, the VM build's); upstream lld can't, so the
+# code segment is marked so here, once it is known to hold code alone (holt_e2.py xonly).
+if [[ $PLATFORM == openbsd ]] && ! python3 -I "$HERE/holt_e2.py" xonly "$OUT/bko-holt.part" >>"$LOGS/build.log"; then
+    rm -f "$OUT/bko-holt.part"; tail -n 1 "$LOGS/build.log" >&2; exit 1
+fi
 chmod 755 "$OUT/bko-holt.part"
 mv "$OUT/bko-holt.part" "$OUT/bko-holt"
 sha=$(sha256sum "$OUT/bko-holt" | cut -d' ' -f1)
 if [[ -n ${HOLT_INFO:-} ]]; then
     python3 -I -c 'import json, socket, sys, time
-p, sha, rustc, src, out, kind, tc, target, sysroot, vm, image, clang, lld = sys.argv[1:14]
+p, sha, rustc, src, out, kind, tc, target, sysroot, vm, image, clang, lld, tier = sys.argv[1:15]
 print(json.dumps({"platform": p, "sha256": sha, "rustc": rustc, "clang": clang, "lld": lld,
                   "host": socket.gethostname().split(".")[0],
                   "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "src": src, "out": out,
-                  "kind": "cross", "build": kind, "toolchain": tc, "target": target, "sysroot": sysroot,
+                  "kind": "cross", "build": kind, "toolchain": tc, "tier": int(tier), "target": target, "sysroot": sysroot,
                   "sysroot_guest": vm, "sysroot_image": image}, sort_keys=True))' \
         "$PLATFORM" "$sha" "$rustc_version" "$SRC" "$OUT/bko-holt" "$KIND" "$TC" "$TARGET" "$SYSROOT" "$VM" \
-        "${image#"$WORK"/}" "$clang_version" "$lld_version" >"$HOLT_INFO.part" && mv -f "$HOLT_INFO.part" "$HOLT_INFO"
+        "${image#"$WORK"/}" "$clang_version" "$lld_version" "$TIER" >"$HOLT_INFO.part" && mv -f "$HOLT_INFO.part" "$HOLT_INFO"
 fi
 ls -l "$OUT/bko-holt"

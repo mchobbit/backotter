@@ -1065,11 +1065,16 @@ class U53HoltRun(unittest.TestCase):
         builds = [(h, re.search(r"--reserved \S+ (\S+)", c[0]).group(1)) for h, c in starts
                   if "build-holt.sh --reserved" in c[0]]
         self.assertEqual(builds, [("chopin", "linux"), ("cinqcent", "freebsd"), ("chopin", "openbsd")])
-        # img-speed.md I10: freebsd's VM build has a cross check build beside it, in CODE/cross/freebsd/
-        # on its build host alone (never CODE/freebsd/: that is the VM build's, the one shipped and tested).
-        crosses = [(h, c[0]) for h, c in starts if "holt-cross.sh --reserved" in c[0]]
-        self.assertEqual([h for h, _ in crosses], ["cinqcent"])
-        self.assertIn("HOLT_OUT=/bkoscratch/t2test/holt-bin/" + "c" * 64 + "/cross/freebsd ", crosses[0][1])
+        # img-speed.md I10, I11: freebsd's and openbsd's VM builds each have a cross check build beside
+        # it, in CODE/cross/PLAT/ on its build host alone (never CODE/PLAT/: that is the VM build's, the
+        # one shipped and tested).
+        crosses = sorted((h, c[0]) for h, c in starts if "holt-cross.sh --reserved" in c[0])
+        self.assertEqual([h for h, _ in crosses], ["chopin", "cinqcent"])
+        self.assertIn("HOLT_OUT=/bkoscratch/t2test/holt-bin/" + "c" * 64 + "/cross/freebsd ", crosses[1][1])
+        self.assertIn("HOLT_OUT=/bkoscratch/t2test/holt-bin/" + "c" * 64 + "/cross/openbsd ", crosses[0][1])
+        # (tier 3's target/ holds std's build too: a bigger reservation)
+        self.assertIn("HOLT_RESERVE=3 ", crosses[0][1])
+        self.assertIn("HOLT_RESERVE=1.5 ", crosses[1][1])
         hb = "/bkoscratch/t2test/holt-bin/" + "c" * 64
         for h in ("chopin", "cinqcent"):
             for p in ("bko-holt", "freebsd/bko-holt", "openbsd/bko-holt"):
@@ -1121,13 +1126,16 @@ class U53HoltRun(unittest.TestCase):
             self.assertEqual(r.files[h][hb + "/freebsd/bko-holt"], "bko-holt freebsd")
             self.assertNotIn("cross", r.files[h][hb + "/SHA256SUMS"])
             self.assertNotIn("cross", r.files[h][hb + "/BUILD-INFO"])
-        self.assertFalse([p for p in r.files["chopin"] if "/cross/" in p], "a check build is not shipped")
+        # A check build is not shipped: each stays on its build host (freebsd's cinqcent, openbsd's chopin).
+        self.assertFalse([p for p in r.files["chopin"] if "/cross/" in p and "openbsd" not in p])
+        self.assertFalse([p for p in r.files["cinqcent"] if "/cross/" in p and "freebsd" not in p])
         info = json.loads(r.files["cinqcent"][hb + "/cross/build-freebsd.json"])
         self.assertEqual((info["kind"], info["run"]), ("cross", "t2h-20261108T0300-abcd"))
         self.assertTrue(all("ONLY_ELSEWHERE" not in c or "/cross" not in c for _, c in self.crosses()))
         self.assertTrue(any("cross check build on cinqcent" in t and "not shipped" in t for t in self.rs.logged),
                         self.rs.logged)
-        self.assertNotIn("openbsd", " ".join(c for _, c in self.crosses()), "tier 3 is I11's")
+        self.assertEqual(r.files["chopin"][hb + "/cross/openbsd/bko-holt"], "cross bko-holt openbsd")   # (I11)
+        self.assertEqual(r.files["chopin"][hb + "/openbsd/bko-holt"], "bko-holt openbsd")
         # A resume starts no second one.
         n = len(self.crosses())
         holt.resume(self.ctx, self.plan, remote=r, sleep=lambda s: None, poll=0, gate=self.gate)
@@ -1151,6 +1159,7 @@ class U53HoltRun(unittest.TestCase):
     def test_no_cross_check_build_over_one_there(self):
         r = FakeRemote({})
         r.files["cinqcent"]["/bkoscratch/t2test/holt-bin/" + "c" * 64 + "/cross/freebsd/bko-holt"] = "older cross"
+        r.files["chopin"]["/bkoscratch/t2test/holt-bin/" + "c" * 64 + "/cross/openbsd/bko-holt"] = "older cross"
         res = self.go({}, r)
         self.assertEqual(res["exit"], 0, res)
         self.assertEqual(self.crosses(), [])

@@ -141,11 +141,13 @@ def disk_mode(host):
     return hosts_table.limit(host, "holt_disk_mode") is True
 POLL_S = 20
 BUILD_TIMEOUT_S = 4 * 3600
-# img-speed.md I10 (§8.1, §8.3): the platforms whose VM build gets a cross check build beside it
-# (holt-cross.sh, tier 2, rustup's pinned 1.94.1).  A check build is never tested by a cell nor
-# shipped: it lands in CODE/cross/PLAT/ on its build host alone, and E2 (holt-e2.sh) runs on it
-# privately.  I11 adds openbsd and dragonfly.
-CROSS_PLATS = ("freebsd", "netbsd", "illumos")
+# img-speed.md I10, I11 (§8.1, §8.3): the platforms whose VM build gets a cross check build beside
+# it (holt-cross.sh: tier 2, rustup's pinned 1.94.1; openbsd and dragonfly tier 3, a pinned
+# nightly that builds std too).  A check build is never tested by a cell nor shipped: it lands in
+# CODE/cross/PLAT/ on its build host alone, and E2 (holt-e2.sh) runs on it privately.
+CROSS_PLATS = ("freebsd", "netbsd", "illumos", "openbsd", "dragonfly")
+# GiB of RAM disk a cross check build reserves: a tier-3 build's target/ holds std's build too.
+CROSS_RESERVE = {"openbsd": 3, "dragonfly": 3}
 CROSS_TIMEOUT_S = 3600
 QUEUE_TIMEOUT_S = 16 * 3600
 DEFAULT_RESERVE_GIB = 3.0
@@ -1049,7 +1051,8 @@ class Runner:
         logs = self.build_logs(host, plat)
         tool, res_default = "build-holt.sh", None
         if cross:
-            out, logs, tool, res_default = self.cross_dir(plat), self.build_logs(host, "cross-" + plat), "holt-cross.sh", 1.5
+            out, logs, tool = self.cross_dir(plat), self.build_logs(host, "cross-" + plat), "holt-cross.sh"
+            res_default = CROSS_RESERVE.get(plat, 1.5)
         peaks = []
         for path, text in self.remote.glob_read(host, os.path.join(self.host_root(), "runs", "t2h-*",
                                                                      f"build-{plat}", "peak-kib")).items():

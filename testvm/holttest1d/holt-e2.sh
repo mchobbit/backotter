@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2 steps 0-2 for one platform (docs/design/img-speed.md §8.2; I10): a cross-built
 # bko-holt (holt-cross.sh) against the VM build of the same code (build-holt.sh), on
-# a KVM test host, as m:
+# a KVM test host, as m (freebsd, netbsd and illumos: I10; openbsd and dragonfly: I11):
 #
 #   holt-e2.sh PLATFORM VM_BIN CROSS_BIN OUT          (TMPDIR: a directory in the RAM disk)
 #   holt-e2.sh --reserved NAME PLATFORM VM_BIN CROSS_BIN OUT
@@ -10,7 +10,7 @@
 #             child's whole address space, so a 4 GiB guest's native test link fails with
 #             ENOMEM), TMPDIR /mnt/bko-ram/t2e-NAME-PLATFORM, made before and removed after
 #
-#   step 0  holt_e2.py elf: the two ELF files' shapes                      OUT/step0.txt
+#   step 0  holt_e2.py elf: the two ELF files' shapes (and the sysroot's symbol versions)  OUT/step0.txt
 #   step 1  both binaries' `--version --json` in the guest, holt_e2.py api  OUT/step1.txt
 #   step 2  holt's tests twice in the same guest boot, from one copy of the tree at the
 #           path both builds name (TMPDIR/e2/, their CARGO_MANIFEST_DIR): cross-built here
@@ -19,8 +19,8 @@
 #           test binary run as root with --test-threads=2; holt_e2.py tests compares
 #           them (OUT/cross/ and OUT/native/: tests.tsv NAME RC SECS, NAME.log)  OUT/step2.txt
 # The guest: a throwaway (-snapshot) copy of the image the VM build builds in,
-# WORK/vms-bko-build/VM-rust.qcow2 (the test guest freebsd14, netbsd11 or omnios58 with
-# Rust and a C compiler), else of the test guest, given Rust as build-holt.sh gives it
+# WORK/vms-bko-build/VM-rust.qcow2 (the test guest freebsd14, netbsd11, omnios58 or openbsd8
+# with Rust and a C compiler), else of the test guest (dragonfly6, which has no build image), given Rust as build-holt.sh gives it
 # (network).  OUT/e2.txt: the three verdict lines.  Exit 0 when all three PASS, 1 when one
 # fails, 2 refused.  HOLT_SRC (the holt tree, beside a docs/design/holt-json.md),
 # HOLT_CROSS_CACHE and HOLT_RUST_TOOLCHAIN go to holt-cross.sh.  The guest takes a port
@@ -58,7 +58,9 @@ case $PLATFORM in   # (build-holt.sh's guests and Rust installs)
     freebsd) VM=freebsd14 RUST='env ASSUME_ALWAYS_YES=yes pkg install -y rust' ;;
     netbsd) VM=netbsd11 RUST='pkg_info -e rust >/dev/null || pkgin -y install rust' ;;
     illumos) VM=omnios58 RUST='pkg install -q ooce/developer/rust developer/gcc14; s=$?; [ $s -eq 0 ] || [ $s -eq 4 ]' MEM=8192 ;;
-    *) die "PLATFORM: freebsd, netbsd or illumos (I10)" ;;
+    openbsd) VM=openbsd8 RUST='pkg_add -I rust' ;;
+    dragonfly) VM=dragonfly6 RUST='export ASSUME_ALWAYS_YES=yes; pkg upgrade -y && pkg install -y rust && cargo --version' ;;
+    *) die "PLATFORM: freebsd, netbsd, illumos, openbsd or dragonfly" ;;
 esac
 [[ -f $VMB && -f $XB ]] || die "no $VMB or $XB"
 [[ -n ${TMPDIR:-} && -d $TMPDIR ]] || die "TMPDIR must name a directory (in the RAM disk)"
@@ -74,7 +76,10 @@ fail_rest() {  # WHY: steps 1 and 2 fail with it
 }
 
 # --- step 0 ----------------------------------------------------------------------------
-python3 -I "$E2PY" elf "$PLATFORM" "$VMB" "$XB" >"$OUT/step0.txt" 2>&1
+# (the cross build's sysroot, holt-cross.sh's cache: the symbol versions its libraries define)
+sr=${HOLT_CROSS_CACHE:-$WORK/holt-cross}/sysroot/$VM
+[[ -f $sr/.digest ]] || sr=""
+python3 -I "$E2PY" elf "$PLATFORM" "$VMB" "$XB" ${sr:+"$sr"} >"$OUT/step0.txt" 2>&1
 verdict "$OUT/step0.txt"
 
 # --- step 2's cross-built tests first (no guest needed) ------------------------------------

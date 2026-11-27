@@ -2311,7 +2311,7 @@
     "established": true
    },
    "update": false,
-   "notes": "docs/design/truenas.md: TrueNAS CE 25.10, BIOS: boot-pool a two-disk mirror plus data pool tank on a third disk (vm-run-options --disk truenas25-mirror-b.qcow2 --disk truenas25-mirror-data.qcow2 --disk-serials BKOTN0,BKOTN1,BKOTN2); a probe boot only, as truenas25's (its notes say why); not in the vm-store, so only Chopin and Cinqcent hold it"
+   "notes": "docs/design/truenas.md: TrueNAS CE 25.10, BIOS: boot-pool a two-disk mirror plus data pool tank on a third disk (vm-run-options --disk truenas25-mirror-b.qcow2 --disk truenas25-mirror-data.qcow2 --disk-serials BKOTN0,BKOTN1,BKOTN2); a probe boot only, as truenas25's (its notes say why); in the vm-store since 2026-11-27 (docs/design/img-speed.md F5), so copland, cage and czerny hold it beside Chopin and Cinqcent (choubox does not)"
   },
   "ubuntu24": {
    "kind": "ssh",

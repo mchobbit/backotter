@@ -1,6 +1,6 @@
 # PCLinuxOS support
 
-**Status: Approved by the user 2026-11-27, every recommendation (decisions 1-10); ON HOLD: nothing is built until the user says proceed.**
+**Status: Approved by the user 2026-11-27, every recommendation (decisions 1-10); the user said proceed 2026-11-27 (PC1-PC7, Medium effort; PC8 later per Decision 9).**
 
 This spec adds PCLinuxOS to bko-holt, to both archivers' tests and to the
 QEMU lanes, the way Solus, Slackware and PikaOS were added

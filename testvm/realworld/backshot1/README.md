@@ -782,7 +782,22 @@ systemd build most of it; the tree of 2026-11-27, gentoo-kernel-bin
 day on Chopin, with the new checks: a second `--detach` refused while
 the first ran and the log left whole, a seeded `oldos` entry (its GUID
 only in `old-partuuids`) deleted and the file dropped, no scratch left in
-`/run/bko-gentoo` or `/tmp` (install 1162 s).  Not yet run on the A100.
+`/run/bko-gentoo` or `/tmp` (install 1162 s).  PASS a third time at
+94a1522 on Cinqcent (placed by `pick-host`; the disk in `DISK_DIR` on
+`/bkoscratch`, the rest under `cmp-run.sh --reserve 4 10`), 59 checks: the
+install 1071 s (gentoo.sh 1038 s, tree 2026-11-26, gentoo-kernel-bin
+6.18.65, nothing source-built outside the allowlist), the same 41 s, 20 s
+and 71 s boots.  Then a whole BackShot1 round on that same rehearsed disk:
+booted once with the drive to run `bs1-adopt --luks-off` (crypttab back
+to `none`, the initramfs's too), then given to `bs1-qemu.py --luks-typed
+--luks-monitor` as a GUEST_DIR (the disk, the rehearsal's client key as
+`id_ed25519`, its passphrase as `luks-passphrase`, its `vars.fd` as
+`uefi-vars.fd` with `--no-secure-boot` in `vm-run-options`, so the source
+boots by the `gentoo` entry as the A100 will): run
+`gentoo-2.18-20261127-200627`, 36 checks ok, the backup 4.3 GiB of 236,219
+files, `bs1-verify` PASS (273,211 files compared, nothing unexpected),
+the restored system booted from NVRAM and unlocked by the drive
+(`UNLOCK=drive`), and asked without it.  Not yet run on the A100.
 
 ## BigLinux: Timeshift's snapshots and systemd-swap
 

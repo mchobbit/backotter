@@ -202,6 +202,24 @@ class SpaceOf(unittest.TestCase):
         self.assertEqual(n.end, v_p + v_t + d_p)
         self.assertIn("has 10 GiB free", why)
 
+    def test_an_ssd_lane_keeps_the_hosts_ssd_floor(self):
+        """img-speed F3: a host with SSD cases needs its ssd_floor_gib (80) free at the peak, not
+        the 30 GiB margin: cmp-run.sh starts a --reserve-ssd only above that floor (copland,
+        2026-11-27: 82 GiB free, a --reserve-ssd 10 waited until the run was stopped)."""
+        can = {"mint22": ["copland"], "debian12": ["copland"]}
+        lead = {"mint22": "copland", "debian12": "copland"}
+        with mock.patch.dict(B.SCRATCH, {("copland", "mint22"): "ssd"}, clear=True):
+            need = B.space_of(["mint22", "debian12"], can, lead, {"copland": [("mint22", 1, 0)]},
+                              {"copland": {"free": 10 ** 6 * GiB, "sources": {}}}, 30)["copland"][0]
+            free = need.peak + 50 * GiB   # over the margin, under the floor
+            rooms = {"copland": {"free": free, "sources": {}}}
+            _, _, why = B.space_of(["mint22", "debian12"], can, lead, {"copland": [("mint22", 1, 0)]}, rooms, 30)["copland"]
+            self.assertIn("+ 80 GiB margin", why)
+            _, _, why = B.space_of(["mint22", "debian12"], can, lead, {"copland": [("debian12", 1, 0)]}, rooms, 30)["copland"]
+            self.assertIsNone(why, "no SSD case there: the margin alone")
+        self.assertEqual(B.ssd_floor("copland"), 80.0)
+        self.assertEqual(B.ssd_floor("nosuch"), 80.0)
+
     def test_run_refuses_naming_the_host(self):
         hosts = {"chopin": "m@chopin.local", "cinqcent": "m@cinqcent.local"}
         have = {h: {"alpine324", "debian12"} for h in hosts}

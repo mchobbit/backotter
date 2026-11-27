@@ -317,7 +317,9 @@ says how it works; in short:
   (guix15-luks, LUKS1; uc24-fde).  UEFI from the dump; seconds a case
   measured for Alpine and Guix, else 0.7 of HoltTest1's (est.).  vanilla3,
   over every RAM ceiling, runs on `/bkoscratch` (`--reserve-ssd`, `HT_RAM=0`)
-  on the `holt_disk_mode` hosts only, one SSD case at a time per host.
+  on the `holt_disk_mode` hosts only, one SSD case at a time per host
+  (since img-speed F3, 2026-11-27: on every `disk_scratch` host, any source
+  over that host's RAM ceiling).
 - **A7** (e50924c, 81d8fd5, f546085): GENERATOR 6, a content recipe per
   filesystem holding `/srv/bs2`: ext2/3/4, XFS, btrfs, f2fs, JFS, NILFS2,
   bcachefs (and 32-bit-time forms); ZFS with A3; FAT holds none; none for

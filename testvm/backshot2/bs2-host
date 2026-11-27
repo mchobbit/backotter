@@ -59,9 +59,11 @@ Paths (ROOT=/bkoscratch/backshot2, BS2_ROOT overrides):
                         (each case run, as a .case file), logs/
   ROOT/bin/             the bko-holt and planner under test (BS2_HOLT, BS2_PLANNER override)
 Work goes in /mnt/bko-ram/backshot2/ (RAM), deleted on a pass; a case whose source's
-room is over this host's RAM-disk ceiling, on a host whose holt_disk_mode is true
-(bs2lib/room.py scratch(): vanilla3), works on /bkoscratch instead (HT_RAM=0, cmp-run.sh
---reserve-ssd), one such case at a time (ssd_token()).
+room is over this host's RAM-disk ceiling, on a host that takes SSD cases (hosts.py
+disk_scratch(): scratch_mode overflow, every amd64 host; bs2lib/room.py scratch(): the
+large desktop sources on the small hosts, vanilla3 on the big ones), works on /bkoscratch
+instead (HT_RAM=0, cmp-run.sh --reserve-ssd, WEAR_SCRATCH=ssd in the wear log), one such
+case at a time (ssd_token()).
 """
 
 import argparse
@@ -1146,16 +1148,16 @@ def host_name():
 
 
 def disk_ok():
-    """Whether this host takes cases on its SSD: its holt_disk_mode is true in hosts.json
-    (Chopin and Cinqcent: bs2-all.md, one disk slot per big host; a scratch_mode overflow
-    alone, the small hosts', doesn't).  No, when the table can't say."""
+    """Whether this host takes cases on its SSD: hosts.py disk_scratch(), as HoltTest's lines
+    (its scratch_mode overflow, every amd64 host's, or its holt_disk_mode; img-speed F3:
+    before it, holt_disk_mode alone, Chopin and Cinqcent).  No, when the table can't say."""
     try:
-        return hosts_table().limit(host_name(), "holt_disk_mode") is True
+        return hosts_table().disk_scratch(host_name()) is True
     except Exception:
         return False
 
 
-# One case on the SSD at a time on this host (bs2-all.md: one disk slot per big host),
+# One case on the SSD at a time on this host (bs2-all.md: one disk slot a host; FD3),
 # across runs: a flock on ROOT/ssd.lock, held for the case's whole cmp-run.sh.  A queue's
 # worker holds it and says so to its case (BS2_SSD_HELD=1); shrink and a tier1 by hand take
 # it themselves, waiting.
@@ -1205,8 +1207,8 @@ def pick(lines, taken, ssd_of, token):
 def case_scratch(path):
     """Where the case at PATH works here: "ssd" (/bkoscratch, HT_RAM=0, under --reserve-ssd)
     when its source's room is over this host's RAM-disk ceiling and this host takes SSD
-    cases (disk_ok(): holt_disk_mode) (bs2lib/room.py scratch(), as bs2 placed it: bs2 deals such a
-    source here only when no host of the run could hold it in RAM); else "ram", as before."""
+    cases (disk_ok(): disk_scratch) (bs2lib/room.py scratch(), as bs2 placed it: split() weighs
+    this host's one-at-a-time SSD lane against the other hosts' slots); else "ram", as before."""
     from bs2lib import room as RM
     try:
         return RM.scratch(C.source_name(C.read(path)), ceiling(), disk_ok()) or RM.RAM

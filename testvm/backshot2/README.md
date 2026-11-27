@@ -371,15 +371,22 @@ lead hosts after them.
 **RAM or SSD** (`room.scratch()`): a source's cases work in the RAM disk on
 the hosts whose `cmp-run.sh --ceiling` holds its room (HoltTest1's D and
 MEM, `holttest1d/ram-sizes.tsv`; a slimmed source's own measured room,
-`slim-sizes.tsv`: "Slimming" below), as ever.  Only a source over every RAM
-ceiling of the run goes to `/bkoscratch` (none since slimming: vanilla3's
-D was 30 GiB, its slimmed D is 12, in the big hosts' RAM disks): on hosts
-with `holt_disk_mode` true (chopin and cinqcent), `cmp-run.sh --reserve-ssd
-D M`, `HT_RAM=0`, its rows `"scratch": "ssd"`, and one such case at a time
-per host (the SSD lane, a flock on `/bkoscratch/backshot2/ssd.lock`: the
+`slim-sizes.tsv`: "Slimming" below), as ever.  A source over a host's RAM
+ceiling goes to that host's `/bkoscratch` wherever `hosts.py disk_scratch()`
+lets it (`scratch_mode` overflow: every amd64 host, since img-speed F3,
+2026-11-27; before it only the `holt_disk_mode` pair, chopin and cinqcent, so
+the large desktop sources, D 10-20 over the small hosts' 9.0, ran on those
+two alone) and its memory ceiling holds the source's (a small host's 10.1:
+qubes-sized rooms stay big-only): `cmp-run.sh --reserve-ssd D M`,
+`HT_RAM=0`, its rows `"scratch": "ssd"`, its wear-log line `scratch=ssd`
+(`/bkoscratch/wear/jobs.log`, tagged `bs2:RUN:CASE`), and one such case at a
+time per host (the SSD lane, a flock on `/bkoscratch/backshot2/ssd.lock`: the
 queue takes the earliest SSD case whenever the lane is free and RAM cases
 on its other slots; replay, soak and the corpus take the lane before their
-reservation, `bs2-host lane`).  A full vanilla3 case wrote up to ~29 GB.
+reservation, `bs2-host lane`).  `split()` weighs each host's lane, one case
+after another, against the RAM slots of the hosts that hold the source in
+RAM, so a small host takes such cases only where it finishes them sooner;
+`bs2 plan` says which cases go to which SSD and about what they write.  A full vanilla3 case wrote up to ~29 GB.
 
 **The word**: `bs2 BackShot2All [plan]` runs, fresh (the ledger excuses no
 case), as `bs2all-YYYYMMDD-HHMMSS`, every built source a host holds: 1,000

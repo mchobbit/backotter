@@ -49,12 +49,15 @@ names another, so two sessions' runs never share a copy).
                                     vms/SOURCE is there takes SOURCE's cases (one read-only
                                     ls each: cage's cache has only alpine324), and only
                                     when its cmp-run.sh --ceiling holds the source's room
-                                    (bs2lib/room.py need(): choubox's can't hold Guix's).  A
-                                    source whose room is over every RAM-disk ceiling of the
-                                    run (vanilla3, D 30) works on /bkoscratch (--reserve-ssd,
-                                    HT_RAM=0), one case at a time, on the hosts whose
-                                    holt_disk_mode is true (chopin, cinqcent) and whose memory
-                                    ceiling holds it (room.py scratch()); plan says which.
+                                    (bs2lib/room.py need()) in its RAM disk or on its SSD.
+                                    A source whose room is over a host's RAM-disk ceiling
+                                    works on that host's /bkoscratch (--reserve-ssd, HT_RAM=0),
+                                    one case at a time, where hosts.py disk_scratch() lets it
+                                    (scratch_mode overflow: every amd64 host, img-speed F3)
+                                    and its memory ceiling holds the source's (room.py
+                                    scratch(): the large desktop sources, D 10-20, on the
+                                    small hosts' 9.0; vanilla3's full D 30 on the big hosts'
+                                    29); plan says which, and how much goes to the SSDs.
                                     Placement is per case: a host whose ceiling is under
                                     the source's room but holds its shared-backup case's
                                     (room.py shared_need(): slim-sizes.tsv's d_shared) takes
@@ -233,9 +236,9 @@ def slots(h):
 
 def held(sources, hosts=None):
     """{host: set of SOURCES whose vms/SOURCE is there and whose cases the host's room can
-    hold} over HOSTS (default RUN_HOSTS), an ls and a cmp-run.sh --ceiling each (roomy(),
-    with the largest RAM-disk ceiling of those hosts: a source over every one of them works
-    on /bkoscratch on a holt_disk_mode host, room.py scratch()); a host that doesn't
+    hold} over HOSTS (default RUN_HOSTS), an ls and a cmp-run.sh --ceiling each (roomy():
+    a source over a host's RAM-disk ceiling works on its /bkoscratch where disk_ok(),
+    room.py scratch()); a host that doesn't
     answer holds none.  CEILINGS and SCRATCH keep what it found, and SHARED_ONLY the
     sources it left out whose shared-backup cases the host's ceiling does hold
     (room.py scratch(shared=True); shared_placement()): per-case placement's."""
@@ -251,7 +254,6 @@ def held(sources, hosts=None):
         seen[h] = ({w for line in r.stdout.splitlines() if not line.startswith("@") for w in line.split()},
                    ceiling_of(r.stdout))
         LISTED[h] = set(seen[h][0])
-    run_disk = max((x[1][0] for x in seen.values() if x and x[1]), default=None)
     out = {}
     for h, x in seen.items():
         if x is None:
@@ -260,10 +262,10 @@ def held(sources, hosts=None):
         here, ceil = x
         CEILINGS[h] = ceil
         ok = disk_ok(h)
-        out[h], dropped = roomy(here, ceil, run_disk, ok)
+        out[h], dropped = roomy(here, ceil, ok)
         for s in out[h]:
-            SCRATCH[(h, s)] = RM.scratch(s, ceil, ok, run_disk)
-        SHARED_ONLY[h] = {s for s in dropped if shared_placement() and RM.scratch(s, ceil, ok, run_disk, shared=True)}
+            SCRATCH[(h, s)] = RM.scratch(s, ceil, ok)
+        SHARED_ONLY[h] = {s for s in dropped if shared_placement() and RM.scratch(s, ceil, ok, shared=True)}
         for s in sorted(SHARED_ONLY[h]):
             SCRATCH[(h, s)] = RM.RAM
             d, m = RM.need(s)
@@ -275,19 +277,21 @@ def held(sources, hosts=None):
             room = f"its cmp-run.sh --ceiling is {ceil[0]:g} {ceil[1]:g}" if ceil else "its cmp-run.sh --ceiling didn't answer"
             ssd = ""
             if ceil and d > ceil[0] and m <= ceil[1]:
-                ssd = (" (a host of the run holds it in its RAM disk)" if run_disk is not None and d <= run_disk + RM.EPS else
-                       " (and its holt_disk_mode isn't true in testvm/hosts.json: no SSD cases there)" if not ok else "")
+                ssd = " (and its scratch_mode is ram in testvm/hosts.json: no SSD cases there)" if not ok else ""
             print(f"bs2: {h} has vms/{s}, but {room}, under {s}'s cases' --reserve {d} {m}: left out for {s}{ssd}",
                   file=sys.stderr)
     return out
 
 
 def disk_ok(host):
-    """Whether HOST takes cases on its SSD: its holt_disk_mode is true in testvm/hosts.json
-    (Chopin and Cinqcent: bs2-all.md, one disk slot per big host; the small hosts' scratch_mode
-    overflow alone doesn't)."""
+    """Whether HOST takes cases on its SSD: hosts.py disk_scratch(), as HoltTest's lines do
+    (its scratch_mode overflow, every amd64 host's since 2026-11-23, or its holt_disk_mode);
+    one SSD case at a time there (bs2-host ssd_token()), each with its wear tag
+    (WEAR_SCRATCH=ssd in jobs.log).  img-speed F3 (FD3, 2026-11-27): before it, the
+    holt_disk_mode hosts only (Chopin and Cinqcent), so the large desktop sources over the
+    small hosts' RAM disk ran on those two alone."""
     try:
-        return HOSTS_TABLE.limit(host, "holt_disk_mode") is True
+        return HOSTS_TABLE.disk_scratch(host) is True
     except Exception:   # (a host the table doesn't know: no)
         return False
 
@@ -305,16 +309,16 @@ def ceiling_of(text):
     return None
 
 
-def roomy(here, ceiling, run_disk=None, disk_ok=False):
+def roomy(here, ceiling, disk_ok=False):
     """(the sources of HERE a host whose cmp-run.sh --ceiling is CEILING can hold, the ones it
     can't): a source's cases reserve at least bs2lib/room.py need()'s (guix15's 7 GiB of RAM
     disk and 4 of memory), and cmp-run.sh refuses at once a --reserve over the ceiling ("can
     never fit here"), so such a case would leave no row on that host.  A host whose ceiling is
     unknown (None) holds none: its --reserve would be refused too (pick-host says the same).
-    With DISK_OK (the host takes SSD cases: disk_ok()) a source whose disk is over RUN_DISK
-    (the largest RAM-disk ceiling of the run's hosts) too is held when its memory fits: its
-    cases work on /bkoscratch there (room.py scratch(): vanilla3's D 30)."""
-    keep = {s for s in here if RM.scratch(s, ceiling, disk_ok, run_disk)}
+    With DISK_OK (the host takes SSD cases: disk_ok()) a source whose disk is over the
+    ceiling is held too when its memory fits: its cases work on /bkoscratch there (room.py
+    scratch(): mint22's D 11 on a small host, vanilla3's D 30 on a big one)."""
+    keep = {s for s in here if RM.scratch(s, ceiling, disk_ok)}
     return keep, set(here) - keep
 
 
@@ -719,17 +723,29 @@ def space_of(sources, can, lead, parts, rooms, margin=None):
     """{host: (Need, its free bytes or None, why it doesn't fit or None)} for the hosts of
     PARTS: each prepares every source of SOURCES it holds (CAN), copies the tools of the
     ones it leads whose tier 0 has dry runs (tools_of()) and drops the rest, then runs its
-    cases (its SSD lane, records): bs2lib/space.py need(), from ROOMS (rooms_of())."""
+    cases (its SSD lane, records): bs2lib/space.py need(), from ROOMS (rooms_of()).  A host
+    with SSD cases keeps at least its ssd_floor_gib (hosts.json, 80) free at the peak instead
+    of MARGIN: cmp-run.sh starts a --reserve-ssd only within the free space less that floor,
+    so under it the lane would wait for ever (img-speed F3: a small host's SSD cases)."""
     margin = SP.MARGIN_GIB if margin is None else margin
     out = {}
     for h in parts:
         mine = [s for s in sources if h in can.get(s, ())]
         led = [s for s in mine if lead.get(s) == h]
         r = rooms.get(h)
-        n = SP.need(mine, tools_of(led), (r or {}).get("sources") or {}, ssd_peak(h, parts[h]), len(parts[h]))
+        lane = ssd_peak(h, parts[h])
+        n = SP.need(mine, tools_of(led), (r or {}).get("sources") or {}, lane, len(parts[h]))
         free = r.get("free") if r else None
-        out[h] = (n, free, SP.check(n, free, margin))
+        out[h] = (n, free, SP.check(n, free, max(margin, ssd_floor(h)) if lane else margin))
     return out
+
+
+def ssd_floor(h):
+    """H's ssd_floor_gib (hosts.json; hosts.py LIMITS' 80 for a host the table doesn't know)."""
+    try:
+        return float(HOSTS_TABLE.limit(h, "ssd_floor_gib"))
+    except Exception:   # (a host the table doesn't know: the default)
+        return 80.0
 
 
 def margin_gib():

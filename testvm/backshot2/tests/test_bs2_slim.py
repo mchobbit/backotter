@@ -277,9 +277,10 @@ class Room(unittest.TestCase):
         self.assertEqual(RM.of("garuda"), (20, 4))             # full fat: ram-sizes.tsv's
         self.assertEqual(RM.of("mint22"), (17, 4))             # not measured yet: the full guest's
         self.assertEqual(RM.need("vanilla3"), (12, 4))
-        # vanilla3 leaves the SSD lane: the big hosts' RAM disks hold it, the small ones don't.
-        self.assertEqual(RM.scratch("vanilla3", (29.0, 23.2), True, 29.0), "ram")
-        self.assertIsNone(RM.scratch("vanilla3", (9.0, 10.1), False, 29.0))
+        # vanilla3 leaves the big hosts' SSD lane: their RAM disks hold it; a small host's SSD does (F3).
+        self.assertEqual(RM.scratch("vanilla3", (29.0, 23.2), True), "ram")
+        self.assertIsNone(RM.scratch("vanilla3", (9.0, 10.1), False))
+        self.assertEqual(RM.scratch("vanilla3", (9.0, 10.1), True), "ssd")   # F3: a small host's SSD
 
     def test_seconds(self):
         self.assertEqual(S.secs("vanilla3", 1), (400, "measured"))

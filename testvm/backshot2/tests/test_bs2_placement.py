@@ -1,7 +1,7 @@
 """bs2 over A2's sources (bs2lib/sources.py): SOURCES, HOME (Alpine's and Guix's as
 before), the refusal of a skipped source, tier 2's counts and its ESP test on every built
 UEFI source, each source's seconds a case in split(), and the /bkoscratch mode for a source
-over every RAM disk (bs2lib/room.py scratch(); bs2's held() and plan; bs2-host's
+over a host's RAM disk (bs2lib/room.py scratch(), img-speed F3; bs2's held() and plan; bs2-host's
 reservation and queue; tier1's HT_RAM=0).  Nothing here reaches a host:
 
     python3 -m unittest discover -s testvm/backshot2/tests
@@ -119,36 +119,53 @@ class TierTwo(unittest.TestCase):
 
 
 class DiskMode(unittest.TestCase):
-    """vanilla3 (D 30) is over every RAM disk (the big hosts' ceiling 29.0): on /bkoscratch."""
+    """A source over a host's RAM-disk ceiling works on that host's /bkoscratch wherever
+    hosts.py disk_scratch() lets it (img-speed F3, FD3): vanilla3 (D 30) on the big hosts'
+    29.0, mint22 (D 17 unslimmed) and guix15 (D 7) on a small host's 9.0 or choubox's 3.0."""
+
+    BIG, SMALL, CHOU = (29.0, 23.2), (9.0, 10.1), (3.0, 6.0)
 
     def test_scratch(self):
         self.assertEqual(RM.need("vanilla3"), (30, 4))
-        big, small, chou = (29.0, 23.2), (9.0, 10.1), (3.0, 6.0)
-        self.assertEqual(RM.scratch("vanilla3", big, True, 29.0), "ssd")
-        self.assertEqual(RM.scratch("vanilla3", big, False, 29.0), None)     # its table lets it no SSD
-        self.assertEqual(RM.scratch("vanilla3", big, True), "ssd")           # bs2-host's: its own ceiling
-        self.assertEqual(RM.scratch("vanilla3", (29.0, 3.0), True, 29.0), None)   # its memory doesn't fit
-        self.assertEqual(RM.scratch("vanilla3", (31.0, 23.2), True, 31.0), "ram")  # a RAM disk that holds it
-        self.assertEqual(RM.scratch("guix15", small, True, 29.0), "ram")
-        self.assertEqual(RM.scratch("guix15", chou, True, 29.0), None)       # a host of the run holds it in RAM
-        self.assertEqual(RM.scratch("mint22", small, True, 29.0), None)
-        self.assertEqual(RM.scratch("alpine324", chou, True, 29.0), "ram")
-        self.assertIsNone(RM.scratch("vanilla3", None, True, 29.0))
-        # roomy() without the run's figures is as before A2: RAM only.
+        big, small, chou = self.BIG, self.SMALL, self.CHOU
+        self.assertEqual(RM.scratch("vanilla3", big, True), "ssd")
+        self.assertEqual(RM.scratch("vanilla3", big, False), None)     # its table lets it no SSD
+        self.assertEqual(RM.scratch("vanilla3", (29.0, 3.0), True), None)   # its memory doesn't fit
+        self.assertEqual(RM.scratch("vanilla3", (31.0, 23.2), True), "ram")  # a RAM disk that holds it
+        self.assertEqual(RM.scratch("guix15", small, True), "ram")
+        # F3: over this host's RAM disk, on its SSD, though another host's RAM disk holds it.
+        self.assertEqual(RM.scratch("guix15", chou, True), "ssd")
+        self.assertEqual(RM.scratch("guix15", chou, False), None)
+        self.assertEqual(RM.scratch("mint22", small, True), "ssd")
+        self.assertEqual(RM.scratch("mint22", small, False), None)
+        self.assertEqual(RM.scratch("vanilla3", small, True), "ssd")
+        # Stays big-only: a room whose memory is over a small host's 10.1.
+        with mock.patch.object(RM, "need", lambda s, path=None: (12, 12)):
+            self.assertIsNone(RM.scratch("qubes-like", small, True))
+            self.assertEqual(RM.scratch("qubes-like", big, True), "ram")
+        self.assertEqual(RM.scratch("alpine324", chou, True), "ram")
+        self.assertIsNone(RM.scratch("vanilla3", None, True))
+        # A shared-backup case goes where the source's own cases do: the SSD when it takes them.
+        self.assertEqual(RM.scratch("mint22", small, True, shared=True), "ssd")
+        # roomy() without disk_ok: RAM only.
         self.assertEqual(B.roomy({"vanilla3", "alpine324"}, big), ({"alpine324"}, {"vanilla3"}))
-        self.assertEqual(B.roomy({"vanilla3", "alpine324"}, big, 29.0, True)[0], {"vanilla3", "alpine324"})
+        self.assertEqual(B.roomy({"vanilla3", "alpine324"}, big, True)[0], {"vanilla3", "alpine324"})
+        self.assertEqual(B.roomy({"mint22", "alpine324"}, small, True), ({"mint22", "alpine324"}, set()))
 
-    def held(self, out, ok=lambda h: True):
+    SOURCES = ["vanilla3", "guix15", "debian13", "mint22"]
+
+    def held(self, out, ok=lambda h: True, plan=("vanilla3", "debian13"), n=20):
         def ssh(h, cmd, check=True, capture=False, input=None):
             return subprocess.CompletedProcess([], 0, out[h], "")
         err = io.StringIO()
         with mock.patch.object(B, "ssh", ssh), mock.patch.object(B, "disk_ok", ok), mock.patch.dict(B.SCRATCH, clear=True), \
+                mock.patch.dict(B.SHARED_ONLY, clear=True), \
                 mock.patch.object(B, "RUN_HOSTS", {h: f"m@{h}.local" for h in out}), contextlib.redirect_stderr(err):
-            got = B.held(["vanilla3", "guix15", "debian13"], list(out))
+            got = B.held(self.SOURCES, list(out))
             scratch = dict(B.SCRATCH)
             text = io.StringIO()
             with contextlib.redirect_stdout(text):
-                B.plan_words(["vanilla3", "debian13"], 20)
+                B.plan_words(list(plan), n)
         return got, scratch, err.getvalue(), text.getvalue()
 
     def test_held_and_the_plan(self):
@@ -156,11 +173,11 @@ class DiskMode(unittest.TestCase):
                "choubox": "@ceiling 3.0 6.0\nguix15\ndebian13\n"}
         got, scratch, err, text = self.held(out)
         self.assertEqual(got, {"chopin": {"vanilla3", "guix15", "debian13"}, "cinqcent": {"vanilla3", "debian13"},
-                               "choubox": {"debian13"}})
-        self.assertEqual({k: v for k, v in scratch.items() if v == "ssd"}, {("chopin", "vanilla3"): "ssd", ("cinqcent", "vanilla3"): "ssd"})
+                               "choubox": {"guix15", "debian13"}})
+        self.assertEqual({k: v for k, v in scratch.items() if v == "ssd"},
+                         {("chopin", "vanilla3"): "ssd", ("cinqcent", "vanilla3"): "ssd", ("choubox", "guix15"): "ssd"})
         self.assertEqual(scratch[("choubox", "debian13")], "ram")
-        self.assertIn("choubox has vms/guix15, but its cmp-run.sh --ceiling is 3 6, under guix15's cases' --reserve 7 4: "
-                      "left out for guix15 (a host of the run holds it in its RAM disk)", err)
+        self.assertNotIn("left out", err)
         line = next(l for l in text.splitlines() if l.startswith("vanilla3 "))
         self.assertIn("SSD", line)
         self.assertIn(f"{B.secs('vanilla3', 1)} est.", line)
@@ -168,11 +185,31 @@ class DiskMode(unittest.TestCase):
                                r"~\d+ GB written est\.")
         self.assertRegex(text, r"chopin: 5 slots, \d+ cases \(vanilla3 \d+\+\d SSD")
 
+    def test_a_large_source_on_the_small_hosts(self):
+        """F3's proof in miniature: mint22 (D 17, over the small hosts' 9.0) is on all five
+        hosts; the small ones take some of its cases on their SSD, one at a time, while the
+        big ones hold it in RAM."""
+        big, small = "@ceiling 29.0 23.2\nmint22\ndebian13\n", "@ceiling 9.0 10.1\nmint22\ndebian13\n"
+        out = {"chopin": big, "cinqcent": big, "copland": small, "cage": small, "czerny": small}
+        got, scratch, err, text = self.held(out, plan=("mint22",), n=60)
+        self.assertEqual({h for h, ss in got.items() if "mint22" in ss}, set(out))
+        self.assertEqual({h for (h, s), v in scratch.items() if s == "mint22" and v == "ssd"}, {"copland", "cage", "czerny"})
+        self.assertEqual({h for (h, s), v in scratch.items() if s == "mint22" and v == "ram"}, {"chopin", "cinqcent"})
+        line = next(l for l in text.splitlines() if l.startswith("mint22 "))
+        self.assertIn("RAM, SSD on copland, cage, czerny", line)
+        self.assertRegex(text, r"copland: 2 slots, \d+ cases \(mint22 \d+ SSD")
+        self.assertRegex(text, r"on the SSD \(/bkoscratch, cmp-run.sh --reserve-ssd\): \d+ cases \(mint22 on [a-z, ]+\)")
+        # With the small hosts' SSD off (scratch_mode ram), mint22 is the big pair's alone, as before F3.
+        got, scratch, err, _ = self.held(out, ok=lambda h: h in ("chopin", "cinqcent"), plan=("mint22",), n=60)
+        self.assertEqual({h for h, ss in got.items() if "mint22" in ss}, {"chopin", "cinqcent"})
+        self.assertIn("copland has vms/mint22, but its cmp-run.sh --ceiling is 9 10.1, under mint22's cases' --reserve 17 4: "
+                      "left out for mint22 (and its scratch_mode is ram in testvm/hosts.json: no SSD cases there)", err)
+
     def test_a_host_the_table_keeps_in_ram(self):
         out = {"chopin": "@ceiling 29.0 23.2\nvanilla3\ndebian13\n", "cinqcent": "@ceiling 29.0 23.2\nvanilla3\ndebian13\n"}
         got, scratch, err, text = self.held(out, ok=lambda h: h == "chopin")
         self.assertEqual(got, {"chopin": {"vanilla3", "debian13"}, "cinqcent": {"debian13"}})
-        self.assertIn("left out for vanilla3 (and its holt_disk_mode isn't true in testvm/hosts.json", err)
+        self.assertIn("left out for vanilla3 (and its scratch_mode is ram in testvm/hosts.json", err)
 
     def test_all_in_ram_says_so(self):
         out = {"chopin": "@ceiling 29.0 23.2\ndebian13\n"}
@@ -187,10 +224,15 @@ class DiskMode(unittest.TestCase):
         self.assertNotIn("on the SSD", text.getvalue())
 
     def test_the_table_says_which_hosts(self):
-        # holt_disk_mode true: the big hosts only; a scratch_mode overflow alone (the small ones') isn't enough.
-        self.assertEqual({h: B.disk_ok(h) for h in ("chopin", "cinqcent", "copland", "cage", "czerny", "choubox", "nosuch")},
-                         {"chopin": True, "cinqcent": True, "copland": False, "cage": False, "czerny": False, "choubox": False,
-                          "nosuch": False})
+        # hosts.py disk_scratch(): scratch_mode overflow (every amd64 host's) or holt_disk_mode;
+        # bigfoot's scratch_mode ram (and a host the table doesn't know): no.
+        self.assertEqual({h: B.disk_ok(h) for h in ("chopin", "cinqcent", "copland", "cage", "czerny", "choubox", "bigfoot",
+                                                    "nosuch")},
+                         {"chopin": True, "cinqcent": True, "copland": True, "cage": True, "czerny": True, "choubox": True,
+                          "bigfoot": False, "nosuch": False})
+        for h, want in (("copland", True), ("bigfoot", False), ("nosuch", False)):
+            with mock.patch.dict(os.environ, {"BS2_HOSTNAME": h}):
+                self.assertEqual(H.disk_ok(), want, h)
 
     def test_the_ssd_lane_is_one_case_at_a_time(self):
         """split() and wall() run a host's SSD cases one after another (bs2-host's ssd_token),

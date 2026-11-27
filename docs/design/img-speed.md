@@ -1108,6 +1108,41 @@ this spec's speedups 2 and 7.
   tier-1 case of each moved source PASSes on a small host, with its wear tag
   in jobs.log. *Gain:* large: BackShot2All's Linux lane over 5 hosts instead
   of 2.
+  *As built (2026-11-27):* `disk_ok()` in bs2 and bs2-host is now
+  `hosts.disk_scratch()`, so every amd64 host takes SSD cases (bigfoot's
+  `scratch_mode` ram does not), and `room.py scratch()` puts a source on a
+  host's SSD whenever its D is over that host's RAM-disk ceiling and its M
+  fits. The old rule (SSD only for a source over every RAM ceiling of the
+  run, `run_disk`) is gone; `split()` already weighed each host's SSD lane,
+  one case at a time (bs2-host `ssd_token()`), against the others' RAM slots,
+  so a small host takes such cases only where it ends them sooner. The
+  count was 17, not about 14: anduinos2, biglinux, endeavouros and -grub,
+  garuda, kinoite44, mint22, mx25, neon24, omarchy, pop24, slackware15 and
+  -uefi, solus49, ubuntu26-luks, vanilla3 and zorin18 (D 10-20, M 4). The
+  same rule also gives choubox (RAM ceiling 3.0, M 6.0) the sources over 3
+  GiB on its SSD, about 30 more. Per-case placement (`SHARED_ONLY`, the
+  shared-backup cases in a small host's RAM) now serves only a host with no
+  SSD cases: a host that takes the SSD holds the source whole there. The
+  wear is real: `bs2 BackShot2All plan` puts 217 cases on the small hosts'
+  SSDs, ~2.4 TB written est. per BackShot2All (FD3's trade). The proof
+  found one gap, now fixed: bs2's space preflight kept a 30 GiB margin, but
+  cmp-run.sh starts a `--reserve-ssd` only above the host's `ssd_floor_gib`
+  (80). Copland passed the preflight with 199 GiB free, other work then took
+  it to 82, and its first SSD case waited. A host with SSD cases now needs
+  its floor free at the peak (`space_of()`). *Proof:* `bs2 BackShot2All plan`
+  (2026-11-27 05:58) lists each of the 17 on chopin, cinqcent, copland, cage
+  and czerny ("RAM, SSD on copland, cage, czerny"), and anduinos2, mx25, omarchy,
+  pop24, solus49 and biglinux on choubox too. One tier 1 case of each PASSed
+  on a small host's SSD, each with its `scratch=ssd` line tagged
+  `bs2:RUN:CASE` in `/bkoscratch/wear/jobs.log`, and on each host one case
+  at a time (the lines' times do not overlap). bs2a-20261127-0603 on cage
+  ran mint22, mx25, neon24, omarchy, pop24 and slackware15, and on czerny
+  slackware15-uefi, solus49, ubuntu26-luks, vanilla3 and zorin18.
+  bs2a-20261127-0648 on cage ran anduinos2, biglinux and endeavouros, and on
+  czerny endeavouros-grub, garuda and kinoite44 (these six were meant for
+  copland; its run was stopped at the floor, and the six preparations it
+  had made there were removed). On choubox, arch PASSed under
+  bs2a-20261127-0603. Run with `--sweep 0 --tier2 0`, one case a source.
 - **F4. ImgTest2 and the +img panel on every host (yes).** This is speedup
   7: §10, step I9.
 - **F5. About a dozen guests missing from the small caches (yes).** leap16,

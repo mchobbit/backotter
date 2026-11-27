@@ -281,14 +281,24 @@ class Room(unittest.TestCase):
             self.assertIn("cmp-run.sh --ceiling", cmd)
             return subprocess.CompletedProcess([], 0, out[h], "")
 
+        # img-speed F3: the table's scratch_mode overflow lets choubox take Guix's cases on its SSD.
         err = io.StringIO()
-        with mock.patch.object(B, "ssh", ssh), contextlib.redirect_stderr(err):
+        with mock.patch.object(B, "ssh", ssh), mock.patch.dict(B.SCRATCH, clear=True), contextlib.redirect_stderr(err):
+            got = B.held(["guix15", "guix15-bios", "alpine324"], list(out))
+            self.assertEqual(B.SCRATCH[("choubox", "guix15")], "ssd")
+            self.assertEqual(B.SCRATCH[("copland", "guix15-bios")], "ram")
+        self.assertEqual(got, {"chopin": {"guix15", "guix15-bios"}, "choubox": {"alpine324", "guix15", "guix15-bios"},
+                               "copland": {"guix15-bios"}, "cage": set()})
+        self.assertIn("cage has vms/guix15, but its cmp-run.sh --ceiling didn't answer", err.getvalue())
+        # A host that takes no SSD cases (a scratch_mode ram row) leaves them out, and the plan deals it none.
+        err = io.StringIO()
+        with mock.patch.object(B, "ssh", ssh), mock.patch.object(B, "disk_ok", lambda h: h != "choubox"), \
+                mock.patch.dict(B.SCRATCH, clear=True), contextlib.redirect_stderr(err):
             got = B.held(["guix15", "guix15-bios", "alpine324"], list(out))
         self.assertEqual(got, {"chopin": {"guix15", "guix15-bios"}, "choubox": {"alpine324"}, "copland": {"guix15-bios"}, "cage": set()})
         self.assertIn("choubox has vms/guix15, but its cmp-run.sh --ceiling is 3 6, under guix15's cases' --reserve 7 4", err.getvalue())
-        self.assertIn("cage has vms/guix15, but its cmp-run.sh --ceiling didn't answer", err.getvalue())
-        # The plan of a run then deals no Guix case to choubox.
         with mock.patch.object(B, "ssh", ssh), mock.patch.object(B, "RUN_HOSTS", {h: f"m@{h}.local" for h in out}), \
+                mock.patch.object(B, "disk_ok", lambda h: h != "choubox"), mock.patch.dict(B.SCRATCH, clear=True), \
                 mock.patch.object(B, "slots", lambda h: 2), contextlib.redirect_stderr(io.StringIO()):
             can, lead, parts, _ = B.placement(["guix15", "guix15-bios"], 10)
         self.assertEqual(can, {"guix15": ["chopin"], "guix15-bios": ["chopin", "copland"]})

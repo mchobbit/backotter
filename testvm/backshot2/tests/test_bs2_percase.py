@@ -41,9 +41,11 @@ def ceilings_out(hosts=HOSTS):
 
 
 @contextlib.contextmanager
-def farm(env=None):
+def farm(env=None, ssd=False):
     """B's hosts and held() as HOSTS with every source there; SHARED_ONLY, SCRATCH and
-    CEILINGS cleared after."""
+    CEILINGS cleared after.  The small hosts take no SSD cases (disk_ok() false, as a
+    scratch_mode ram row: the only hosts per-case placement serves since img-speed F3, when
+    every amd64 host's overflow put a source over its RAM disk on its SSD), unless SSD."""
     out = ceilings_out()
 
     def ssh(h, cmd, check=True, capture=False, input=None):
@@ -51,7 +53,8 @@ def farm(env=None):
     with mock.patch.object(B, "ssh", ssh), mock.patch.object(B, "RUN_HOSTS", dict(RUN_HOSTS)), \
             mock.patch.object(B, "slots", lambda h: HOSTS[h]), mock.patch.dict(B.SHARED_ONLY, {}, clear=True), \
             mock.patch.dict(B.SCRATCH, {}, clear=True), mock.patch.dict(B.CEILINGS, {}, clear=True), \
-            mock.patch.dict(os.environ, env or {}), contextlib.redirect_stderr(io.StringIO()) as err:
+            mock.patch.dict(os.environ, env or {}), mock.patch.object(B, "disk_ok", lambda h: ssd or HOSTS[h] == 5), \
+            contextlib.redirect_stderr(io.StringIO()) as err:
         for v in ("BS2_REUSE_SOURCE", "BS2_REUSE_BACKUP", "BS2_REPO_BIND"):
             if v not in (env or {}):
                 os.environ.pop(v, None)
@@ -100,6 +103,19 @@ class Held(unittest.TestCase):
             self.assertEqual(B.SCRATCH[("copland", "mint22")], RM.RAM)
         self.assertIn("copland holds vms/mint22's shared-backup cases only", err.getvalue())
         self.assertIn("copland has vms/pop24, but", err.getvalue())
+
+    def test_a_small_host_with_an_ssd_holds_them_all_there(self):
+        """img-speed F3: a small host that takes SSD cases (disk_scratch) holds mint22 and pop24
+        whole, on its SSD (one at a time), so none of it is per-case placement's."""
+        with farm(ssd=True) as err:
+            got = B.held(SOURCES)
+            self.assertEqual(got["copland"], set(SOURCES))
+            self.assertEqual(B.SHARED_ONLY["copland"], set())
+            self.assertEqual({s: B.SCRATCH[("copland", s)] for s in SOURCES},
+                             {"debian12": RM.RAM, "mint22": RM.SSD, "pop24": RM.SSD})
+            self.assertEqual(B.SCRATCH[("chopin", "mint22")], RM.RAM)
+            self.assertFalse(B.wide_of(SOURCES, 20))
+        self.assertNotIn("shared-backup cases only", err.getvalue())
 
     def test_reuse_off_places_by_the_full_room(self):
         for v in ("BS2_REUSE_SOURCE", "BS2_REUSE_BACKUP", "BS2_REPO_BIND"):

@@ -183,23 +183,23 @@ EPS = 1e-9
 RAM, SSD = "ram", "ssd"
 
 
-def scratch(source, ceiling, disk_ok, run_disk=None, path=SIZES, shared=False):
+def scratch(source, ceiling, disk_ok, path=SIZES, shared=False):
     """Where SOURCE's cases work on a host, or None when the host can't hold them:
     - "ram": in the RAM disk, under cmp-run.sh --reserve D M, as every case did before
       A2: whenever need()'s D and M are within the host's CEILING ((disk, memory) GiB,
       its cmp-run.sh --ceiling; None: unknown, holds nothing);
-    - "ssd": on /bkoscratch (HT_RAM=0, under --reserve-ssd D M), only for a source whose
-      D is over every RAM ceiling of the run (RUN_DISK: the largest of the run's hosts'
-      disk ceilings; None: this host's alone, as bs2-host on the host decides) on a host
-      that takes SSD cases (DISK_OK: its holt_disk_mode is true in hosts.json, Chopin and
-      Cinqcent; bs2-host runs one at a time there) whose memory ceiling holds its M:
-      vanilla3's full room, D 30 GiB over the big hosts' 29 (its slimmed room, D 12, is
-      in RAM: slim-sizes.tsv).
-    A source one host of the run can hold in RAM never goes to the SSD on another: it
-    stays in the RAM disks that hold it, as before.
+    - "ssd": on /bkoscratch (HT_RAM=0, under --reserve-ssd D M), for a source whose D is
+      over this host's RAM-disk ceiling on a host that takes SSD cases (DISK_OK:
+      hosts.py disk_scratch(), its scratch_mode overflow or its holt_disk_mode; every
+      amd64 host since img-speed F3, 2026-11-27; bs2-host runs one at a time there)
+      whose memory ceiling holds its M: the large desktop sources (D 10-20) on the
+      small hosts' 9.0, vanilla3's full room (D 30) on the big hosts' 29.  Before F3 the
+      SSD was the big hosts' alone (holt_disk_mode), and only for a source no RAM disk of
+      the run could hold; now placement (bs2 split()) weighs each host's one-at-a-time
+      SSD lane against the others' RAM slots.
     SHARED: where a shared-backup case of SOURCE works (bs2-host repo_shared()): where its
     own cases do, else "ram" when shared_need() is within CEILING (a host that holds such
-    cases only: bs2's SHARED_ONLY), else None."""
+    cases only: bs2's SHARED_ONLY, which only a host with no SSD cases has), else None."""
     if not ceiling:
         return None
     d, m = need(source, path)
@@ -207,8 +207,7 @@ def scratch(source, ceiling, disk_ok, run_disk=None, path=SIZES, shared=False):
         return None
     if d <= ceiling[0] + EPS:
         return RAM
-    top = max(ceiling[0], run_disk if run_disk is not None else ceiling[0])
-    if disk_ok and d > top + EPS:
+    if disk_ok:
         return SSD
     if shared and shared_need(source, path)[0] <= ceiling[0] + EPS:
         return RAM

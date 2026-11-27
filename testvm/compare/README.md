@@ -177,7 +177,10 @@ than that memory feeds.  `CPUS` and `MEMORY` given to `build-round.sh` win;
 neither is a digest input, so the size never stops a reuse ("Guest size" in
 its header; the log and `--dry-run` print it).  A host builds nothing from a copy
 whose digests aren't the Mac's.  Every builder's files are then gathered to
-one collector (Chopin, else the first build host given), which makes the
+one collector (since 2026-11-27 the host `testvm/pick-host` ranks first
+among `--hosts`, else the first of them in the table's tie order;
+`--collector H` names one, and `--split legacy` keeps Chopin, else the first
+build host given; img-speed F20), which makes the
 round's `SHA256SUMS`, and the distribution gives every build host the whole
 `roundROUND/bin` (illumos' also as `omnios`) with that same `SHA256SUMS`; it
 ends with a table, per

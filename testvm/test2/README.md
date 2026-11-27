@@ -489,7 +489,8 @@ Tests set all of them; `t2 ledger seed-current` refuses the default MAC_ROOT.
 
 ## Tests
 
-    testvm/test2/t2 self-test        every tests/test_*.py, drive.py --self-test, check-manifests.py
+    testvm/test2/t2 self-test        every tests/test_*.py and testvm/backshot2/tests/test_*.py (t2
+                                     UNIT_DIRS, one pool), drive.py --self-test, check-manifests.py
                                      over stic's manifests (and --strict-watch) and the holt, gate,
                                      guest and img specs, leakscan over the corpus, the fixtures and
                                      guest/*.json and img/*.json, and the class table's check

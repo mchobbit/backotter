@@ -452,6 +452,15 @@ class Values(unittest.TestCase):
         # a HoltTest1 run (no CODE): the binaries it used, by sha256 (R14)
         t1 = self.r("holt:debian13", opts={"holt_sha256": {"linux": A}}).inputs
         self.assertEqual(t1["bin"]["linux/bko-holt"], "sha256:" + A)
+        # the build kind (img-speed.md §8.2a, D17): vm keys nothing more; a cross kind its own input
+        vm = self.r("holt:freebsd15", opts={"holt_build": {"freebsd": "vm"}})
+        self.assertEqual(vm.key, self.r("holt:freebsd15", opts={}).key)
+        x = self.r("holt:freebsd15", opts={"holt_build": {"freebsd": "cross:1.94.1:freebsd14@0123456789ab"}})
+        self.assertEqual(x.inputs["bin"]["freebsd/bko-holt-build"], "ver:cross:1.94.1:freebsd14@0123456789ab")
+        self.assertEqual(x.inputs["bin"]["freebsd/bko-holt"], "code:" + code)
+        self.assertNotEqual(x.key, vm.key)
+        self.assertEqual(self.r("holt:debian13", opts={"holt_build": {"freebsd": "cross:x"}}).key,
+                         self.r("holt:debian13", opts={}).key)   # another platform's kind
         # a variant: the same inputs, another key
         v = self.r("holt:debian13+oneshot", opts={})
         self.assertEqual(v.inputs, self.r("holt:debian13", opts={}).inputs)

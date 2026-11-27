@@ -102,6 +102,11 @@ A facts dict is one host's facts_host.py output.  Options (opts) a caller can gi
     holt_code    CODE, when the caller has it (else computed from the source)
     holt_sha256  {PLAT: sha256} of the bko-holt binaries a HoltTest1 or --holt-bin run used:
                  holt then keys sha256: (R14), not code:
+    holt_build   {PLAT: KIND}: how holt's PLAT/bko-holt of CODE is built (docs/design/img-speed.md
+                 §8.2a, D17).  "vm" (and a platform not named, every one until I12's switch) keys
+                 nothing more, so the rows of a VM build keep their keys; any other kind (holt-cross.sh's
+                 cross:TOOLCHAIN:GUEST@SYSROOT12) adds bin/PLAT/bko-holt-build as ver:KIND, so the
+                 switch makes every holt line of that platform due once, on the build it names
     gitrepos     {name: commit} instead of reading BKO_GIT
 """
 
@@ -1081,6 +1086,9 @@ def _holt_bin(r, c, plat, facts, src, opts):
             return
         code = opts.get("holt_code") or holt_code(src)
         r.put("bin", name, "code:" + code)
+        kind = (opts.get("holt_build") or {}).get(plat)
+        if kind and kind != "vm":
+            r.put("bin", name + "-build", ver(kind))
         return
     code = opts.get("holt_code") or holt_code(src)
     if _part_failed(facts, "holt_bins"):

@@ -857,7 +857,7 @@ class HoltBuildHosts(unittest.TestCase):
     def builds(self, r):
         import re
         return [(h, re.search(r"--reserved \S+ (\S+)", c[0]).group(1))
-                for h, op, *c in r.calls if op == "start" and "--reserved" in c[0]]
+                for h, op, *c in r.calls if op == "start" and "build-holt.sh --reserved" in c[0]]
 
     def test_a_small_build_host_in_hosts_builds_too(self):
         """F8: a small host with the build role builds as a big one does, in --hosts' order

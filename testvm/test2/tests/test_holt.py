@@ -842,10 +842,11 @@ class FakeRemote:
 
     def start(self, host, cmd, log, pidfile):
         self.calls.append((host, "start", cmd))
-        m = re.search(r"build-holt\.sh --reserved (\S+) (\S+)$", cmd)
+        m = re.search(r"(build-holt|holt-cross)\.sh --reserved (\S+) (\S+)$", cmd)
         if m:
             env = dict(re.findall(r"(\w+)=(\S+)", cmd))
-            return self._new(host, {"kind": "build", "plat": m.group(2), "env": env})
+            return self._new(host, {"kind": "build", "plat": m.group(3), "env": env,
+                                    "cross": m.group(1) == "holt-cross"})
         m = re.search(r"ht1-queue\.sh (\S+) 2600 [1-9]", cmd)   # (MAXJOBS: the host's holt_jobs)
         if m:
             oe = re.search(r"ONLY_ELSEWHERE='([^']*)'", cmd)
@@ -926,11 +927,14 @@ class FakeRemote:
                 env = p["env"]
                 out = env["HOLT_OUT"]
                 path = out + "/bko-holt"
-                self.files[host][path] = f"bko-holt {p['plat']}"
+                body = ("cross " if p.get("cross") else "") + f"bko-holt {p['plat']}"
+                self.files[host][path] = body
                 self.files[host][env["HOLT_LOGS"] + "/exit"] = "0\n"
-                self.files[host][env["HOLT_INFO"]] = json.dumps(
-                    {"platform": p["plat"], "sha256": hashlib.sha256(f"bko-holt {p['plat']}".encode()).hexdigest(),
-                     "rustc": "rustc 1.94.1", "host": host, "time": "2026-11-08T03:01:00Z"})
+                info = {"platform": p["plat"], "sha256": hashlib.sha256(body.encode()).hexdigest(),
+                        "rustc": "rustc 1.94.1", "host": host, "time": "2026-11-08T03:01:00Z"}
+                if p.get("cross"):
+                    info.update(kind="cross", build="cross:1.94.1:freebsd14@0123456789ab")
+                self.files[host][env["HOLT_INFO"]] = json.dumps(info)
                 p["alive"] = False
             elif p["kind"] == "queue":
                 q = holt.QUEUE + "/" + p["qrun"]
@@ -1058,8 +1062,14 @@ class U53HoltRun(unittest.TestCase):
         res = self.go({"mint22": (1, "FAIL"), "mint22@r2": (0, "FLAKY-FAIL"), "debian13-oneshot": (2, None)})
         r = self.remote
         starts = [(h, c) for h, op, *c in r.calls if op == "start"]
-        builds = [(h, re.search(r"--reserved \S+ (\S+)", c[0]).group(1)) for h, c in starts if "--reserved" in c[0]]
+        builds = [(h, re.search(r"--reserved \S+ (\S+)", c[0]).group(1)) for h, c in starts
+                  if "build-holt.sh --reserved" in c[0]]
         self.assertEqual(builds, [("chopin", "linux"), ("cinqcent", "freebsd"), ("chopin", "openbsd")])
+        # img-speed.md I10: freebsd's VM build has a cross check build beside it, in CODE/cross/freebsd/
+        # on its build host alone (never CODE/freebsd/: that is the VM build's, the one shipped and tested).
+        crosses = [(h, c[0]) for h, c in starts if "holt-cross.sh --reserved" in c[0]]
+        self.assertEqual([h for h, _ in crosses], ["cinqcent"])
+        self.assertIn("HOLT_OUT=/bkoscratch/t2test/holt-bin/" + "c" * 64 + "/cross/freebsd ", crosses[0][1])
         hb = "/bkoscratch/t2test/holt-bin/" + "c" * 64
         for h in ("chopin", "cinqcent"):
             for p in ("bko-holt", "freebsd/bko-holt", "openbsd/bko-holt"):
@@ -1097,6 +1107,55 @@ class U53HoltRun(unittest.TestCase):
         self.assertEqual(by["holt:debian13"]["verdict"], "PASS")
         self.assertEqual(res["exit"], 1)
         self.assertEqual(len(self.rs.stops.fed), 7)
+
+    # --- img-speed.md I10: the cross check builds (§8.2a, §8.3) ---------------------------------------
+    def crosses(self):
+        return [(h, c[0]) for h, op, *c in self.remote.calls if op == "start" and "holt-cross.sh --reserved" in c[0]]
+
+    def test_cross_check_build_lands_in_cross_never_in_code_plat(self):
+        res = self.go({})
+        self.assertEqual(res["exit"], 0, res)
+        r, hb = self.remote, "/bkoscratch/t2test/holt-bin/" + "c" * 64
+        self.assertEqual(r.files["cinqcent"][hb + "/cross/freebsd/bko-holt"], "cross bko-holt freebsd")
+        for h in ("chopin", "cinqcent"):   # the VM build is the one in CODE/freebsd/, shipped and tested
+            self.assertEqual(r.files[h][hb + "/freebsd/bko-holt"], "bko-holt freebsd")
+            self.assertNotIn("cross", r.files[h][hb + "/SHA256SUMS"])
+            self.assertNotIn("cross", r.files[h][hb + "/BUILD-INFO"])
+        self.assertFalse([p for p in r.files["chopin"] if "/cross/" in p], "a check build is not shipped")
+        info = json.loads(r.files["cinqcent"][hb + "/cross/build-freebsd.json"])
+        self.assertEqual((info["kind"], info["run"]), ("cross", "t2h-20261108T0300-abcd"))
+        self.assertTrue(all("ONLY_ELSEWHERE" not in c or "/cross" not in c for _, c in self.crosses()))
+        self.assertTrue(any("cross check build on cinqcent" in t and "not shipped" in t for t in self.rs.logged),
+                        self.rs.logged)
+        self.assertNotIn("openbsd", " ".join(c for _, c in self.crosses()), "tier 3 is I11's")
+        # A resume starts no second one.
+        n = len(self.crosses())
+        holt.resume(self.ctx, self.plan, remote=r, sleep=lambda s: None, poll=0, gate=self.gate)
+        self.assertEqual(len(self.crosses()), n)
+
+    def test_failed_cross_check_build_is_a_note(self):
+        class CrossFails(FakeRemote):
+            def tick(self):
+                for (host, pid), p in list(self.procs.items()):
+                    if p["alive"] and p["kind"] == "build" and p.get("cross"):
+                        self.files[host][p["env"]["HOLT_LOGS"] + "/exit"] = "1\n"
+                        p["alive"] = False
+                super().tick()
+        res = self.go({}, CrossFails({}))
+        self.assertEqual(res["exit"], 0, res)
+        self.assertTrue(all(c["verdict"] == "PASS" for c in res["cells"]))
+        self.assertTrue(any(n.startswith("bko-holt freebsd cross check build failed on cinqcent (exit 1")
+                            and n.endswith("a check build, the run goes on") for n in res["notes"]), res["notes"])
+        self.assertFalse(self.remote.exists("cinqcent", "/bkoscratch/t2test/holt-bin/" + "c" * 64 + "/cross/freebsd/bko-holt"))
+
+    def test_no_cross_check_build_over_one_there(self):
+        r = FakeRemote({})
+        r.files["cinqcent"]["/bkoscratch/t2test/holt-bin/" + "c" * 64 + "/cross/freebsd/bko-holt"] = "older cross"
+        res = self.go({}, r)
+        self.assertEqual(res["exit"], 0, res)
+        self.assertEqual(self.crosses(), [])
+        self.assertEqual(r.files["cinqcent"]["/bkoscratch/t2test/holt-bin/" + "c" * 64 + "/cross/freebsd/bko-holt"],
+                         "older cross")
 
     def test_all_pass_and_resume(self):
         res = self.go({})
@@ -1161,7 +1220,7 @@ class U53HoltRun(unittest.TestCase):
         self.assertEqual(res["exit"], 0, res)
         hb = "/bkoscratch/t2test/holt-bin/" + "c" * 64
         self.assertEqual(sorted(p for p in self.remote.files["cinqcent"] if p.startswith(hb)),
-                         sorted(p for p in self.remote.files["chopin"] if p.startswith(hb)))
+                         sorted(p for p in self.remote.files["chopin"] if p.startswith(hb) and "/cross/" not in p))
         self.assertEqual(self.remote.files["cinqcent"][hb + "/BUILD-INFO"], self.remote.files["chopin"][hb + "/BUILD-INFO"])
         self.assertFalse([1 for h, op, *c in self.remote.calls if op == "start" and h == "cinqcent"])
 
@@ -1621,7 +1680,7 @@ class U53HoltRun(unittest.TestCase):
         res = self.go({})
         r = self.remote
         builds = [re.search(r"--reserved \S+ (\S+)", c[0]).group(1) for _, op, *c in r.calls
-                  if op == "start" and "--reserved" in c[0]]
+                  if op == "start" and "build-holt.sh --reserved" in c[0]]
         self.assertEqual(builds, ["linux", "freebsd", "openbsd", "netbsd"])
         todo = r.written[("cinqcent", holt.QUEUE + "/t2h-20261108T0300-abcd/todo")].split()
         self.assertIn("netbsd11", todo)

@@ -141,6 +141,12 @@ def disk_mode(host):
     return hosts_table.limit(host, "holt_disk_mode") is True
 POLL_S = 20
 BUILD_TIMEOUT_S = 4 * 3600
+# img-speed.md I10 (§8.1, §8.3): the platforms whose VM build gets a cross check build beside it
+# (holt-cross.sh, tier 2, rustup's pinned 1.94.1).  A check build is never tested by a cell nor
+# shipped: it lands in CODE/cross/PLAT/ on its build host alone, and E2 (holt-e2.sh) runs on it
+# privately.  I11 adds openbsd and dragonfly.
+CROSS_PLATS = ("freebsd", "netbsd", "illumos")
+CROSS_TIMEOUT_S = 3600
 QUEUE_TIMEOUT_S = 16 * 3600
 DEFAULT_RESERVE_GIB = 3.0
 STOPPING = ("stop-starts", "stop-family", "stop-run")
@@ -630,6 +636,7 @@ class State:
             self.d = {}
         self.d.setdefault("v", 1)
         self.d.setdefault("builds", {})
+        self.d.setdefault("cross", {})
         self.d.setdefault("queues", {})
 
     def save(self):
@@ -876,6 +883,7 @@ class Runner:
             host = bh[i % len(bh)]
             builds[p] = self.start_build(host, p)
             self.state.save()
+        self.start_crosses([p for p in order if p in CROSS_PLATS], bh, every)
         err = self.wait_builds(order)
         if err:
             # (A failed build that ended, other than linux's, loses its platform's cells
@@ -949,7 +957,52 @@ class Runner:
                 self.log(f"bko-holt code {self.code[:12]}: shipped to {h} too")
             except (OSError, KeyError) as e:
                 self.notes.append(f"bko-holt code {self.code[:12]} not shipped to {h}: {e}")
+        self.wait_crosses()
         return None
+
+    # --- the cross check builds (img-speed.md I10, §8.2a: CODE/cross/PLAT/, never CODE/PLAT/) ---------
+    def cross_dir(self, plat):
+        return os.path.join(self.holt_dir(), "cross", plat)
+
+    def start_crosses(self, plats, bh, every):
+        """A cross check build of each of PLATS (the platforms this run builds in a VM) that
+        this run hasn't started and no host holds in CODE/cross/PLAT/ already (never built
+        over, as CODE/'s builds aren't), on the build host after the VM build's."""
+        cross = self.state["cross"]
+        for i, p in enumerate(sorted(plats)):
+            if p in cross or not bh:
+                continue
+            path = os.path.join(self.cross_dir(p), "bko-holt")
+            if any(self.remote.exists(h, path) for h in every):
+                continue
+            host = bh[(i + 1) % len(bh)]
+            cross[p] = self.start_build(host, p, cross=True)
+            self.state.save()
+
+    def wait_crosses(self):
+        """The check builds' ends: a failure, or one still running after CROSS_TIMEOUT_S, is a
+        note and nothing more (the run tests the VM builds); a build's info goes beside it as
+        CODE/cross/build-PLAT.json on its host."""
+        cross = self.state["cross"]
+        plats = sorted(p for p, b in cross.items() if not b.get("noted"))
+        if not plats:
+            return
+        err = self.wait_builds(plats, key="cross", timeout=CROSS_TIMEOUT_S)
+        for p in plats:
+            b = cross[p]
+            if b.get("rc") == 0:
+                jp = os.path.join(self.holt_dir(), "cross", f"build-{p}.json")
+                self.remote.write(b["host"], jp, json.dumps(b["info"], sort_keys=True) + "\n")
+                self.log(f"bko-holt {p}: cross check build on {b['host']}, sha256 {b['info']['sha256'][:12]} "
+                         f"({b['info'].get('build')}): not shipped, not tested here (E2)")
+            elif b.get("rc") is None:
+                self.notes.append(f"bko-holt {p} cross check build still running on {b['host']} after "
+                                  f"{CROSS_TIMEOUT_S // 60} min: left to end by itself")
+            else:
+                self.notes.append(self.build_failure(p, key="cross") + ": a check build, the run goes on")
+            b["noted"] = True
+        self.state.save()
+        return err
 
     def infos_on(self, h, hd, infos, plats, good):
         """The builds host H's CODE/ holds: the ones checked here, and earlier runs' others
@@ -988,10 +1041,15 @@ class Runner:
     def build_logs(self, host, plat):
         return os.path.join(self.rs.host_run_dir(host), f"build-{plat}")
 
-    def start_build(self, host, plat):
+    def start_build(self, host, plat, cross=False):
+        """PLAT's VM build (build-holt.sh), or with CROSS its check build (holt-cross.sh) into
+        CODE/cross/PLAT/ (img-speed.md §8.2a)."""
         hd = self.holt_dir()
         out = hd if plat == "linux" else os.path.join(hd, plat)
         logs = self.build_logs(host, plat)
+        tool, res_default = "build-holt.sh", None
+        if cross:
+            out, logs, tool, res_default = self.cross_dir(plat), self.build_logs(host, "cross-" + plat), "holt-cross.sh", 1.5
         peaks = []
         for path, text in self.remote.glob_read(host, os.path.join(self.host_root(), "runs", "t2h-*",
                                                                      f"build-{plat}", "peak-kib")).items():
@@ -999,7 +1057,7 @@ class Runner:
                 peaks.append(int(text.strip()))
             except ValueError:
                 pass
-        res = reserve_gib(sorted(peaks)[-3:])
+        res = reserve_gib(sorted(peaks)[-3:]) if res_default is None else res_default
         from . import hostrun
         # (A build started again on a resume: the last one's exit and info.json mustn't be
         # read as this one's.)
@@ -1008,23 +1066,28 @@ class Runner:
         env = {"HOLT_SRC": os.path.join(self.copy_path(host), "holt"), "HOLT_OUT": out, "HOLT_LOGS": logs,
                "HOLT_INFO": os.path.join(logs, "info.json"), "HOLT_RESERVE": f"{res:g}", "PYTHONDONTWRITEBYTECODE": "1"}
         cmd = ("env " + " ".join(f"{k}={hostrun.rq(v)}" for k, v in sorted(env.items())) + " "
-               + " ".join([hostrun.rq(self.tool(host, "build-holt.sh")), "--reserved", self.run_id, plat]))
+               + " ".join([hostrun.rq(self.tool(host, tool)), "--reserved", self.run_id, plat]))
         pidfile = os.path.join(logs, "wrapper.pid")
         pid = self.remote.start(host, cmd, os.path.join(logs, "wrapper.out"), pidfile)
-        pid = self.started_pid(host, pid, pidfile, "build-holt.sh")
-        self.log(f"bko-holt {plat}: building on {host} (pid {pid}, --reserve {res:g} 4, code {self.code[:12]})")
+        pid = self.started_pid(host, pid, pidfile, tool)
+        what = "cross check build" if cross else "building"
+        self.log(f"bko-holt {plat}: {what} on {host} (pid {pid}, --reserve {res:g} 4, code {self.code[:12]})")
         # (Its scratch: the RAM disk's, or the SSD's when the RAM disk had no room: build-holt.sh
-        # picks, so both are recorded for a dead run's sweep.)
-        self.rs.record_made(host, f"/mnt/bko-ram/t2b-{self.run_id}-{plat}", pid)
-        self.rs.record_made(host, f"/bkoscratch/t2b-{self.run_id}-{plat}", pid)
-        b = {"host": host, "pid": pid, "rc": None, "info": None, "reserve": res, "logs": logs, "started": utc_now()}
+        # picks, so both are recorded for a dead run's sweep; holt-cross.sh's is the RAM disk's.)
+        if cross:
+            self.rs.record_made(host, f"/mnt/bko-ram/t2x-{self.run_id}-{plat}", pid)
+        else:
+            self.rs.record_made(host, f"/mnt/bko-ram/t2b-{self.run_id}-{plat}", pid)
+            self.rs.record_made(host, f"/bkoscratch/t2b-{self.run_id}-{plat}", pid)
+        b = {"host": host, "pid": pid, "rc": None, "info": None, "reserve": res, "logs": logs, "started": utc_now(),
+             "tool": tool}
         if pid is None:
             b["rc"], b["why"] = 1, "its wrapper didn't start"
         return b
 
-    def wait_builds(self, plats):
-        builds = self.state["builds"]
-        end = self.clock() + BUILD_TIMEOUT_S
+    def wait_builds(self, plats, key="builds", timeout=BUILD_TIMEOUT_S):
+        builds = self.state[key]
+        end = self.clock() + timeout
         while True:
             pending = []
             for p in plats:
@@ -1049,7 +1112,7 @@ class Runner:
                     self.state.save()
                     self.log(f"bko-holt {p} on {b['host']}: exit {b['rc']}")
                     continue
-                a = self.remote.alive(b["host"], b["pid"], "build-holt.sh") if b.get("pid") else False
+                a = self.remote.alive(b["host"], b["pid"], b.get("tool") or "build-holt.sh") if b.get("pid") else False
                 if a is False:
                     # (Its exit file may have landed just before it ended: looked at next time.)
                     if b.get("gone"):
@@ -1064,18 +1127,18 @@ class Runner:
                 break
             if self.clock() > end:
                 left = ", ".join(f"{p} ({builds[p]['host']} pid {builds[p].get('pid')})" for p in pending)
-                return (f"bko-holt builds still running after {BUILD_TIMEOUT_S // 3600} h: {left}; "
+                return (f"bko-holt builds still running after {timeout / 3600:g} h: {left}; "
                         "they are left to end by themselves (each removes its RAM dir)")
             self.sleep(self.poll)
         bad = [p for p in plats if (builds.get(p) or {}).get("rc") != 0]
         if bad:
-            return "; ".join(self.build_failure(p) for p in bad)
+            return "; ".join(self.build_failure(p, key) for p in bad)
         return None
 
-    def build_failure(self, p):
+    def build_failure(self, p, key="builds"):
         """Why platform P's build of this run failed (its host, exit and logs)."""
-        b = self.state["builds"].get(p) or {}
-        return (f"bko-holt {p} build failed on {b.get('host')} (exit {b.get('rc')}"
+        b = self.state[key].get(p) or {}
+        return (f"bko-holt {p}{' cross check' if key == 'cross' else ''} build failed on {b.get('host')} (exit {b.get('rc')}"
                 + (f": {b['why']}" if b.get("why") else "")
                 + f"; logs {b.get('host')}:{b.get('logs')})")
 

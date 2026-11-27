@@ -239,7 +239,7 @@ const GENERIC_HOSTS: [&str; 42] = [
 ];
 /// Labels (lower case, trailing digits and '*' dropped) that installers
 /// and partitioners write: kept, because they help and identify no one.
-const GENERIC_LABELS: [&str; 88] = [
+const GENERIC_LABELS: [&str; 91] = [
     "",
     "efi",
     "esp",
@@ -343,6 +343,12 @@ const GENERIC_LABELS: [&str; 88] = [
     "qubes_dom0",
     "root-pool",
     "vm-pool",
+    // KDE Linux's installer and live image: the root partition's GPT name
+    // (its ESP's is "ESP"), the live ISO's root and sysext partitions
+    // (docs/design/kde-linux.md).
+    "kdelinux",
+    "kdelinuxlive",
+    "kdelinuxliveext",
 ];
 /// The qubes Qubes OS 4.3 makes itself (its initial setup's system and
 /// default qubes, its templates, Whonix's): kept in qube names
@@ -3163,6 +3169,24 @@ mod tests {
         let d = parse(r#"{"os": {"id": "debian"}, "host": {"hostname": "vanilla"}, "storage": {"disks": [{"name": "vda", "serial": "1", "partitions": [{"partlabel": "vos-boot", "content": {"type": "ext4", "label": "vos-boot"}}, {"partlabel": "vos-efi", "content": {"type": "vfat", "label": "vos-efi"}}, {"partlabel": "vos-root"}, {"partlabel": "vos-var"}]}], "dm_devices": [{"name": "dm-4", "content": {"type": "btrfs", "label": "vos-a"}}, {"name": "dm-5", "content": {"type": "btrfs", "label": "vos-b"}}, {"name": "dm-0", "content": {"type": "ext4", "label": "vos-init"}}, {"name": "dm-7", "content": {"type": "btrfs", "label": "vos-var"}}], "lvm": {"volume_groups": [{"name": "vos-root", "creation_host": "vanilla"}]}}}"#).unwrap();
         let (r, red) = redact(&d);
         assert_eq!(r.pretty(), d.pretty(), "{}", red.summary(true));
+    }
+
+    /// KDE Linux: its installer's GPT names and the live image's are kept,
+    /// and so is its os name as a hostname; a `DEFAULT_HOSTNAME`-made name
+    /// (`$-????`: kde-linux and four characters of the machine-id) is the
+    /// machine's, redacted as a host.  UKI and image file names keep their
+    /// versions.
+    #[test]
+    fn kdelinux_labels_kept_default_host_redacted() {
+        let d = parse(r#"{"os": {"id": "kde-linux", "name": "KDE Linux", "variant_id": "testing"}, "host": {"hostname": "kde-linux"}, "storage": {"disks": [{"name": "vda", "serial": "1", "partitions": [{"partlabel": "ESP", "content": {"type": "vfat", "label": ""}}, {"partlabel": "KDELinux", "content": {"type": "btrfs", "label": ""}}, {"partlabel": "KDELinuxLive"}, {"partlabel": "KDELinuxLiveExt"}]}]}, "boot": {"sysupdate": {"ukis": [{"path": "EFI/Linux/kde-linux_202611270255+3.efi"}]}}}"#).unwrap();
+        let (r, red) = redact(&d);
+        assert_eq!(r.pretty(), d.pretty(), "{}", red.summary(true));
+        let d = parse(r#"{"os": {"id": "kde-linux", "name": "KDE Linux"}, "host": {"hostname": "kde-linux-a1b2"}, "x": "kde-linux-a1b2 boots kde-linux_202611270255.efi"}"#).unwrap();
+        let (r, red) = redact(&d);
+        let t = r.pretty();
+        assert!(!t.contains("kde-linux-a1b2"), "{t}");
+        assert!(t.contains("kde-linux_202611270255.efi"), "{t}");
+        assert!(red.leaks(&t).is_empty(), "{:?}", red.leaks(&t));
     }
 
     /// An LVM pseudonym is never one the dump already has in its dashed

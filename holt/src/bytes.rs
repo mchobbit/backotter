@@ -786,6 +786,46 @@ fn sha256_compress(h: &mut [u32; 8], block: &[u8], w: &mut [u32; 64]) {
     }
 }
 
+/// SHA-256 of the file at PATH, as `sha256sum` prints it, read a MiB at a
+/// time whatever its size (a 250 MB unified kernel image: `sha256_hex`
+/// would hold it whole).
+///
+/// # Errors
+///
+/// The file's open or read error.
+pub fn sha256_file(path: &Path) -> std::io::Result<String> {
+    let mut f = File::open(path)?;
+    let mut h = SHA256_H0;
+    let mut w = [0u32; 64];
+    let mut buf = vec![0u8; 1 << 20];
+    let mut have = 0usize; // bytes of buf not yet compressed
+    let mut total: u64 = 0;
+    loop {
+        let n = f.read(&mut buf[have..])?;
+        if n == 0 {
+            break;
+        }
+        total += n as u64;
+        have += n;
+        let whole = have / 64 * 64;
+        for block in buf[..whole].chunks_exact(64) {
+            sha256_compress(&mut h, block, &mut w);
+        }
+        buf.copy_within(whole..have, 0);
+        have -= whole;
+    }
+    let mut tail = buf[..have].to_vec();
+    tail.push(0x80);
+    while tail.len() % 64 != 56 {
+        tail.push(0);
+    }
+    tail.extend(total.wrapping_mul(8).to_be_bytes());
+    for block in tail.chunks_exact(64) {
+        sha256_compress(&mut h, block, &mut w);
+    }
+    Ok(hex(&sha256_digest(h)))
+}
+
 fn sha256_digest(h: [u32; 8]) -> [u8; 32] {
     let mut out = [0u8; 32];
     for (o, x) in out.chunks_exact_mut(4).zip(h) {
@@ -796,7 +836,24 @@ fn sha256_digest(h: [u32; 8]) -> [u8; 32] {
 
 #[cfg(test)]
 mod sha256_tests {
-    use super::{hex, sha256, sha256_hex, sha256_short};
+    use super::{hex, sha256, sha256_file, sha256_hex, sha256_short};
+
+    /// The streaming file hash agrees with the in-memory one across block
+    /// and buffer boundaries.
+    #[test]
+    fn file_matches() {
+        let t = crate::testutil::Tree::new("sha256-file");
+        for n in [0usize, 1, 55, 56, 63, 64, 65, (1 << 20) - 1, 1 << 20, (1 << 20) + 77] {
+            let data: Vec<u8> = (0..n).map(|i| (i as u8).wrapping_mul(31)).collect();
+            t.file(&format!("/f{n}"), &data);
+            assert_eq!(
+                sha256_file(&t.p(&format!("/f{n}"))).unwrap(),
+                sha256_hex(&data),
+                "length {n}"
+            );
+        }
+        assert!(sha256_file(&t.p("/missing")).is_err());
+    }
 
     /// The one-block form agrees with the general one at every length it
     /// takes, and leaves its block padded as FIPS 180-4 pads it.

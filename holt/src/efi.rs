@@ -290,6 +290,11 @@ impl LoadOption {
     }
 }
 
+/// `LoaderEntrySelected`: the entry systemd-boot booted (`crate::sysupdate`).
+pub(crate) fn loader_entry_selected(sys: &Sys) -> Option<String> {
+    var_utf16(sys, "LoaderEntrySelected", LOADER)
+}
+
 /// UTF-16 string variable (systemd's `LoaderInfo` and friends).
 fn var_utf16(sys: &Sys, name: &str, vendor: &str) -> Option<String> {
     var(sys, name, vendor)
@@ -453,7 +458,25 @@ pub(crate) fn boot_json(sys: &Sys, partuuid_to_dev: &dyn Fn(&str) -> Option<Stri
                     "loader_entry_default",
                     var_utf16(sys, "LoaderEntryDefault", LOADER),
                 )
-                .set("stub_info", var_utf16(sys, "StubInfo", LOADER)),
+                .set("stub_info", var_utf16(sys, "StubInfo", LOADER))
+                // Only when set, so a dump without them is as before: the
+                // hidden menu's timeout (KDE Linux's auto-hide-bootloader
+                // sets it to 0), a one-shot entry, and whether systemd-boot
+                // has a system token for its random seed
+                // (docs/design/kde-linux.md, "dump").  None is restored.
+                .set_some(
+                    "loader_config_timeout",
+                    var_utf16(sys, "LoaderConfigTimeout", LOADER),
+                )
+                .set_some(
+                    "loader_entry_oneshot",
+                    var_utf16(sys, "LoaderEntryOneShot", LOADER),
+                )
+                .set_some(
+                    "loader_system_token",
+                    sys.exists(&format!("{EFIVARS}/LoaderSystemToken-{LOADER}"))
+                        .then_some(true),
+                ),
         )
         .set("shim_variables", shim_vars)
         .build()

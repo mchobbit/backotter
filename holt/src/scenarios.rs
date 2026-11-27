@@ -15109,3 +15109,161 @@ fn btrfs_top_level_that_cant_fit() {
         "{p:?}"
     );
 }
+
+/// KDE Linux (docs/design/kde-linux.md, K2): the `kdelinux` guest's shape,
+/// GPT with the installer's ESP and `KDELinux` root-x86-64 partition, the
+/// btrfs top level at /system, @system at /, /usr the erofs on loop0, the
+/// ESP at /boot behind gpt-auto's automount; two versions.  `esp_mounted`
+/// false leaves /boot as the autofs alone (the automount expired and
+/// listing it didn't mount it).
+fn kdelinux_tree(esp_mounted: bool) -> Tree {
+    use crate::efi::LOADER;
+    use crate::sysupdate::tests as kde;
+    let t = Tree::new("scn-kdelinux");
+    let mut img = vec![0u8; 64 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "7a1c2c3d-0000-4000-8000-000000000de1",
+            parts: vec![
+                (ESP, "1b5f04ed-e731-4ac6-933e-83ff25657722", 2048, 73727, 0, "ESP"),
+                (
+                    "4f68bce3-e8cd-4db1-96e7-fbcaf984b709",
+                    "21112222-3333-4444-5555-666677778888",
+                    73728,
+                    131_038,
+                    0,
+                    "KDELinux",
+                ),
+            ],
+        },
+    );
+    put(&mut img, 2048, &fat::sample::fat32(71680, 0x1234_abcd, ""));
+    put(&mut img, 73728, &btrfs::sample::image("", 0x1 | 0x20 | 0x40 | 0x100 | 0x200));
+    let utf16 = |s: &str| {
+        let mut b = vec![6u8, 0, 0, 0];
+        for u in s.encode_utf16().chain([0]) {
+            b.extend(u.to_le_bytes());
+        }
+        b
+    };
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{LOADER}");
+    kde::kde_files(&t);
+    let mountinfo = if esp_mounted {
+        kde::KDE_MOUNTINFO.replace("/dev/mapper/root", "/dev/nvme0n1p2")
+    } else {
+        kde::KDE_MOUNTINFO
+            .replace("/dev/mapper/root", "/dev/nvme0n1p2")
+            .lines()
+            .filter(|l| !l.contains(" vfat "))
+            .fold(String::new(), |mut a, l| {
+                a.push_str(l);
+                a.push('\n');
+                a
+            })
+    };
+    t.disk("nvme0n1", "259:0", &img, 512)
+        .partition("nvme0n1", "nvme0n1p1", "259:1", 1, 2048, 71680, &img)
+        .partition("nvme0n1", "nvme0n1p2", "259:2", 2, 73728, 57311, &img)
+        .disk("loop0", "7:0", &vec![0u8; 65536], 512)
+        .file(
+            "/sys/block/loop0/loop/backing_file",
+            format!("/system/kde-linux_{}.erofs\n", kde::V2),
+        )
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&var("LoaderInfo"), utf16("systemd-boot 262.1"))
+        .file(&var("LoaderEntrySelected"), utf16(&format!("kde-linux_{}.efi", kde::V2)))
+        .file(&var("LoaderConfigTimeout"), utf16("0"))
+        .file(&var("LoaderSystemToken"), [6u8, 0, 0, 0, 1, 2, 3])
+        .symlink("/dev/disk/by-partuuid/1b5f04ed-e731-4ac6-933e-83ff25657722", "../../nvme0n1p1")
+        .file("/proc/self/mountinfo", mountinfo);
+    t
+}
+
+#[test]
+fn kdelinux_guest() {
+    let t = kdelinux_tree(true);
+    let v = run(&t, true, FakeRunner::default());
+    assert_eq!(s(&v, &["os", "id"]), "kde-linux");
+    assert_eq!(crate::sysupdate::refusal(&v), None);
+    // The backup tree replaces the generic sources: / is the top level at
+    // /system, the ESP is @system/boot; no @system entry, no /usr.
+    let src = arr(&v, &["storage", "backup_sources"]);
+    let paths: Vec<(&str, &str)> = src
+        .iter()
+        .map(|x| (s(x, &["path"]), s(x, &["from"])))
+        .collect();
+    assert_eq!(paths, [("/", "/system"), ("/@system/boot", "/boot")]);
+    assert!(!src.iter().any(|x| x.get("subvol").and_then(Value::as_str) == Some("/@system")));
+    assert_eq!(s(&v, &["storage", "physical_root"]), "/system");
+    // erofs is pseudo: /usr is no layout mount; the overlay neither.
+    let targets: Vec<&str> = arr(&v, &["storage", "mounts"])
+        .iter()
+        .map(|m| s(m, &["target"]))
+        .collect();
+    assert!(!targets.contains(&"/usr") && !targets.contains(&"/etc"), "{targets:?}");
+    // boot.sysupdate, the prebuilt initramfs, systemd-boot's Type #2 UKIs.
+    assert_eq!(s(&v, &["boot", "sysupdate", "booted_version"]), crate::sysupdate::tests::V2);
+    assert_eq!(arr(&v, &["boot", "sysupdate", "ukis"]).len(), 2);
+    assert_eq!(s(&v, &["boot", "sysupdate", "kdelinux", "layout"]), "rootfsv3-etc-mstack");
+    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "prebuilt");
+    assert_eq!(s(&v, &["boot", "initramfs", "in"]), "uki");
+    assert_eq!(s(&v, &["boot", "loader", "name"]), "systemd-boot");
+    assert_eq!(v.at(&["boot", "loader", "type2"]), Some(&Value::Bool(true)));
+    // The loader variables load doesn't restore, recorded.
+    let li = v.at(&["boot", "efi", "loader_interface"]).unwrap();
+    assert_eq!(s(li, &["loader_config_timeout"]), "0");
+    assert_eq!(li.get("loader_system_token"), Some(&Value::Bool(true)));
+    assert!(li.get("loader_entry_oneshot").is_none());
+    let w = arr(&v, &["warnings"]);
+    assert!(!w.iter().filter_map(Value::as_str).any(|w| w.contains("automount") || w.contains("KDE Linux")), "{w:?}");
+}
+
+/// The ESP's automount expired and listing /boot didn't mount it: warned
+/// about, and dump refuses (no UKIs would be backed up).
+#[test]
+fn kdelinux_autofs_only_boot() {
+    let t = kdelinux_tree(false);
+    let v = run(&t, true, FakeRunner::default());
+    let w = arr(&v, &["warnings"]);
+    assert!(
+        w.iter()
+            .filter_map(Value::as_str)
+            .any(|w| w.starts_with("/boot is an automount")),
+        "{w:?}"
+    );
+    assert!(
+        crate::sysupdate::refusal(&v).is_some_and(|r| r.contains("no ESP is mounted")),
+        "{:?}",
+        crate::sysupdate::refusal(&v)
+    );
+    // Not KDE Linux's tree: the generic sources stay.
+    assert!(arr(&v, &["storage", "backup_sources"]).iter().any(|x| s(x, &["path"]) == "/"));
+}
+
+/// A loop mount of a file on another mount is that file's: an alias, not
+/// a backup source.
+#[test]
+fn loop_mount_of_a_file_is_an_alias() {
+    let t = Tree::new("scn-loop-alias");
+    t.debian13();
+    let x = crate::probe::xfs::sample::image("bulk");
+    t.disk("sdc", "8:32", &x, 4096)
+        .disk("loop0", "7:0", &ext::sample::image(0x4, 0x2, 0x1, ""), 512)
+        .file("/sys/block/loop0/loop/backing_file", "/srv/images/a.img\n")
+        .file(
+            "/proc/self/mountinfo",
+            "26 1 8:32 / / rw,relatime shared:1 - xfs /dev/sdc rw\n27 26 7:0 / /mnt/img rw,relatime shared:2 - ext4 /dev/loop0 rw\n",
+        );
+    let v = run(&t, true, FakeRunner::default());
+    let m = arr(&v, &["storage", "mounts"]);
+    let img = m.iter().find(|m| s(m, &["target"]) == "/mnt/img").unwrap();
+    assert_eq!(s(img, &["alias_of"]), "/");
+    assert_eq!(s(img, &["backing_file"]), "/srv/images/a.img");
+    let paths: Vec<&str> = arr(&v, &["storage", "backup_sources"])
+        .iter()
+        .map(|x| s(x, &["path"]))
+        .collect();
+    assert_eq!(paths, ["/"]);
+}

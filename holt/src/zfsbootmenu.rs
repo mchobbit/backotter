@@ -158,50 +158,87 @@ fn text(b: &[u8]) -> String {
     String::from_utf8_lossy(&b[..end]).trim().to_string()
 }
 
+/// A PE file opened for its sections: the file and its section table.
+pub(crate) struct Pe {
+    f: std::fs::File,
+    pub sections: Vec<Section>,
+}
+
+impl Pe {
+    /// The PE file at ABS (its section table read wherever it lies): None
+    /// for anything that isn't one.
+    pub(crate) fn open(sys: &Sys, abs: &str) -> Option<Self> {
+        let mut f = std::fs::File::open(sys.p(abs)).ok()?;
+        let mut head = read_at(&mut f, 0, 4096)?;
+        let pe = u64::from(le32(&head, 0x3c)?);
+        if pe > 1 << 20 {
+            return None;
+        }
+        // The section table can lie beyond the first 4 KiB.
+        let hdr = read_at(&mut f, pe, 24)?;
+        let n = u64::from(le16(&hdr, 6)?);
+        let opt = u64::from(le16(&hdr, 20)?);
+        let end = pe + 24 + opt + 40 * n.min(96);
+        if end > head.len() as u64 {
+            head = read_at(&mut f, 0, end)?;
+        }
+        let sections = pe_sections(&head)?;
+        Some(Self { f, sections })
+    }
+
+    /// The first section named NAME.
+    pub(crate) fn find(&self, name: &str) -> Option<&Section> {
+        self.sections.iter().find(|s| s.name == name)
+    }
+
+    /// A small section's text (at most 64 KiB read), NUL-terminated and
+    /// trimmed.
+    pub(crate) fn text(&mut self, s: &Section) -> Option<String> {
+        read_at(&mut self.f, s.offset, s.size.min(64 << 10)).map(|b| text(&b))
+    }
+
+    /// LEN bytes at AT of the file.
+    fn bytes(&mut self, at: u64, len: u64) -> Option<Vec<u8>> {
+        read_at(&mut self.f, at, len)
+    }
+}
+
+/// `.sdmagic`'s text as the stub's name and version ("systemd-stub 262.1").
+pub(crate) fn sdmagic(m: &str) -> Option<String> {
+    let m = m
+        .trim_matches('#')
+        .trim()
+        .trim_start_matches("LoaderInfo:")
+        .trim()
+        .to_string();
+    (!m.is_empty()).then_some(m)
+}
+
 /// A unified kernel image's sections (`.linux` and `.initrd` both there),
 /// read from the file at ABS: None for anything else.
 pub(crate) fn read_uki(sys: &Sys, abs: &str) -> Option<Uki> {
-    let mut f = std::fs::File::open(sys.p(abs)).ok()?;
-    let mut head = read_at(&mut f, 0, 4096)?;
-    let pe = u64::from(le32(&head, 0x3c)?);
-    if pe > 1 << 20 {
-        return None;
-    }
-    // The section table can lie beyond the first 4 KiB.
-    let n = u64::from(le16(&read_at(&mut f, pe, 24)?, 6)?);
-    let opt = u64::from(le16(&read_at(&mut f, pe, 24)?, 20)?);
-    let end = pe + 24 + opt + 40 * n.min(96);
-    if end > head.len() as u64 {
-        head = read_at(&mut f, 0, end)?;
-    }
-    let sections = pe_sections(&head)?;
-    let find = |n: &str| sections.iter().find(|s| s.name == n);
-    let linux = find(".linux")?;
-    find(".initrd")?;
-    let mut small = |s: Option<&Section>| {
-        s.and_then(|s| read_at(&mut f, s.offset, s.size.min(64 << 10)))
-            .map(|b| text(&b))
-    };
-    let osrel = small(find(".osrel"))
+    let mut pe = Pe::open(sys, abs)?;
+    let find = |pe: &Pe, n: &str| pe.find(n).cloned();
+    let linux = find(&pe, ".linux")?;
+    find(&pe, ".initrd")?;
+    let (osrel_s, cmdline_s, sdmagic_s) = (
+        find(&pe, ".osrel"),
+        find(&pe, ".cmdline"),
+        find(&pe, ".sdmagic"),
+    );
+    let mut small = |s: Option<Section>| s.and_then(|s| pe.text(&s));
+    let osrel = small(osrel_s)
         .map(|t| crate::boot::parse_shell_assignments(&t))
         .unwrap_or_default();
-    let cmdline = small(find(".cmdline")).filter(|c| !c.is_empty());
-    let stub = small(find(".sdmagic"))
-        .map(|m| {
-            m.trim_matches('#')
-                .trim()
-                .trim_start_matches("LoaderInfo:")
-                .trim()
-                .to_string()
-        })
-        .filter(|m| !m.is_empty());
+    let cmdline = small(cmdline_s).filter(|c| !c.is_empty());
+    let stub = small(sdmagic_s).and_then(|m| sdmagic(&m));
     // The bzImage's setup header: "HdrS" at 0x202, then at 0x20e the
     // offset (less 0x200) of its version string.
-    let hdr = read_at(&mut f, linux.offset, 0x210)?;
+    let hdr = pe.bytes(linux.offset, 0x210)?;
     let kernel = if hdr.get(0x202..0x206) == Some(b"HdrS") {
         let at = u64::from(le16(&hdr, 0x20e)?) + 0x200;
         (at < linux.size)
-            .then(|| read_at(&mut f, linux.offset + at, 256))
+            .then(|| pe.bytes(linux.offset + at, 256))
             .flatten()
             .map(|b| text(&b))
             .and_then(|t| t.split_whitespace().next().map(str::to_string))

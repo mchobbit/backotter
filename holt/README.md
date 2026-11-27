@@ -80,7 +80,8 @@ refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
 - Linux: Debian 12 and 13 (Proxmox VE 9 on it, ZFS root; TrueNAS CE 25.10 on 12, its boot environments), Devuan 6, Ubuntu 24.04 and 26.04, Linux Mint 22,
   Pop!_OS 24.04, Vanilla OS 3, Zorin OS 18, KDE neon 24.04, AnduinOS 2, elementary OS 8, Arch Linux, CachyOS, Artix Linux, Omarchy,
   EndeavourOS, Manjaro, Garuda Linux, BigLinux, Alpine Linux 3, AerynOS, Solus 4, Void Linux (also on a ZFS root with ZFSBootMenu, its boot environments), Chimera Linux,
-  Gentoo Linux, PikaOS 4, Kali Linux, Fedora 44 and 45, Bazzite 44, Rocky Linux 10, openSUSE
+  Gentoo Linux, PikaOS 4, Kali Linux, KDE Linux (its testing edition, RootFSv3 with etc-mstack only, `src/sysupdate.rs`,
+  docs/design/kde-linux.md), Fedora 44 and 45, Bazzite 44, Rocky Linux 10, openSUSE
   Tumbleweed, openSUSE Leap 16, openSUSE MicroOS and Aeon (transactional-update, any snapshot: their own boot arm,
   docs/design/aeon.md), NixOS 26.05 and Guix System (no VERSION_ID; its store GRUB-less, docs/design/guix.md),
   Slackware 15 (and -current, by its VERSION_CODENAME, at VERSION_ID 15.0 or

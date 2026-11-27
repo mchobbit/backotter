@@ -40,6 +40,7 @@ pub mod snaplayout;
 pub mod stick;
 pub(crate) mod store;
 pub mod sys;
+pub(crate) mod sysupdate;
 #[doc(hidden)]
 pub mod testutil;
 pub(crate) mod transactional;
@@ -102,7 +103,10 @@ pub fn dump_with(
     let v = report::build_with(sys, os.as_ref(), &timestamp(), only, luks);
     // What the report found that a backup can't follow (Solus's ESP, not
     // mounted: report::refusal).
-    match snapcore::refusal(&v).or_else(|| report::refusal(&v)) {
+    match snapcore::refusal(&v)
+        .or_else(|| sysupdate::refusal(&v))
+        .or_else(|| report::refusal(&v))
+    {
         Some(e) => Err(e),
         None => Ok(v),
     }

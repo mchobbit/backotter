@@ -1110,6 +1110,74 @@ fn swaps_json(sys: &Sys, ctx: &Ctx<'_>) -> Vec<Value> {
         .collect()
 }
 
+/// The mount table, after the ESP's automount is triggered: gpt-auto
+/// mounts the ESP at /boot (KDE Linux) or /efi (GNOME OS) through an
+/// automount with an idle timeout, and once it expires mountinfo shows only
+/// the autofs, which is pseudo, so the dump would have no ESP and a backup
+/// none of its files (docs/design/kde-linux.md, "dump").  Listing the
+/// directory mounts it again; a mount point still only autofs after that is
+/// warned about.
+fn trigger_automounts(sys: &Sys) -> Vec<Mount> {
+    let read = || {
+        sys.read("/proc/self/mountinfo")
+            .map(|t| mounts::parse_mountinfo(&t))
+            .unwrap_or_default()
+    };
+    let only_autofs = |mi: &[Mount], at: &str| {
+        mi.iter().any(|m| m.target == at && m.fstype == "autofs")
+            && !mi.iter().any(|m| m.target == at && m.fstype != "autofs")
+    };
+    let first = read();
+    let waiting: Vec<&str> = crate::sysupdate::checks::AUTOMOUNT_POINTS
+        .into_iter()
+        .filter(|at| only_autofs(&first, at))
+        .collect();
+    if waiting.is_empty() {
+        return first;
+    }
+    for at in &waiting {
+        let _ = sys.list(at);
+    }
+    let again = read();
+    for at in waiting.iter().filter(|at| only_autofs(&again, at)) {
+        sys.warn(format!(
+            "{at} is an automount that listing it didn't mount: if the ESP belongs there, this dump has none of its files; mount it (ls {at}/) and dump again"
+        ));
+    }
+    again
+}
+
+/// The mounts of MOUNTS that are loop devices whose backing file is on
+/// another of them, with that mount (the deepest): a filesystem image kept
+/// as a file, whose bytes a backup of the filesystem holding it already
+/// has.  (KDE Linux's /usr is one, though erofs is pseudo anyway.)
+fn loop_aliases<'a>(
+    ctx: &Ctx<'_>,
+    mounts: &[&'a Mount],
+) -> Vec<(&'a Mount, &'a Mount, String)> {
+    let under = |file: &str, dir: &str| {
+        let d = dir.trim_end_matches('/');
+        d.is_empty() || file.starts_with(&format!("{d}/"))
+    };
+    mounts
+        .iter()
+        .filter_map(|m| {
+            let d = ctx.by_devno(&m.devno)?;
+            if d.b.kind != Kind::Loop {
+                return None;
+            }
+            let file = d.b.loop_backing_file.clone()?;
+            let file = file.trim_end_matches(" (deleted)").to_string();
+            let holder = mounts
+                .iter()
+                .filter(|o| !std::ptr::eq(**o, *m) && o.devno != m.devno)
+                .filter(|o| under(&file, &o.target))
+                .max_by_key(|o| o.target.len())?;
+            Some((*m, *holder, file))
+        })
+        .collect()
+}
+
 /// The mounted ESPs, as (device, mount point): vfat mounts of an ESP
 /// partition, or at /boot/efi or /efi.
 fn mounted_esps(ctx: &Ctx<'_>) -> Vec<(String, String)> {
@@ -1190,10 +1258,7 @@ pub fn build_with(
     // the dump reads them (crate::qubes).
     let activated = crate::qubes::activate_skipped(sys);
     let devs = devices(sys, only);
-    let mountinfo = sys
-        .read("/proc/self/mountinfo")
-        .map(|t| mounts::parse_mountinfo(&t))
-        .unwrap_or_default();
+    let mountinfo = trigger_automounts(sys);
     let ctx = Ctx {
         devs: &devs,
         mounts: &mountinfo,
@@ -1238,6 +1303,7 @@ pub fn build_with(
     if mountinfo.iter().any(mounts::is_pmxcfs) {
         sys.warn("/etc/pve is Proxmox VE's pmxcfs (FUSE), not a file system to back up: its data is /var/lib/pve-cluster/config.db, a file on /, and comes back with /");
     }
+    let loop_mounts = loop_aliases(&ctx, &layout_mounts);
     let mount_dev = |m: &Mount| {
         ctx.by_devno(&m.devno)
             .map(|d| d.b.name.clone())
@@ -1249,6 +1315,12 @@ pub fn build_with(
             let mut v = m.to_json(mount_dev(m).as_deref(), sys.statvfs(&m.target));
             if let (Some(a), Value::Obj(o)) = (mounts::alias_of(m, &layout_mounts), &mut v) {
                 o.push(("alias_of".into(), Value::from(a.target.as_str())));
+            } else if let (Some((_, holder, file)), Value::Obj(o)) = (
+                loop_mounts.iter().find(|(x, ..)| std::ptr::eq(*x, *m)),
+                &mut v,
+            ) {
+                o.push(("alias_of".into(), Value::from(holder.target.as_str())));
+                o.push(("backing_file".into(), Value::from(file.as_str())));
             }
             v
         })
@@ -1282,7 +1354,13 @@ pub fn build_with(
         .flatten()
         .map(|e| (e, ctx.resolve(sys, &e.spec)))
         .collect();
-    let mut sources = backup_sources(&layout_mounts, &mount_dev, &fstab_resolved, ostree);
+    // A loop mount of a file on another mount is that file's (loop_aliases).
+    let source_mounts: Vec<&Mount> = layout_mounts
+        .iter()
+        .copied()
+        .filter(|m| !loop_mounts.iter().any(|(x, ..)| std::ptr::eq(*x, *m)))
+        .collect();
+    let mut sources = backup_sources(&source_mounts, &mount_dev, &fstab_resolved, ostree);
     zfs_mounted_twice(&mut sources);
     // ZFS boot environments the running system doesn't mount
     // (crate::zfs_be: ZFSBootMenu's, TrueNAS's): each joins backup_sources
@@ -1355,6 +1433,65 @@ pub fn build_with(
         .then(|| crate::snapcore::read(sys, &disks, &dm));
     if let Some(sc) = &snapcore {
         sources = sc.sources.clone();
+    }
+    // systemd-sysupdate (crate::sysupdate): its transfers, versions and
+    // UKIs; on KDE Linux the backup tree is the btrfs top level and the
+    // ESP, replacing the generic sources.
+    let sysupdate = {
+        let parts = crate::sysupdate::partitions(&disks);
+        let xbootldr = mountinfo
+            .iter()
+            .filter(|m| mounts::is_layout_mount(m))
+            .find(|m| {
+                mount_dev(m).is_some_and(|d| {
+                    parts
+                        .iter()
+                        .any(|p| p.device == d && p.type_guid == parttable::XBOOTLDR)
+                })
+            })
+            .map(|m| m.target.clone());
+        let loop_backing = |m: &Mount| {
+            ctx.by_devno(&m.devno)
+                .filter(|d| d.b.kind == Kind::Loop)
+                .and_then(|d| d.b.loop_backing_file.clone())
+                .map(|f| f.trim_end_matches(" (deleted)").to_string())
+        };
+        let arch = crate::arch::machine(sys);
+        let esps_now = mounted_esps(&ctx);
+        crate::sysupdate::read(
+            sys,
+            &crate::sysupdate::Input {
+                os,
+                arch: &arch,
+                mounts: &mountinfo,
+                esps: &esps_now,
+                xbootldr,
+                parts,
+                device: &mount_dev,
+                loop_backing: &loop_backing,
+                entry_selected: crate::efi::loader_entry_selected(sys),
+            },
+        )
+    };
+    if let Some(k) = sysupdate.as_ref().and_then(|d| d.kdelinux.as_ref()) {
+        for w in &k.warnings {
+            sys.warn(w.clone());
+        }
+        if let Some(tree) = &k.sources {
+            // Every other filesystem: not in v1's tree, said now.
+            for s in sources.iter().filter(|s| {
+                s.device
+                    .as_ref()
+                    .is_none_or(|d| !k.tree_devices.contains(d))
+            }) {
+                sys.warn(format!(
+                    "KDE Linux: {} ({}) is not in the backup tree, which is the btrfs top level and the ESP only (docs/design/kde-linux.md); its files are not backed up",
+                    s.path,
+                    s.device.as_deref().unwrap_or(&s.source)
+                ));
+            }
+            sources = tree.clone();
+        }
     }
     let luks_headers = crate::luksheader::capture(
         sys,
@@ -1521,6 +1658,7 @@ pub fn build_with(
     let boot = crate::transactional::add_to_boot(boot, transactional);
     let boot = crate::snapcore::add_to_boot(boot, snapcore.as_ref());
     let boot = crate::qubes::add_to_boot(boot, crate::qubes::xen_json(sys));
+    let boot = crate::sysupdate::add_to_boot(boot, sysupdate.as_ref());
     let boot = cbm_esps(boot, &ctx, sys, &packages, &fstab_resolved);
 
     let mut out = Obj::new()

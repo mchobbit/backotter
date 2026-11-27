@@ -272,6 +272,12 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     // archive: VERSION_ID is the snapshot's year.release (2026.3), as
     // AerynOS's is, so every snapshot (docs/design/kali.md, decision 2).
     ("kali", "*", "Kali Linux"),
+    // Rolling, Alpha: VERSION_ID is the daily build (202611270255), as
+    // AerynOS's is a snapshot.  systemd-sysupdate with erofs /usr files on
+    // a btrfs top level (crate::sysupdate): its markers, not this row, keep
+    // a layout bko-holt hasn't seen from being taken (RootFSv3 with
+    // etc-mstack, the testing edition only; docs/design/kde-linux.md).
+    ("kde-linux", "*", "KDE Linux"),
     // Not Linux (other/): os-release, or uname for those without one.
     ("freebsd", "14", "FreeBSD 14"),
     ("freebsd", "15", "FreeBSD 15"),
@@ -494,7 +500,7 @@ pub(crate) mod tests {
         assert!(check_supported(Some(&parse(neon))).is_ok());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "22.04")))).is_err());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "26.04")))).is_err());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Fedora 45, Alpine Linux 3, Artix Linux, AerynOS, Solus 4, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE MicroOS, Aeon, openSUSE Leap 16, Rocky Linux 10, Qubes OS 4.3, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Slackware 15, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox, Sculpt OS or Ubuntu Core 24"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Fedora 45, Alpine Linux 3, Artix Linux, AerynOS, Solus 4, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE MicroOS, Aeon, openSUSE Leap 16, Rocky Linux 10, Qubes OS 4.3, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Slackware 15, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, KDE Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox, Sculpt OS or Ubuntu Core 24"), "{e}");
         for t in [
             "ID=devuan\nVERSION_ID=6\n",
             "ID=pop\nVERSION_ID=\"24.04\"\n",
@@ -533,6 +539,13 @@ pub(crate) mod tests {
             .is_ok()
         );
         assert!(check_supported(Some(&parse("ID=\"aerynos\"\nVERSION_ID=\"2027.01\"\n"))).is_ok());
+        // KDE Linux's os-release as its 202611270255 image has it ([seen],
+        // docs/design/kde-linux.md): every daily build, by "*".
+        let kde = "NAME=\"KDE Linux\"\nPRETTY_NAME=\"KDE Linux\"\nID=kde-linux\nDEFAULT_HOSTNAME=\"$-????\"\nVERSION=\"2026-11-27 02:55\"\nVERSION_ID=202611270255\nBUILD_ID=unknownSHA\nIMAGE_ID=\"kde-linux\"\nIMAGE_VERSION=\"202611270255\"\nVARIANT=\"testing\"\nVARIANT_ID=\"testing\"\nKDE_LINUX_SYSUPDATE_ENDPOINT=sysupdate/v2\n";
+        assert!(check_supported(Some(&parse(kde))).is_ok());
+        assert!(check_supported(Some(&parse("ID=kde-linux\nVERSION_ID=202701010255\n"))).is_ok());
+        // Not KDE neon, nor a derivative by its ID_LIKE.
+        assert!(check_supported(Some(&parse("ID=kdeos\nID_LIKE=kde-linux\nVERSION_ID=1\n"))).is_err());
         // Linux Mint 22.x; not 21, and not Mint's Debian edition (LMDE).
         let mint = parse("ID=linuxmint\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=\"22.3\"\n");
         assert!(check_supported(Some(&mint)).is_ok());
@@ -774,7 +787,7 @@ pub(crate) mod tests {
         assert_eq!(o.get("PRETTY_NAME"), Some("Kali GNU/Linux Rolling"));
         assert_eq!(o.get("ANSI_COLOR"), Some("1;31"));
         assert!(check_supported(Some(&o)).is_ok());
-        assert!(supported_names().contains("AnduinOS 2, Kali Linux, FreeBSD 14"));
+        assert!(supported_names().contains("AnduinOS 2, Kali Linux, KDE Linux, FreeBSD 14"));
         // Rolling (decision 2): every snapshot, the next year's too, and
         // one with no VERSION_ID at all.
         for v in ["2026.4", "2027.1", "2025.4"] {

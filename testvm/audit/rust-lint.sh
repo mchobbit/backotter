@@ -154,6 +154,15 @@ if [[ -n $hostsarg ]]; then
 else
     cands=$(hosts_names --role build --arch amd64 | tr '\n' ' ') || die "no build hosts in the host table"
 fi
+# A row given as NAME.local becomes its name: pick-host ranks by names, and the
+# probes are filed under the names the deal reads.
+norm=
+for c in $cands; do
+    n=
+    [[ $c == *@* ]] || n=$(hosts_get "$c" name 2>/dev/null) || n=
+    norm+="${norm:+ }${n:-$c}"
+done
+cands=$norm
 # shellcheck disable=SC2086
 probe_hosts "$L/probe" $cands
 # shellcheck disable=SC2086

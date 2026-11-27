@@ -259,6 +259,18 @@ class HeatFields(unittest.TestCase):
         self.assertEqual(r.stdout, "95\n\n2\n4\n", r.stderr)
 
 
+    def test_inner_jobs_keep_hot_max(self):
+        """A job that sources jobs.sh again under a fresh env (step 2's guest boot) must
+        carry HOT_MAX, or its hot_wait there never waits (Chopin did, by name, before F10)."""
+        with open(os.path.join(REPO, "testvm/compare/rustic-exact-round.sh")) as f:
+            text = f.read()
+        lines = text.splitlines()
+        inner = [i for i, line in enumerate(lines) if 'bash -c \'. "$HOME/backotter-work/$RUN/jobs.sh"' in line]
+        self.assertTrue(inner)
+        for i in inner:
+            self.assertIn('HOT_MAX="${HOT_MAX:-}"', lines[i - 1], lines[i - 1])
+
+
 class NoHostNames(unittest.TestCase):
     """The four scripts' code names no host: they take them from the table (comments
     may still say Chopin)."""

@@ -476,7 +476,7 @@ job_s1() {
 # Step 2: rustic_core's integration test under ktrace in a throwaway BSD guest,
 # under cmp-run.sh --reserve 2 10 (the 8 GiB build guest; then a 4 GiB one).
 job_s2() {
-    reserve "$JOB" 2 10 env HOME="$HOME" PATH="$PATH" JOB="$JOB" KIND="$KIND" RUN="$RUN" TC="$TC" OSN="$OSN" PORT="$PORT" \
+    reserve "$JOB" 2 10 env HOME="$HOME" PATH="$PATH" JOB="$JOB" KIND="$KIND" RUN="$RUN" TC="$TC" OSN="$OSN" PORT="$PORT" HOT_MAX="${HOT_MAX:-}" \
         bash -c '. "$HOME/backotter-work/$RUN/jobs.sh" || exit 2
             trap "note \"stopped (TERM)\"; job_cleanup; exit 143" TERM INT HUP
             rc=0; job_s2in || rc=$?; job_cleanup; exit $rc'

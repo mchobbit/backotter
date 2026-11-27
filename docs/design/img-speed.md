@@ -900,7 +900,10 @@ whenever a guest is updated.
   state); the planner keeps an img cell off a host whose ceiling can't hold
   width 1. An image size the facts don't give counts as 1.6 GB. A stop now
   unwinds `boot-test.py` (TERM, HUP), so its QEMU is killed when only the
-  runner is signalled. `batchprof.IMG_RESERVE` (the batch planner's model of
+  runner is signalled; the handler acts once (a second signal doesn't cut
+  its cleanup short), and a signal ignored on entry (nohup's HUP) stays
+  ignored by it, as before (I6 review; QEMU itself still ends on a HUP to
+  the group, so such a mode fails, cleanly). `batchprof.IMG_RESERVE` (the batch planner's model of
   an ImgTest2 job) is still (1, 5): widening it moves the batch schedules,
   which is left to a later step. Proof, 2026-11-27: three sets (the current
   one and the two before it) of all seven platforms, each image booted

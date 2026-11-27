@@ -1867,6 +1867,63 @@ class BootModes(unittest.TestCase):
         self.assertEqual(os.listdir(ram), [])
 
 
+class BootTestSignals(unittest.TestCase):
+    """stick/boot-test.py itself, its QEMU a stub that sleeps: a TERM unwinds it and kills that
+    QEMU; a HUP ignored on entry (nohup) stays ignored."""
+
+    def setUp(self):
+        self.t = os.path.realpath(tempfile.mkdtemp(prefix="t2-i6-btsig-"))
+        self.addCleanup(shutil.rmtree, self.t, True)
+        bin_ = os.path.join(self.t, "bin")
+        os.makedirs(bin_)
+        self.qpid = os.path.join(self.t, "qemu.pid")
+        wr(os.path.join(bin_, "qemu-system-x86_64"), f"#!/bin/sh\necho $$ >{self.qpid}\nexec sleep 60\n", 0o755)
+        self.img = os.path.join(self.t, "x.img")
+        wr(self.img, "x")
+        self.env = dict(os.environ, PATH=bin_ + os.pathsep + os.environ.get("PATH", ""))
+
+    def start(self, ignore_hup=False):
+        def pre():
+            if ignore_hup:
+                signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        p = subprocess.Popen([sys.executable, "-B", os.path.join(WT, "stick", "boot-test.py"), self.img, "bios",
+                              "--platform", "linux", "--media", "cdrom", "--arch", "amd64",
+                              "--log", os.path.join(self.t, "boot.log")],
+                             env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True, preexec_fn=pre)
+        self.addCleanup(lambda: p.poll() is None and (os.killpg(p.pid, signal.SIGKILL), p.wait()))
+        for _ in range(200):
+            if os.path.exists(self.qpid) and rd(self.qpid).strip():
+                break
+            time.sleep(0.05)
+        time.sleep(0.2)
+        return p, int(rd(self.qpid))
+
+    def gone(self, pid):
+        for _ in range(100):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_a_term_kills_its_qemu(self):
+        p, q = self.start()
+        p.send_signal(signal.SIGTERM)   # (boot-test.py alone, not its group)
+        self.assertEqual(p.wait(30), 143)
+        self.assertTrue(self.gone(q))
+
+    def test_a_hup_ignored_on_entry_stays_ignored(self):
+        p, q = self.start(ignore_hup=True)
+        p.send_signal(signal.SIGHUP)
+        time.sleep(0.5)
+        self.assertIsNone(p.poll())
+        p.send_signal(signal.SIGTERM)
+        self.assertEqual(p.wait(30), 143)
+        self.assertTrue(self.gone(q))
+
+
 class BootPlan(unittest.TestCase):
     """img.boot_width and boot_reserve: the width from the host's ceiling (D8), the room for the copy."""
 

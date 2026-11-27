@@ -385,9 +385,16 @@ def main() -> int:
     ap.add_argument("--arch", choices=ARCHES, default=host_arch(),
                     help="the image's architecture (default: this host's, %(default)s)")
     args = ap.parse_args()
-    # A stop (stick/boot-modes.sh's, or a job's) unwinds run(): its finally kills QEMU.
+    # A stop (stick/boot-modes.sh's, or a job's) unwinds run(): its finally kills QEMU.  Once:
+    # a second signal (the group's TERM after boot-modes.sh's) must not cut that finally short.
+    # A signal ignored on entry (nohup's HUP) stays ignored, as it was before these handlers.
+    def stop(n, _f):
+        for s in (signal.SIGTERM, signal.SIGHUP):
+            signal.signal(s, signal.SIG_IGN)
+        sys.exit(128 + n)
     for s in (signal.SIGTERM, signal.SIGHUP):
-        signal.signal(s, lambda n, _f: sys.exit(128 + n))
+        if signal.getsignal(s) is not signal.SIG_IGN:
+            signal.signal(s, stop)
     if args.arch == "arm64" and args.mode not in FIRMWARE_ARM64:
         ap.error(f"arm64 has no {args.mode} mode: uefi or uefi-secureboot")
     if args.arch == "arm64" and args.platform != "linux":

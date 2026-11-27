@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# Warm bko-holt build dirs on any build host (docs/design/img-speed.md F14),
+# for the fix cycle's tests: the tree in HOST:/bkoscratch/holt-warm/TAG/src,
+# cargo's target/ beside it, kept between runs, so a cycle's second build is
+# incremental.  Run on the Mac, from the repository (or any copy of it):
+#
+#   testvm/holt-warm host TAG [--repick]
+#       print the ssh target TAG's warm dir lives on: the host recorded for it,
+#       else (or with --repick) the one pick-host --reserve 2 4 chooses, which
+#       is then recorded (~/backotter-work/holt-warm/TAG.host,
+#       BKO_HOLT_WARM_STATE).  A new host's first build is cold.
+#   testvm/holt-warm test TAG [--host H] [--repick] [-- CARGO_TEST_ARG...]
+#       rsync holt/ (without target/), testvm/test2/classes.json and
+#       docs/design/holt-json.md there (the two files holt's tests read beside
+#       holt/), then cargo test --offline under that host's cmp-run.sh
+#       --reserve 2 4 (WEAR_TAG holt-warm:TAG), Rust HOLT_RUST_TOOLCHAIN
+#       (default 1.94.1, holt-bin's): testvm/holt-warm-host.sh test.  --host
+#       H (an ssh target or a table name) uses and records H.
+#   testvm/holt-warm prune [--host H]... [--days N] [--whole] [--dry-run]
+#       on each host (default: the table's default amd64 hosts), remove the
+#       cargo target dirs of the tags nobody used or changed in N days
+#       (default 7), none held open or locked; --whole removes such tags
+#       entirely (holt-warm-host.sh prune says the rule).
+#
+# One tag per concurrent user: cargo locks a target dir.  Tags are names of
+# [A-Za-z0-9._-], not starting with a dot or a dash.
+# BKO_HOLT_WARM_ROOT (default /bkoscratch/holt-warm) is the hosts' root;
+# BKO_PICK_HOST, BKO_CMP_RUN (default ~/backotter-work/cmp-run.sh on the host)
+# and BKO_HOLT_WARM_TMP (the RAM disk, /mnt/bko-ram) are for tests and
+# private trials.  Exit: the test's or prune's status, 2 on bad usage.
+
+set -uo pipefail
+
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO=$(dirname "$HERE")
+ROOT=${BKO_HOLT_WARM_ROOT:-/bkoscratch/holt-warm}
+STATE=${BKO_HOLT_WARM_STATE:-$HOME/backotter-work/holt-warm}
+PICK=${BKO_PICK_HOST:-$HERE/pick-host}
+HOSTS_PY=$HERE/test2/t2lib/hosts.py
+TC=${HOLT_RUST_TOOLCHAIN:-1.94.1}
+SSH=(ssh -o BatchMode=yes -o ConnectTimeout=15)
+
+die() { echo "holt-warm: $*" >&2; exit 2; }
+q() { printf '%q ' "$@"; }
+
+check_tag() {
+    [[ $1 =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || die "bad tag '$1': [A-Za-z0-9._-], not starting with . or -"
+}
+
+# An ssh target for H: as given when it has an @ or a dot, else the table's row.
+target() {
+    case $1 in
+        *@* | *.*) echo "$1" ;;
+        *) python3 -I -B "$HOSTS_PY" get "$1" ssh || die "no host $1 in the table" ;;
+    esac
+}
+
+# The host of TAG (recorded, else chosen and recorded); $2: 1 to choose anew.
+host_of() {
+    local tag=$1 repick=$2 f=$STATE/$1.host h=""
+    if [[ $repick != 1 && -s $f ]]; then read -r h <"$f"; fi
+    if [[ -z $h ]]; then
+        h=$("$PICK" --reserve 2 4) || { echo "holt-warm: pick-host found no host" >&2; return 1; }
+        [[ -n $h ]] || { echo "holt-warm: pick-host printed no host" >&2; return 1; }
+        record "$tag" "$h"
+    fi
+    echo "$h"
+}
+
+record() { mkdir -p "$STATE" && echo "$2" >"$STATE/$1.host"; }
+
+cmd_host() {
+    local tag="" repick=0
+    while [[ $# -gt 0 ]]; do
+        case $1 in --repick) repick=1 ;; -*) die "host: unknown $1" ;; *) [[ -z $tag ]] || die "host: one TAG"; tag=$1 ;; esac
+        shift
+    done
+    [[ -n $tag ]] || die "host: no TAG"
+    check_tag "$tag"
+    host_of "$tag" "$repick"
+}
+
+cmd_test() {
+    local tag="" host="" repick=0
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --host) [[ $# -ge 2 ]] || die "--host needs H"; host=$(target "$2") || exit 2; shift ;;
+            --repick) repick=1 ;;
+            --) shift; break ;;
+            -*) die "test: unknown $1" ;;
+            *) [[ -z $tag ]] || die "test: one TAG (cargo's arguments go after --)"; tag=$1 ;;
+        esac
+        shift
+    done
+    [[ -n $tag ]] || die "test: no TAG"
+    check_tag "$tag"
+    [[ $TC =~ ^[A-Za-z0-9._-]+$ ]] || die "bad HOLT_RUST_TOOLCHAIN $TC"
+    if [[ -n $host ]]; then record "$tag" "$host" || exit 1; else host=$(host_of "$tag" "$repick") || exit 1; fi
+    local d=$ROOT/$tag cmp=${BKO_CMP_RUN:-'~/backotter-work/cmp-run.sh'}
+    echo "holt-warm: $tag on $host ($d)" >&2
+    "${SSH[@]}" "$host" "mkdir -p $(q "$d/src/holt" "$d/src/testvm/test2" "$d/src/docs/design")" || exit 1
+    rsync -a --delete --exclude /target "$REPO/holt/" "$host:$d/src/holt/" &&
+        rsync -a "$REPO/testvm/test2/classes.json" "$host:$d/src/testvm/test2/" &&
+        rsync -a "$REPO/docs/design/holt-json.md" "$host:$d/src/docs/design/" &&
+        rsync -a "$HERE/holt-warm-host.sh" "$host:$d/.holt-warm-host.sh" || exit 1
+    local env=(WEAR_TAG="holt-warm:$tag")
+    [[ -z ${BKO_HOLT_WARM_TMP:-} ]] || env+=(BKO_HOLT_WARM_TMP="$BKO_HOLT_WARM_TMP")
+    "${SSH[@]}" "$host" "cd ~/backotter-work 2>/dev/null || cd; $(q env "${env[@]}") $cmp --reserve 2 4 $(q bash "$d/.holt-warm-host.sh" test "$d" "$TC" "$@")"
+}
+
+cmd_prune() {
+    local hosts=() days=7 extra=() h rc=0
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --host) [[ $# -ge 2 ]] || die "--host needs H"; h=$(target "$2") || exit 2; hosts+=("$h"); shift ;;
+            --days) [[ $# -ge 2 && $2 =~ ^[1-9][0-9]*$ ]] || die "--days needs N, 1 or more"; days=$2; shift ;;
+            --whole | --dry-run) extra+=("$1") ;;
+            *) die "prune: unknown $1" ;;
+        esac
+        shift
+    done
+    if [[ ${#hosts[@]} -eq 0 ]]; then
+        while IFS= read -r h; do hosts+=("$h"); done < <(python3 -I -B "$HOSTS_PY" names --default --arch amd64 --field ssh)
+        [[ ${#hosts[@]} -gt 0 ]] || die "no default hosts in the table"
+    fi
+    for h in "${hosts[@]}"; do
+        echo "== $h"
+        "${SSH[@]}" "$h" "test -d $(q "$ROOT")"
+        case $? in 0) ;; 1) echo "no $ROOT"; continue ;; *) echo "holt-warm: ssh $h failed" >&2; rc=1; continue ;; esac
+        "${SSH[@]}" "$h" "bash -s -- prune $(q "$ROOT" "$days" ${extra[@]+"${extra[@]}"})" <"$HERE/holt-warm-host.sh" || rc=1
+    done
+    return $rc
+}
+
+case ${1:-} in
+    host) shift; cmd_host "$@" ;;
+    test) shift; cmd_test "$@" ;;
+    prune) shift; cmd_prune "$@" ;;
+    *) die "usage: holt-warm host TAG [--repick] | test TAG [--host H] [--repick] [-- ARG...] | prune [--host H]... [--days N] [--whole] [--dry-run]" ;;
+esac

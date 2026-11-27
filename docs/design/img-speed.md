@@ -1217,6 +1217,26 @@ this spec's speedups 2 and 7.
   Each new host's first build is cold. *Proof:* one fix cycle on copland.
   *Gain:* small per cycle, but the job is the most frequent one, and the
   warm dirs stop filling Chopin's 81 % full P3.
+  *Built 2026-11-27:* `testvm/holt-warm test TAG [--host H] [-- ARGS]`
+  (on the Mac) uses the host recorded for TAG
+  (`~/backotter-work/holt-warm/TAG.host`), else the one `pick-host --reserve
+  2 4` chooses, and records it, so a cycle's later runs stay warm. It rsyncs
+  holt/ (no target/), `testvm/test2/classes.json` and
+  `docs/design/holt-json.md` (the two files holt's tests read beside holt/)
+  to `HOST:/bkoscratch/holt-warm/TAG/src`, and runs `cargo test --offline`
+  there under the host's `cmp-run.sh --reserve 2 4` (WEAR_TAG
+  `holt-warm:TAG`), with Rust `HOLT_RUST_TOOLCHAIN` (1.94.1, build-holt.sh's
+  rule, not the host's rustup default, which differs: 1.94.1 on Chopin,
+  1.85.1 on the others), the target dir kept beside src and TMPDIR in the
+  RAM disk (`testvm/holt-warm-host.sh test`). The spec's "prune" half:
+  `holt-warm prune [--host H]... [--days N] [--whole] [--dry-run]` removes,
+  of each tag that nobody used (its `.last-used` stamp) or changed in N days
+  (default 7) and that no process has open and no `.cargo-lock` holds, its
+  cargo target dirs (cargo's CACHEDIR.TAG), the bulk of a tag; `--whole`
+  removes the tag. On Chopin it pruned 42 of 82 tags' targets (57 GiB by
+  du; 345 to 392 GiB free). *Proof:* tests `test_holt_warm.py` (24, on the
+  Mac and on copland); a fix cycle on copland (a cold run, an edit, a warm
+  run).
 - **F15. HoltTest2's queue host is hosts[0] (partly).** `holt.py:658`. Change:
   choose the queue host by a role, or by the most reliable default host.
   `cmp-run.sh`'s QUEUE_HOST already lets the queue live anywhere. *Stays:*

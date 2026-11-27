@@ -1108,6 +1108,37 @@ this spec's speedups 2 and 7.
   Tctl wait. Spread lint targets over hosts. *Proof:* `rust-lint.sh` on a
   small host gives the same findings as Chopin's baseline. *Gain:* medium
   for RustAudit and ForkAudit rounds.
+  *Built 2026-11-27:* the candidates are the table's amd64 build-role hosts
+  (or `--host`/`--hosts`). `testvm/audit/audit-hosts.py` probes each over
+  ssh (rustup's toolchains, targets and components, a Go, flock, time, cc;
+  read only) and `audit-pick.sh` ranks them with `pick-host --reserve`.
+  rust-lint.sh deals its targets (`audit-hosts.py lint-plan`, `--spread N`,
+  default 3): the best host with 1.94.1's clippy and rustfmt and 1.85.1 is
+  the primary (fmt, doc, holt's parser pass and floor check, `--tests`,
+  rustic, its share of the targets), and up to N-1 more hosts run
+  `rust-lint-host.sh --clippy-only` over the rest. Each target goes only to
+  a host that has its std (the build-std ones: the nightly's clippy and
+  rust-src). The outputs merge into one `raw/`. A host that lacks a part is
+  named, with the `rustup` command that adds it. stock-baseline.sh puts
+  restic on the best host with a Go and the Rust pair on the best other one
+  with the toolchain; it still looks for a finished baseline on every build
+  host first. rustic-exact-round.sh takes each host's ssh from the table: a
+  row with an `ip` by it, under `HostKeyAlias`. Chopin's row now holds its
+  `ip`, 192.168.68.194, which was the script's hard-coded address. Two new
+  limits replace the name checks: `hot_max`, the Tctl wait before a job
+  (Chopin 95, the rest none), and `xz_threads`, compress-images.sh's `-T`
+  (Chopin 2, default 4). Only on that hunk does compress-images.sh change
+  (see the note under §14). On 2026-11-27 only Chopin had every part. Cinqcent
+  lacks rustfmt and the nightly's clippy. The small hosts had no clippy, so
+  copland got 1.94.1's clippy, rustfmt and the freebsd, netbsd and illumos
+  stds, and the nightly's clippy. Proof (holt c4917fc8, rustic_core 695d676,
+  rustic 2c3b237, the RA2 baseline's commits): `--host chopin`
+  (20261127T004905), `--host copland` (20261127T004907) and the default,
+  spread over chopin, cinqcent and copland (20261127T004909). All three have
+  the same summary table. Their 33 filtered outputs are equal except for the
+  paths of their inputs, and `rust-filter.py --compare` finds 0 new either
+  way. The committed `baseline.txt` (2026-11-20) differs only in rows the
+  filter has gained since: walkdir, and rustic_core doc's upstream split.
 
 ### Small gains, hygiene and reliability
 
@@ -1358,7 +1389,8 @@ Shared files the work touches, each a small hunk: `img-one.sh`,
 round lock), `img-refresh-holt.sh` (the round lock), `testvm/vm-update` (the
 refusal's wording), `t2lib/img.py` and `img/boot.sh` (width), and
 `t2lib/holt.py` and `t2lib/keys.py` (cross builds and their key).
-`compress-images.sh` is unchanged; only its callers change.
+`compress-images.sh` is unchanged; only its callers change (but for F10's
+`-T` default, from the host table's `xz_threads`).
 
 ## 15. Open
 

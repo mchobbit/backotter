@@ -146,7 +146,8 @@
                         "testvm/compare/cmp-pop.sh", "testvm/audit/stock-baseline.sh",
                         "testvm/rebuild-one.sh", "testvm/update/trim.sh", "testvm/update/pkgset.sh",
                         "testvm/update/fingerprint.py", "stick/img-*.sh",
-                        "testvm/audit/rust-*", "testvm/audit/rust/**", "testvm/audit/test_rust_filter.py"]
+                        "testvm/audit/rust-*", "testvm/audit/rust/**", "testvm/audit/test_rust_filter.py",
+                        "testvm/audit/audit-hosts.py", "testvm/audit/audit-pick.sh"]
   },
   "arm64": {
     "about": "docs/design/arm64.md A6: the arm64 guests on Bigfoot. plan.py (arch_classes) merges this block into stic and holt only for a run whose --hosts has an arm64 host, and a cell of an -arm64 guest is in a word's universe only then (Ctx.arch_ok), so an amd64 run's cells, counts and plans are as without it. Bigfoot is no default host until HostTest2 and one representative per family pass on it (testvm/HOSTS.md), and 1ARM stays out of HoltTest2All until then (Decision 7). The +img cells wait for an arm64 image in images/ that ImgTest2 pins (A4's is a private build): testvm/arm64/a6-run.sh runs 1ARM +img by hand.",

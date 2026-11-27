@@ -5,8 +5,10 @@
 # Usage: compress-images.sh [-T THREADS] [-p PLATFORM] [IMAGES_DIR]
 #
 # IMAGES_DIR defaults to ~/backotter-work/images.  -p does only that platform.
-# THREADS is xz's -T: by default 4 (about 5 GB of memory; several builds may
-# run this at once), or 2 on Chopin, whose cooler is weak.
+# THREADS is xz's -T: by default the host's xz_threads in testvm/hosts.json
+# (testvm/hosts.sh hosts_limit, beside this stick/: 4, about 5 GB of memory,
+# several builds may run this at once; Chopin's 2, its weak cooler), 4 where
+# no table answers.
 #
 # img-one.sh runs this for its platform after a build passes its boot tests,
 # and img-xcopy.sh on the host it copied to (both in stick/).
@@ -35,7 +37,11 @@ die() { echo "compress-images: $*" >&2; exit 1; }
 
 usage="usage: $0 [-T THREADS] [-p PLATFORM] [IMAGES_DIR]"
 threads=4
-[[ $(hostname -s) != chopin ]] || threads=2
+hosts_sh=$(dirname "$0")/../testvm/hosts.sh
+if [[ -f $hosts_sh ]] && . "$hosts_sh" 2>/dev/null &&
+    t=$(hosts_limit "$(hostname -s)" xz_threads 2>/dev/null) && [[ $t =~ ^[0-9]+$ ]]; then
+    threads=$t
+fi
 platform=
 while getopts T:p: o; do
     case $o in

@@ -25,7 +25,9 @@
   "ssd_floor_gib": "the GiB of /bkoscratch that jobs' scratch never takes: a --reserve-ssd gets its room from the free space above it, less what the other SSD jobs hold, so a host short of free SSD gets no overflow; default 80",
   "holt_ram_slots": "with scratch_mode overflow, HoltTest jobs at once on the host whose scratch is in the RAM disk (a RAM slot each); 0 to 16, or null: no cap but holt_jobs; default null. holt_jobs stays the total",
   "heat": "how hot the host runs, 0 (cool) to 9, used only to break ties (hosts.py tie_key: class, then heat, then the table's order); default 0. chopin 1: its faulty cooler, and the temperature sampler's medians of 2026-11-24 to 26 (chopin 40.4, cinqcent 35.7 C Tctl), so a tie between the big hosts goes to cinqcent",
-  "holt_ssd_slots": "the same for jobs whose scratch is on /bkoscratch (an SSD slot each). A HoltTest line takes a RAM slot when one is free and its D fits the RAM disk right now, else an SSD slot when one is free and the SSD has room for its D, else it waits or is left for the other hosts (ht1-queue.sh's place); a +img line takes a RAM slot only. The modes ram and ssd count no slots (holt_jobs alone); overflow with 0 SSD slots is ram, with 0 RAM slots ssd; default null"
+  "holt_ssd_slots": "the same for jobs whose scratch is on /bkoscratch (an SSD slot each). A HoltTest line takes a RAM slot when one is free and its D fits the RAM disk right now, else an SSD slot when one is free and the SSD has room for its D, else it waits or is left for the other hosts (ht1-queue.sh's place); a +img line takes a RAM slot only. The modes ram and ssd count no slots (holt_jobs alone); overflow with 0 SSD slots is ram, with 0 RAM slots ssd; default null",
+  "hot_max": "whole degrees C, 50 to 110, or null: heavy work on the host waits while sensors' Tctl is over it, checked before each job (testvm/compare/rustic-exact-round.sh, on the Mac and in the host's jobs); default null (no wait). chopin 95, its weak cooler (until docs/design/img-speed.md F10, 2026-11-27, a wait for Chopin alone, by name)",
+  "xz_threads": "stick/compress-images.sh's xz -T on the host, 1 to 16 (its own -T wins); default 4 (about 5 GB of memory). chopin 2, its weak cooler (until F10 a hostname check in compress-images.sh)"
  },
  "class_limits": {
   "big": {"bs2_slots": 5, "holt_jobs": 4, "scratch_mode": "overflow", "holt_ram_slots": 2, "holt_ssd_slots": 4},
@@ -35,7 +37,7 @@
   {
    "name": "chopin",
    "ssh": "m@chopin.local",
-   "ip": null,
+   "ip": "192.168.68.194",
    "host_key_alias": "chopin.local",
    "slot_range": "2700-2799",
    "stic_ports": [2780, 2799],
@@ -43,6 +45,8 @@
    "roles": ["build", "fleet", "store-mirror", "bigfoot-link"],
    "holt_disk_mode": true,
    "heat": 1,
+   "hot_max": 95,
+   "xz_threads": 2,
    "default": true,
    "enabled": true
   },

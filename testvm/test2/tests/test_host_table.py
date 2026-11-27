@@ -158,7 +158,8 @@ class Table(unittest.TestCase):
                          ["big", "big", "small", "small", None, None])
         self.assertEqual(H.phrase(["a", "b", "c"]), "a, b or c")
         self.assertEqual(H.phrase(["a"]), "a")
-        self.assertIsNone(H.ssh_fallback("chopin"))   # no ip known yet
+        self.assertEqual(H.ssh_fallback("chopin"), ["-o", "HostKeyAlias=chopin.local", "m@192.168.68.194"])   # F10
+        self.assertIsNone(H.ssh_fallback("cinqcent"))   # no ip known yet
         self.assertEqual(H.ssh_fallback("bigfoot"), ["-o", "HostKeyAlias=bigfoot.local", "m@192.168.68.197"])
 
     def test_ssh_fallback(self):
@@ -254,7 +255,8 @@ class Table(unittest.TestCase):
                          (0, "2800-2899\n3000-3099\n3100-3199\n3300-3399\n3200-3299\n", ""))
         self.assertEqual(run("get", "copland.local", "slot_range"), (0, "2800-2899\n", ""))
         self.assertEqual(run("get", "chopin", "roles"), (0, "build fleet store-mirror bigfoot-link\n", ""))
-        self.assertEqual(run("get", "chopin", "ip"), (0, "\n", ""))
+        self.assertEqual(run("get", "chopin", "ip"), (0, "192.168.68.194\n", ""))
+        self.assertEqual(run("get", "cinqcent", "ip"), (0, "\n", ""))
         self.assertEqual(run("get", "chopin", "default"), (0, "true\n", ""))
         self.assertEqual(run("get", "czerny", "slot_range"), (0, "3100-3199\n", ""))
         self.assertEqual(run("get", "czerny", "roles"), (0, "build cache\n", ""))

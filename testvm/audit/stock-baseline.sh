@@ -2,19 +2,25 @@
 # Build and test stock restic, rustic_core and rustic once (the versions the
 # forks are based on, audit-lib.sh's STOCK) and keep the results on the
 # hosts, so that fork-tests.sh compares the forks' tests with them without
-# building stock again.  restic runs on Chopin, rustic_core then rustic on
-# Cinqcent, the two hosts in parallel; each host's run waits for room in the
+# building stock again.  restic runs on one host, rustic_core then rustic on
+# another, the two in parallel; each host's run waits for room in the
 # shared ledger (cmp-run.sh --reserve) and runs at nice 10.
 #
 # Usage, on the Mac (no Go or Rust needed here):
 #   stock-baseline.sh [--force] [--restic-host H] [--host H] [NAME ...]
 #
 # NAME is restic, rustic_core or rustic (default: all three).  A baseline
-# already on either host (its exit file 0) is not run again unless --force;
-# its results are still copied here.  --host H runs rustic_core and rustic
-# on H instead of Cinqcent (e.g. --host chopin when Cinqcent can't);
-# --restic-host H restic on H instead of Chopin (H needs Go).  H is a name
-# (chopin), NAME.local or USER@HOST.
+# already on one of the hosts (the table's amd64 build-role hosts, and --host
+# and --restic-host; its exit file 0) is not run again unless --force; its
+# results are still copied here.  --host H runs rustic_core and rustic on H,
+# --restic-host H restic on H (H needs Go).  H is a name of testvm/hosts.json
+# (chopin), NAME.local or USER@HOST.  Without them (F10 of
+# docs/design/img-speed.md: Chopin and Cinqcent were the defaults by name),
+# the build-role hosts are probed (audit-hosts.py probe: a Go, rustup's
+# BKO_AUDIT_RUST toolchain, default 1.94.1) and ranked by pick-host for
+# RESERVE (6 12 leaves the small hosts out: their ceiling is under 12); restic
+# goes to the best host with a Go, the Rust pair to the best other host with
+# the toolchain (the same host when no other has it).
 #
 # Where things go:
 #   HOST:/bkoscratch/bko-audit/src/NAME-COMMIT   the stock trees (git archive
@@ -38,8 +44,9 @@
 
 set -u
 source "$(dirname "$0")/audit-lib.sh"
+source "$(dirname "$0")/audit-pick.sh"
 
-force=0 rhost=chopin chost=cinqcent
+force=0 rhost= chost=
 while [[ $# -gt 0 ]]; do
     case $1 in
         --force) force=1; shift ;;
@@ -51,7 +58,38 @@ while [[ $# -gt 0 ]]; do
 done
 names=("$@")
 [[ $# -gt 0 ]] || names=(restic rustic_core rustic)
-rhost=$(host_of "$rhost") chost=$(host_of "$chost")
+builders=$(hosts_names --role build --arch amd64 | tr '\n' ' ') || die "no build hosts in the host table"
+builders=${builders% }
+# rank: the build hosts probed and ranked, once (picked).
+picked=
+rank() {
+    [[ -z $picked ]] || return 0
+    # shellcheck disable=SC2086
+    probe_hosts "$LOCAL/stock-probe" $builders
+    # shellcheck disable=SC2086
+    picked=$(rank_hosts $builders) || die "pick-host found no host among $builders for --reserve $RESERVE_DISK $RESERVE_MEM"
+}
+# pick restic|rust: the best of picked that can run it; the Rust pair not on
+# restic's host (rpick) while another host can run it.
+pick() {
+    local want=$1 c
+    for c in $picked; do
+        [[ $want == rust && $c == "$rpick" && -n $(pick_other) ]] && continue
+        python3 -I -B "$here/audit-hosts.py" stock-need --probe "$LOCAL/stock-probe/$c.txt" \
+            --toolchain "${BKO_AUDIT_RUST:-1.94.1}" "$([[ $want == restic ]] && echo restic || echo rustic_core)" && { echo "$c"; return 0; }
+    done
+    die "no host among $picked can run $want's stock baseline (the reasons above)"
+}
+# pick_other: a host other than rpick with the Rust toolchain (empty: none).
+pick_other() {
+    local c
+    for c in $picked; do
+        [[ $c != "$rpick" ]] || continue
+        python3 -I -B "$here/audit-hosts.py" stock-need --probe "$LOCAL/stock-probe/$c.txt" \
+            --toolchain "${BKO_AUDIT_RUST:-1.94.1}" rustic_core 2>/dev/null && { echo "$c"; return 0; }
+    done
+}
+rpick=
 for n in "${names[@]}"; do
     c=$(stock_field "$n" 3)
     [[ -n $c ]] || die "unknown NAME $n (restic, rustic_core, rustic)"
@@ -71,15 +109,21 @@ t_start=$(date +%s)
 for n in "${names[@]}"; do
     v=$(stock_field "$n" 2) c=$(stock_field "$n" 3)
     out=$RWORK/stock/$n-$v
-    if [[ $n == restic ]]; then h=$rhost; else h=$chost; fi
     if [[ $force == 0 ]]; then
         have=
-        for x in "$h" "$rhost" "$chost"; do done_on "$x" "$out" "$c" && { have=$x; break; }; done
+        for x in $rhost $chost $builders; do done_on "$(dest_of "$x")" "$out" "$c" && { have=$(dest_of "$x"); break; }; done
         if [[ -n $have ]]; then
             log "$n $v: baseline on $have already (--force runs it again)"
             fetch "$have" "$out" "$LOCAL/stock-baseline/$n-$v"
             continue
         fi
+    fi
+    if [[ $n == restic ]]; then
+        [[ -n $rhost ]] || { rank; rhost=$(pick restic) || exit 1; log "restic: on $rhost (best of $picked with a Go)"; }
+        rpick=$rhost h=$(dest_of "$rhost")
+    else
+        [[ -n $chost ]] || { rank; chost=$(pick rust) || exit 1; log "$n: on $chost (best of $picked with Rust ${BKO_AUDIT_RUST:-1.94.1})"; }
+        h=$(dest_of "$chost")
     fi
     ship_tools "$h"
     ship_src "$h" "$n" "$c"

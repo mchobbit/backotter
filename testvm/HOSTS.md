@@ -63,7 +63,7 @@ host with the fleet role (Chopin) holds vm-update's fleet lock.
 |---|---|
 | `name` | the short host name. It must be exactly what `hostname -s` prints, because guest-slot.sh and run-all.sh look the host up by it (`H` or `H.DOMAIN`, never by prefix). |
 | `ssh` | `USER@HOST`, the ssh destination used by sync-hosts.sh, build-round.sh, promote-bins.sh, vm-update, bs2 and drive.py. t2 itself always uses `m@NAME.local`. |
-| `ip`, `host_key_alias` | an address to use when mDNS fails, and the name known_hosts pins that address under (`host_key_alias` defaults to the host part of `ssh`, e.g. `chopin.local`). `ip` is null in every row today. Only drive.py uses them: when ssh to the name fails because the host can't be resolved or reached, drive.py tries `-o HostKeyAlias=ALIAS USER@IP` (hosts.py `ssh_fallback`) and, if that answers, reaches the host that way for the rest of the run. t2, the shell scripts, vm-update and bs2 don't use the fallback yet. |
+| `ip`, `host_key_alias` | an address to use when mDNS fails, and the name known_hosts pins that address under (`host_key_alias` defaults to the host part of `ssh`, e.g. `chopin.local`). `ip` is set in Chopin's row (192.168.68.194, since F10) and Bigfoot's. drive.py, pick-host and rustic-exact-round.sh use them; drive.py and pick-host as a fallback: when ssh to the name fails because the host can't be resolved or reached, drive.py tries `-o HostKeyAlias=ALIAS USER@IP` (hosts.py `ssh_fallback`) and, if that answers, reaches the host that way for the rest of the run; rustic-exact-round.sh reaches a host whose row has an `ip` by it always (as it reached Chopin before F10). t2, the other shell scripts, vm-update and bs2 don't use them yet. |
 | `slot_range` | `LO-HI`, the host's guest-slot range (`slot_range_here` in guest-slot.sh). run-all.sh's `PORT_BASE` is LO and its `GUEST_PORTS` is the whole range. Ranges must not overlap. |
 | `stic_ports` | `[LO, HI]`, drive.py's ports for the checks. They must lie inside `slot_range`. |
 | `class` | `big` or `small` (see below). The gate's `host_reserve` in `gate/layers.json` and run-all.sh's profile are chosen by class. |
@@ -438,6 +438,14 @@ class (big first), then `heat` (the cooler first), then the table's order:
 `hosts.py tie_key`, `hosts.py names --ties`. `heat` is a limit, 0 to 9, default
 0; Chopin's is 1 (its cooler), so a tie between the big hosts goes to Cinqcent.
 The table's order is unchanged and still what lists and reports keep.
+
+**Heat limits** (docs/design/img-speed.md F10, 2026-11-27). `hot_max` (whole
+degrees C, or null: none) makes heavy work on a host wait while sensors' Tctl
+is over it (rustic-exact-round.sh, before each job); `xz_threads` (default 4)
+is compress-images.sh's `xz -T` there. Chopin's are 95 and 2, its cooler: both
+were checks of Chopin's name in those scripts. The audit and compare scripts
+(rust-lint.sh, stock-baseline.sh, rustic-exact-round.sh) take their hosts from
+the table and pick-host, never a name of their own.
 
 ## Bigfoot, the arm64 host
 

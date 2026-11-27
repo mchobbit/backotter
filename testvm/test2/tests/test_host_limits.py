@@ -42,7 +42,7 @@ BEFORE = "602922f"   # the commit before the limits
 BASH = shutil.which("bash")
 DEFAULTS = {"stic_slots": 3, "guest_slots": 3, "holt_jobs": 3, "base_gib": 6, "holt_disk_mode": False, "bs2_slots": 3,
             "max_wall_x": None, "scratch_mode": "ram", "ssd_floor_gib": 80, "holt_ram_slots": None,
-            "holt_ssd_slots": None, "heat": 0}
+            "holt_ssd_slots": None, "heat": 0, "hot_max": None, "xz_threads": 4}
 
 
 def load_module(name, path):
@@ -124,7 +124,7 @@ class Limits(AltTable):
                    holt_ram_slots=2, holt_ssd_slots=4)
         choubox = dict(small, stic_slots=1, holt_jobs=1, base_gib=3, bs2_slots=1, max_wall_x=2)
         bigfoot = dict(small, holt_jobs=1, scratch_mode="ram")
-        own = {"chopin": {"holt_disk_mode", "heat"}, "cinqcent": {"holt_disk_mode"},
+        own = {"chopin": {"holt_disk_mode", "heat", "hot_max", "xz_threads"}, "cinqcent": {"holt_disk_mode"},
                "choubox": {"stic_slots", "holt_jobs", "base_gib", "bs2_slots", "max_wall_x"},
                "bigfoot": {"holt_jobs", "scratch_mode"}}
         self.assertEqual(H.LIMITS, DEFAULTS)
@@ -139,7 +139,7 @@ class Limits(AltTable):
         for h in H.names(all_=True):   # (never more of a kind than the total; the six can run a job of either kind)
             self.assertLessEqual(max(H.holt_slots(h)), H.limit(h, "holt_jobs"), h)
         for r in H.rows(all_=True):
-            want = {"choubox": choubox, "bigfoot": bigfoot, "chopin": dict(big, heat=1)}.get(
+            want = {"choubox": choubox, "bigfoot": bigfoot, "chopin": dict(big, heat=1, hot_max=95, xz_threads=2)}.get(
                 r["name"], small if r["class"] == "small" else big)
             self.assertEqual(H.limits(r["name"]), want, r["name"])
             self.assertEqual(set(H.LIMITS) & set(r), own.get(r["name"], set()),

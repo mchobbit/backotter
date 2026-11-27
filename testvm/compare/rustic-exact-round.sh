@@ -135,10 +135,11 @@
 #                    never got room, 2N hours after it started): the watchdog
 #   -h, --help       this text
 #
-# Environment: BKO_GIT (~/git), BKO_RUST_TOOLCHAIN (1.94.1), CHOPIN_ADDR
-# (192.168.68.194: Chopin is ssh -o HostKeyAlias=chopin.local m@CHOPIN_ADDR,
-# the others m@NAME.local), HOT_MAX (95: heavy work on Chopin waits while
-# sensors' Tctl is over it, checked before each job there), RX_LINUX_BIN and
+# Environment: BKO_GIT (~/git), BKO_RUST_TOOLCHAIN (1.94.1), HOT_MAX (each
+# host's hot_max in testvm/hosts.json, Chopin's 95 and none elsewhere: heavy
+# work on a host with one waits while sensors' Tctl is over it, checked
+# before each job there and on the Mac before it starts one; HOT_MAX set
+# replaces every such host's figure), RX_LINUX_BIN and
 # RX_BSD_BIN (the c517a69/ba93d6e binaries kept on the Mac: rx-linux/bin, flat,
 # and rx-bsd/bin/OS, in the scratchpad of the session that built them),
 # ALLOW_OTHER_GO=1 (restic-bko built by a Go without golang/go#80285's
@@ -147,10 +148,13 @@
 # before it runs, and netbsd's restic-bko after; with it, a loud WARNING and
 # build-round.sh's
 # BKO_ALLOW_FIXLESS_GO=1, and the round's netbsd restic-bko can't be
-# trusted).  The script's own ssh reaches Chopin by its address, but
-# testvm/pick-host and stick/build-round.sh, which it runs, reach it as
-# m@chopin.local over mDNS (testvm/hosts.json; CHOPIN= can't carry the
-# HostKeyAlias option): if mDNS fails, pick-host leaves Chopin out and
+# trusted).  The script's own ssh takes each host from testvm/hosts.json: a
+# row with an ip is reached by it (ssh -o HostKeyAlias=HOST_KEY_ALIAS
+# USER@IP: Chopin's 192.168.68.194, the address this script had for it
+# before F10 of docs/design/img-speed.md), the others by their ssh
+# (m@NAME.local); stick/build-round.sh, which it runs, reaches every host by
+# its ssh over mDNS (CHOPIN= can't carry the HostKeyAlias option), and
+# testvm/pick-host by its ssh, then its ip: if mDNS fails for Chopin,
 # build-round.sh fails, so check `ssh m@chopin.local true` first.
 #
 # On the hosts.  Each host used gets ~/backotter-work/RUN (RUN is
@@ -208,7 +212,6 @@ TC=${BKO_RUST_TOOLCHAIN:-1.94.1}
 SCRATCH=/private/tmp/claude-501/-Users-mchobbit-git-backotter/b1242dfa-05e2-431d-8d8b-21ef05e69ab2/scratchpad
 RX_LINUX_BIN=${RX_LINUX_BIN:-$SCRATCH/rx-linux/bin}
 RX_BSD_BIN=${RX_BSD_BIN:-$SCRATCH/rx-bsd/bin}
-CHOPIN_ADDR=${CHOPIN_ADDR:-192.168.68.194}
 usage() { sed -n '2,/^$/{s/^# \{0,1\}//;p;}' "$me"; exit "${1:-0}"; }
 say() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*"; }
 die() { say "STOP: $*" >&2; exit 1; }
@@ -284,12 +287,38 @@ exec > >(trap '' INT TERM; tee -a "$LOGDIR/driver.log") 2>&1
 
 # --- ssh and rsync to the farm ----------------------------------------------------------
 SSHO=(-o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10)
-dest() { if [[ $1 == chopin ]]; then echo "m@$CHOPIN_ADDR"; else echo "m@$1.local"; fi; }
-sshv() { if [[ $1 == chopin ]]; then echo "ssh $(q "${SSHO[@]}") -o HostKeyAlias=chopin.local"; else echo "ssh $(q "${SSHO[@]}")"; fi; }
+# Each farm host's ssh destination and options, from the host table once
+# (bash 3.2 has no maps: DEST_HOST, ALIAS_HOST and HOT_HOST variables): the
+# row's ip, known_hosts checking it as host_key_alias, when it has one, else
+# its ssh; HOT_HOST its hot_max (HOT_MAX overrides a set one), empty: none.
+for h in $ALL_HOSTS $BUILD_ALL; do
+    v=$(hosts_get "$h" ip) || die "no row for $h in testvm/hosts.json"
+    if [[ -n $v ]]; then
+        a=$(hosts_get "$h" host_key_alias) || a=""
+        u=$(hosts_get "$h" ssh) || die "no ssh for $h"
+        printf -v "DEST_$h" '%s' "${u%%@*}@$v"
+        printf -v "ALIAS_$h" '%s' "${a:-${u#*@}}"
+    else
+        printf -v "DEST_$h" '%s' "$(hosts_get "$h" ssh)"
+        printf -v "ALIAS_$h" '%s' ""
+    fi
+    v=$(hosts_limit "$h" hot_max) || v=""
+    [[ -z $v || -z ${HOT_MAX:-} ]] || v=$HOT_MAX
+    printf -v "HOT_$h" '%s' "$v"
+done
+unset v a u
+hv_of() { local n=$1_$2; printf '%s' "${!n:-}"; }   # KIND HOST: DEST, ALIAS or HOT of HOST
+dest() { local d; d=$(hv_of DEST "$1"); [[ -n $d ]] || die "no ssh destination for $1"; echo "$d"; }
+# sshv HOST: the ssh command line rsync -e takes for HOST.
+sshv() {
+    local a; a=$(hv_of ALIAS "$1")
+    if [[ -n $a ]]; then echo "ssh $(q "${SSHO[@]}") -o HostKeyAlias=$a"; else echo "ssh $(q "${SSHO[@]}")"; fi
+}
 # hssh HOST CMD: ssh to a farm host (read-only lookups call it directly, the rest through x).
 hssh() {
-    local h=$1; shift
-    if [[ $h == chopin ]]; then ssh -n "${SSHO[@]}" -o HostKeyAlias=chopin.local "$(dest "$h")" "$@"
+    local h=$1 a; shift
+    a=$(hv_of ALIAS "$h")
+    if [[ -n $a ]]; then ssh -n "${SSHO[@]}" -o HostKeyAlias="$a" "$(dest "$h")" "$@"
     else ssh -n "${SSHO[@]}" "$(dest "$h")" "$@"; fi
 }
 # hput HOST REMOTE_DIR SRC...: rsync to ~/REMOTE_DIR/ there (no target/, .git, caches); STOP if it fails.
@@ -310,14 +339,17 @@ WT=$W/$RUN-wt             # this run's testvm/ and stick/ there
 TOUCHED=""                # hosts this run made directories on
 
 lo_of() { local r; r=$(hosts_get "$1" slot_range) || die "no slot_range for $1 in testvm/hosts.json"; echo "${r%-*}"; }
-# chopin_cool: before a heavy job on Chopin, wait while sensors' Tctl is over HOT_MAX.
-chopin_cool() {
-    local t
+# host_cool HOST: before a heavy job on HOST, wait while sensors' Tctl is over
+# its hot_max (HOT_HOST); a host with none doesn't wait.
+host_cool() {
+    local h=$1 t m
+    m=$(hv_of HOT "$h")
+    [[ -n $m ]] || return 0
     while :; do
-        t=$(hssh chopin "sensors 2>/dev/null | sed -n 's/^Tctl: *+\([0-9]*\).*/\1/p' | head -n 1" 2>/dev/null) || t=""
-        if [[ -z $t ]]; then say "chopin: no Tctl from sensors (not waiting)"; return 0; fi
-        if [[ $t -le ${HOT_MAX:-95} || $DRY == 1 ]]; then say "chopin: Tctl $t C"; return 0; fi
-        say "chopin: Tctl $t C, over ${HOT_MAX:-95} C: waiting"
+        t=$(hssh "$h" "sensors 2>/dev/null | sed -n 's/^Tctl: *+\([0-9]*\).*/\1/p' | head -n 1" 2>/dev/null) || t=""
+        if [[ -z $t ]]; then say "$h: no Tctl from sensors (not waiting)"; return 0; fi
+        if [[ $t -le $m || $DRY == 1 ]]; then say "$h: Tctl $t C"; return 0; fi
+        say "$h: Tctl $t C, over $m C: waiting"
         sleep 60
     done
 }
@@ -337,15 +369,16 @@ W=$HOME/backotter-work
 R=$W/$RUN WT=$W/$RUN-wt L=$W/$RUN/logs CR=$W/cmp-run.sh
 CLEANUP=()
 note() { echo "$(date +%T) $JOB: $*"; }
-# Chopin's cooler is the farm's weakest: heavy work there waits while Tctl is over HOT_MAX.
+# A host with a hot_max (testvm/hosts.json; the job script's HOT_MAX, empty:
+# none): heavy work there waits while Tctl is over it.
 hot_wait() {
-    [ "$(hostname -s)" = chopin ] || return 0
+    [ -n "${HOT_MAX:-}" ] || return 0
     local t
     while :; do
         t=$(sensors 2>/dev/null | sed -n 's/^Tctl: *+\([0-9]*\).*/\1/p' | head -n 1)
         [ -n "$t" ] || { note "no Tctl from sensors: not waiting"; return 0; }
-        [ "$t" -gt "${HOT_MAX:-95}" ] || return 0
-        note "Tctl $t C over ${HOT_MAX:-95} C: waiting"
+        [ "$t" -gt "$HOT_MAX" ] || return 0
+        note "Tctl $t C over $HOT_MAX C: waiting"
         sleep 60
     done
 }
@@ -726,13 +759,13 @@ job() {
     mkdir -p "$LOGDIR/jobs"
     { echo '#!/usr/bin/env bash'
       echo "# $n on $h, written by testvm/compare/rustic-exact-round.sh ($RUN)"
-      printf 'JOB=%q KIND=%q RUN=%q TC=%q\n' "$n" "$k" "$RUN" "$TC"
+      printf 'JOB=%q KIND=%q RUN=%q TC=%q HOT_MAX=%q\n' "$n" "$k" "$RUN" "$TC" "$(hv_of HOT "$h")"
       printf '%s' "$HDR"
       echo '. "$HOME/backotter-work/$RUN/jobs.sh" || exit 2'
       echo 'job_run'; } >"$f"
     HDR=""
     hput "$h" "$R/jobs" "$f"
-    [[ $h == chopin ]] && chopin_cool
+    host_cool "$h"
     say "start $n on $h ($LOGDIR/jobs/$n.sh)"
     x hssh "$h" "setsid -f bash $R/jobs/$n.sh </dev/null >/dev/null 2>&1" || die "couldn't start $n on $h"
     JN+=("$n") JH+=("$h") JS+=(run) JR+=("") JT+=("$(date +%s)") JG+=("")
@@ -1349,7 +1382,7 @@ step4() {
         say "WARNING ****************************************************************"
     fi
     for h in $bh; do prep_host "$h"; done
-    [[ " $bh " == *" chopin "* ]] && chopin_cool
+    for h in $bh; do host_cool "$h"; done
     say "build-round.sh $ROUND (log $S/build-round.log)${dist:+; --dist-hosts $dist}"
     local only=restic,linux,dragonfly,freebsd,netbsd,openbsd,illumos
     if [[ $DRY == 1 ]]; then

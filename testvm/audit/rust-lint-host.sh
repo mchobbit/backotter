@@ -6,13 +6,19 @@
 # HOST:~/backotter-work/bko-audit/bin/ with prep-rustic-src.sh and
 # holt-lints.txt and runs it there, detached, under cmp-run.sh --reserve.
 #
-# Usage (on Chopin, the host with the toolchains):
-#   rust-lint-host.sh [--targets LIST] [--tests] OUT NAME:ROOT[:CORE] ...
+# Usage (on a farm host with the toolchains: audit-hosts.py's lint-plan says
+# which):
+#   rust-lint-host.sh [--targets LIST] [--tests | --clippy-only] OUT NAME:ROOT[:CORE] ...
 #
 # NAME is holt, rustic_core or rustic; ROOT its tree (a git archive under
 # /bkoscratch/bko-audit/src); CORE, for rustic, the rustic_core tree it is
 # built against (prep-rustic-src.sh, in ROOT+core-COMMIT, the same tree
-# audit-host.sh makes).  LIST: comma-separated targets (rust-lint.sh's
+# audit-host.sh makes).  --clippy-only: only the per-target clippy steps
+# (holt's clippy, rustic_core's clippy and walkdir-clippy), none of the
+# once-only ones (fmt, doc, clippy-parser, the floor check, tests) and no
+# rustic: rust-lint.sh's other hosts when it spreads the targets (F10 of
+# docs/design/img-speed.md).  LIST "-": no target (the once-only steps
+# alone).  LIST: comma-separated targets (rust-lint.sh's
 # header names them): x86_64-unknown-linux-gnu (the host's, cargo's default
 # target), x86_64-unknown-linux-musl, aarch64-unknown-linux-musl and
 # x86_64-unknown-{freebsd,netbsd,illumos} with rustup's std (TOOLCHAIN);
@@ -83,17 +89,20 @@ unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS RUSTC_WRAPPER RUST_BACKTRACE RUST_LIB_BA
 die() { echo "rust-lint-host: $*" >&2; exit 1; }
 log() { echo "$(date '+%F %T') $*"; }
 
-targets=$HOST_TARGET tests=0
+targets=$HOST_TARGET tests=0 only=0
 while [[ $# -gt 0 ]]; do
     case $1 in
         --targets) targets=${2:?}; shift 2 ;;
         --tests) tests=1; shift ;;
+        --clippy-only) only=1; shift ;;
         -*) die "unknown option $1" ;;
         *) break ;;
     esac
 done
-[[ $# -ge 2 ]] || die "usage: rust-lint-host.sh [--targets LIST] [--tests] OUT NAME:ROOT[:CORE] ..."
+[[ $# -ge 2 ]] || die "usage: rust-lint-host.sh [--targets LIST] [--tests | --clippy-only] OUT NAME:ROOT[:CORE] ..."
+[[ $tests == 0 || $only == 0 ]] || die "--tests and --clippy-only don't go together"
 OUT=$1; shift
+[[ $targets != - ]] || targets=
 targets=${targets//,/ }
 mkdir -p "$OUT" || die "can't make $OUT"
 exec 9>"$OUT/.lock"
@@ -107,6 +116,7 @@ trap 'rm -rf "$RAMTMP"' EXIT
     echo "date=$(date '+%F %T %z')"
     echo "targets=$targets"
     echo "toolchain=$TOOLCHAIN"
+    echo "clippy_only=$only"
     for tc in "$TOOLCHAIN" "$FLOOR" "$NIGHTLY"; do
         echo "rustc_$tc=$(rustc +"$tc" -V 2>&1)"
         echo "clippy_$tc=$(cargo +"$tc" clippy -V 2>/dev/null || echo "no clippy")"
@@ -185,11 +195,12 @@ run_holt() {
     mkdir -p "$OUT/conf/holt"
     lints_section clippy.toml >"$OUT/conf/holt/clippy.toml"
     export CLIPPY_CONF_DIR=$OUT/conf/holt
-    step holt any fmt "$D/any.fmt.txt" "0 1" cargo +"$TOOLCHAIN" fmt --check -- --color=never
+    [[ $only == 1 ]] || step holt any fmt "$D/any.fmt.txt" "0 1" cargo +"$TOOLCHAIN" fmt --check -- --color=never
     for t in $targets; do
         clippy_cmd "$t"
         step holt "$t" clippy "$D/$t.clippy.json" 0 "${CMD[@]}" --all-targets --message-format=json -- "${flags[@]}"
     done
+    [[ $only == 0 ]] || return 0
     step holt "$HOST_TARGET" clippy-parser "$D/$HOST_TARGET.clippy-parser.json" 0 \
         cargo +"$TOOLCHAIN" clippy --lib --message-format=json -- "${flags[@]}" "${pflags[@]}"
     unset CLIPPY_CONF_DIR
@@ -210,7 +221,7 @@ run_rustic_core() {
     local t
     # shellcheck disable=SC2206
     local ff=($FORK_FLAGS)
-    step rustic_core any fmt "$D/any.fmt.txt" "0 1" cargo +"$TOOLCHAIN" fmt --all --check -- --color=never
+    [[ $only == 1 ]] || step rustic_core any fmt "$D/any.fmt.txt" "0 1" cargo +"$TOOLCHAIN" fmt --all --check -- --color=never
     for t in $targets; do
         [[ $t == *-linux-musl ]] && continue   # holt's targets only
         clippy_cmd "$t"
@@ -222,13 +233,13 @@ run_rustic_core() {
                 --message-format=json -- "${ff[@]}"
         fi
     done
-    step rustic_core "$HOST_TARGET" doc "$D/$HOST_TARGET.doc.json" 0 \
+    [[ $only == 1 ]] || step rustic_core "$HOST_TARGET" doc "$D/$HOST_TARGET.doc.json" 0 \
         cargo +"$TOOLCHAIN" doc --workspace --no-deps --document-private-items --all-features --message-format=json
     # vendor/walkdir: excluded from the workspace (Cargo.toml), so neither
     # fmt --all nor clippy --workspace reaches it (ForkAudit1 F7-03,
     # RustAudit1 R8-01).  Its clippy paths are relative to it.
     cd vendor/walkdir || { echo "no vendor/walkdir in $ROOT" >&2; fail=1; return; }
-    step rustic_core any walkdir-fmt "$D/any.walkdir-fmt.txt" "0 1" cargo +"$TOOLCHAIN" fmt --check -- --color=never
+    [[ $only == 1 ]] || step rustic_core any walkdir-fmt "$D/any.walkdir-fmt.txt" "0 1" cargo +"$TOOLCHAIN" fmt --check -- --color=never
     for t in $targets; do
         [[ $t == *-linux-musl ]] && continue
         clippy_cmd "$t"
@@ -273,6 +284,7 @@ for spec in "$@"; do
                 echo "root_rustic_core=$ROOT" >>"$OUT/info.txt"
                 run_rustic_core ;;
             rustic)
+                [[ $only == 0 ]] || { echo "rustic: linux only, never --clippy-only: skipped" >&2; exit 0; }
                 [[ -d $CORE ]] || die "rustic needs a CORE tree"
                 work=$ROOT+core-$(basename "$CORE" | sed 's/^rustic_core-//')
                 if [[ ! -f $work/.bko-prepared ]]; then

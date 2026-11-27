@@ -91,6 +91,12 @@ gets the defaults):
     heat             0     how hot the host runs, 0 (cool) to 9, a tie-break and nothing
                            else: where a planner has two hosts it rates the same, the tie
                            goes by class, then heat, then the table's order (tie_key)
+    hot_max          null  a whole number of degrees C, 50 to 110, or null (no wait): heavy
+                           work there waits while the CPU's sensors Tctl is over it, checked
+                           before each job (testvm/compare/rustic-exact-round.sh; F10 of
+                           docs/design/img-speed.md, which made it a field: it was a wait
+                           for Chopin alone)
+    xz_threads       4     compress-images.sh's xz -T there, 1 to 16 (its -T wins)
 The defaults are what every host had before the table had limits.
 
 Ties (tie_key, tie_order; docs/design/img-speed.md F13, FD2).  A planner that rates two
@@ -137,7 +143,7 @@ REQUIRED = ("name", "ssh", "slot_range", "stic_ports", "class", "roles", "defaul
 # the table's class_limits {CLASS: {FIELD: VALUE}}.
 LIMITS = {"stic_slots": 3, "guest_slots": 3, "holt_jobs": 3, "base_gib": 6, "holt_disk_mode": False, "bs2_slots": 3,
           "max_wall_x": None, "scratch_mode": "ram", "ssd_floor_gib": 80, "holt_ram_slots": None,
-          "holt_ssd_slots": None, "heat": 0}
+          "holt_ssd_slots": None, "heat": 0, "hot_max": None, "xz_threads": 4}
 SCRATCH_MODES = ("ram", "overflow", "ssd")
 FIELDS += tuple(LIMITS)
 # A host's architecture (its row's arch, else DEFAULT_ARCH), Debian's names; MACHINES maps
@@ -200,6 +206,8 @@ def limit_error(k, v):
         return None if type(v) is int and 1 <= v <= 6 else "1 to 6 (bs2-host queue's ports 2943-2948)"
     if k == "heat":
         return None if type(v) is int and 0 <= v <= 9 else "a whole number, 0 (cool) to 9"
+    if k == "hot_max":
+        return None if v is None or (type(v) is int and 50 <= v <= 110) else "null, or whole degrees C, 50 to 110"
     if k == "max_wall_x":
         return None if v is None or (type(v) in (int, float) and 0.5 <= v <= 10) else "null, or a number 0.5 to 10"
     return None if type(v) is int and 1 <= v <= 16 else "a whole number, 1 to 16"

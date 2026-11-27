@@ -1313,8 +1313,11 @@ M is 6 because the VM gets 6 GiB.  A rehearsal under a small host's ceiling
 big pair free.  On H, run it from /mnt/bko-ram under `cmp-run.sh --reserve D
 6` with a `WEAR_TAG=bs1:GUEST` and a `--port` of its own:
 
-  - TOOLS_DIR: a directory with `holt-bin/linux/bko-holt` and
-    `bko-bin/linux/rustic-bko`, which every host holds as the same set.
+  - TOOLS_DIR: a directory of your own with `bko-holt` and `rustic-bko`
+    side by side (bs1-qemu.py copies `TOOLS_DIR/bko-holt` and
+    `TOOLS_DIR/rustic-bko`), copied or linked from the host's
+    `holt-bin/linux/bko-holt` and `bko-bin/linux/rustic-bko`, which every
+    host holds as the same set.  `~/backotter-work` itself is not one.
   - TEST_IMG: `images/linux/test/*.img` on a host that has one.  The small
     hosts have no `images/` yet (until the image fan-out, img-speed I8), so
     copy one from Chopin or Cinqcent (`scp` host to host) and compare their

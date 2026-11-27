@@ -58,7 +58,8 @@ What the user wants instead:
   fits.
 - **No change to vm-store's D2** (only Chopin talks to Bigfoot), to the fleet
   lock, or to the user's rule that guests are updated on Chopin, unless the
-  user rewords it (FD1).
+  user rewords it (FD1; reworded with the approval, built as F1 on
+  2026-11-27).
 - **No release process.** "Publish" (§7) means a compressed, checksummed
   copy that the user asks for. Hosting it anywhere is out of scope.
 
@@ -1311,7 +1312,55 @@ this spec's speedups 2 and 7.
   double update. *Gain:* large: about 100 guests 2 at a time today. Over 5-6
   hosts est. a third to a quarter of the time, and the long DragonFly base
   rebuilds and installer updates move off Chopin's faulty cooler.
-- **F2. Rescue images built on all build hosts (yes).** This is speedup 2:
+  *As built (2026-11-27):* `vm-update --ship GUEST`, a real update on a host
+  that isn't the fleet's. Steps 1-4 run there on its copy (a vm-store cache's
+  `vms/G` link), which must be the fleet's generation **byte for byte**: its
+  disks' SHA-256s those of the first fleet host's image-state. Step 5 copies
+  only the overlay to the fleet (Chopin) and merges it there with the same
+  commit script; the cache's copy is only read, and takes the new
+  generation by `vm-store publish` (weekly, as before: a publish inside a
+  round is refused by the fleet lock it takes) and `vm-store link`. The
+  per-guest lock is Chopin's `vms/G/.vm-update.lock` (the one a vm-update
+  there and `make-img-bsd.sh` take), held over ssh from step 1 to the end;
+  a lost holder merges nothing. The fleet lock stays Chopin's: a round's job
+  holds it shared throughout as before, a by-hand `--ship` only for step 5
+  (waited for up to 30 min). The dumps go to Chopin, where `--reproject` and
+  pkgdiff read them. GuestTest2's update round places each guest on the
+  fleet host or any run host whose facts show the same generation and the
+  same image-state SHA-256s (facts' new `state_sha256`), runs it there with
+  `T2_GUEST_SHIP=1` (job.sh: `--ship`), merges only on the fleet (a word's
+  `--hosts` no longer names merge targets beyond the fleet's own), and drops
+  a host whose synced tree differs. The row of a shipped update takes its
+  fingerprint and update count from result.json, not the cache's sidecars.
+  *Code reality:* one generation is not one set of bytes. On 2026-11-27, 35
+  of Chopin's 62 g-guests had other bytes than their published objects at
+  the same generation (devuan6, freebsd14 and artix-s6 among them); those
+  update on Chopin until republished. `vm-update --ship` refused all three
+  before booting, which is why the planner now compares the SHA-256s too.
+  *Proof*, in private worlds (`/bkoscratch/imgspeed/F1`; copland was full,
+  so pick-host's cinqcent took its place): alpine324 updated side by side,
+  on Chopin by `vm-update` and on cinqcent by `--ship` from its cache link
+  into a second Chopin world, at once: the same package list (pkgset-after
+  ce412966), the same holt fingerprint b2df5cbe and stic digest 682fc141,
+  update 5 on both, the cache object unchanged (80c7e218), the dump on
+  Chopin. Then round t2v-20261127T0946-bf41 of 7 guests over 4 hosts
+  (chopin 2, cinqcent 2, cage 2, czerny 1), each guest updated once: 4
+  shipped and merged on Chopin (alpine324-lvm, alpine324-uefi, haiku6,
+  hardenedbsd15-zfs), freebsd15-geli-bios shipped nothing (no change), 2
+  updated on Chopin. alpine324-uefi's fingerprint 1fbadb7e was the same from
+  cinqcent (an earlier round) and from cage. Mid-round, with haiku6 shipping
+  from cage, a by-hand vm-update on Chopin was refused by the fleet lock, a
+  round job there by the guest's lock, and a `--ship` from czerny by the
+  guest's lock on Chopin. Every row's needs passed but logs, whose new lines
+  (the private world's tool paths, and update-mode lines no baseline held)
+  were the same on Chopin's jobs as on the shipped ones; once accepted,
+  GuestTest2 of the six updated guests on Chopin (the four shipped, the
+  unchanged freebsd15-geli-bios and Chopin's own alpine324) PASSed every
+  check: t2v-20261127T0959-d590, alpine324 in t2v-20261127T0955-1c4e, haiku6
+  on a rerun once its varying boot lines were accepted. The round took
+  8 min from its start to its report, for 7 guests est. 20 guest-minutes. Tests: test_vm_update (TestShip,
+  TestShipArguments, TestShipScripts, TestCheckHostsRef: 27), test_guest
+  (UpdateSpread: 9, and a shipped row's fingerprint and count). Rescue images built on all build hosts (yes).** This is speedup 2:
   §5, steps I7 and I8.
 - **F3. BackShot2 tier 1 and 2 of the large desktop sources (partly)
   (user: FD3).** `bs2:285 disk_ok()` admits SSD cases only on
@@ -1906,7 +1955,7 @@ this spec's speedups 2 and 7.
 | what | where | why it cannot move |
 |---|---|---|
 | vm-store publish, push and verify; sculpt-update | Chopin | D2: only Chopin talks to Bigfoot (bigfoot-link role) |
-| The fleet lock and the commit of updated guests | Chopin | One committer per guest generation. F1 moves only the update work |
+| The fleet lock and the commit of updated guests | Chopin | One committer per guest generation. F1 moves only the update work (`vm-update --ship`) |
 | qubes43's Stic and Holt cells | big hosts | M 12 GiB is over a small host's 10.1 |
 | uc24-fde | hosts with swtpm | a host capability, not a placement habit |
 | The BS2 leftovers chain | one host, any class (F18) | needs all three UEFI sources on one disk |
@@ -2032,7 +2081,8 @@ this spec's speedups 2 and 7.
    Chopin in a --keep overlay, ship only the overlay" to "update on any host
    that caches the base, in a --keep overlay; ship only the overlay to
    Chopin, which commits and publishes". *Recommend yes*, after one guest's
-   side-by-side proof.
+   side-by-side proof. *Done 2026-11-27:* proved (F1, as built) and the rule
+   reworded in those words in the user's memory note.
 2. **FD2. Ties (F13).** *Recommend:* a tie-break rule (class, then heat or
    speed, then table order) rather than reordering hosts.json, which other
    tools and notes read.
@@ -2064,7 +2114,7 @@ Each step is done when its proof passes. Figures are rough (est.).
 | **I8** | `img-round.sh run` and `fanout`, the round lock (C10, after D16). Retire Chopin's `images/lanes.sh`. promote-bins' source relaxed (F20). (~1.5 d) As built (2026-11-27; §5.2, §10, C10): run, fanout, the host and Mac round locks, img-lanes.sh's `P@SHA256` refresh units, `BKO_IMG_RUN` and plan environment, img-one.sh's exit 5, the locks in promote-bins.sh and img-refresh-holt.sh, and Chopin's four stale scripts retired (§5.3). Proof, from private dirs on all six amd64 hosts (`/bkoscratch/imgspeed/I8`: stick/, the sets copied, images/; `--remote-env`): round i8r2 built full ×7 where its plan said (linux and dragonfly on cinqcent, freebsd on chopin, illumos on copland, openbsd and haiku on cage, netbsd on czerny; 3.2 to 17 min a unit) and fanned out 35 copies over 25 host pairs, 06:26 to 06:51Z; every platform's two images had the same SHA-256 on all six hosts, each hashed again there; `t2-host tool img pin` of all seven on each of the six said ok, no `bins-stale`, Linux `release_same` true; sampled every 30 s, no host's `cmp-run.sh --free` went below 0 and the small hosts' RAM disk peaked at 3.9 of 9.0 GiB. Mid-round, `promote-bins.sh --sets holt-bin,bko-bin cage choubox` said REFUSED with the round's name for both holt-bins (bko-bin was up to date), and `img-refresh-holt.sh` on copland was refused (exit 2). An `img-lanes.sh "haiku netbsd"` with the plan's environment on czerny, its holt-bin SHA256SUMS changed once haiku had started: haiku passed, netbsd refused (exit 5, nothing moved). The first round (i8r1, with the code before its blip fixes) lost the Mac's ssh to cage mid-build; that is why a lost ssh no longer stops the lanes or drops the lock. 27 new tests (test_img_round_run, a fixture farm behind a fake ssh, and test_round_dist's round refusal); t2 self-test all ok but test_plan's Performance timing (3.3 s against its 3.0 s on a loaded Mac). Review (2026-11-27): a RUN that has run is refused by `run` (§5.2), one test more; `run i8r2` again said so, exit 3 | A full farm round: each platform built where `plan` said, identical SHA-256 on every holding host, every host's pin accepts every platform, and no host over its limits. A promote-bins started mid-round is refused, and a unit started with a host's sets changed under it refuses |
 | **I9** | Proof cells on six hosts: fan-out to all, choubox's width-1 boot cells. (~0.5 d) As built (2026-11-27; §10): the facts' `image_round` and the planner's wait for it, fan-out's room check, the panel's +img lines longest first in the queue; D12's test-copies-only fallback not built (no host short of disk). Proof, from private dirs on all six amd64 hosts (`/bkoscratch/imgspeed/I9`: stick/ and testvm/, the sets copied, images/, a T2_HOST_ROOT with each host's ledger and holt-bin seeded; T2_IMAGES there): round i9r2 built full ×7 (linux on cage, freebsd on chopin, netbsd and openbsd on cinqcent, dragonfly and haiku on czerny, illumos on copland; 2.9 to 15 min a unit) and fanned out to all six; a network blip on the Mac stopped 4 of its 35 copies before they began (freebsd to cage, choubox and czerny, illumos to chopin), which `img-xcopy.sh` from the builders then made; every platform's two images hashed again on every host: the same sums on all six, done.exit 0. During a round, `t2 ImgTest2` (all seven named) planned 7 not-runnable, each "image round i9r1 holds images/.round.lock on chopin, cinqcent, copland, cage, czerny, choubox" (`plan-midround.txt`, 07:51Z: i9r1, the first try, held the lock on all six while its units ran, though its private tree lacked testvm/ and its six non-Linux units failed; no mid-round plan of i9r2 was kept). After it, `t2 ImgTest2` of all seven (t2i-20261127T0842-dd1a) placed them on all six hosts (linux cinqcent, freebsd cage, netbsd czerny, openbsd and haiku choubox, dragonfly chopin, illumos copland), 7 PASS in under 5 min; choubox's two at width 1 from a RAM copy. The panel, all 17 +img lines named: first (t2h-20261127T0847-2247, before the order fix) 17 PASS over six hosts in 27.8 min, dragonfly6+img taken last at 08:58 and ending the queue at 09:13:52; again with the fix (t2h-20261127T0917-9eef) 17 PASS over six hosts (chopin 4, cinqcent 4, czerny 3, cage, copland, choubox 2 each) in 17.7 min, its queue 15.3 min against its longest line's 15.1 (dragonfly6+img, taken first). 5 new tests (test_facts' flock, test_plan's wait, test_img_round_run's room ×2, test_holt's order); test_plan, test_facts, test_img*, test_round_dist and test_holt pass, and `t2 self-test` all ok on HEAD | An ImgTest2 run places cells on at least 5 hosts. The panel's lines spread, and its wall time drops to about its longest line |
 | **I10** | `holt-cross.sh` for freebsd, netbsd and illumos, as HoltTest2 check builds in `CODE/cross/` with their own key (§8.2a, D17). (~1.5 d) As built (2026-11-27): `testvm/holttest1d/holt-cross.sh`, holt.py's check builds, keys.py's `holt_build`, `holt-e2.sh` and `holt_e2.py` (§8.1, §8.2 and §8.2a as built). Proof, on code 16832911. Steps 0-2: PASS for all three, on chopin, against the VM builds of run t2h-20261127T0733-d2dd. In step 2, of 981 tests every native pass was a cross pass, and 86-87 failed both ways. Step 3: HoltTest2 of the platforms' 16 guests under private roots, t2h-20261127T0733-d2dd on the VM builds and t2h-20261127T0757-4ef5 on the cross set. Both runs passed 16/16, and judge.py found every guest's src and restored dumps equal. The run's cross builds landed in `CODE/cross/PLAT/` only, while `CODE/PLAT/` and its SHA256SUMS held the VM builds. Tests: test_holt (4 new), test_keys, test_holt_cross (11); t2 self-test all ok. Review (2026-11-27): a sysroot could be remade (a vm-update of its image) under a build linking against it, so a build now holds the cache's lock shared (§8.1), and the info records clang and lld; a cross build on chopin from the reviewed script gave freebsd's ccbb4f60 again, with the lock held for the whole build; test_holt_cross 12 (the lock test fails on the old script) | E2 steps 0-3 for each. A check build never lands in `CODE/PLAT/` |
-| **I11** | The same for openbsd and dragonfly (tier 3). (~1.5 d) | E2 steps 0-3 for each |
+| **I11** | The same for openbsd and dragonfly (tier 3). (~1.5 d) As built (2026-11-27): holt-cross.sh's openbsd and dragonfly, on the pinned 1.94.1 with `-Zbuild-std` (D10 as built: the nightly's std panics in OpenBSD's `current_exe`, which step 2 found), OpenBSD's link as its own lld makes it, step 0's IBT reading and its sysroot symbol versions, `linkface` for OpenBSD's relinked libraries, holt.py's check builds (§8.1, §8.2 as built). Proof, on code 16832911, commit 752658a. Steps 0-2: PASS for both against the VM builds of run t2h-20261127T0923-bbaf (openbsd on copland, dragonfly on cinqcent). Step 0 for OpenBSD: the same IBT handling as the VM build (landing pads, the GNU property's IBT bit, no NOBTCFI) and the same interpreter, DT_NEEDED, notes, segments (`PT_OPENBSD_RANDOMIZE`) and load flags (code E). DragonFly's differ only in symbol versions that its sysroot's libc.so.8 defines. In step 2, of 981 tests every native pass was a cross pass, and 87 (openbsd) and 88 (dragonfly) failed both ways. Step 3: HoltTest2 of openbsd8 and dragonfly6 under private roots, t2h-20261127T0923-bbaf on the VM builds and t2h-20261127T0948-f22f on the cross set (openbsd 9a2140db, dragonfly 00e4a179). Both runs passed 2/2, and judge.py found the src and restored dumps equal. The check builds landed in `CODE/cross/PLAT/` only, while `CODE/PLAT/` and SHA256SUMS held the VM builds. The cross builds had the same bytes on two hosts each, and fresh openbsd8 sysroots on chopin and cage the same digest. Cargo took 1.1-1.4 min cross against 2.0-2.6 min in the guests. No farm CPU has IBT: the Ryzens have `user_shstk` alone, and choubox's Comet Lake has neither. Tests: test_holt_cross 20 (8 new: IBT reading, xonly, linkface, the tier-3 fake world with OpenBSD's linker wrapper), test_holt (the two check builds). t2 self-test all ok except test_vm_update, which fails on another session's uncommitted vm-update | E2 steps 0-3 for each |
 | **I12** | The switch per platform after D11, the weekly VM reference, `holt_build` in the provenance. (~0.5 d) | E2 on two consecutive rounds. At the switch, `t2 plan` shows every holt line of the platform due. The first image set built from cross builds passes ImgTest2 and the panel |
 | **F1-F20** | §12, each with its own proof. | As listed in §12 |
 

@@ -5,8 +5,10 @@
 #
 #   holt-e2.sh PLATFORM VM_BIN CROSS_BIN OUT          (TMPDIR: a directory in the RAM disk)
 #   holt-e2.sh --reserved NAME PLATFORM VM_BIN CROSS_BIN OUT
-#             the same under cmp-run.sh --reserve HOLT_RESERVE 6 (default 3; the guest is
-#             4 GiB), TMPDIR /mnt/bko-ram/t2e-NAME-PLATFORM, made before and removed after
+#             the same under cmp-run.sh --reserve HOLT_RESERVE M (default 3; M the guest's
+#             GiB and 2: its 4 GiB, illumos's 8, whose fork and exec reserve swap for a
+#             child's whole address space, so a 4 GiB guest's native test link fails with
+#             ENOMEM), TMPDIR /mnt/bko-ram/t2e-NAME-PLATFORM, made before and removed after
 #
 #   step 0  holt_e2.py elf: the two ELF files' shapes                      OUT/step0.txt
 #   step 1  both binaries' `--version --json` in the guest, holt_e2.py api  OUT/step1.txt
@@ -38,11 +40,12 @@ if [[ ${1:-} == --reserved ]]; then
     mountpoint -q "$r" || die "no RAM disk at $r"
     # (Absolute paths: the reservation's command doesn't run in this directory.)
     set -- "$1" "$(realpath -m -- "$2")" "$(realpath -m -- "$3")" "$(realpath -m -- "$4")"
-    tmp=$r/t2e-$name-$1 rc=0
+    tmp=$r/t2e-$name-$1 rc=0 mem=6
+    [[ $1 != illumos ]] || mem=10
     finish() { rm -rf --one-file-system "$tmp"; exit "$1"; }
     trap 'finish 143' TERM; trap 'finish 130' INT; trap 'finish 129' HUP
     rm -rf --one-file-system "$tmp"; mkdir -p "$tmp" || finish 2
-    WEAR_TAG=e2:$name:$1 "${HOLT_CMP_RUN:-$WORK/cmp-run.sh}" --reserve "${HOLT_RESERVE:-3}" 6 \
+    WEAR_TAG=e2:$name:$1 "${HOLT_CMP_RUN:-$WORK/cmp-run.sh}" --reserve "${HOLT_RESERVE:-3}" "$mem" \
         env TMPDIR="$tmp" "$HERE/holt-e2.sh" "$@" || rc=$?
     finish "$rc"
 fi
@@ -50,10 +53,11 @@ fi
 [[ $# -eq 4 ]] || die "usage: holt-e2.sh [--reserved NAME] PLATFORM VM_BIN CROSS_BIN OUT"
 PLATFORM=$1 VMB=$(realpath -- "$2") XB=$(realpath -- "$3") OUT=$4
 GUEST_PATH=/sbin:/usr/sbin:/bin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/pkg/sbin:/usr/pkg/bin:/opt/ooce/bin:/usr/gnu/bin
+MEM=4096
 case $PLATFORM in   # (build-holt.sh's guests and Rust installs)
     freebsd) VM=freebsd14 RUST='env ASSUME_ALWAYS_YES=yes pkg install -y rust' ;;
     netbsd) VM=netbsd11 RUST='pkg_info -e rust >/dev/null || pkgin -y install rust' ;;
-    illumos) VM=omnios58 RUST='pkg install -q ooce/developer/rust developer/gcc14; s=$?; [ $s -eq 0 ] || [ $s -eq 4 ]' ;;
+    illumos) VM=omnios58 RUST='pkg install -q ooce/developer/rust developer/gcc14; s=$?; [ $s -eq 0 ] || [ $s -eq 4 ]' MEM=8192 ;;
     *) die "PLATFORM: freebsd, netbsd or illumos (I10)" ;;
 esac
 [[ -f $VMB && -f $XB ]] || die "no $VMB or $XB"
@@ -93,10 +97,10 @@ done
 trap vm_halt EXIT
 image=$WORK/vms-bko-build/$VM-rust.qcow2 key=$WORK/vms-bko-build/$VM.id_ed25519
 if [[ -f $image && -f $key ]]; then
-    VM_IMAGE=$image VM_IMAGE_KEY=$key vm_boot "$VM" "$port" "$OUT" --snapshot --cpus 4 --memory 4096 ||
+    VM_IMAGE=$image VM_IMAGE_KEY=$key vm_boot "$VM" "$port" "$OUT" --snapshot --cpus 4 --memory "$MEM" ||
         fail_rest "the $VM build guest didn't come up"
 else
-    vm_boot "$VM" "$port" "$OUT" --snapshot --cpus 4 --memory 4096 || fail_rest "the $VM guest didn't come up"
+    vm_boot "$VM" "$port" "$OUT" --snapshot --cpus 4 --memory "$MEM" || fail_rest "the $VM guest didn't come up"
 fi
 env="PATH=$GUEST_PATH; export PATH"
 if ! vm_ssh "$env; command -v cargo" >/dev/null 2>&1; then

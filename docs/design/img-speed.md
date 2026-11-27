@@ -939,6 +939,32 @@ generation changes. Paths are remapped (`--remap-path-prefix`) as
 build-round's zig builds remap them. Est. 1-3 min per platform with no guest
 booted, against today's 2.3-9 min in a guest.
 
+*As built (I10, 2026-11-27):* the script is `testvm/holttest1d/holt-cross.sh`,
+beside build-holt.sh, since HoltTest2's build step runs both from the run's
+copy; bko-rescue's `HOLT_CRATE=rescue` waits until it ships. The sysroot comes
+from the image the VM build builds in, `vms-bko-build/VM-rust.qcow2` (else the
+test guest), because the test guests of NetBSD and OmniOS lack the comp set and
+the C runtime objects a link needs. It holds `/lib` and `/usr/lib`; for illumos,
+their `amd64/`, gcc 14's runtime in `/usr/gcc/14/lib/amd64`, and its crt
+objects and libgcc from `/opt/gcc-14`. It is cached in `WORK/holt-cross/sysroot/VM`
+and named by a digest of its files. The three sysroots had the same digest on
+chopin, cinqcent, copland and cage. The cross builds of one code had the same
+bytes on every host (freebsd ccbb4f60, netbsd 70d33f2e, illumos dd7e807e), so
+unlike the VM builds (R14) they are reproducible.
+
+No host has clang or lld installed, so Debian's clang-19 and lld-19 are
+unpacked into the cache. NetBSD's link names `/usr/libexec/ld.elf_so`, as its
+gcc does (clang's default is the one in /libexec). illumos links through a
+wrapper that turns the Solaris-ld arguments of clang's Solaris driver (`-C`,
+`-z ignore` and `-z record`, the default interpreter) into lld's. It passes
+`--gcc-install-dir` at /opt/gcc-14 and `-rpath /usr/gcc/14/lib/amd64`, as the VM
+build's gcc does.
+
+In the first HoltTest2 run (t2h-20261127T0733-d2dd) the cross builds took
+1.5-1.7 min each, including a first sysroot and toolchain fetch on each host,
+against 1.6-5.9 min for the VM builds. The first cross build did not fail:
+1.94.1 compiles the BSD and illumos code as it is.
+
 ### 8.2 Proof: E2, behaviour equivalence
 
 The bytes cannot match, because the compiler differs (§1.6). Per platform,
@@ -975,6 +1001,32 @@ The first cross build may simply fail: the BSD and illumos `cfg` code has
 only ever been compiled by the guests' Rust 1.98-1.100, never by 1.94.1, so
 it may use a newer API. I10 finds out.
 
+*As built (I10):* `testvm/holttest1d/holt-e2.sh PLATFORM VM_BIN CROSS_BIN OUT`
+runs steps 0-2 on a host, and `holt_e2.py` judges them. Step 3 is two HoltTest2
+runs under private roots, the second with `--holt-bin` at the cross set, then
+`holt_e2.py fetch` and `holt_e2.py dumps` on the Mac. The code found the
+following, and these steps follow it:
+
+- **Step 0** reads the ELF files itself. A difference fails unless holt_e2.py's
+  EXPLAINED list names it for the platform and says why it changes nothing.
+  - NetBSD: the VM build carries pkgsrc rust's `-R/usr/pkg/lib/libatomic`, and
+    GNU ld writes NOW without DF_BIND_NOW.
+  - illumos: the VM build is linked by illumos's own ld, so lld's layout
+    differs: a separate read-only LOAD, GNU_RELRO, GNU_STACK, GNU_EH_FRAME
+    (= PT_SUNW_EH_FRAME) where the VM build has SUNW_UNWIND, and DT_RUNPATH
+    alone for `-R`.
+  - Symbol versions: a cross build that needs a subset of the VM build's
+    passes, since the pinned std is older than the guests' packaged Rust.
+  - FreeBSD's matched exactly, with ABI tag 1405000 (14's).
+- **Step 1** also ignores `generated`, the time the document was written.
+- **Step 2** cannot require every test to pass. holt's tests assume Linux in
+  places, and 86-87 of the 981 fail on these systems whatever compiles them.
+  So the same tests are also built natively in the same guest boot, with the
+  build image's Rust, and run from the same tree. The step passes when every
+  test that passes natively also passes cross-built. The guest is therefore
+  the build image, not the bare test guest. illumos's needs 8 GiB, because its
+  fork and exec reserve swap for a child's whole address space.
+
 ### 8.2a Keys: the cross build must be tested as itself
 
 HoltTest2 keys a platform's bko-holt by its **code digest** CODE (R14,
@@ -991,6 +1043,21 @@ platform is due once and is run on the cross build. `img-refresh-holt.sh`
 copies from the directory the key names. (A guest's Rust update changes
 today's VM build without changing CODE either: a pre-existing gap, which
 D10's pinned toolchain closes for the cross-built platforms.)
+
+*As built (I10):* the key and the directory work as follows.
+
+- **The key:** keys.py's `holt_build` option is {PLAT: KIND}. A kind other
+  than `vm` adds `bin/PLAT/bko-holt-build` (ver:KIND). `vm` adds nothing, so
+  no row's key moved at I10. I12 passes holt-cross.sh's kind, for example
+  `cross:1.94.1:freebsd14@SYSROOT12`, which `holt-cross.sh --kind PLAT`
+  prints.
+- **The check builds:** HoltTest2's build step starts a cross check build
+  beside each VM build of freebsd, netbsd and illumos. It goes into
+  `CODE/cross/PLAT/` on its build host alone, with `CODE/cross/build-PLAT.json`.
+  It is not shipped, and no cell tests it. A failure, or a build still running
+  after an hour, is a note. None is made where one is already there.
+- **The refusal:** holt-cross.sh refuses (exit 2) an output that doesn't end
+  in `cross/PLAT` or that lies in a shipped set.
 
 ### 8.3 Rollout
 
@@ -1843,7 +1910,7 @@ Each step is done when its proof passes. Figures are rough (est.).
 | **I7** | `img-seed.sh`, and Linux inputs on copland, cage and czerny. (~0.5 d) As built (2026-11-27), with the media and copland's builder mended (§5.1). Proof: the slim manifests match on all three (e19af22fa576, ISO c8e9d797f718); full Linux builds at 05:05Z on Chopin and copland (private image dirs, the shared sets) gave the same base, bins and tests digests in the provenance, the same base squashfs (65bc6e21) and layer manifest (2c9863ec) in both images of each, layer squashfs bytes that differ only within E1's noise floor (114 tree-listing entries, none outside I3's diff(A, A')), and ImgTest2 `linux` PASS on each (private T2 roots, `T2_IMAGES` at each set; panel not needed). 13 new tests (test_img_seed, a fixture farm behind a fake ssh); the t2 suite passes (3310) | The slim manifests match. A full Linux build on copland and one on Chopin from the same inputs, the same day, have the same layer manifest (package list), the same base squashfs bytes, and both PASS ImgTest2 |
 | **I8** | `img-round.sh run` and `fanout`, the round lock (C10, after D16). Retire Chopin's `images/lanes.sh`. promote-bins' source relaxed (F20). (~1.5 d) As built (2026-11-27; §5.2, §10, C10): run, fanout, the host and Mac round locks, img-lanes.sh's `P@SHA256` refresh units, `BKO_IMG_RUN` and plan environment, img-one.sh's exit 5, the locks in promote-bins.sh and img-refresh-holt.sh, and Chopin's four stale scripts retired (§5.3). Proof, from private dirs on all six amd64 hosts (`/bkoscratch/imgspeed/I8`: stick/, the sets copied, images/; `--remote-env`): round i8r2 built full ×7 where its plan said (linux and dragonfly on cinqcent, freebsd on chopin, illumos on copland, openbsd and haiku on cage, netbsd on czerny; 3.2 to 17 min a unit) and fanned out 35 copies over 25 host pairs, 06:26 to 06:51Z; every platform's two images had the same SHA-256 on all six hosts, each hashed again there; `t2-host tool img pin` of all seven on each of the six said ok, no `bins-stale`, Linux `release_same` true; sampled every 30 s, no host's `cmp-run.sh --free` went below 0 and the small hosts' RAM disk peaked at 3.9 of 9.0 GiB. Mid-round, `promote-bins.sh --sets holt-bin,bko-bin cage choubox` said REFUSED with the round's name for both holt-bins (bko-bin was up to date), and `img-refresh-holt.sh` on copland was refused (exit 2). An `img-lanes.sh "haiku netbsd"` with the plan's environment on czerny, its holt-bin SHA256SUMS changed once haiku had started: haiku passed, netbsd refused (exit 5, nothing moved). The first round (i8r1, with the code before its blip fixes) lost the Mac's ssh to cage mid-build; that is why a lost ssh no longer stops the lanes or drops the lock. 27 new tests (test_img_round_run, a fixture farm behind a fake ssh, and test_round_dist's round refusal); t2 self-test all ok but test_plan's Performance timing (3.3 s against its 3.0 s on a loaded Mac). Review (2026-11-27): a RUN that has run is refused by `run` (§5.2), one test more; `run i8r2` again said so, exit 3 | A full farm round: each platform built where `plan` said, identical SHA-256 on every holding host, every host's pin accepts every platform, and no host over its limits. A promote-bins started mid-round is refused, and a unit started with a host's sets changed under it refuses |
 | **I9** | Proof cells on six hosts: fan-out to all, choubox's width-1 boot cells. (~0.5 d) | An ImgTest2 run places cells on at least 5 hosts. The panel's lines spread, and its wall time drops to about its longest line |
-| **I10** | `holt-cross.sh` for freebsd, netbsd and illumos, as HoltTest2 check builds in `CODE/cross/` with their own key (§8.2a, D17). (~1.5 d) | E2 steps 0-3 for each. A check build never lands in `CODE/PLAT/` |
+| **I10** | `holt-cross.sh` for freebsd, netbsd and illumos, as HoltTest2 check builds in `CODE/cross/` with their own key (§8.2a, D17). (~1.5 d) As built (2026-11-27): `testvm/holttest1d/holt-cross.sh`, holt.py's check builds, keys.py's `holt_build`, `holt-e2.sh` and `holt_e2.py` (§8.1, §8.2 and §8.2a as built). Proof, on code 16832911. Steps 0-2: PASS for all three, on chopin, against the VM builds of run t2h-20261127T0733-d2dd. In step 2, of 981 tests every native pass was a cross pass, and 86-87 failed both ways. Step 3: HoltTest2 of the platforms' 16 guests under private roots, t2h-20261127T0733-d2dd on the VM builds and t2h-20261127T0757-4ef5 on the cross set. Both runs passed 16/16, and judge.py found every guest's src and restored dumps equal. The run's cross builds landed in `CODE/cross/PLAT/` only, while `CODE/PLAT/` and its SHA256SUMS held the VM builds. Tests: test_holt (4 new), test_keys, test_holt_cross (11); t2 self-test all ok | E2 steps 0-3 for each. A check build never lands in `CODE/PLAT/` |
 | **I11** | The same for openbsd and dragonfly (tier 3). (~1.5 d) | E2 steps 0-3 for each |
 | **I12** | The switch per platform after D11, the weekly VM reference, `holt_build` in the provenance. (~0.5 d) | E2 on two consecutive rounds. At the switch, `t2 plan` shows every holt line of the platform due. The first image set built from cross builds passes ImgTest2 and the panel |
 | **F1-F20** | §12, each with its own proof. | As listed in §12 |

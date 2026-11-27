@@ -645,6 +645,13 @@ def layout(img, rewritten=(), xorriso=None, eltorito=True):
                         line += " rewritten"
                         if e[4] == 0xA5:
                             out.append(f"/mbr/part/{i + 1}/boot\tsha256={_range_sha(f, first * SECTOR, 16 * SECTOR)}")
+                        elif e[4] == 0xA6:
+                            # OpenBSD's slot: its first 8 KiB but its disklabel (sector 1), whose
+                            # DUID a refresh draws anew (D2; build.sh refresh checks the rest).
+                            f.seek(first * SECTOR)
+                            b = bytearray(f.read(16 * SECTOR))
+                            b[SECTOR:2 * SECTOR] = bytes(SECTOR)
+                            out.append(f"/mbr/part/{i + 1}/boot\tsha256={_sha(bytes(b))}")
                     else:
                         line += f" size={n * SECTOR} sha256={_range_sha(f, first * SECTOR, n * SECTOR)}"
                 out.append(f"/mbr/part/{i + 1}\t{line}")

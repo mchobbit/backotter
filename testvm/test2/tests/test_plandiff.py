@@ -159,9 +159,10 @@ class CorpusMatchesClasses(unittest.TestCase):
     def test_variants_txt_is_holt_variants_bigger(self):
         with open(VARIANTS, encoding="utf-8") as f:
             listed = sorted(l.split("#")[0].strip() for l in f if l.split("#")[0].strip())
-        # (+reformat-TYPE plans: docs/design/reformat.md; classes.json holt.variants makes some HoltTest2 cells)
+        # (golden_plans.rs plans +bigger, +espfmt (74710f4) and +reformat-TYPE (docs/design/reformat.md);
+        # +espfmt and +reformat-TYPE are golden-only; classes.json holt.variants makes some HoltTest2 cells)
         for v in listed:
-            self.assertTrue(v.endswith("+bigger") or re.fullmatch(r"[a-z0-9-]+\+reformat-[a-z0-9]+", v), v)
+            self.assertTrue(v.endswith("+bigger") or re.fullmatch(r"[a-z0-9-]+\+(espfmt|reformat-[a-z0-9]+)", v), v)
         self.assertEqual([v for v in listed if v.endswith("+bigger")],
                          sorted(g + "+bigger" for g in self.holt()["variants"].get("bigger", [])))
         for v in listed:

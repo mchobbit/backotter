@@ -195,14 +195,17 @@ class LayersJson(unittest.TestCase):
             self.assertEqual(r.inputs.get("soft", {}), {}, cell)       # the gate has no soft inputs
             self.assertEqual(r.inputs.get("plumbing", {}), {}, cell)   # nor plumbing
             row = {"inputs": r.inputs, "groups": r.groups, "key": r.key}
-            # gate:holt keys every file of holt/** (two or so a corpus guest, ~110 B each): its
-            # budget is larger.  gate:selftest's unit tests and fixtures are two tree: inputs, so a
-            # test added grows no row (6.9 KiB, 2026-11-19; one input a file took 40 KiB), and its
-            # whole row, at the most fails a row holds, still fits a ledger line.
+            # gate:holt keys every file of holt/** but the corpus (~110 B each), and the corpus
+            # (309 files, 2026-11-27, two or so a guest) as one tree: input, so a dump added grows
+            # no row: its budget is larger.  gate:selftest's unit tests and fixtures are two tree:
+            # inputs, so a test added grows no row (6.9 KiB, 2026-11-19; one input a file took 40
+            # KiB).  Each whole row, at the most fails a row holds, still fits a ledger line.
             budget = 40 * 1024 if cell == "gate:holt" else 24 * 1024
             self.assertLess(len(canonical(row)), budget, f"{cell}: its inputs alone take {len(canonical(row))} B")
-            if cell == "gate:selftest":
-                o = gate.Outcome({"t2-self-test": "FAIL", "drive-self-test": "FAIL"}, ["x" * 300] * 30)
+            if cell in ("gate:selftest", "gate:holt"):
+                o = gate.Outcome({n: "FAIL" for n in gate.layer_entry(self.layers, "holt")["needs"]}
+                                 if cell == "gate:holt" else
+                                 {"t2-self-test": "FAIL", "drive-self-test": "FAIL"}, ["x" * 300] * 30)
 
                 class E:
                     run, word, family, set_name = "t2g-20261108T0500-4f2a", "GateTest2All", "gate", "bko-bin"
@@ -211,6 +214,18 @@ class LayersJson(unittest.TestCase):
                 full.update(groups=r.groups, key=r.key, host="mac", commit="0" * 40, committed=True,
                             dirty={}, copy="6fff54b")
                 self.assertLess(len(canonical(full)), 60000)
+
+    def test_holt_keys_its_corpus_as_one_tree_input(self):
+        """gate:holt: holt/tests/corpus/** is one tree: input (a dump added moves the key, not
+        the row's size); holt's own source is still keyed a file each."""
+        src = keys.TreeSource(REPO)
+        r = keys.resolve("gate:holt", src, facts(), keys.Specs(src), dict(GIT, set="bko-bin"))
+        h = r.inputs["harness"]
+        self.assertTrue(h.get("tree:holt/tests/corpus/**", "").startswith("dir:"), h.get("tree:holt/tests/corpus/**"))
+        self.assertEqual([p for p in h if p.startswith("holt/tests/corpus/")], [])
+        self.assertIn("holt/src/boot.rs", h)
+        self.assertIn("holt/Cargo.toml", h)
+        self.assertIn("testvm/test2/gate/holt-test.sh", h)
 
     def test_the_judge_keys_every_layer(self):
         """gate_judge.py holds every layer's verdict rules: a change to it makes them all due."""
@@ -226,6 +241,10 @@ class LayersJson(unittest.TestCase):
         for tree in ("tree:testvm/test2/tests/fixtures/**", "tree:testvm/test2/tests/*.py"):
             self.assertTrue(h.get(tree, "").startswith("dir:"), tree)
         self.assertEqual([n for n in h if n.startswith("testvm/test2/tests/")], [])   # in no other input
+        # the self-test runs BackShot2's unit tests too (t2 UNIT_DIRS): their code, cases and
+        # tests, one tree: input
+        self.assertTrue(h.get("tree:testvm/backshot2/**", "").startswith("dir:"))
+        self.assertEqual([n for n in h if n.startswith("testvm/backshot2/")], [])
         self.assertIn("testvm/test2/stic/check-manifests.py", h)         # ?testvm/test2/*/*.py's other hits
         self.assertIn("testvm/test2/t2lib/plan.py", h)
 
@@ -328,7 +347,8 @@ class LayerInputs(unittest.TestCase):
     def test_holt_keys_its_tree_and_the_raw_dumps(self):
         a = self.res("gate:holt")
         self.assertIn("holt/src/main.rs", a.inputs["harness"])
-        self.assertIn("holt/tests/corpus/debian13/src.json", a.inputs["harness"])
+        self.assertTrue(a.inputs["harness"]["tree:holt/tests/corpus/**"].startswith("dir:"))   # the corpus, as one
+        self.assertNotIn("holt/tests/corpus/debian13/src.json", a.inputs["harness"])
         self.assertIn("testvm/test2/gate/holt-test.sh", a.inputs["harness"])
         self.assertEqual(a.inputs["host"]["rustc"], "ver:rustc 1.94.1 (e408947bf 2026-03-25)")
         for p in ("util-linux", "fdisk", "gdisk", "e2fsprogs", "xfsprogs", "btrfs-progs", "dosfstools", "cryptsetup-bin"):

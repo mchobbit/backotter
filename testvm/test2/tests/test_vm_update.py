@@ -2970,8 +2970,11 @@ class TestFingerprint(unittest.TestCase):
         self.assertEqual(FP.major("1:4.1.0"), "4")
 
     def test_packages_are_boot_rs(self):
-        text = (REPO / "holt" / "src" / "boot.rs").read_text()
-        body = re.search(r"pub const PACKAGES: &\[&str\] = &\[(.*?)\];", text, re.S)[1]
+        # boot/packages.rs since 4720fec (RustAudit1 H4-09), pub(crate) there
+        text = (REPO / "holt" / "src" / "boot" / "packages.rs").read_text()
+        m = re.search(r"pub(?:\(crate\))? const PACKAGES: &\[&str\] = &\[(.*?)\];", text, re.S)
+        self.assertIsNotNone(m, "holt/src/boot/packages.rs: no PACKAGES list")
+        body = m[1]
         body = re.sub(r"//[^\n]*", "", body)     # its comments quote names too (Chimera's)
         self.assertEqual(sorted(re.findall(r'"([^"]+)"', body)), sorted(FP.PACKAGES))
         self.assertEqual(len(FP.PACKAGES), len(set(FP.PACKAGES)))

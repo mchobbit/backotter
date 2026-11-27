@@ -131,6 +131,27 @@ class UnitTests(unittest.TestCase):
         with open(os.path.join(TESTS, "test_plan.py")) as f:   # (the alone run fails too when it's gone)
             self.assertIn("\nclass Performance(", f.read())
 
+    def test_more_dirs_share_one_pool(self):
+        """TESTS may be several dirs (t2 self-test: test2's and backshot2's, UNIT_DIRS): one
+        pool over all their files, the first dir's named bare, another's by its path; SERIAL
+        names the first dir's tests."""
+        e = tempfile.mkdtemp(prefix="t2-selftest-test-more-")
+        self.addCleanup(shutil.rmtree, e, True)
+        with open(os.path.join(e, "test_x.py"), "w") as f:
+            f.write(PASSING % "test_x")
+        with open(os.path.join(e, "test_a.py"), "w") as f:     # the same name as the first dir's: its own file
+            f.write(FAILING)
+        res = t2.unit_tests(sys.executable, dict(os.environ), tests=(self.d, e), jobs=3, serial=("test_c",))
+        self.assertEqual([(n, rc) for n, rc, _, _ in res],
+                         [("test_a.py", 0), ("test_b.py", 1), (os.path.join(e, "test_a.py"), 1),
+                          (os.path.join(e, "test_x.py"), 0), ("test_c.py (alone: test_c)", 0)])
+        self.assertEqual(t2.unit_summary([t for _, _, t, _ in res]), "FAILED (failures=2, errors=2, skipped=3)")
+
+    def test_the_real_dirs(self):
+        """t2 self-test runs test2's unit tests and backshot2's (BS2's own README runs them so too)."""
+        self.assertEqual(t2.UNIT_DIRS, (TESTS, os.path.join(os.path.dirname(os.path.dirname(T2)), "testvm", "backshot2", "tests")))
+        self.assertTrue(all(os.path.isdir(d) for d in t2.UNIT_DIRS))
+
     def test_jobs_from_the_environment(self):
         old = os.environ.get("T2_SELFTEST_JOBS")
         os.environ["T2_SELFTEST_JOBS"] = "junk"   # (not a number: the default)

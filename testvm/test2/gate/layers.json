@@ -25,6 +25,7 @@
    "timeout_s": 3600,
    "harness": [
     "testvm/test2/gate/holt-test.sh",
+    "tree:holt/tests/corpus/**",
     "holt/**"
    ],
    "judge": [
@@ -474,7 +475,7 @@
     "t2-self-test",
     "drive-self-test"
    ],
-   "notes": "Its key is the self-tests' code, the specs they read and the unit tests' fixtures (which leakscan scans), not every repo file the spec checker reads through them (a row holds at most 64 KiB); the unit tests and their fixtures are two tree: inputs (keys.py), so a test file added grows no row; holt/tests/corpus/** is gate:holt's",
+   "notes": "Its key is the self-tests' code, the specs they read and the unit tests' fixtures (which leakscan scans), not every repo file the spec checker reads through them (a row holds at most 64 KiB); the unit tests and their fixtures are two tree: inputs (keys.py), so a test file added grows no row, and so is testvm/backshot2/** (the self-test runs its unit tests too: t2 UNIT_DIRS); holt/tests/corpus/** is gate:holt's (one tree: input there, so a dump added grows no row either)",
    "harness": [
     "testvm/test2/t2",
     "testvm/test2/t2-host",
@@ -485,7 +486,8 @@
     "testvm/test2/*/*.json",
     "?testvm/test2/*/*.py",
     "testvm/stictest1/drive.py",
-    "tree:testvm/test2/tests/fixtures/**"
+    "tree:testvm/test2/tests/fixtures/**",
+    "tree:testvm/backshot2/**"
    ],
    "judge": [
     "testvm/test2/t2lib/gate_judge.py"

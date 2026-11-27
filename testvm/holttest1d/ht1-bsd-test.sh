@@ -459,7 +459,7 @@ chk "list_diag_sh: kernel stacks (mdb, no pstack or pfiles: they hang on a proce
 chk "list_diag_sh: the queues read before the disks are, and after" eval 'before "$T/diag.sh" "vq > /tmp/ht1-list.vq0" "dd if=" && before "$T/diag.sh" "dd if=" "vq > /tmp/ht1-list.vq1"'
 # Its verdict, on the queues t2h-20261127T1312-9ca9's repro found.
 grep "^awk 'NR == FNR" "$T/diag.sh" | sed 's|/tmp/ht1-list.vq0 /tmp/ht1-list.vq1|"$1" "$2"|' > "$T/verdict.sh"
-printf '%s\n' "vioblk#0 bkoresc: in flight 0, avail idx 1edf, used flags/idx 0 1edf" "vioblk#1 bkodisk-0: in flight 1, avail idx 2fea, used flags/idx 0 2fe9" "vioblk#2 bkodisk-1: in flight 0, avail idx 6c8a, used flags/idx 0 6c8a" > "$T/vq0"
+printf '%s\n' "vioblk#0 bkoresc: in flight 0, avail idx 1edf, used flags/idx 0 1edf" "vioblk#1 bkodisk-0: in flight 0x1, avail idx 2fea, used flags/idx 0 2fe9" "vioblk#2 bkodisk-1: in flight 0, avail idx 6c8a, used flags/idx 0 6c8a" > "$T/vq0"
 printf '%s\n' "vioblk#0 bkoresc: in flight 0, avail idx 1ee0, used flags/idx 0 1ee0" "vioblk#1 bkodisk-0: in flight 3, avail idx 2ffc, used flags/idx 0 2ff9" "vioblk#2 bkodisk-1: in flight 0, avail idx 6c8b, used flags/idx 0 6c8b" > "$T/vq1"
 chk "list_diag_sh: a queue a read released is HT1-LOSTKICK, the others aren't" eval '[[ $(sh "$T/verdict.sh" "$T/vq0" "$T/vq1") == "HT1-LOSTKICK vioblk#1 bkodisk-0: avail idx 2fea, used idx 2fe9 until a read of the disk notified it again (used idx 2ff9 after)" ]]'
 printf '%s\n' "vioblk#1 bkodisk-0: in flight 1, avail idx 2fea, used flags/idx 0 2fe9" > "$T/vq1b"

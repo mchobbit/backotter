@@ -1259,7 +1259,7 @@ for r in /dev/rdsk/c*t0d0p0; do dd if="$r" of=/dev/null bs=4k count=1 iseek=1 2>
 sleep 5; vq > /tmp/ht1-list.vq1; cat /tmp/ht1-list.vq1
 # A queue with requests in flight, the avail ring ahead of the used one and
 # used's flags 0 before the reads, whose used idx moved after them.
-awk 'NR == FNR { gsub(/,/, ""); b[$1] = $0; next } { gsub(/,/, ""); split(b[$1], o, " "); if (o[5] > 0 && o[8] != o[12] && o[11] == 0 && $12 != o[12]) print "HT1-LOSTKICK " $1 " " $2 " avail idx " o[8] ", used idx " o[12] " until a read of the disk notified it again (used idx " $12 " after)" }' /tmp/ht1-list.vq0 /tmp/ht1-list.vq1
+awk 'NR == FNR { gsub(/,/, ""); b[$1] = $0; next } { gsub(/,/, ""); split(b[$1], o, " "); if (o[5] "" != "0" && o[8] != o[12] && o[11] == 0 && $12 != o[12]) print "HT1-LOSTKICK " $1 " " $2 " avail idx " o[8] ", used idx " o[12] " until a read of the disk notified it again (used idx " $12 " after)" }' /tmp/ht1-list.vq0 /tmp/ht1-list.vq1
 echo "== zpool status -v"; zpool status -v 2>&1
 EOF
 }

@@ -1311,7 +1311,20 @@ this spec's speedups 2 and 7.
 - **F17. vm-store's default source names Chopin (partly) (user: FD5).**
   `vmstore.py:68` `DEFAULT_CHOPIN`. Change: read the store-mirror role. *Stays:*
   publish, push, verify and sculpt-update on Chopin (D2). A second mirror on
-  Cinqcent waits for the user to revisit D2.
+  Cinqcent waits for the user to revisit D2. *As built (2026-11-27):*
+  `DEFAULT_CHOPIN` is gone; with VM_STORE_SOURCES unset a cache's sources
+  are `mirror_sources`: hosts.json's enabled rows with the store-mirror role,
+  in table order, each `NAME=SSH:/bkoscratch/bko-store` (Chopin alone, so
+  the same source as before), never a row that is Bigfoot (D2). Read on
+  first use, so the mirror's own ensure and the commands that fetch nothing
+  never read the table; no table or no such row is an error naming
+  VM_STORE_SOURCES. *Proof:* `test_vmstore.py`'s TestMirrorSources (6);
+  the whole suite (146) on the Mac and on cage; on cage and copland, from a
+  private copy with VM_STORE_SOURCES unset, `vm-store list --source chopin`
+  and `link aeon --dry-run` (which reads latest from the source) answered
+  from Chopin, `--source cinqcent` was refused naming the store-mirror
+  hosts, and a table with no store-mirror row made link exit 1 naming
+  VM_STORE_SOURCES.
 - **F18. BackShot2 leads, leftovers and the SSD lane (partly).** Change: let
   any host that holds all its sources lead, or publish the BS2 sources to
   vm-store. *Stays:* the leftovers chain on one host (it needs all three

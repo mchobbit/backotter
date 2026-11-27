@@ -1825,6 +1825,89 @@ class TestCacheHosts(StoreTest):
         self.assertIn("not a cache host: nope", err)
 
 
+class TestMirrorSources(StoreTest):
+    """F17 (FD5): a cache's default sources are hosts.json's store-mirror rows, not a name."""
+
+    def sources(self, rows=HOSTS_ROWS, text=None, env=None):
+        path = self.tmp / "hosts.json"
+        path.write_text(text if text is not None else json.dumps({"v": 1, "hosts": rows}))
+        with mock.patch.object(vs, "HOSTS_JSON", path), mock.patch.dict(os.environ, env or {}), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            if not (env or {}).get("VM_STORE_SOURCES"):
+                os.environ.pop("VM_STORE_SOURCES", None)
+            cfg = vs.Config()
+            got = [repr(s) for s in cfg.sources]
+        self.last_err = err.getvalue()
+        return got
+
+    def test_role_not_name(self):
+        self.assertEqual(self.sources(), ["chopin=m@chopin.local:/bkoscratch/bko-store"])
+        rows = [dict(HOSTS_ROWS[1], roles=["cache", "store-mirror"]), HOSTS_ROWS[0], HOSTS_ROWS[2]]
+        self.assertEqual(self.sources(rows), ["cinqcent=m@cinqcent.local:/bkoscratch/bko-store",
+                                              "chopin=m@chopin.local:/bkoscratch/bko-store"])     # table order
+        renamed = [dict(HOSTS_ROWS[0], name="chopin2", ssh="m@10.0.0.9")]
+        self.assertEqual(self.sources(renamed), ["chopin2=m@10.0.0.9:/bkoscratch/bko-store"])
+        off = [dict(HOSTS_ROWS[0], enabled=False), dict(HOSTS_ROWS[2], roles=["store-mirror"])]
+        self.assertEqual(self.sources(off), ["copland=m@copland.local:/bkoscratch/bko-store"])
+        self.assertEqual(self.sources([HOSTS_ROWS[0], HOSTS_ROWS[0]]), ["chopin=m@chopin.local:/bkoscratch/bko-store"])
+
+    def test_the_real_table_gives_the_old_default(self):
+        with mock.patch.dict(os.environ, {}):
+            os.environ.pop("VM_STORE_SOURCES", None)
+            got = [repr(s) for s in vs.Config().sources]
+        self.assertEqual(got, ["chopin=m@chopin.local:/bkoscratch/bko-store"])
+
+    def test_never_bigfoot(self):
+        rows = [{"name": "bigfoot", "ssh": "m@elsewhere.local", "roles": ["store-mirror"], "enabled": True},
+                {"name": "sneaky", "ssh": "bigfoot.local", "roles": ["store-mirror"], "enabled": True},
+                {"name": "nas", "ssh": "m@nas.local", "roles": ["store-mirror"], "enabled": True}, HOSTS_ROWS[0]]
+        self.assertEqual(self.sources(rows, env={"VM_STORE_BIGFOOT_HOST": "m@nas.local"}),
+                         ["chopin=m@chopin.local:/bkoscratch/bko-store"])
+        for n in ("bigfoot", "sneaky", "nas"):
+            self.assertIn(f"warning: {n}=", self.last_err)
+        self.assertNotIn("warning: chopin", self.last_err)
+
+    def test_environment_wins(self):
+        env = {"VM_STORE_SOURCES": f"a={self.mirror} b=m@x.local:/s"}
+        self.assertEqual(self.sources(text="not json", env=env), [f"a={self.mirror}", "b=m@x.local:/s"])
+
+    def test_bad_table_is_an_error_but_only_when_a_source_is_needed(self):
+        cases = ("{not json", '{"v": 1}', json.dumps({"hosts": [HOSTS_ROWS[1]]}),
+                 json.dumps({"hosts": [dict(HOSTS_ROWS[0], enabled=False)]}),
+                 json.dumps({"hosts": [dict(HOSTS_ROWS[0], ssh="m@chopin.local:/x")]}),
+                 json.dumps({"hosts": [dict(HOSTS_ROWS[0], ssh="")]}))
+        for text in cases:
+            with self.assertRaises(vs.StoreError) as cm:
+                self.sources(text=text)
+            self.assertIn("hosts.json", str(cm.exception))
+            self.assertIn("VM_STORE_SOURCES", str(cm.exception))
+        with mock.patch.object(vs, "HOSTS_JSON", self.tmp / "none.json"), mock.patch.dict(os.environ, {}):
+            os.environ.pop("VM_STORE_SOURCES", None)
+            cfg = vs.Config()                     # no read yet
+            with self.assertRaises(vs.StoreError) as cm:
+                cfg.sources
+            self.assertIn("none.json", str(cm.exception))
+            self.guest("g1")
+            self.assertEqual(self.run_vs("publish", "g1")[0], 0, self.last_err)
+            self.assertEqual(self.run_vs("ensure", "g1")[0], 0, self.last_err)      # the mirror needs none
+            self.init_cache()
+            rc, _, err = self.run_vs("ensure", "g1", root=self.cache)
+            self.assertEqual(rc, 1, err)
+            self.assertIn("store-mirror", err)
+            self.assertEqual(self.run_vs("ensure", "g1", "--offline", root=self.cache)[0], 1)   # nothing cached
+
+    def test_source_by_name(self):
+        path = self.tmp / "hosts.json"
+        path.write_text(json.dumps({"hosts": HOSTS_ROWS}))
+        with mock.patch.object(vs, "HOSTS_JSON", path), mock.patch.dict(os.environ, {}):
+            os.environ.pop("VM_STORE_SOURCES", None)
+            cfg = vs.Config()
+            self.assertEqual(cfg.source("chopin").host, "m@chopin.local")
+            with self.assertRaises(vs.Usage) as cm:
+                cfg.source("cinqcent")
+            self.assertIn("the store-mirror hosts", str(cm.exception))
+
+
 def seg(guest, rc, *lines):
     return [f"@@begin {guest}", *lines, f"@@rc {guest} {rc}"]
 

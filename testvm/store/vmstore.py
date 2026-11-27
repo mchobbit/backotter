@@ -17,7 +17,8 @@ contract).  One tree shape serves every role:
 
 Chopin's root is the mirror, the only publisher; Bigfoot's is the master,
 written only by push (rsync into its staging, then mv), and only Chopin
-talks to it; the other hosts' are caches, filled from Chopin by ensure and
+talks to it; the other hosts' are caches, filled from Chopin by ensure (from
+hosts.json's store-mirror host, unless VM_STORE_SOURCES names the sources) and
 emptied by gc.  stdout carries only the
 result; everything else goes to stderr.
 
@@ -65,7 +66,6 @@ DEFAULT_CACHE = "/bkoscratch/bko-cache"
 DEFAULT_BF_ROOT = "/media/DantePool/bt/BkoStore"
 DEFAULT_BF_STAGE = "/media/DantePool/bt/.bko-staging"
 DEFAULT_BF_HOST = "m@bigfoot.local"
-DEFAULT_CHOPIN = "m@chopin.local"
 DEFAULT_SCAN = "/mnt/bko-ram /dev/shm /bkoscratch"
 # Trees gc's overlay scan never walks: tool trees and chroots that hold no overlay of a
 # store object (the Test2 gate's Arch chroot, /bkoscratch/tools/arch-root, root's 0700 dirs).
@@ -645,20 +645,67 @@ class Config:
         if not rt.isdigit() or int(rt) == 0:
             raise Usage(f"VM_STORE_RELINK_TIMEOUT is seconds (> 0), not {rt!r}")
         self.relink_timeout = int(rt)
-        # D2: only Chopin talks to Bigfoot, so a cache's default source is Chopin alone, and
-        # with Chopin down ensure uses what is cached (as --offline).  On Chopin, where the
-        # mirror needs no source, VM_STORE_SOURCES may name bigfoot=... (a test cache root).
-        spec = env.get("VM_STORE_SOURCES") or f"chopin={DEFAULT_CHOPIN}:{DEFAULT_MIRROR}"
-        self.sources = []
-        for i, tok in enumerate(spec.split()):
-            name, _, s = tok.partition("=") if "=" in tok.split("/")[0] else (f"src{i}", "", tok)
-            self.sources.append(Source(name, s, self))
+        self._sources: list[Source] | None = None
+
+    @property
+    def sources(self) -> list[Source]:
+        """Where ensure fetches from, in order: VM_STORE_SOURCES, else the store-mirror
+        role's hosts (mirror_sources).  Read on first use, so a command that fetches
+        nothing (and the mirror's own ensure) never reads hosts.json."""
+        if self._sources is None:
+            spec = self.env.get("VM_STORE_SOURCES")
+            if spec:
+                out = []
+                for i, tok in enumerate(spec.split()):
+                    name, _, s = tok.partition("=") if "=" in tok.split("/")[0] else (f"src{i}", "", tok)
+                    out.append(Source(name, s, self))
+            else:
+                out = mirror_sources(self)
+            self._sources = out
+        return self._sources
 
     def source(self, name: str) -> Source:
         for s in self.sources:
             if s.name == name:
                 return s
-        raise Usage(f"no source {name!r} in VM_STORE_SOURCES ({' '.join(map(repr, self.sources))})")
+        where = "VM_STORE_SOURCES" if self.env.get("VM_STORE_SOURCES") else "the store-mirror hosts"
+        raise Usage(f"no source {name!r} in {where} ({' '.join(map(repr, self.sources))})")
+
+
+def mirror_sources(cfg: Config) -> list[Source]:
+    """A cache's default sources (F17, FD5): hosts.json's enabled rows with the store-mirror
+    role, in table order, each NAME=SSH:/bkoscratch/bko-store (Chopin alone today).  D2:
+    only the mirror talks to Bigfoot, so a row that is Bigfoot (by name or ssh target) is
+    left out, and with every mirror down ensure uses what is cached (as --offline).  On
+    the mirror, which needs no source, VM_STORE_SOURCES may name bigfoot=... (a test
+    cache root).  No table, or no such row, is an error naming VM_STORE_SOURCES."""
+    try:
+        table = json.loads(HOSTS_JSON.read_text())
+    except FileNotFoundError:
+        raise StoreError(f"no {HOSTS_JSON} to take the store-mirror host from (or set VM_STORE_SOURCES)")
+    except (OSError, ValueError) as e:
+        raise StoreError(f"{HOSTS_JSON}: can't read the store-mirror host from it ({e}); "
+                         f"fix it or set VM_STORE_SOURCES")
+    hosts = table.get("hosts") if isinstance(table, dict) else None
+    if not isinstance(hosts, list):
+        raise StoreError(f"{HOSTS_JSON} has no hosts list (or set VM_STORE_SOURCES)")
+    bf = {t.rpartition("@")[2] for t in (cfg.bf_host, DEFAULT_BF_HOST) if t}
+    out: list[Source] = []
+    for h in hosts:
+        if not isinstance(h, dict) or h.get("enabled") is not True or "store-mirror" not in (h.get("roles") or []):
+            continue
+        name, ssh = h.get("name"), h.get("ssh")
+        if not isinstance(name, str) or not GUEST_RE.fullmatch(name) or not isinstance(ssh, str) or not ssh \
+                or ":" in ssh or "/" in ssh:
+            raise StoreError(f"{HOSTS_JSON}: a store-mirror host's row lacks a name or ssh target: {h} "
+                             f"(fix it or set VM_STORE_SOURCES)")
+        if name.lower() == "bigfoot" or ssh.rpartition("@")[2] in bf:
+            say(f"warning: {name}={ssh} is Bigfoot, which is no store-mirror (D2); left out")
+        elif name not in {s.name for s in out}:
+            out.append(Source(name, f"{ssh}:{DEFAULT_MIRROR}", cfg))
+    if not out:
+        raise StoreError(f"{HOSTS_JSON} has no enabled store-mirror host (or set VM_STORE_SOURCES)")
+    return out
 
 
 class Store:

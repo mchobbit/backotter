@@ -293,7 +293,7 @@ per-job pins (`VM_STORE_PIN`, `vm_store_dir`) are not built.
 | Variable | Default |
 |---|---|
 | `VM_STORE_ROOT` | `/bkoscratch/bko-store` if it exists, else `/bkoscratch/bko-cache` |
-| `VM_STORE_SOURCES` | `chopin=m@chopin.local:/bkoscratch/bko-store` (in order; a bare path is a local source; on Chopin only, `bigfoot=m@bigfoot.local:/media/DantePool/bt/BkoStore` may be added for a test cache root) |
+| `VM_STORE_SOURCES` | hosts.json's enabled `store-mirror` rows in table order, each `NAME=SSH:/bkoscratch/bko-store`: `chopin=m@chopin.local:/bkoscratch/bko-store` today (never Bigfoot's row; no table or no such row is an error, read only when a fetch needs a source) (in order; a bare path is a local source; on Chopin only, `bigfoot=m@bigfoot.local:/media/DantePool/bt/BkoStore` may be added for a test cache root) |
 | `VM_STORE_BIGFOOT`, `VM_STORE_BIGFOOT_STAGE` | `/media/DantePool/bt/BkoStore`, `/media/DantePool/bt/.bko-staging` |
 | `VM_STORE_BIGFOOT_HOST` | `m@bigfoot.local` (empty: Bigfoot's side runs here on local paths, for tests) |
 | `VM_STORE_BWLIMIT_BIGFOOT` | `40000` (KiB/s of compressed bytes on the wire, not of the files) |

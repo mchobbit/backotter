@@ -9,7 +9,7 @@
   "build": "builds a round's binaries (stick/build-round.sh) and bko-holt",
   "build-arm64": "builds a round's arm64 rustic-bko natively (stick/build-round.sh --arch arm64) and arm64 bko-holt (build-holt.sh linux-arm64); only an arm64 host has it, and it is not the build role",
   "fleet": "holds every guest; vm-update keeps the fleet's copies alike",
-  "store-mirror": "vm-store's mirror (/bkoscratch/bko-store), which publishes",
+  "store-mirror": "vm-store's mirror (/bkoscratch/bko-store), which publishes and which the caches fetch from",
   "bigfoot-link": "the one host that talks to Bigfoot (vm-store push)",
   "cache": "a vm-store cache (/bkoscratch/bko-cache)"
  },

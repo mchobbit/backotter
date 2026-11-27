@@ -8,7 +8,7 @@
 #
 # Usage, on the Mac (no Go or Rust needed):
 #   build-round.sh [--dry-run] [--hosts all|both|H,H...] [--split deal|legacy] [--only LIST]
-#                  [--arch amd64|arm64|amd64,arm64|all] [--dist-hosts H,H|all] ROUND
+#                  [--arch amd64|arm64|amd64,arm64|all] [--dist-hosts H,H|all] [--collector H] ROUND
 #   build-round.sh --dist-only [--dry-run] [--hosts H] --dist-hosts H,H|all ROUND
 # On a host (the Mac part runs these over ssh):
 #   build-round.sh --host HOST --units LIST [--dry-run] [--arch LIST] ROUND
@@ -55,9 +55,18 @@
 #
 # The gather.  Each host writes what it built as build-HOST.files (the paths)
 # and build-HOST.tsv (its table rows).  Once the builds pass, the Mac gathers
-# every other builder's files to one collector -- Chopin, else the first build
-# host given -- host to host, through the Mac when they can't reach each
-# other, and has the collector make the round's SHA256SUMS (--sums).  Then the
+# every other builder's files to one collector, host to host, through the Mac
+# when they can't reach each other, and has the collector make the round's
+# SHA256SUMS (--sums).  The collector is one of --hosts, chosen before the
+# builds and logged ("collector: HOST (why)"): --collector HOST names it;
+# else, by load, the host testvm/pick-host ranks first among --hosts (room,
+# then load a core, a fleet or store-mirror host's counted 4 higher;
+# BKO_PICK_HOST names another pick-host), else the first of them in the
+# table's tie order (hosts.py names --ties) when pick-host gives none; a dry
+# run with BKO_CAPS asks no pick-host.  --split legacy keeps the old rule,
+# Chopin, else the first build host given, as those rounds were gathered
+# (docs/design/img-speed.md F20).  Every build host ends the round with the
+# whole bin anyway (below), so any of them serves as promote-bins.sh's source.  Then the
 # distribution below copies the whole bin from the collector to every other
 # build host as well, each checked there with sha256sum -c, so every build
 # host ends with the whole round and the same SHA256SUMS, as the two hosts
@@ -280,10 +289,11 @@ tree_digest() {
 }
 
 dry=no hosts=all only="" mode=mac dist="" distonly=no arch=amd64 units=""
-split=deal hosts_given=no
+split=deal hosts_given=no collector=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --dry-run) dry=yes ;;
+        --collector) collector=${2:-}; [[ -n $collector ]] || die "--collector needs a host"; shift ;;
         --arch) arch=${2:-}; shift ;;
         --sums) mode=sums ;;
         --hosts) hosts=${2:-}; hosts_given=yes; shift ;;
@@ -302,6 +312,7 @@ done
 round=$1
 [[ $round =~ ^[A-Za-z0-9._-]+$ ]] || die "bad ROUND $round"
 [[ $mode == mac || ( -z $dist && $distonly == no ) ]] || die "--dist-hosts and --dist-only are the Mac part's"
+[[ $mode == mac || -z $collector ]] || die "--collector is the Mac part's"
 [[ $mode != mac || -z $units ]] || die "--units is the host part's (the Mac deals them: --hosts, --only)"
 [[ $mode == mac || -z $only ]] || die "--only is the Mac part's: it deals the units and names them with --units"
 [[ $split == deal || $split == legacy ]] || die "--split: deal or legacy, not $split"
@@ -493,11 +504,24 @@ if [[ $mode == mac ]]; then
     fi
     [[ $distonly == no || -n $dl ]] || die "--dist-only needs --dist-hosts"
     # The collector: where every builder's files are gathered and the round's
-    # SHA256SUMS made, and so the source of every copy.  Chopin, else the first
-    # build host given.
-    src_name=chopin
-    [[ " $hl " == *" chopin "* ]] || src_name=${hl%% *}
-    src_ssh=$(hostof "$src_name")
+    # SHA256SUMS made, and so the source of every copy ("The gather").
+    if [[ -n $collector ]]; then
+        [[ $distonly == no ]] || die "--collector is the build's: --dist-only copies from its one --hosts"
+        [[ " $hl " == *" $collector "* ]] || die "--collector $collector: not one of the round's --hosts ($hl)"
+        src_name=$collector src_why="--collector"
+    elif [[ $distonly == yes ]]; then
+        src_name=$hl src_why="--hosts"
+    elif [[ $split == legacy ]]; then
+        # --split legacy reproduces the old rounds, gathered to Chopin.
+        src_name=chopin src_why="--split legacy: chopin, else the first given"
+        [[ " $hl " == *" chopin "* ]] || src_name=${hl%% *}
+    elif [[ $hl != *" "* ]]; then
+        src_name=$hl src_why="the one build host"
+    else
+        src_name="" src_why=""   # by load, once the deal has passed (below)
+    fi
+    src_ssh=""
+    [[ -z $src_name ]] || src_ssh=$(hostof "$src_name")
     # bdl: the other build hosts, NAME=SSH, which the distribution copies the
     # whole round to as well, so that each ends with it and the same
     # SHA256SUMS.  Filled once the builds have passed; --dist-only leaves it
@@ -692,6 +716,29 @@ echo "${out# }"
     for h in $hl; do [[ -n $(units_of "$h") ]] && hb+=" $h"; done
     hb=${hb# }
     [[ -n $hb ]] || die "the deal left every host of --hosts $hosts without a unit"
+    # The collector by load ("The gather"), now that the deal has passed: the
+    # host pick-host ranks first among --hosts, else the first of them in the
+    # table's tie order.  (Not on a dry run with BKO_CAPS, which stands in for
+    # the hosts.)  BKO_PICK_HOST: another pick-host (the tests').
+    if [[ -z $src_name ]]; then
+        src_why="by load: pick-host" nopick="pick-host gave no host among them"
+        pick=(python3 -I -B "$here/../testvm/pick-host")
+        [[ -z ${BKO_PICK_HOST:-} ]] || pick=("$BKO_PICK_HOST")
+        if [[ $dry == no || -z ${BKO_CAPS:-} ]]; then
+            src_name=$("${pick[@]}" --hosts "$(echo "$hl" | tr ' ' ',')" --field name --timeout 15 2>/dev/null |
+                head -n 1) || src_name=""
+        else
+            nopick="a dry run with BKO_CAPS asks no pick-host"
+        fi
+        if [[ -z $src_name || " $hl " != *" $src_name "* ]]; then
+            src_name=$(hosts_names --ties --role build --arch amd64 |
+                while read -r h; do [[ " $hl " == *" $h "* ]] && { echo "$h"; break; }; done)
+            src_why="the first in the table's tie order: $nopick"
+        fi
+        [[ -n $src_name ]] || die "no collector among $hl"
+        src_ssh=$(hostof "$src_name")
+    fi
+    log "collector: $src_name ($src_why)"
     # --dry-run: each host's build guests' size ("Guest size"), worked out there
     # by guest_size from this very text (its nproc, cmp-run.sh --free), in one
     # read-only ssh each; the host part works it out again as it starts.  Not

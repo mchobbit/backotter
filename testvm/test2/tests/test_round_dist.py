@@ -87,6 +87,11 @@ os.execv(os.environ["FAKE_REAL_RSYNC"], ["rsync"] + out)
 
 FAKE_FLOCK = '#!/bin/sh\n[ -e "$FAKE_ROOT/lock-held" ] && exit 1\nexit 0\n'
 
+# build-round.sh's BKO_PICK_HOST: the host the world's "pick" file names (pick-host's
+# answer), else no host (exit 1), as pick-host when every candidate was dropped.
+FAKE_PICK = ('#!/bin/sh\necho "pick-host $*" >>"$FAKE_ROOT/log"\n'
+             '[ -s "$FAKE_ROOT/pick" ] || exit 1\ncat "$FAKE_ROOT/pick"\n')
+
 # BKO_CAPS for build-round.sh's deal: what each build host has, instead of the
 # read-only ssh probe (no Go, Rust or guest image exists under a fake host's home).
 ALL_CAPS = "go,musl,arm64-musl,dragonfly,haiku,zig,vm-freebsd,vm-netbsd,vm-openbsd,vm-illumos"
@@ -161,7 +166,7 @@ class World:
         self.root = tempfile.mkdtemp(prefix="t2-dist-")
         self.bin = os.path.join(self.root, "bin")
         os.makedirs(self.bin)
-        for name, text in (("ssh", FAKE_SSH), ("rsync", FAKE_RSYNC), ("flock", FAKE_FLOCK)):
+        for name, text in (("ssh", FAKE_SSH), ("rsync", FAKE_RSYNC), ("flock", FAKE_FLOCK), ("pick-host", FAKE_PICK)):
             p = os.path.join(self.bin, name)
             with open(p, "w") as f:
                 f.write(text)
@@ -223,6 +228,11 @@ class World:
         elif os.path.exists(p):
             os.unlink(p)
 
+    def pick(self, host):
+        """What the fake pick-host answers (None: no host, exit 1)."""
+        with open(os.path.join(self.root, "pick"), "w") as f:
+            f.write(f"{host}\n" if host else "")
+
     def log(self):
         try:
             with open(os.path.join(self.root, "log")) as f:
@@ -235,7 +245,7 @@ class World:
         for k in (H.ENV, "CHOPIN", "CINQCENT", "BKO_ROUNDS", "BKO_REMOTE_DIR", "BKO_WORK_REMOTE", "BKO_CAPS"):
             e.pop(k, None)
         e.update(PATH=self.bin + os.pathsep + e["PATH"], FAKE_ROOT=self.root, FAKE_REAL_RSYNC=REAL_RSYNC,
-                 TMPDIR=self.tmp, **(env or {}))
+                 TMPDIR=self.tmp, BKO_PICK_HOST=os.path.join(self.bin, "pick-host"), **(env or {}))
         return subprocess.run(["bash"] + list(argv), capture_output=True, text=True, env=e, timeout=120,
                               cwd=self.root)
 
@@ -370,7 +380,11 @@ class BuildRoundDist(unittest.TestCase):
                 subprocess.run(["git", "-C", d] + cmd, check=True, capture_output=True)
         for h in ("chopin", "cinqcent", "copland", "cage"):
             self.w.put(h, "w/stick/build-round.sh", FAKE_PART, 0o755)
+        self.w.pick("chopin")
         return {"BKO_GIT": g, "BKO_REMOTE_DIR": "w", "BKO_CAPS": caps()}
+
+    def pick(self, host):
+        self.w.pick(host)
 
     def test_a_build_then_dist(self):
         env = self.git_trees()
@@ -390,6 +404,89 @@ class BuildRoundDist(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(sorted({x.split()[1] for x in self.w.log() if x.startswith("ssh ")}), ["chopin", "cinqcent"])
         self.assertNotIn("copland", r.stdout)
+
+    # --- the collector (img-speed F20): by load, else the tie order; --collector; legacy ---
+
+    def gathered_to(self, r, host, rnd="r2"):
+        """The round was gathered to HOST and copied from it to every other host of --hosts."""
+        b = f"backotter-work/round{rnd}/bin"
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(os.path.isfile(os.path.join(self.w.home(host), b, "build-hosts")), host)
+        sums = self.w.read(host, f"{b}/SHA256SUMS")
+        self.assertTrue(sums)
+        return b, sums
+
+    def test_the_collector_is_pick_hosts_choice(self):
+        env = self.git_trees()
+        self.pick("cinqcent")
+        r = self.br("--hosts", "chopin,cinqcent", "--dist-hosts", "cage", "r2", env=env)
+        b, sums = self.gathered_to(r, "cinqcent")
+        self.assertIn("collector: cinqcent (by load: pick-host)", r.stdout)
+        self.assertIn("chopin: what it built is on cinqcent", r.stdout)
+        for h in ("chopin", "cage"):
+            self.assertEqual(self.w.files(h, b), self.w.files("cinqcent", b), h)
+            self.assertIn(f"{h}: {b} copied from cinqcent", r.stdout)
+        # one pick-host over the round's hosts, by name
+        picks = [x for x in self.w.log() if x.startswith("pick-host ")]
+        self.assertEqual(picks, ["pick-host --hosts chopin,cinqcent --field name --timeout 15"])
+
+    def test_a_small_build_host_collects(self):
+        env = self.git_trees()
+        self.pick("cage")
+        r = self.br("--hosts", "copland,cage", "r2", env=env)
+        b, _ = self.gathered_to(r, "cage")
+        self.assertIn("collector: cage (by load: pick-host)", r.stdout)
+        self.assertEqual(self.w.files("copland", b), self.w.files("cage", b))
+        # Chopin isn't needed for a round
+        self.assertEqual(sorted({x.split()[1] for x in self.w.log() if x.startswith("ssh ")}), ["cage", "copland"])
+
+    def test_no_pick_falls_back_to_the_tie_order(self):
+        env = self.git_trees()
+        for answer in (None, "copland"):   # none, or a host outside --hosts
+            with self.subTest(answer=answer):
+                self.pick(answer)
+                r = self.br("--hosts", "chopin,cinqcent", "r2", env=env)
+                self.gathered_to(r, "cinqcent")   # hosts.py tie_key: cinqcent's heat 0 beats chopin's 1
+                self.assertIn("collector: cinqcent (the first in the table's tie order: pick-host gave no host "
+                              "among them)", r.stdout)
+
+    def test_collector_named(self):
+        env = self.git_trees()
+        self.pick("cinqcent")
+        r = self.br("--hosts", "chopin,cinqcent", "--collector", "chopin", "r2", env=env)
+        self.gathered_to(r, "chopin")
+        self.assertIn("collector: chopin (--collector)", r.stdout)
+        self.assertFalse([x for x in self.w.log() if x.startswith("pick-host ")])
+        for args, msg in ((["--hosts", "chopin,cinqcent", "--collector", "cage", "r2"],
+                           "--collector cage: not one of the round's --hosts (chopin cinqcent)"),
+                          (["--dist-only", "--hosts", "chopin", "--dist-hosts", "cage", "--collector", "chopin", "r2"],
+                           "--collector is the build's"),
+                          (["--host", "chopin", "--units", "restic", "--collector", "chopin", "r2"],
+                           "--collector is the Mac part's"),
+                          (["--collector"], "--collector needs a host")):
+            r = self.br(*args, env=env)
+            self.assertEqual(r.returncode, 2, (args, r.stdout, r.stderr))
+            self.assertIn(msg, r.stderr, args)
+
+    def test_legacy_and_one_host_keep_their_collector(self):
+        env = self.git_trees()
+        self.pick("cinqcent")
+        r = self.br("--split", "legacy", "r2", env=env)
+        self.gathered_to(r, "chopin")
+        self.assertIn("collector: chopin (--split legacy: chopin, else the first given)", r.stdout)
+        r = self.br("--hosts", "copland", "--only", "restic", "r3", env=env)
+        self.gathered_to(r, "copland", "r3")
+        self.assertIn("collector: copland (the one build host)", r.stdout)
+        self.assertFalse([x for x in self.w.log() if x.startswith("pick-host ")])
+
+    def test_a_dry_run_with_caps_asks_no_pick_host(self):
+        env = self.git_trees()
+        self.pick("cinqcent")
+        r = self.br("--dry-run", "--hosts", "chopin,cinqcent", "r2", env=env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("collector: cinqcent (the first in the table's tie order: a dry run with BKO_CAPS asks no "
+                      "pick-host)", r.stdout)
+        self.assertFalse([x for x in self.w.log() if x.startswith("pick-host ")])
 
     def test_a_failed_build_is_not_distributed(self):
         env = self.git_trees()
@@ -490,7 +587,8 @@ class PromoteBins(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         hosts = sorted({x.split()[1] for x in r.stdout.splitlines() if " bko-bin: " in x})
         self.assertEqual(hosts, ["cage", "choubox", "cinqcent", "copland", "czerny"])   # not bigfoot: an arm64 host
-        for args, msg in ((["--from", "cage", "chopin"], "--from cage: not a big build host"),
+        for args, msg in ((["--from", "choubox", "chopin"], "--from choubox: not an amd64 build host"),
+                          (["--from", "bigfoot", "chopin"], "--from bigfoot: not an amd64 build host"),
                           (["chopin"], "chopin is the source"),
                           (["liszt"], "no such enabled host liszt"),
                           (["--sets", "images", "cage"], "--sets: of bko-bin cmp-bin holt-bin"),
@@ -498,6 +596,24 @@ class PromoteBins(unittest.TestCase):
             r = self.pb(*args)
             self.assertEqual(r.returncode, 2, (args, r.stdout, r.stderr))
             self.assertIn(msg, r.stderr, args)
+
+    def test_a_small_build_host_is_a_source(self):
+        """img-speed F20: any amd64 build host is a source, its sets checked there first."""
+        w = "backotter-work"
+        for s in ("bko-bin", "cmp-bin", "holt-bin"):   # copland holds chopin's sets, as every build host does
+            shutil.copytree(os.path.join(self.w.home("chopin"), w, s), os.path.join(self.w.home("copland"), w, s))
+        r = self.pb("--from", "copland", "cage", "chopin")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("cage bko-bin: 4 of 4 files copied from copland, all 4 checked by sha256", r.stdout)
+        self.assertIn("chopin bko-bin: up to date (4 files)", r.stdout)
+        for s in ("bko-bin", "cmp-bin", "holt-bin"):
+            self.assertEqual(self.w.files("cage", f"{w}/{s}"), self.w.files("copland", f"{w}/{s}"))
+        # one whose sets don't check goes nowhere, as from a big one
+        self.w.put("copland", f"{w}/bko-bin/linux/restic-bko", "changed\n")
+        r = self.pb("--from", "copland", "--sets", "bko-bin", "czerny")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("bko-bin: FAILED: a SHA256SUMS in copland:backotter-work/bko-bin doesn't check", r.stdout)
+        self.assertFalse(os.path.exists(self.w.home("czerny")))
 
     def netbsd_restic(self, embeds, commit_go="go1.26.10"):
         """bko-bin/netbsd/restic-bko on chopin, whose (fake) go version FILE says EMBEDS (None:

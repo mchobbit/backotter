@@ -13,10 +13,14 @@
 # each with its own SHA256SUMS), never an amd64 binary; a set with none
 # (cmp-bin) is left alone there, and said.  An amd64 host gets each set
 # whole, as ever.
-# --from: the source, a host with the build role and the big class there
-# (default chopin, the table's first: the shared sets are assembled where the
-# images are built, and a small build host holds only copies of them, even
-# though it builds a round's units since 2026-11-14).
+# --from: the source, any enabled amd64 host with the build role, of either
+# class, whose sets check there (below).  Every build host ends a round with
+# the whole bin (stick/build-round.sh's distribution), and once images are
+# dealt over the farm they are built on any build host, so a small one serves
+# as well as a big one (docs/design/img-speed.md F20; until 2026-11-27 it had
+# to be big).  The default is still the table's first build host (chopin):
+# a default that moved would promote another host's older set, so name the
+# host whose sets are the ones to spread.
 # --sets: comma-separated, of bko-bin cmp-bin holt-bin
 # (default all three).
 #
@@ -82,14 +86,14 @@ done
 for s in $sets; do [[ " $ALL_SETS " == *" $s "* ]] || die "--sets: of $ALL_SETS, not '$s'"; done
 [[ -n ${sets// /} ]] || die "--sets: of $ALL_SETS"
 
-# The source is a big build host: the shared sets are assembled where the
-# images are built (img-one.sh), and a small host holds only copies of them.
-builders=" $(hosts_names --role build --class big | tr '\n' ' ')" ||
-    die "no big build hosts from testvm/hosts.json"
-[[ -n ${builders// /} ]] || die "no enabled host has the build role and the big class in testvm/hosts.json"
+# The source is an amd64 build host, of either class (F20): each holds the
+# whole round's bin, and its sets are checked below before anything goes.
+builders=" $(hosts_names --role build --arch amd64 | tr '\n' ' ')" ||
+    die "no build hosts from testvm/hosts.json"
+[[ -n ${builders// /} ]] || die "no enabled amd64 host has the build role in testvm/hosts.json"
 [[ -n $from ]] || from=$(echo $builders | cut -d' ' -f1)
 [[ $builders == *" $from "* ]] ||
-    die "--from $from: not a big build host in testvm/hosts.json (big build hosts:${builders% })"
+    die "--from $from: not an amd64 build host in testvm/hosts.json (build hosts:${builders% })"
 src=$(hosts_get "$from" ssh) || die "--from $from: no ssh in testvm/hosts.json"
 
 targets=""

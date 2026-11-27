@@ -677,7 +677,8 @@ a fresh set, waits for the first set built with I1's provenance.
 
 - `promote-bins.sh`'s "the shared sets are assembled where the images are
   built", which makes the source big-class Chopin by default: the source can
-  be any build host whose sets check (F20). holt-bin still comes from
+  be any build host whose sets check (F20, built 2026-11-27: `--from` any
+  amd64 build host; the default is still chopin). holt-bin still comes from
   `img-refresh-holt.sh` on each builder, out of HoltTest2's builds, which
   HoltTest2 already copies to every run host.
 - Chopin's `images/lanes.sh` and its stale copies of `img-one.sh` and
@@ -1356,6 +1357,43 @@ this spec's speedups 2 and 7.
   build host ends a round with the whole bin, once images are dealt (§5.3).
   *Stays:* `--split legacy` and ROUND_BUILDERS, which exist to rebuild or
   read old rounds as they were built.
+  *Proof* (this entry named none, so F20 set its own): the fixture tests of
+  both rules, and on the farm a round collected by a small host and a
+  promotion from one, with no part on Chopin.
+  *Built 2026-11-27:* build-round.sh's collector (Mac part) is chosen once
+  the deal has passed and logged as `collector: HOST (why)`: `--collector H`
+  names one of `--hosts`; else, with two or more hosts, the one
+  `testvm/pick-host --hosts H,H --field name` ranks first (room, then load
+  a core, the fleet/store-mirror host's counted 4 higher; `BKO_PICK_HOST`
+  for tests), and when it gives none or a host outside `--hosts`, the first
+  of them in `hosts.py names --ties` order (cinqcent before chopin). One
+  host collects its own round, `--dist-only` copies from its one `--hosts`
+  as before, and `--split legacy` keeps "Chopin, else the first given". The
+  host part is unchanged. promote-bins.sh's `--from` is any enabled amd64
+  build host, either class; the default stays the table's first build host
+  (chopin), since a default that moved would spread another host's older
+  set (F13's note): F20 relaxes the rule, not the default. HOSTS.md says
+  both. *Proved 2026-11-27:* `t2 self-test` and test_round_dist's 7 new
+  tests (pick-host's choice, a small collector with no ssh to Chopin, the
+  tie-order fallback for no answer and for a host outside `--hosts`,
+  `--collector` and its refusals, legacy and one host asking no pick-host,
+  a BKO_CAPS dry run asking none; promote-bins from copland, and its refusal
+  of choubox and bigfoot). On the farm, from private dirs
+  (`/bkoscratch/imgspeed/F20`, BKO_ROUNDS, BKO_BUILD_CACHE, BKO_REMOTE_DIR
+  there): `build-round.sh --hosts copland,cage,czerny --only restic f20a`
+  dealt restic to copland, pick-host chose cage as collector; copland built
+  restic-bko for its seven OSes (152 s), the gather took copland's files to
+  cage, cage made the SHA256SUMS, and the bin went from cage to copland and
+  czerny, 22 sums checked on each (exit 0, about 2 min 50 s in all).
+  The other t2 self-test failures that day (test_gate LayersJson's gate:holt
+  row size, test_plandiff's oi2610+espfmt, test_vm_update's boot.rs
+  PACKAGES, --strict-watch's wfwatch.sh and anduinos-older-snapshot.sh) fail
+  the same on HEAD without F20.
+  `promote-bins.sh --dry-run --from copland all` found copland's three sets
+  check and equal every host's (up to date ×15), and a promotion of a copy
+  of them (`BKO_WORK_REMOTE` into the private dir) from copland to cage and
+  czerny copied and checked 30 + 12 + 15 files on each, the three trees'
+  digests equal; `--from choubox` is refused (exit 2).
 
 ### What stays pinned, and why
 

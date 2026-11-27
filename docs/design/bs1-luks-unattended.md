@@ -77,7 +77,7 @@ record's family with the dump's `boot.initramfs.generator`.
 | **D: initramfs-tools** | Debian 12 (the Thinkpad's LUKS install), Debian 13, Mint, Pop, Zorin, MX, Devuan, Chimera's port | crypttab option `keyscript=/usr/local/lib/backshot1/unlock-key`, key field left as `none` | the script itself runs askpass | `/run/backshot1-unlock` says `NAME drive` (initramfs-tools moves /run into the root) |
 | **E: mkinitcpio busybox `encrypt`** | Arch, Manjaro, Omarchy, CachyOS if its HOOKS have `encrypt` | own hook `bs1key`, inserted before `encrypt`, writes `/crypto_keyfile.bin`, which `encrypt` uses when the file exists | `encrypt` prompts as usual ("Invalid keyfile. Reverting to passphrase.", or no file at all) | `/run/backshot1-unlock`, as D |
 | **N: NixOS** (built 2026-11-16, "Built, family N" below) | the Thinkpad's NixOS 26.05 (Calamares: LUKS2 root on xfs and LUKS2 swap, systemd stage 1, systemd-boot) | `/etc/nixos/backshot1-luks.nix`, imported by `backshot1.nix` while it exists, for each typed `boot.initrd.luks.devices` volume: systemd stage 1 gets `keyFile = "PATH:LABEL=..."` and `keyFileTimeout`; scripted stage 1 gets `preOpenCommands` that copy the key into `/crypt-ramfs`, `keyFile` and `fallbackToPassword = true`; both get the USB modules and the drive's file system; then `nixos-rebuild switch` | systemd stage 1: systemd-cryptsetup asks; scripted: luksroot's prompt | systemd stage 1: journal, as S; scripted: `/run/backshot1-unlock`, as D |
-| **A: attended** | non-systemd dracut (Void, Gentoo OpenRC), Alpine's mkinitfs (`cryptkey` reads only from inside the initramfs), booster, ugrd, ZFS native encryption, ostree (load refuses LUKS there) | nothing | the prompt | none; the run is attended |
+| **A: attended** | non-systemd dracut (Void, Gentoo OpenRC), Alpine's mkinitfs (`cryptkey` reads only from inside the initramfs), booster without rEFInd's `refind_linux.conf` (booster on PikaOS is family P, "Built, family P" below), ugrd, ZFS native encryption, ostree (load refuses LUKS there) | nothing | the prompt | none; the run is attended |
 
 **S, details.**
 - systemd-cryptsetup-generator(8) documents the `path:device` key form (it
@@ -822,3 +822,81 @@ gave entry 1 a fresh initrd with the original line (`bootctl cleanup`
 removed aa80211); a second adopt made `initrd-aa80211...` again (dracut's
 `--reproducible`), and a third changed nothing.  The drive-unlocked boot
 and BackShot1 itself are next.
+
+## Built, family P (2026-11-27)
+
+PikaOS 4 on LUKS (`testvm/realworld/pika-bootstrap.sh --luks`: the GTK
+installer's Btrfs-on-LUKS2 layout, `crypt_root`, rEFInd with its NVRAM
+entry) boots booster 0.12.1 (Pika's fork of anatol's; its source and the
+26.08.20-4 ISO's binaries read for this), whose command line is rEFInd's
+`/boot/refind_linux.conf`.  What booster's init does with LUKS
+(`init/luks.go`, `cmdline.go`, `main.go`): it opens each volume
+`rd.luks.name=UUID=NAME` or `rd.luks.uuid=` names as soon as the device
+appears; `rd.luks.key=UUID=PATH` is a key file inside the image, read once
+at that moment, and missing, empty or wrong it asks (Plymouth's prompt with
+`splash`).  Its `PATH:UUID=` form ("keyfile lives on another device") logs
+"I don't know how to do that"; it reads no crypttab; `enable_hooks`'
+`hooks-early` run after the root is mounted; and the image's `/init` is its
+Go binary (`--init-binary` is a command-line flag the restore's `booster
+build` doesn't pass).  So nothing in booster itself can wait for the drive.
+
+- **Mechanism:** a FIFO as the key file.  The kernel runs BackShot1's
+  preinit first (`rdinit=/usr/local/lib/backshot1/booster-preinit`, busybox
+  `sh`).  It links the applets it needs under `/backshot1-bin` (the image has
+  only `/usr/bin/busybox`, no applet links and no `/bin/sh`), runs
+  `bs1-unlock-key --booster-fifos` (`mkfifo /backshot1-key.UUID` for each of
+  the record's P volumes), starts `bs1-unlock-key --booster` in the
+  background and execs `/init`.  booster's read of the FIFO blocks (Go's
+  `os.ReadFile`) until the helper, once booster has mounted `/run` and up to
+  `wait=` s later, writes the drive's key into it and closes it; without the
+  drive it closes it empty (booster logs the failed key file and asks at
+  once).  The helper finds the drive by busybox `findfs LABEL=` (booster makes
+  no by-label links), mounts it `ro,norecovery` (xfs), and marks `NAME drive`
+  or `NAME typed` in `/run/backshot1-unlock`, which booster moves into the
+  booted system.  booster wipes its root (FIFOs, key copy, links) before it
+  switches root.
+- **adopt** (`bs1-luks`, family P, generator `booster`, found after
+  mkinitcpio as holt's `initramfs_json` does): the preinit and
+  `unlock-key` (listed in `made`), `/etc/booster.yaml` (in `orig/`) with
+  `extra_files` += busybox, the preinit, the script and the record, and
+  `modules_force_load` += `usb_storage uas sd_mod xhci_pci FSTYPE`, those the
+  running kernel has as modules (`modinfo -F filename` not `(builtin)`:
+  booster refuses a module it has no `.ko` for, and its image has no
+  modprobe); then `booster build --force --kernel-version K
+  /boot/booster.img-K` per kernel (load's arm), each image checked with
+  `booster ls` and `booster cat ... etc/booster.init.yaml`; then
+  `refind_linux.conf` (in `orig/`): on each line naming the volume,
+  `rdinit=`, `rd.luks.key=UUID=/backshot1-key.UUID` and, on a `quiet` line
+  without `booster.log`, `booster.log=warning` (booster's `quiet` logs only
+  errors; the failed-key line is a warning), before the closing ` ---`.
+  Last, because a line with `rdinit=` and an image without the preinit
+  can't boot (the kernel falls back to mounting `root=` itself); `--luks-off`
+  puts both files back before remaking the images.  A first line (rEFInd's
+  default) that doesn't name the volume, an `rdinit=` of the line's own, a
+  name other than the open mapping's, booster without
+  `refind_linux.conf`, or no busybox: family A.  An `rd.luks.key=` of its
+  own: `own`.  A volume the booted system opens is S's, under systemd.
+- **Evidence** (`unlock_how P`): the helper's mark, unless this boot's
+  kernel log (`journalctl -k -b`, else `dmesg`) has booster's
+  `password in keyfile ... was unable to unseal` or `reading password:`.
+- **The restore:** bko-holt load restores `refind_linux.conf` (its UUID
+  check reads `rd.luks.name=`; `rd.luks.key=` carries the same UUID, which
+  BackShot1's restore keeps), `booster.yaml` and the scripts, and runs
+  `booster build` per kernel in the chroot (host-only from the rescue's
+  `/sys`, plus `modules_force_load`), so the restored images carry the
+  preinit.  No bko-holt change.
+- **Limits:** a `mount_timeout` in `booster.yaml` would run from booster's
+  start, the 30 s wait included; PikaOS sets none, and this booster's
+  default is then to wait for the root for ever (the 26.08.20-4 live
+  image's `booster.init.yaml` has no `mounttimeout`; the manual's "3
+  minutes" is upstream's).  A restore that changed the LUKS UUID would need holt's `refind_linux.conf`
+  rewrite to carry `rd.luks.key=` too (not BackShot1's case).  Older
+  `booster.img-*.bak` / `.dpkg-bak` copies lack the preinit (adopt warns).
+
+Unit tests: `testvm/test2/tests/test_bs1_booster.py` (booster.yaml and
+refind_linux.conf edits, `lk_p_volume`'s cases, adopt, rerun and
+`--luks-off` on a fake PikaOS with a fake `booster`, an image without the
+preinit putting everything back, the helper's FIFOs with and without the
+drive, the evidence, install.sh's key-file lines).  Not yet rehearsed in
+QEMU (`pika-bootstrap-qemu.sh` with `--luks`, then `bs1-qemu.py`), nor run on
+the Thinkpad.

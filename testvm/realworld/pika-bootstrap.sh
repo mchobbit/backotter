@@ -6,7 +6,7 @@
 # pikaos4 guest is built (make-pikaos.sh).  P8's groundwork
 # (docs/design/pikaos.md, "What P8 found").  As root, on the rescue:
 #
-#   pika-bootstrap.sh SERIAL ISO INSTALL_SH KEYS_DIR HOSTNAME
+#   pika-bootstrap.sh [--luks] SERIAL ISO INSTALL_SH KEYS_DIR HOSTNAME
 #
 #   SERIAL      the one disk to ERASE, by serial number (lsblk -dno SERIAL)
 #   ISO         PikaOS-Nest-GNOME-4.0-amd64-v3-26.08.20-4.iso (its SHA-256
@@ -15,6 +15,9 @@
 #   KEYS_DIR    authorized_keys (root's login) and ssh_host_ed25519_key{,.pub}
 #               (the fixed host key), BackShot1's keys/ on the backup drive
 #   HOSTNAME    the installed system's host name (BackShot1's: thinkpad)
+#   --luks      root on LUKS2: the GTK installer's "Automatic", Btrfs,
+#               encryption on (install.sh's layout btrfs-luks), outside
+#               BOOTX64 mode, its passphrase KEYS_DIR/disk-passphrase (below)
 #
 # What the installer makes (its defaults): GPT, "linux-efi" 1-500 MiB vfat
 # at /boot/efi, "linux-boot" 500-1500 MiB ext4 /boot (XBOOTLDR, labelled
@@ -23,6 +26,23 @@
 # theme; GNOME, with the first-setup user pikaos/pikaos.  No LUKS.  Then
 # only: the host name, root's authorized_keys (root's password stays
 # locked), sshd enabled, and the fixed host key.
+#
+# With --luks: the same GPT, ESP and ext4 /boot (rEFInd reads the kernel and
+# booster's image from there, unencrypted), "linux-root" LUKS2 (cryptsetup's
+# defaults: argon2id, aes-xts-plain64) opened as crypt_root, Btrfs on it with
+# subvolumes @ (/) and @home (/home); pikainstall writes /etc/crypttab's
+# "crypt_root UUID=... none luks,discard" and each refind_linux.conf line's
+# "rd.luks.name=UUID=crypt_root rd.luks.options=discard ...
+# root=/dev/mapper/crypt_root", and booster asks for the passphrase at boot
+# (bs1-adopt's family P then gives it the drive's key: backshot1/README.md).
+# rEFInd keeps its NVRAM entry, as without --luks (the pikaos4-luks guest is
+# BOOTX64 mode).  The passphrase is KEYS_DIR/disk-passphrase's bytes, as
+# BackShot1 keeps it (printf '%s', no final newline; printable ASCII, so it
+# can be typed at booster's prompt): copied to the chroot's own /run (RAM,
+# mode 600) for install.sh's PIKA_LUKS_KEYFILE, removed as soon as the
+# install is done, and never printed, logged or put on a command line.  The
+# drive's mount (/mnt/bs1-backup) stays as it is: everything this mounts is
+# under /run/bko-pika.
 #
 # Run on the Thinkpad 2026-11-14 from the rescue stick (Ubuntu 26.04's
 # kernel 7.0): install.sh took 43 s.
@@ -34,7 +54,9 @@
 # own with the rescue's udev database.  Prints BKO-PIKA-INSTALL-OK.
 
 set -euo pipefail
-SERIAL=${1:?usage: pika-bootstrap.sh SERIAL ISO INSTALL_SH KEYS_DIR HOSTNAME}
+LUKS=no
+if [[ ${1:-} == --luks ]]; then LUKS=yes; shift; fi
+SERIAL=${1:?usage: pika-bootstrap.sh [--luks] SERIAL ISO INSTALL_SH KEYS_DIR HOSTNAME}
 ISO=${2:?}
 INSTALL_SH=${3:?}
 KEYS=${4:?}
@@ -50,9 +72,21 @@ grep -qw avx2 /proc/cpuinfo || die "this CPU has no AVX2: PikaOS is built for x8
 [[ -s $ISO && -s $INSTALL_SH ]] || die "no $ISO or $INSTALL_SH"
 [[ $HOST =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "HOSTNAME \"$HOST\" isn't a plain host name"
 for f in authorized_keys ssh_host_ed25519_key ssh_host_ed25519_key.pub; do [[ -s $KEYS/$f ]] || die "no $KEYS/$f"; done
-for t in sha256sum losetup wipefs blockdev chroot python3 lsblk findmnt; do
+for t in sha256sum losetup wipefs blockdev chroot python3 lsblk findmnt blkid; do
     command -v $t >/dev/null || die "this system has no $t"
 done
+KEY=$KEYS/disk-passphrase
+LAYOUT=xfs
+ROOT_MAP=bko-pika-root
+if [[ $LUKS == yes ]]; then
+    LAYOUT=btrfs-luks
+    command -v cryptsetup >/dev/null || die "this system has no cryptsetup"
+    grep -qw btrfs /proc/filesystems || modprobe btrfs || die "this system can't mount Btrfs"
+    [[ -s $KEY ]] || die "--luks needs the passphrase in $KEY (printf '%s' PASSPHRASE, no final newline)"
+    [[ $(tail -c 1 "$KEY" | od -An -tx1 | tr -d ' ') != 0a ]] || die "$KEY ends with a newline: BackShot1's passphrase file has none (printf '%s')"
+    ! LC_ALL=C grep -q '[^ -~]' "$KEY" || die "$KEY has a character that isn't printable ASCII: booster's prompt couldn't take it typed"
+    ! [[ -e /dev/mapper/$ROOT_MAP ]] || die "/dev/mapper/$ROOT_MAP is open already: an earlier run's? cryptsetup close $ROOT_MAP"
+fi
 grep -qw overlay /proc/filesystems || modprobe overlay || die "no overlayfs"
 ! findmnt -rn "$W" >/dev/null || die "$W is mounted already: an earlier run's? umount -R $W"
 
@@ -103,13 +137,22 @@ findmnt -rn "$R/sys/firmware/efi/efivars" >/dev/null || mount -t efivarfs efivar
 mount -t tmpfs -o mode=0755 run "$R/run"
 if [[ -d /run/udev ]]; then mkdir -p "$R/run/udev"; mount --bind /run/udev "$R/run/udev"; fi
 mount -t tmpfs -o mode=1777 tmp "$R/tmp"
+# --luks: the passphrase for install.sh, in the chroot's /run (RAM), and
+# gone whatever happens next.
+KEYCOPY=/run/bko-pika-luks-key
+envkey=()
+if [[ $LUKS == yes ]]; then
+    trap 'rm -f "$R$KEYCOPY"' EXIT
+    (umask 077 && cat "$KEY" >"$R$KEYCOPY")
+    envkey=(PIKA_LUKS_KEYFILE="$KEYCOPY")
+fi
 
 step "install.sh, filled in for $HOST on ${DISK#/dev/}"
-python3 - "$INSTALL_SH" "$R/root/bko-install.sh" "$HOST" "$(head -n 1 "$KEYS/authorized_keys")" <<'PY'
+python3 - "$INSTALL_SH" "$R/root/bko-install.sh" "$HOST" "$(head -n 1 "$KEYS/authorized_keys")" "$LAYOUT" <<'PY'
 import re, sys
-src, dst, host, key = sys.argv[1:]
+src, dst, host, key, layout = sys.argv[1:]
 text = open(src).read()
-for k, v in {"HOSTNAME": host, "ROOT_PASSWORD_HASH": "", "AUTHORIZED_KEY": key, "LAYOUT": "xfs",
+for k, v in {"HOSTNAME": host, "ROOT_PASSWORD_HASH": "", "AUTHORIZED_KEY": key, "LAYOUT": layout,
              "REFIND_BOOTX64": "false", "LUKS_PASSPHRASE": ""}.items():
     text = text.replace(f"@{k}@", v)
 left = re.findall(r"@[A-Z_0-9]+@", text)
@@ -120,7 +163,8 @@ PY
 t0=$(date +%s)
 rc=0
 chroot "$R" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root TERM=dumb LANG=C.UTF-8 \
-    PIKA_DISK="${DISK#/dev/}" PIKA_METAL=1 bash /root/bko-install.sh 2>&1 | tee "$W/install.log" || rc=$?
+    PIKA_DISK="${DISK#/dev/}" PIKA_METAL=1 ${envkey[@]+"${envkey[@]}"} bash /root/bko-install.sh 2>&1 | tee "$W/install.log" || rc=$?
+rm -f "$R$KEYCOPY"
 echo "install.sh took $(( $(date +%s) - t0 )) s"
 grep -qx BACKOTTER-INSTALL-OK "$W/install.log" || die "install.sh didn't finish (exit $rc): $(grep -m1 BACKOTTER-INSTALL-FAILED "$W/install.log" || tail -n 3 "$W/install.log")"
 
@@ -128,13 +172,22 @@ step "the fixed host key and root's keys"
 part() { case $DISK in *[0-9]) echo "${DISK}p$1" ;; *) echo "$DISK$1" ;; esac; }
 T=$W/target
 mkdir -p "$T"
-mount "$(part 3)" "$T"
+if [[ $LUKS == yes ]]; then
+    [[ $(blkid -o value -s TYPE "$(part 3)") == crypto_LUKS ]] || die "$(part 3) isn't LUKS"
+    cryptsetup luksDump "$(part 3)" | grep -E '^(Version|UUID):'
+    cryptsetup open --key-file "$KEY" "$(part 3)" "$ROOT_MAP" || die "$KEY doesn't open $(part 3)"
+    mount -o subvol=@ "/dev/mapper/$ROOT_MAP" "$T"
+    echo "crypttab: $(cat "$T/etc/crypttab")"
+else
+    mount "$(part 3)" "$T"
+fi
 install -m 600 "$KEYS/ssh_host_ed25519_key" "$T/etc/ssh/ssh_host_ed25519_key"
 install -m 644 "$KEYS/ssh_host_ed25519_key.pub" "$T/etc/ssh/ssh_host_ed25519_key.pub"
 install -m 600 "$KEYS/authorized_keys" "$T/root/.ssh/authorized_keys"
 echo "hostname: $(cat "$T/etc/hostname")"
 grep -E '^127\.0\.1\.1' "$T/etc/hosts" || true
 umount "$T"
+[[ $LUKS == no ]] || cryptsetup close "$ROOT_MAP"
 
 step "taking the chroot away"
 cp "$W/install.log" /var/log/bko-pika-install.log 2>/dev/null || true

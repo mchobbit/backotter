@@ -60,6 +60,16 @@
 # console, text-mode boot, the "tester" user, the EFI/BOOT copy, and root's
 # password when ROOT_PASSWORD_HASH is empty (root logs in by key only).  The
 # installer's own steps are the same.
+#
+# And on LUKS there (pika-bootstrap.sh --luks, layout btrfs-luks, outside
+# BOOTX64 mode), PIKA_LUKS_KEYFILE, a file in the chroot's RAM holding the
+# passphrase's exact bytes, in place of @LUKS_PASSPHRASE@ (left empty): the
+# GTK script's luksFormat and luksOpen read it with --key-file instead of
+# printf "$PIKA_INSTALL_AUTO_LUKS_PASSWORD" | (printf would read % and \ in
+# it as its own), and pikainstall gets no -c, which only a /home on a LUKS
+# volume of its own needs (here /home is @home on crypt_root: pikainstall
+# skips it when / and /home are the same file system), so the passphrase is
+# in no file but that one, no command line and no log.
 
 set -euo pipefail
 trap 'echo "BACKOTTER-INSTALL-FAILED at line $LINENO"' ERR
@@ -72,6 +82,11 @@ REFIND_BOOTX64='@REFIND_BOOTX64@'
 LUKS_PASSPHRASE='@LUKS_PASSPHRASE@'   # (btrfs-luks only; letters and digits)
 DISK=${PIKA_DISK:-vda}
 METAL=${PIKA_METAL:-}
+KEYFILE=${PIKA_LUKS_KEYFILE:-}
+if [[ -n $KEYFILE ]]; then
+    [[ $LAYOUT == btrfs-luks && -s $KEYFILE && -z $LUKS_PASSPHRASE ]] ||
+        { echo "PIKA_LUKS_KEYFILE is for layout btrfs-luks, a key file that isn't empty, and no LUKS_PASSPHRASE"; false; }
+fi
 [[ $DISK =~ ^[a-z0-9]+$ ]] || { echo "PIKA_DISK must be a disk's kernel name (vda, nvme0n1), not \"$DISK\""; false; }
 # The disk's partition N, as the GTK script names it: nvme0n1p3, vda3.
 part() { case $DISK in *nvme*) echo "/dev/${DISK}p$1" ;; *) echo "/dev/$DISK$1" ;; esac; }
@@ -187,7 +202,9 @@ fi
 EOF
 ;;
 btrfs-luks)
-echo "PIKA_INSTALL_AUTO_LUKS_PASSWORD='$LUKS_PASSPHRASE'"
+if [[ -n $KEYFILE ]]; then echo "PIKA_INSTALL_AUTO_LUKS_KEYFILE='$KEYFILE'"
+else echo "PIKA_INSTALL_AUTO_LUKS_PASSWORD='$LUKS_PASSPHRASE'"
+fi
 cat <<'EOF'
 
 parted -s -a optimal /dev/"$PIKA_INSTALL_AUTO_TARGET_DISK" mklabel gpt \
@@ -256,7 +273,7 @@ esac
 # The pikainstall run: AUTOMATIC_OPEN_PART_PIKAINSTALL_PROG, or on LUKS
 # AUTOMATIC_LOCKED_PART_PIKAINSTALL_PROG (-c, the passphrase, which
 # pikainstall uses only for a /home on another LUKS volume: not here).
-crypt=""; [[ $LAYOUT == btrfs-luks ]] && crypt='-c "$PIKA_INSTALL_AUTO_LUKS_PASSWORD" '
+crypt=""; [[ $LAYOUT == btrfs-luks && -z $KEYFILE ]] && crypt='-c "$PIKA_INSTALL_AUTO_LUKS_PASSWORD" '
 cat <<EOF
 
 
@@ -269,6 +286,12 @@ pikainstall $crypt-r "\$PIKA_INSTALL_CHROOT_PATH" -l "\$PIKA_INSTALL_LOCALE" -k 
 fi
 EOF
 } >"$gtk"
+if [[ -n $KEYFILE ]]; then
+    # The passphrase from the key file, byte for byte.
+    sed -i -E 's/^printf "\$PIKA_INSTALL_AUTO_LUKS_PASSWORD" \| cryptsetup (.*) (luksFormat|luksOpen) /cryptsetup \1 \2 --key-file "$PIKA_INSTALL_AUTO_LUKS_KEYFILE" /' "$gtk"
+    [[ $(grep -c -- '--key-file "$PIKA_INSTALL_AUTO_LUKS_KEYFILE"' "$gtk") == 4 ]] && ! grep -q 'PIKA_INSTALL_AUTO_LUKS_PASSWORD' "$gtk" ||
+        { echo "the GTK script's LUKS lines didn't take the key file"; false; }
+fi
 echo "--- running the GTK installer's script ($gtk)"
 # As the GTK runs it: bash -e, no pipefail (its "yes | mkfs" would fail).
 bash "$gtk"
@@ -288,7 +311,7 @@ if [[ $LAYOUT == btrfs-luks ]]; then
         { echo "refind_linux.conf has no rd.luks.name=UUID=crypt_root ... root=/dev/mapper/crypt_root"; false; }
     grep -Eq '^crypt_root[[:space:]]+UUID=[0-9a-f-]+[[:space:]]+none[[:space:]]+luks,discard$' "$T/etc/crypttab" ||
         { echo "/etc/crypttab has no crypt_root UUID=... none luks,discard"; false; }
-    [[ ! -e $T/boot/efi/EFI/refind ]] || { echo "BOOTX64 mode left an EFI/refind too"; false; }
+    [[ $REFIND_BOOTX64 != true || ! -e $T/boot/efi/EFI/refind ]] || { echo "BOOTX64 mode left an EFI/refind too"; false; }
 else
     grep -q 'root=UUID=' "$T/boot/refind_linux.conf" || { echo "refind_linux.conf has no root=UUID="; false; }
 fi

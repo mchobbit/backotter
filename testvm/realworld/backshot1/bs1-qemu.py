@@ -44,7 +44,8 @@ newline) goes into keys/disk-passphrase.  When bs1-adopt sets the guest to
 unlock from the drive (docs/design/bs1-luks-unattended.md: families S, D, E
 and B; Z, ZFSBootMenu's hooks for ZFS native encryption: void-zbm-enc; S's
 Ubuntu ZFS keystore, dracut hooks around the zfs module's: ubuntu2610-zfsenc;
-G, Guix's GRUB and initrd: guix15-luks, with --virtio),
+G, Guix's GRUB and initrd: guix15-luks, with --virtio; P, booster's FIFO
+key file from BackShot1's preinit: pikaos4-luks, with --virtio),
 the source also:
   (a) runs bs1-adopt again, which must change nothing and remake nothing;
   (b) boots with the drive and nothing typed: "bs1-verify --unlock" must say
@@ -172,11 +173,11 @@ cat $t'''
 # the Ubuntu ZFS keystore's, BackShot1's dracut module.
 LUKS_FILES = ("find /etc/backshot1 /etc/crypttab /etc/crypttab.initramfs /etc/dracut.conf.d /etc/mkinitcpio.conf.d "
               "/etc/initcpio /etc/initramfs-tools/hooks /etc/kernel/cmdline.d /usr/local/lib/backshot1 "
-              "/usr/lib/dracut/modules.d/99backshot1 "
+              "/usr/lib/dracut/modules.d/99backshot1 /etc/booster.yaml /boot/refind_linux.conf "
               "/boot/efi/EFI/ZBM /efi/EFI/ZBM -type f 2>/dev/null | LC_ALL=C sort | "
               "while read -r f; do echo \"$f $(sha256sum <\"$f\" | cut -c1-16)\"; done")
 # The families that unlock from the drive (bs1-luks).
-DRIVE_FAMILIES = ("S", "D", "E", "B", "Z", "G")
+DRIVE_FAMILIES = ("S", "D", "E", "B", "Z", "G", "P")
 fails = []
 
 

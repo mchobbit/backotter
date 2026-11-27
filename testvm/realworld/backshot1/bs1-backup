@@ -128,7 +128,7 @@ unlock_check() {
         luks_key_test "$disk" "$key" || return 1
     fi
     gen=$(luks_rec generator) || gen=
-    if [[ -n $gen && $(luks_rec family) =~ ^[SDEB]$ ]]; then
+    if [[ -n $gen && $(luks_rec family) =~ ^[SDEBP]$ ]]; then
         dumped=$(python3 -c 'import json, sys; print(((json.load(open(sys.argv[1])).get("boot") or {}).get("initramfs") or {}).get("generator") or "")' "$1")
         [[ $dumped == "$gen" ]] || { echo "$LUKS_REC was written for $gen's initramfs, but bko-holt dump says ${dumped:-none}: bs1-adopt again"; return 1; }
     fi

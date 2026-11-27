@@ -313,6 +313,30 @@ bootstrap in QEMU: a blank NVMe, the ISO on a USB drive, then the disk alone
 by rEFInd's NVRAM entry.  It passed 2026-11-14, as did `bs1-qemu.py --virtio`
 on `pikaos4`.
 
+**On LUKS** (family P, 2026-11-27; not yet run on the Thinkpad), the same
+command with `--luks` first:
+
+    sudo bash /mnt/bs1-backup/backshot1/pika/pika-bootstrap.sh --luks SERIAL \
+        /mnt/bs1-backup/iso/pikaos4/PikaOS-Nest-GNOME-4.0-amd64-v3-26.08.20-4.iso \
+        /mnt/bs1-backup/backshot1/pika/install.sh /mnt/bs1-backup/backshot1/keys thinkpad
+
+It is the GTK installer's "Automatic" Btrfs layout with encryption on
+(install.sh's `btrfs-luks`, the `pikaos4-luks` guest's, but with rEFInd's
+NVRAM entry rather than BOOTX64 mode): the same ESP and ext4 `/boot`
+(`PikaOS`), then LUKS2 `crypt_root` (cryptsetup's defaults, argon2id)
+holding Btrfs `@` (/) and `@home`.  The passphrase is
+`keys/disk-passphrase`'s bytes (no final newline, printable ASCII: it must
+be typeable at booster's prompt); the script copies it to its chroot's
+`/run` for install.sh's `PIKA_LUKS_KEYFILE`, so `cryptsetup luksFormat` and
+`luksOpen` read it with `--key-file`, and removes the copy once the install
+is done.  It is never printed, logged or put on a command line (pikainstall
+gets no `-c`: it only keys a separate `/home` volume).  Everything it mounts
+is under `/run/bko-pika`, so `/mnt/bs1-backup` stays readable throughout.
+The first boot asks for the passphrase (booster's prompt, Plymouth's with
+`splash`); `bs1-adopt` then sets up family P (below, "Unlocking from the
+drive"), and the next boot, with `mybig512` plugged in, must unlock with
+nothing typed before the backup (`backshot1 unlock` says `UNLOCK=drive`).
+
 ## AnduinOS: the MOK-signed GRUB and its snapshots
 
 AnduinOS 2 signs its own GRUB with a MOK made on the machine, behind
@@ -987,15 +1011,17 @@ How depends on what opens the volume:
 | E | mkinitcpio's busybox `encrypt`: Arch, Manjaro, Omarchy | a `bs1key` hook, put right before `encrypt` by `/etc/mkinitcpio.conf.d/zz-backshot1.conf`, writes `/crypto_keyfile.bin` only if that key opens the volume |
 | N | NixOS (systemd or scripted stage 1) | `/etc/nixos/backshot1-luks.nix`, imported by `backshot1.nix` while it exists, sets each typed `boot.initrd.luks.devices` volume's `keyFile`: systemd stage 1 the same `PATH:LABEL=` form and `keyFileTimeout = 30`; scripted stage 1 a copy its `preOpenCommands` take off the drive (mounted read-only, `norecovery` for xfs), with `fallbackToPassword`; then `nixos-rebuild switch` |
 | B | AerynOS: systemd in the initramfs that comes prebuilt with the kernel (it reads no crypttab of the system's), the kernel command line written by blsforme from `/etc/kernel/cmdline.d` | `/etc/kernel/cmdline.d/90-backshot1-luks.cmdline` gives each volume the initramfs opens `rd.luks.uuid=UUID rd.luks.key=UUID=/backshot1/keys/disk-passphrase:LABEL=mybig512 rd.luks.options=UUID=OPTIONS,keyfile-timeout=30s`, OPTIONS those the other `cmdline.d` files already give it (one `rd.luks.options=` for the volume, since the last wins); then `moss boot sync`, and every boot entry on the ESP must carry the key and those options as the last of each; a volume the booted system opens is S's |
+| P | booster (PikaOS), its command line rEFInd's `/boot/refind_linux.conf` | booster reads a key file only from inside its image, once, as the volume appears, before the drive is there; so each `refind_linux.conf` line that opens the volume gets `rdinit=/usr/local/lib/backshot1/booster-preinit rd.luks.key=UUID=/backshot1-key.UUID` (and `booster.log=warning` on a `quiet` line).  The preinit makes that key file a FIFO, starts `bs1-unlock-key --booster` in the background and execs booster's `/init`; the helper writes the drive's key into the FIFO booster is waiting on (`/run/backshot1-unlock`: `NAME drive`), or closes it empty after 30 s without the drive, and booster asks.  `/etc/booster.yaml`'s `extra_files` gain busybox, the preinit, the script and the record, its `modules_force_load` the USB modules and the drive's file system; each kernel's image is remade (`booster build`) and checked before `refind_linux.conf` is written (below) |
 | Z | ZFSBootMenu with ZFS native encryption (passphrase) and no LUKS: `void-zbm-enc`, the ZFSBootMenu guide's install | ZFSBootMenu hooks on the ESP in `EFI/ZBM/backshot1/` (a `load-key.d` hook made from `bs1-unlock-key --zfs`, and a `boot-sel.d` hook), named by `zbm.hookroot=UUID=ESP//EFI/ZBM/backshot1 zbm.wait_for=UUID=ESP` added to `EFI/ZBM/VMLINUZ.EFI`'s embedded command line (below) |
 | G | Guix System: GRUB opens /boot's and the store's LUKS1 volume, then the initrd opens it again (`guix15-luks`, Guix's installer's encrypted layout) | `/etc/backshot1/luks.scm`, applied by adopt's `system.scm` while it exists: a boot loader inheriting `grub-efi-bootloader` that writes `EFI/Guix/grubx64.efi` again with BackShot1's script (`cryptomount -k` with the drive's key, else the prompt), `extra-initrd` with the key in a cpio and each volume's `#:key-file`; then `guix system reconfigure` (below) |
 | A | non-systemd dracut, Alpine's mkinitfs, ostree; ZFS native encryption not booted by ZFSBootMenu (no record is written for it); GRUB reading /boot from LUKS, whatever the initramfs is, but on Guix System (G; below) | nothing: the run is attended |
 
 A volume that already opens with no one typing (a key file of its own in the
 initramfs, TPM2, FIDO2; on B an `rd.luks.key=` of its own in another
-`cmdline.d` file) is left alone (`own`).  The boot loader is never touched,
+`cmdline.d` file; on P one in `refind_linux.conf`) is left alone (`own`).  The boot loader is never touched,
 nor the kernel command line, but for B's `cmdline.d` file and the entries
-`moss boot sync` writes from it, and S's unified images (below); another
+`moss boot sync` writes from it, S's unified images and P's
+`refind_linux.conf` (below); another
 `cmdline.d` file is never edited (adopt warns of one with an `rd.luks.key=`:
 `--luks-off` leaves it).  Adopt
 checks the key with `cryptsetup --test-passphrase` before changing
@@ -1134,6 +1160,53 @@ changes nothing unless the recorded ESP is mounted where adopt found it,
 and keeps `/etc/backshot1` when a file can't be put back.  ZFS native
 encryption without ZFSBootMenu (the initramfs's own ZFS code asks) is
 attended, as before, and adopt writes no record for it.
+
+**P, booster** (PikaOS 4 on LUKS, `pika-bootstrap.sh --luks`; booster
+0.12.1, Pika's fork).  booster's init opens the volume that
+`rd.luks.name=UUID=NAME` names as soon as the disk appears; its
+`rd.luks.key=UUID=PATH` is a file in the image, read once then (the
+`PATH:UUID=` form, a key on another device, isn't built), and when it is
+missing, empty or doesn't fit, booster asks.  It reads no crypttab, runs no
+hook before the root is mounted, and its `/init` is its own binary.  The
+backup drive comes seconds after the internal disk, but a FIFO waits for
+it: booster's read blocks until a writer closes it.  Adopt:
+
+- checks that `refind_linux.conf`'s first line (rEFInd's default) names the
+  volume by `rd.luks.name=UUID=NAME` (as it is open now) or `rd.luks.uuid=`,
+  that no line has an `rdinit=` of its own (one with an `rd.luks.key=` of
+  its own is `own`), and that `/usr/bin/busybox` is there; anything else is
+  family A, as is booster without `refind_linux.conf`;
+- writes `/usr/local/lib/backshot1/booster-preinit` (busybox `sh`: it links
+  the applets `bs1-unlock-key` needs under `/backshot1-bin`, runs
+  `bs1-unlock-key --booster-fifos`, starts `bs1-unlock-key --booster` in the
+  background and execs `/init`) and `/usr/local/lib/backshot1/unlock-key`,
+  and adds to `/etc/booster.yaml` (the original in `orig/`) `extra_files`'
+  busybox, both scripts and the record, and `modules_force_load`'s
+  `usb_storage`, `uas`, `sd_mod`, `xhci_pci` and the drive's file system
+  (those the kernel has as modules: booster has no modprobe in the image);
+- remakes each kernel's image as the restore does (`booster build --force
+  --kernel-version K /boot/booster.img-K`) and checks every one has the
+  preinit, busybox, the script and the record, and loads those modules;
+- only then writes `refind_linux.conf`: on each line naming the volume,
+  `rdinit=` and `rd.luks.key=` (and `booster.log=warning` where `quiet` would
+  hide booster's warnings) before the closing ` ---`.  An image without the
+  preinit wouldn't boot from such a line, so `--luks-off` puts
+  `refind_linux.conf` and `booster.yaml` back before it remakes the images;
+  if the check fails, everything is put back.
+
+At boot the helper waits for booster's `/run` (booster moves it into the
+booted system, with the mark), then up to 30 s for `LABEL=mybig512`
+(busybox `findfs`: booster makes no by-label links), mounts it read-only
+(`norecovery` for xfs) and writes the key into the FIFO.  Evidence: the mark
+`NAME drive`, unless this boot's kernel log has booster's "password in
+keyfile ... was unable to unseal".  PikaOS's `booster.yaml` sets no
+`mount_timeout`, and this booster then waits for the root for ever (its
+images' `booster.init.yaml` has no `mounttimeout`), so a typed boot without
+the drive has no time limit after the 30 s wait.  `.bak` and
+`.dpkg-bak` copies of older images lack the preinit; adopt warns of them.
+The restore puts back `refind_linux.conf`, `booster.yaml` and the scripts
+with the tree and runs `booster build` per kernel in its chroot, so the
+restored images carry the preinit too.
 
 **G, Guix System** (docs/design/guix.md, "guix15-luks"): /boot and the
 store are inside the LUKS1 volume, so Guix's GRUB asks first and the initrd

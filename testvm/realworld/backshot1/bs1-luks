@@ -67,6 +67,19 @@
 #      else asks, and an extra-initrd cpio with the key on the root, which
 #      each volume's #:key-file names; then guix system reconfigure (below,
 #      "Family G").
+#   P  booster (PikaOS), whose command line is rEFInd's refind_linux.conf:
+#      booster reads a key file only from inside its image, once, when the
+#      volume appears, and has no hook that runs before then.  So each line
+#      that opens the volume gets rdinit=LK_BOOSTER_INIT (BackShot1's
+#      preinit, run by the kernel first) and rd.luks.key=UUID=/backshot1-
+#      key.UUID, a FIFO the preinit makes before it execs booster's /init;
+#      bs1-unlock-key --booster, started by the preinit, writes the drive's
+#      key into it, or nothing after LUKS_WAIT s without the drive (booster
+#      then asks at once).  booster.yaml's extra_files carry the preinit,
+#      bs1-unlock-key, the record and busybox; its modules_force_load the
+#      USB modules and the drive's file system.  The images are remade
+#      (booster build, as the restore does) and checked before
+#      refind_linux.conf names the preinit (below, "Family P").
 #   Z  ZFSBootMenu, with ZFS native encryption and no LUKS: a load-key.d hook
 #      (bs1-unlock-key --zfs) and a boot-sel.d hook on the ESP, which
 #      zbm.hookroot= in VMLINUZ.EFI's embedded command line names (below,
@@ -119,6 +132,21 @@ LK_UKI_PRESETS=/etc/mkinitcpio.d
 LK_UKI_FILES="/etc/kernel/cmdline /usr/lib/kernel/cmdline"
 LK_UKI_DROPIN=/etc/cmdline.d
 LK_STUB_INFO=/sys/firmware/efi/efivars/StubInfo-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f
+# Family P (booster, PikaOS): rEFInd's kernel options, booster's
+# configuration, BackShot1's preinit (the kernel's rdinit=, in the image),
+# the key files booster's rd.luks.key= names (FIFOs in the image's root:
+# PREFIX.UUID), busybox (the preinit's shell), the kernels and their images.
+LK_REFIND_CONF=/boot/refind_linux.conf
+LK_BOOSTER_YAML=/etc/booster.yaml
+LK_BOOSTER_INIT=/usr/local/lib/backshot1/booster-preinit
+LK_BOOSTER_KEY=/backshot1-key
+LK_BUSYBOX=/usr/bin/busybox
+LK_MODULES_DIR=/lib/modules
+LK_BOOT=/boot
+# What bs1-unlock-key runs in booster's image, as busybox applets.
+LK_P_APPLETS="sh cat mount umount mkdir rmdir rm mkfifo sleep grep modprobe blkid findfs timeout"
+LK_P_VOLS=()
+LK_P_FORCE=
 # Family S on dracut: BackShot1's drop-in; dracut's modules, among them the
 # zfs module's pre-mount hook (zfs-load-key.sh) and BackShot1's own for
 # Ubuntu's ZFS keystore (volume HOW K), LK_KS_MOD, module "backshot1".
@@ -178,6 +206,9 @@ lk_generator() {
     # Guix System: its initrd is built with the system too (family G).
     elif lk_is_guix; then echo guix
     elif command -v mkinitcpio >/dev/null; then echo mkinitcpio
+    # PikaOS: booster's package puts its own update-initramfs over Debian's,
+    # and initramfs-tools or dracut may be installed beside it.
+    elif command -v booster >/dev/null; then echo booster
     elif command -v dracut >/dev/null; then echo dracut
     elif command -v update-initramfs >/dev/null; then echo initramfs-tools
     elif command -v mkinitfs >/dev/null; then echo mkinitfs
@@ -219,6 +250,17 @@ lk_remake() {
         fi
         ;;
     initramfs-tools) update-initramfs -u -k all ;;
+    # PikaOS: what booster's own update-initramfs runs for each kernel (load's
+    # booster arm), host-only or not as booster.yaml says.
+    booster)
+        for k in "$LK_MODULES_DIR"/*; do
+            [[ -d $k/kernel ]] || continue
+            k=${k##*/}
+            booster build --force --kernel-version "$k" "$LK_BOOT/booster.img-$k" || return 1
+            n=$((n + 1))
+        done
+        [[ $n -gt 0 ]]
+        ;;
     # AerynOS (family B): the initramfs comes with the kernel; blsforme
     # writes the boot entries, the command line from cmdline.d with them.
     prebuilt) [[ ! -e /run/ostree-booted ]] && command -v moss >/dev/null && moss boot sync ;;
@@ -237,8 +279,8 @@ lk_images() {
     local d
     for d in $LK_IMG_DIRS; do
         [[ -d $d ]] || continue
-        find "$d" -maxdepth 5 -xdev -type f -newer "$1" \( -name 'initramfs*' -o -name 'initrd*' -o -path '*/EFI/Linux/*.efi' \) \
-            ! -name '*.old' ! -name '*.bak' 2>/dev/null
+        find "$d" -maxdepth 5 -xdev -type f -newer "$1" \( -name 'initramfs*' -o -name 'initrd*' -o -name 'booster.img-*' -o -path '*/EFI/Linux/*.efi' \) \
+            ! -name '*.old' ! -name '*.bak' ! -name '*.dpkg-bak' 2>/dev/null
     done | while read -r d; do readlink -f "$d"; done | LC_ALL=C sort -u
 }
 
@@ -248,6 +290,7 @@ lk_list() {
     mkinitcpio) lsinitcpio "$2" ;;
     dracut) lsinitrd "$2" | sed -E 's/ -> .*//; s/.* //' ;;
     initramfs-tools) lsinitramfs "$2" ;;
+    booster) booster ls "$2" | sed -E 's/ -> .*//; s|/$||; s|^/||' ;;
     esac 2>/dev/null | sed 's|^\./||'
 }
 
@@ -1004,6 +1047,251 @@ lk_grub_luks() {
     unhandled=("$(grub_luks_reason "$g")" ${unhandled[@]+"${unhandled[@]}"})
 }
 
+# Family P: booster (PikaOS 4: booster 0.12.1, Pika's fork of anatol's, and
+# rEFInd).  What booster's init does (init/luks.go, cmdline.go, main.go):
+# it opens each LUKS volume named by rd.luks.name=UUID=NAME or rd.luks.uuid=
+# as soon as the device appears; rd.luks.key=UUID=PATH is a key file inside
+# the image, read once at that moment (its PATH:UUID= form, a key on
+# another device, isn't built: "I don't know how to do that"), and when it
+# is missing, empty or doesn't fit, booster asks for the passphrase.  It
+# reads no crypttab, runs no hook before the root is mounted (enable_hooks'
+# hooks-early run after), and its image's /init is its own Go binary.  The
+# backup drive comes seconds after the internal disk, so no file put there
+# in time could hold its key.  But a FIFO can: booster's read of it waits
+# until a writer closes it.  So the kernel runs BackShot1's preinit first
+# (rdinit=LK_BOOSTER_INIT): it makes the FIFO LK_BOOSTER_KEY.UUID for each
+# volume, starts bs1-unlock-key --booster in the background and execs
+# booster's /init.  That helper waits for booster's /run (where its marks
+# go: booster moves /run into the booted system), then up to LUKS_WAIT s for
+# LABEL=BACKUP_LABEL (busybox findfs: booster makes no by-label links),
+# mounts it read-only and writes the key into the FIFO, marking the volume
+# drive; without the drive it closes the FIFO empty and marks it typed, and
+# booster asks at once.  A booster.yaml mount_timeout would count from
+# booster's start, the wait included (PikaOS sets none: booster then waits
+# for the root for ever).  The preinit, bs1-unlock-key and the
+# record get into the image by booster.yaml's extra_files, with busybox (the
+# preinit's shell: the image has no /bin/sh, and the preinit links the
+# applets bs1-unlock-key needs, LK_P_APPLETS, under /backshot1-bin); the
+# USB modules and the drive's file system by modules_force_load (booster
+# loads them as it starts; the image has no modprobe).  Booster wipes its
+# image, FIFOs and key copy with it, before it switches root.
+# The kernel command line is rEFInd's refind_linux.conf on /boot: each line
+# that names the volume gets rdinit=, rd.luks.key= and, if it has quiet
+# (booster's quiet logs errors only), booster.log=warning, so a key that
+# didn't fit shows in the kernel's log ("password in keyfile ... was unable
+# to unseal": bs1-common's unlock_how P).  An image without the preinit
+# would not boot from such a line (the kernel finds no rdinit= and mounts
+# root= itself), so refind_linux.conf is written last, once every kernel's
+# image is remade and has it, and --luks-off puts it back before the remake.
+# The restore: bko-holt load restores refind_linux.conf, booster.yaml and
+# the files, keeps the LUKS UUID, and runs booster build per kernel in the
+# chroot, so the restored images carry the preinit too.
+
+# lk_loadable MODULE...: those that are modules of their own (booster's
+# modules and modules_force_load refuse a name it has no .ko for).
+lk_loadable() {
+    local m f
+    for m in "$@"; do
+        [[ -n $m ]] || continue
+        f=$(modinfo -F filename "$m" 2>/dev/null | head -n 1)
+        [[ -n $f && $f != "(builtin)" ]] && printf '%s ' "$m"
+    done
+    return 0
+}
+
+# lk_booster_yaml FILE FILES MODULES: booster.yaml FILE's text with FILES in
+# its extra_files and MODULES in its modules_force_load (comma-separated
+# lists; quotes and a trailing comment off the lines it rewrites, each item
+# once, the new ones last), each key added at the end when it has none.
+# Every other line byte for byte.
+lk_booster_yaml() {
+    { [[ -f $1 ]] && cat "$1"; true; } | awk -v extra="$2" -v force="$3" '
+        function merge(v, add,    a, b, n, m, i, out, seen) {
+            sub(/[[:space:]]+#.*$/, "", v)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+            if (v ~ /^".*"$/ || v ~ /^\047.*\047$/) v = substr(v, 2, length(v) - 2)
+            n = split(v, a, ",")
+            out = ""
+            for (i = 1; i <= n; i++) {
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", a[i])
+                if (a[i] == "" || (a[i] in seen)) continue
+                seen[a[i]] = 1
+                out = out (out == "" ? "" : ",") a[i]
+            }
+            m = split(add, b, " ")
+            for (i = 1; i <= m; i++) {
+                if (b[i] in seen) continue
+                seen[b[i]] = 1
+                out = out (out == "" ? "" : ",") b[i]
+            }
+            return out
+        }
+        /^extra_files:/ && !de { de = 1; v = $0; sub(/^extra_files:/, "", v); print "extra_files: " merge(v, extra); next }
+        /^modules_force_load:/ && !df { df = 1; v = $0; sub(/^modules_force_load:/, "", v); print "modules_force_load: " merge(v, force); next }
+        { print }
+        END {
+            if (!de && extra != "") print "extra_files: " merge("", extra)
+            if (!df && force != "") print "modules_force_load: " merge("", force)
+        }'
+}
+
+# lk_p_files: what booster.yaml's extra_files must carry.
+lk_p_files() { echo "busybox $LK_BUSYBOX $LK_BOOSTER_INIT $UNLOCK_KEY $LUKS_REC"; }
+
+# lk_p_preinit: BackShot1's preinit, the kernel's rdinit=.
+lk_p_preinit() {
+    cat <<EOF
+#!$LK_BUSYBOX sh
+# BackShot1 (bs1-adopt): run by the kernel before booster's /init (rdinit=
+# in $LK_REFIND_CONF), so that booster gets the LUKS key from the backup
+# drive (bs1-luks, family P): a FIFO for each volume's rd.luks.key=, which
+# $UNLOCK_KEY --booster fills from the drive while booster
+# starts, or closes empty after $LUKS_WAIT s without it, when booster asks.
+# Whatever fails here, booster's /init runs.
+# TESTBED ONLY; bs1-adopt --luks-off removes it.
+b=$LK_BUSYBOX
+d=/backshot1-bin
+\$b mkdir -p \$d
+for a in $LK_P_APPLETS; do \$b ln -sf \$b \$d/\$a; done
+PATH=\$d:/usr/bin \$b sh $UNLOCK_KEY --booster-fifos
+PATH=\$d:/usr/bin \$b sh $UNLOCK_KEY --booster </dev/null &
+exec /init "\$@"
+EOF
+}
+
+# lk_p_options FILE: each line's options (its last quoted string), one a
+# line, the comments and lines without two quotes left out.
+lk_p_options() {
+    [[ -f $1 ]] || return 0
+    awk '/^[[:space:]]*#/ { next }
+        { n = split($0, q, "\""); if (n >= 5 && n % 2 == 1) print q[n - 1] }' "$1"
+}
+
+# lk_p_names OPTIONS UUID: OPTIONS name the volume (rd.luks.name=UUID=NAME
+# or rd.luks.uuid=UUID; booster takes the UUID bare), and say as what:
+# the name, or - for rd.luks.uuid's.
+lk_p_names() {
+    local w u=${2,,} r=1 name=-
+    for w in $1; do
+        case ${w,,} in
+        rd.luks.name="$u"=*) name=${w#*=}; name=${name#*=}; r=0 ;;
+        rd.luks.uuid="$u" | rd.luks.uuid=luks-"$u") r=0 ;;
+        esac
+    done
+    [[ $r -eq 0 ]] && echo "$name"
+    return $r
+}
+
+# lk_p_volume UUID NAME: whether family P can give the volume (open as NAME)
+# the drive's key from refind_linux.conf: "ok", "own" (a key file of its own
+# on the command line), or "bad REASON".
+lk_p_volume() {
+    local uuid=$1 name=$2 o first=yes named=0 as w ours="rd.luks.key=$1=$LK_BOOSTER_KEY.$1"
+    while IFS= read -r o; do
+        if ! as=$(lk_p_names "$o" "$uuid"); then
+            [[ $first == no ]] || { echo "bad $name ($uuid) isn't named by rd.luks.name= or rd.luks.uuid= on $LK_REFIND_CONF's first line, rEFInd's default, so booster wouldn't open it with a key from there"; return 0; }
+            first=no
+            continue
+        fi
+        first=no named=$((named + 1))
+        [[ $as == - || $as == "$name" ]] || { echo "bad $LK_REFIND_CONF opens $uuid as $as, but it is open as $name now"; return 0; }
+        for w in $o; do
+            case $w in
+            "$ours") ;;
+            rd.luks.key="$uuid"=* | rd.luks.key=/*) echo "own $w"; return 0 ;;
+            rdinit=*) [[ $w == "rdinit=$LK_BOOSTER_INIT" ]] || { echo "bad $LK_REFIND_CONF already has $w, an initramfs program of its own"; return 0; } ;;
+            esac
+        done
+    done < <(lk_p_options "$LK_REFIND_CONF")
+    [[ $named -gt 0 ]] || { echo "bad no line of $LK_REFIND_CONF names $name ($uuid)"; return 0; }
+    echo ok
+}
+
+# lk_p_refind_text FILE UUID...: refind_linux.conf FILE's text with, on each
+# line that names one of the volumes, rdinit=LK_BOOSTER_INIT, rd.luks.key=
+# UUID=LK_BOOSTER_KEY.UUID for each it names, and booster.log=warning when
+# the line has quiet and no booster.log or booster.debug, each only when
+# missing, before a closing " ---"; every other byte as it was.
+lk_p_refind_text() {
+    local file=$1; shift
+    awk -v uuids="$*" -v init="$LK_BOOSTER_INIT" -v key="$LK_BOOSTER_KEY" '
+        BEGIN { nu = split(tolower(uuids), U, " ") }
+        function has(toks, nt, re,    i) { for (i = 1; i <= nt; i++) if (toks[i] ~ re) return 1; return 0 }
+        /^[[:space:]]*#/ { print; next }
+        {
+            line = $0
+            e = 0; s = 0
+            for (i = length(line); i > 0; i--) if (substr(line, i, 1) == "\"") { if (!e) e = i; else { s = i; break } }
+            if (!s) { print; next }
+            o = substr(line, s + 1, e - s - 1)
+            nt = split(o, t, /[[:space:]]+/)
+            lo = tolower(o)
+            add = ""
+            named = 0
+            for (j = 1; j <= nu; j++) {
+                u = U[j]
+                if (lo !~ ("(^|[[:space:]])rd\\.luks\\.(name=" u "=|uuid=(luks-)?" u "([[:space:]]|$))")) continue
+                named = 1
+                if (!has(t, nt, "^rd\\.luks\\.key=" u "=")) kadd = kadd " rd.luks.key=" u "=" key "." u
+            }
+            if (!named) { print; next }
+            if (!has(t, nt, "^rdinit=")) add = add " rdinit=" init
+            add = add kadd
+            kadd = ""
+            if (has(t, nt, "^quiet$") && !has(t, nt, "^booster\\.(log=|debug$)")) add = add " booster.log=warning"
+            if (add == "") { print; next }
+            tail = ""
+            if (match(o, /[[:space:]]+---[[:space:]]*$/)) { tail = substr(o, RSTART); o = substr(o, 1, RSTART - 1) }
+            sub(/^[[:space:]]+/, "", add)
+            o = (o == "" ? add : o " " add) tail
+            print substr(line, 1, s) o substr(line, e)
+        }' "$file"
+}
+
+# lk_p_refind_ok: every line of refind_linux.conf that names a P volume has
+# BackShot1's rdinit= and that volume's key; else says which not.
+lk_p_refind_ok() {
+    local v uuid o bad=0
+    for v in "${LK_P_VOLS[@]}"; do
+        uuid=${v#*:}
+        while IFS= read -r o; do
+            lk_p_names "$o" "$uuid" >/dev/null || continue
+            [[ " $o " == *" rdinit=$LK_BOOSTER_INIT "* ]] || { lk_err "$LK_REFIND_CONF has a line for ${v%%:*} without rdinit=$LK_BOOSTER_INIT"; bad=1; }
+            [[ " $o " == *" rd.luks.key=$uuid=$LK_BOOSTER_KEY.$uuid "* ]] || { lk_err "$LK_REFIND_CONF has a line for ${v%%:*} without its rd.luks.key="; bad=1; }
+        done < <(lk_p_options "$LK_REFIND_CONF")
+    done
+    [[ $bad -eq 0 ]]
+}
+
+# lk_p_check STAMP: every kernel's booster image was remade since STAMP and
+# carries the preinit, its shell, bs1-unlock-key and the record, and loads
+# the USB modules and the drive's file system as it starts.
+lk_p_check() {
+    local k img list init m n=0 bad=0
+    for k in "$LK_MODULES_DIR"/*; do
+        [[ -d $k/kernel ]] || continue
+        k=${k##*/} n=$((n + 1))
+        img=$LK_BOOT/booster.img-$k
+        if [[ ! -f $img || ! $img -nt $1 ]]; then lk_err "$img wasn't remade"; bad=1; continue; fi
+        list=$(lk_list booster "$img")
+        [[ -n $list ]] || { lk_err "can't list $img"; bad=1; continue; }
+        for m in init "${LK_BUSYBOX#/}" "${LK_BOOSTER_INIT#/}" "${UNLOCK_KEY#/}" "${LUKS_REC#/}"; do
+            grep -qxF "$m" <<<"$list" || { lk_err "$img has no $m"; bad=1; }
+        done
+        init=$(booster cat "$img" etc/booster.init.yaml 2>/dev/null |
+            awk '/^[^[:space:]-]/ { inl = ($1 == "modulesforceload:") } inl && $1 == "-" { print $2 }')
+        for m in $LK_P_FORCE; do
+            grep -qxF "$m" <<<"$init" || { lk_err "$img doesn't load $m as it starts"; bad=1; }
+        done
+        [[ $bad -eq 0 ]] && lk_say "  $img: ok"
+    done
+    [[ $n -gt 0 ]] || { lk_err "no kernel in $LK_MODULES_DIR"; return 1; }
+    for img in "$LK_BOOT"/booster.img-*.bak "$LK_BOOT"/booster.img-*.dpkg-bak; do
+        [[ -e $img ]] && lk_say "  $img: an older image without the preinit (warning: booted from a line with rdinit=, it can't start)"
+    done
+    [[ $bad -eq 0 ]]
+}
+
 # luks_adopt: the step itself.  False, having changed nothing, if it can't.
 luks_adopt() {
     local disk key fstype gen family='' reason='' cmdline vols dev uuid name line k o how kf
@@ -1075,6 +1363,12 @@ luks_adopt() {
             fi
             ;;
         initramfs-tools) family=D ;;
+        booster)
+            if [[ ! -f $LK_REFIND_CONF ]]; then family=A reason="booster's initramfs without rEFInd's $LK_REFIND_CONF, the only command line bs1-adopt gives booster's key file on"
+            elif [[ ! -x $LK_BUSYBOX ]]; then family=A reason="booster's initramfs, but no $LK_BUSYBOX for BackShot1's preinit to run in it"
+            else family=P
+            fi
+            ;;
         prebuilt)
             if lk_blsforme; then family=B
             else family=A reason="the initramfs is ${gen}'s"
@@ -1146,6 +1440,8 @@ luks_adopt() {
         re="(^|[[:space:]])rd\.luks\.(uuid=(luks-)?|name=)$uuid([[:space:]=]|\$)"
         [[ $family == B && $cmdline =~ $re ]] && early=yes
         if [[ $family:$early == B:yes ]]; then line=$(lk_bls_eff "$uuid" <<<"$LK_BLS_ARGS")
+        # P: booster reads no crypttab; its command line is refind_linux.conf's.
+        elif [[ $family:$early == P:yes ]]; then line=
         elif [[ $early == yes ]]; then line=$(lk_tab_line "$LK_INI" "$name" "$dev" "$uuid")
         else line=$(lk_tab_line "$LK_TAB" "$name" "$dev" "$uuid")
         fi
@@ -1182,6 +1478,14 @@ luks_adopt() {
             ;;
         S:*) how=S ;;
         B:yes) how=B ;;
+        P:yes)
+            why=$(lk_p_volume "$uuid" "$name")
+            case $why in
+            ok) how=P ;;
+            own*) own_list+=("$name:$uuid"); continue ;;
+            *) unhandled+=("${why#bad }") ;;
+            esac
+            ;;
         A:*) unhandled+=("$reason") ;;
         *:no)
             # Opened by the booted system: systemd's crypttab takes the key
@@ -1209,6 +1513,7 @@ luks_adopt() {
         D:yes) edits_tab+=("$name|D|$uuid|0|0"); LK_EARLY_D+=" $name" ;;
         D:no) edits_tab+=("$name|D|$uuid|0|0") ;;
         B:*) edits_bls+=("$uuid|$o") ;;
+        P:*) LK_P_VOLS+=("$name:$uuid") ;;
         esac
     done <<<"$vols"
     lk_grub_luks "$vols"
@@ -1299,6 +1604,23 @@ luks_adopt() {
     [[ $family:$gen == S:dracut ]] && grep -qsx 'install_items+=" /etc/crypttab "' "$LK_DRACUT_CONF" &&
         LK_DRACUT_EXTRA='install_items+=" /etc/crypttab "'
     lk_files "$family" "$gen" "$fstype" || return 1
+
+    # P: refind_linux.conf names the preinit only once every image has it.
+    local p_text='' p_uuids=() v
+    if [[ $family == P && ${#LK_P_VOLS[@]} -gt 0 ]]; then
+        for v in "${LK_P_VOLS[@]}"; do p_uuids+=("${v#*:}"); done
+        p_text=$(lk_p_refind_text "$LK_REFIND_CONF" "${p_uuids[@]}")
+        if [[ $LK_CHANGED -eq 0 && $p_text == "$(cat "$LK_REFIND_CONF")" ]]; then
+            lk_say "unchanged; the initramfs isn't remade"
+            return 0
+        fi
+        if lk_remake_checked "$family" "$gen" && lk_put "$LK_REFIND_CONF" - "$p_text" && lk_p_refind_ok; then
+            return 0
+        fi
+        lk_err "putting everything back"
+        luks_off
+        return 1
+    fi
 
     if [[ $LK_CHANGED -eq 0 ]]; then
         # B: unless an earlier sync didn't take (the boot entries lack it).
@@ -1419,6 +1741,17 @@ done
 HOOKS=(\"\${_bs1[@]}\")
 unset _h _bs1" || return 1
         ;;
+    P:booster)
+        # (Only its late volumes, S's, under systemd: nothing in the image.)
+        [[ ${#LK_P_VOLS[@]} -gt 0 ]] || return 0
+        lk_put "$UNLOCK_KEY" 755 "$(cat "$here/bs1-unlock-key")" || return 1
+        # The USB modules and the drive's file system, loaded as booster
+        # starts: the ones the running kernel has as modules.
+        LK_P_FORCE=$(lk_loadable usb_storage uas sd_mod xhci_pci "${3:-ext4}")
+        LK_P_FORCE=${LK_P_FORCE% }
+        lk_put "$LK_BOOSTER_INIT" 755 "$(lk_p_preinit)" || return 1
+        lk_put "$LK_BOOSTER_YAML" 644 "$(lk_booster_yaml "$LK_BOOSTER_YAML" "$(lk_p_files)" "$LK_P_FORCE")" || return 1
+        ;;
     D:initramfs-tools)
         lk_put "$LK_ITH_HOOK" 755 "#!/bin/sh
 # BackShot1 (bs1-adopt): what the keyscript $UNLOCK_KEY reads, and the
@@ -1440,6 +1773,11 @@ for m in $mods; do manual_add_modules \"\$m\"; done" || return 1
 lk_check() {
     local family=$1 gen=$2 imgs img list tab n=0 bad=0 v want ukis=0
     LK_TAB_MISSING=0
+    # P: every kernel's booster image (refind_linux.conf comes after).
+    if [[ $family == P && ${#LK_P_VOLS[@]} -gt 0 ]]; then
+        lk_p_check "$3"
+        return
+    fi
     # B remakes no initramfs: its boot entries carry the key.
     if [[ $family == B ]]; then
         [[ ${#LK_BLS_VOLS[@]} -eq 0 ]] || lk_bls_check "${LK_BLS_VOLS[@]}"

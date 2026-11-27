@@ -272,7 +272,9 @@ timers are held; `bs1-manifest` `EXPECTED` gains `boot/booster.img-*`;
 `refind_linux.conf` and the ESP's rEFInd files must be unchanged. A
 `bs1-qemu.py --virtio` rehearsal on `pikaos4` on both hosts first. LUKS on
 the Thinkpad isn't proposed: booster has no key-file-on-USB unlock like
-[[bs1-luks-unattended]]'s (*check*).
+[[bs1-luks-unattended]]'s (*check*). (Checked 2026-11-27: it has none, but a
+FIFO as its in-image key file works around that: "BackShot1 on LUKS"
+below.)
 
 ## Shared lines (with AnduinOS, elementary OS, KDE neon, BigLinux, Garuda)
 
@@ -488,6 +490,45 @@ in the library). Nothing committed.
   but the guest's host-only booster image was built on virtio and has no
   NVMe driver, which is why `--virtio` exists. The Thinkpad run covered
   NVMe, with an image built for it in the rescue's chroot.
+
+## BackShot1 on LUKS: family P (2026-11-27)
+
+Built, unit-tested, not yet rehearsed or run on the Thinkpad.
+
+- **The install:** `pika-bootstrap.sh --luks SERIAL ISO INSTALL_SH KEYS_DIR
+  HOSTNAME` runs install.sh's `btrfs-luks` layout (the GTK installer's
+  "Automatic", Btrfs, encryption on: LUKS2 `crypt_root` with Btrfs `@` and
+  `@home`, the same ESP and ext4 `/boot`) outside BOOTX64 mode, so rEFInd
+  keeps its NVRAM entry as on the plain install. The passphrase is
+  BackShot1's `keys/disk-passphrase` (no final newline, printable ASCII),
+  copied into the chroot's `/run` for install.sh's new `PIKA_LUKS_KEYFILE`:
+  the GTK script's `printf "$PIKA_INSTALL_AUTO_LUKS_PASSWORD" | cryptsetup`
+  lines become `cryptsetup ... --key-file` (printf would read `%` and `\` as
+  its own), and pikainstall gets no `-c` (it keys only a separate `/home`
+  volume; with `@home` on `crypt_root` it skips that). The guest build
+  (`make-pikaos.sh`) is unchanged; install.sh's BOOTX64-only check that
+  `EFI/refind` is absent now applies in BOOTX64 mode only.
+- **booster** (0.12.1, Pika's fork, read from the 26.08.20-4 ISO and the
+  fork's source): `rd.luks.key=UUID=PATH` is a key file inside the image,
+  read once as the volume appears, then the prompt; no crypttab, no hook
+  before the root is mounted (`enable_hooks`' `hooks-early` run after), and
+  its own Go `/init`. Installed `booster.yaml` (pikainstall's
+  `pika-install-host.sh`): `vconsole`, `extra_files: busybox`, `enable_lvm`,
+  `modules`/`modules_force_load: usbhid,hid_generic`, `compression: lz4`,
+  `strip`, `enable_plymouth`. `refind_linux.conf`'s three lines each start
+  `rd.luks.name=UUID=crypt_root rd.luks.options=discard`.
+- **Family P** ([[bs1-luks-unattended]], "Built, family P"): BackShot1's
+  preinit as the kernel's `rdinit=` makes the key file a FIFO and starts
+  `bs1-unlock-key --booster`, which writes the drive's key into it once the
+  drive appears (else closes it empty after 30 s, and booster asks);
+  `booster.yaml`'s `extra_files` and `modules_force_load` carry what that
+  needs; `refind_linux.conf` gets `rdinit=`, `rd.luks.key=` and, on `quiet`
+  lines, `booster.log=warning`. The restore needs no change: it restores
+  those files and runs `booster build` in its chroot.
+- **Next:** `pika-bootstrap-qemu.sh` with `--luks` (the install, a boot with
+  the passphrase typed, `bs1-adopt`, a boot with a fake `mybig512` carrying
+  the key), `bs1-qemu.py --virtio` on `pikaos4-luks` (BOOTX64 mode: its
+  `refind_linux.conf` has the same lines), then BackShot1 on the Thinkpad.
 
 ## Pieces to build (ordered, est.)
 

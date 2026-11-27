@@ -34,6 +34,17 @@
 #   the drive, or with a key that doesn't fit, ZFSBootMenu asks as before.
 #   Once a boot found no drive, a second encryption root doesn't wait again.
 #
+#   unlock-key --booster-fifos, then --booster in the background (family P:
+#   booster, PikaOS; the kernel runs BackShot1's booster-preinit first, by
+#   rdinit=, which runs these with busybox, then execs booster's /init):
+#   --booster-fifos makes a FIFO /backshot1-key.UUID for each of the
+#   record's P volumes, the key file booster's rd.luks.key=UUID=PATH names;
+#   --booster, once booster has mounted /run, waits up to wait= seconds for
+#   the drive and writes its key into each FIFO, which booster is waiting
+#   to read, then marks NAME drive; without the drive it writes nothing
+#   (booster asks at once) and marks NAME typed.  A key that doesn't fit
+#   shows in the kernel's log, where booster says so (bs1-common).
+#
 #   unlock-key --keystore, then --keystore-done (family S's Ubuntu ZFS
 #   keystore, volume HOW K: BackShot1's dracut module's pre-mount hooks 85
 #   and 95, either side of the zfs module's 90-zfs-load-key.sh, which opens
@@ -85,8 +96,13 @@ fetch() {
             # By libblkid too, should udev make no by-label link
             # (ZFSBootMenu; the booted system, for cryptdisks).  Not in
             # the unit tests' fake root, but for --zfs's.
-            if { [ "$mode" = zfs ] || [ -z "$R" ]; } && ! present "$dev"; then
+            if { [ "$mode" = zfs ] || [ "$mode" = booster ] || [ -z "$R" ]; } && ! present "$dev"; then
                 d=$(blkid -L "$label" 2>/dev/null) && [ -b "$d" ] && dev=$d
+                # busybox's findfs: booster makes no by-label links, and
+                # busybox's blkid has no -L.
+                if ! present "$dev"; then
+                    d=$(findfs "LABEL=$label" 2>/dev/null) && present "$d" && dev=$d
+                fi
             fi
         done
     fi
@@ -115,7 +131,77 @@ askpass() {
 
 umask 077
 mode=keyscript
-case ${1:-} in --to) mode=to ;; --zfs) mode=zfs ;; --keystore) mode=keystore ;; --keystore-done) mode=keystore-done ;; esac
+case ${1:-} in
+--to) mode=to ;; --zfs) mode=zfs ;; --keystore) mode=keystore ;; --keystore-done) mode=keystore-done ;;
+--booster-fifos) mode=booster-fifos ;; --booster) mode=booster ;;
+esac
+
+# Family P (booster, PikaOS): each P volume's key file, the FIFO
+# BOOSTER_KEY.UUID that rd.luks.key=UUID=/backshot1-key.UUID names, in the
+# initramfs's own root (booster wipes it before switching root).
+BOOSTER_KEY=$R/backshot1-key
+# give FROM FIFO: FROM's bytes through FIFO, once booster opens it to read
+# (it does as soon as the volume appears); given up after GIVE_WAIT s, when
+# it never does.
+GIVE_WAIT=${BS1_GIVE_WAIT:-600}
+give() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$GIVE_WAIT" sh -c 'exec cat "$1" >"$2"' sh "$1" "$2"
+    else
+        sh -c 'exec cat "$1" >"$2"' sh "$1" "$2"
+    fi
+}
+p_volumes() {
+    for v in $volumes; do
+        [ "${v##*:}" = P ] || continue
+        u=${v#*:}
+        echo "${v%%:*} ${u%%:*}"
+    done
+}
+
+if [ $mode = booster-fifos ]; then
+    p_volumes | while read -r name uuid; do
+        rm -f "$BOOSTER_KEY.$uuid"
+        mkfifo -m 600 "$BOOSTER_KEY.$uuid" || echo "BackShot1: no $BOOSTER_KEY.$uuid; booster will ask for $name" >&2
+    done
+    exit 0
+fi
+
+if [ $mode = booster ]; then
+    # booster's own /proc, /dev and /run first (it mounts them as it
+    # starts): the marks go into the /run it moves into the booted system.
+    i=0
+    while ! grep -qs ' /run ' "$R/proc/mounts" && [ "$i" -lt 100 ]; do
+        sleep 0.1 2>/dev/null || sleep 1
+        i=$((i + 1))
+    done
+    tmp=$R/backshot1-key.tmp
+    got=no
+    fetch "$tmp" && got=yes
+    p_volumes | {
+    while read -r name uuid; do
+        f=$BOOSTER_KEY.$uuid
+        (
+            if [ ! -p "$f" ]; then
+                mark "$name" typed
+            elif [ $got = yes ] && give "$tmp" "$f"; then
+                # Booster tries it, and says so in the kernel's log if it
+                # doesn't fit (bs1-common's unlock_how P).
+                echo "<5>BackShot1: $name: the backup drive's key, handed to booster" >"$R/dev/kmsg" 2>/dev/null
+                mark "$name" drive
+            else
+                # No key: an empty one, so booster asks at once.
+                [ $got = yes ] || give /dev/null "$f"
+                mark "$name" typed
+            fi
+            rm -f "$f"
+        ) &
+    done
+    wait
+    }
+    rm -f "$tmp"
+    exit 0
+fi
 
 if [ $mode = keystore ] || [ $mode = keystore-done ]; then
     ks=''

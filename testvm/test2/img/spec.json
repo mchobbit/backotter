@@ -14,6 +14,7 @@
       "bins": ["{plat}/rustic-bko", "{plat}/bko-holt", "{plat}/test-image", "{plat}/release-image"],
       "harness": [
         "stick/boot-test.py",
+        "stick/boot-modes.sh",
         "stick/{plat}/checks.sh",
         "stick/{plat}/manifest.sh",
         "?stick/{plat}/config-checks.sh",

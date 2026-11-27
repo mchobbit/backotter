@@ -34,7 +34,7 @@ from . import batchsched as bs
 
 SPLIT_FAMILIES = ("stic", "holt", "guest", "img")
 FAMILY_POOL = {"stic": "stic", "holt": "holt", "guest": "holt", "img": "holt", "gate": "gate"}
-IMG_RESERVE = (1.0, 5.0)        # img.RESERVE
+IMG_RESERVE = (1.0, 5.0)        # img.RESERVE as was; the runner now reserves img.boot_reserve (img-speed.md §9)
 GUEST_RESERVE = (2.0, 8.0)      # guest: --reserve 2 M, M its ram_gib (run.ram_gib_first 8 by default)
 GATE_RESERVE = (2.0, 4.0)       # gate.base_reserve's default
 HOLT_MEM = 4.0                  # ram-sizes.tsv: MEM is 4 for all

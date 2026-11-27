@@ -752,6 +752,10 @@ class Flow(unittest.TestCase):
     def ctx(self, plan, rows=(), word=None):
         self.rs = RS(self.t, plan, word)
         facts = {"chopin": {"images": {p: {"bins": dict(BINS), "pin": {}} for p in ("linux", "netbsd", "openbsd", "haiku")}}}
+        for p, size in (getattr(self, "sizes", None) or {}).items():
+            facts["chopin"]["images"][p]["test"] = {"size": size}
+        if getattr(self, "ceiling", None):
+            facts["chopin"]["preflight"] = {"ram": {"ceiling": list(self.ceiling)}}
         specs = type("S", (), {"get": staticmethod(lambda n: None)})()
         return type("Ctx", (), {"run": self.rs, "classes": self.CLASSES, "options": {}, "ledger": list(rows), "facts": facts,
                                 "specs": specs, "hosts": ["chopin"]})()
@@ -783,10 +787,25 @@ class Flow(unittest.TestCase):
         self.assertEqual(r["extra"]["manifest"]["kernel"], "k1")
         self.assertEqual(res["blocks"][0], "img:netbsd   boot PASS   panel not needed (storage pieces unchanged)    release build not tested")
         job = next(c for c in io.started)
-        self.assertIn("cmp-run.sh --reserve 1 5", job)
+        # No ceiling and no image size in the facts: width 1, a 1.6 GB image's room (img-speed.md §9).
+        self.assertIn("cmp-run.sh --reserve 2 4.5", job)
+        self.assertIn("boot.sh --ram /mnt/bko-ram/t2i-20261110T0312-4f2a-img-netbsd --ram-gib 2 --width 1 netbsd", job)
         self.assertIn("WEAR_TAG=img:t2i-20261110T0312-4f2a:netbsd", job)
         self.assertIn("boot.sh", job)
         self.assertEqual(len(io.started), 1)
+
+    def test_the_job_is_as_wide_as_the_hosts_ceiling_holds(self):
+        # img-speed.md §9, D8: Chopin's 23.2 GiB holds 4 guests, NetBSD has 2 modes; its image + 0.5 GiB.
+        self.ceiling, self.sizes = (29.0, 23.2), {"netbsd": 536870912}
+        io = IO({1: passing()}, manifest())
+        res = self.go([PC("img:netbsd")], io, rows=[passrow(manifest(), cell="img:netbsd")])
+        self.assertEqual(res["exit"], 0)
+        job = io.started[0]
+        self.assertIn("cmp-run.sh --reserve 1 9 ", job)
+        self.assertIn("--ram-gib 1 --width 2 netbsd", job)
+        st = json.loads(rd(os.path.join(self.rs.mac_dir, "img.json")))
+        rec = st["cells"]["netbsd"]["attempts"]["1"]
+        self.assertEqual((rec["width"], rec["reserve"]), (2, [1.0, 9.0]))
 
     def test_a_panel_that_passes_writes_a_second_row(self):
         io = IO({1: passing()}, manifest())
@@ -1283,8 +1302,8 @@ class ImgOne(unittest.TestCase):
            '#!/bin/sh\nif [ "$1" = --test ]; then d=$3; else d=$2; fi\necho image >"$d/x.img"\necho "Wrote $d/x.img"\n', 0o755)
         wr(os.path.join(self.s, "boot-test.py"), "print('  ok   tools  all')\n")
         wr(os.path.join(self.s, "compress-images.sh"), "#!/bin/sh\nexit 0\n", 0o755)
-        # The digests and the provenance (I1) are the real ones'.
-        for f in ("img_inputs.py", "img-inputs.tsv", "img-swap.tsv"):
+        # The digests and the provenance (I1) are the real ones', and so is the boot runner (I6).
+        for f in ("img_inputs.py", "img-inputs.tsv", "img-swap.tsv", "boot-modes.sh"):
             shutil.copy2(os.path.join(WT, "stick", f), os.path.join(self.s, f))
         wr(os.path.join(self.path, "flock"), "#!/bin/sh\nexit 0\n", 0o755)
 
@@ -1646,6 +1665,8 @@ class BootSh(unittest.TestCase):
         self.root = os.path.join(self.t, "copy")
         os.makedirs(os.path.join(self.root, "testvm", "test2", "img"))
         shutil.copy(os.path.join(T2, "img", "boot.sh"), os.path.join(self.root, "testvm", "test2", "img", "boot.sh"))
+        os.makedirs(os.path.join(self.root, "stick"))
+        shutil.copy(os.path.join(WT, "stick", "boot-modes.sh"), os.path.join(self.root, "stick", "boot-modes.sh"))
         wr(os.path.join(self.root, "stick", "boot-test.py"),
            "import json, sys\nprint(' '.join(sys.argv[1:]))\n"
            "if '--manifest' in sys.argv:\n    json.dump({'kernel': 'k'}, open(sys.argv[sys.argv.index('--manifest') + 1], 'w'))\n"
@@ -1696,6 +1717,188 @@ class BootSh(unittest.TestCase):
         text = rd(os.path.join(T2, "img", "boot.sh"))
         for code, name in ((143, "TERM"), (130, "INT"), (129, "HUP")):
             self.assertIn(f"""trap 'trap "" TERM INT HUP; exit {code}' {name}""", text)
+
+
+class BootModes(unittest.TestCase):
+    """stick/boot-modes.sh (img-speed.md §9, I6): modes side by side, the RAM copy, the manifest."""
+    STUB = (
+        "import json, os, signal, sys, time\n"
+        "a = sys.argv[1:]\nmode = a[1] + ('-cd' if 'cdrom' in a else '')\n"
+        "cfg = json.loads(os.environ.get('STUB', '{}')).get(mode, {})\n"
+        "log = os.environ['STUB_LOG']\n"
+        "with open(log, 'a') as f:\n    f.write(f'start {mode} {time.time()} {a[0]}\\n')\n"
+        "signal.signal(signal.SIGTERM, lambda n, _f: (open(log, 'a').write(f'term {mode}\\n'), sys.exit(143)))\n"
+        "time.sleep(cfg.get('sleep', 0.6))\n"
+        "print(' '.join(a))\n"
+        "if cfg.get('reached', True):\n    print(f'{a[1]} (usb): reached login in 3 s')\n    print('  ok   tools  all')\n"
+        "if '--manifest' in a and cfg.get('reached', True):\n"
+        "    json.dump({'kernel': mode}, open(a[a.index('--manifest') + 1], 'w'))\n"
+        "with open(log, 'a') as f:\n    f.write(f'end {mode} {time.time()}\\n')\n"
+        "sys.exit(cfg.get('rc', 0))\n")
+
+    def setUp(self):
+        self.t = os.path.realpath(tempfile.mkdtemp(prefix="t2-i6-modes-"))
+        self.addCleanup(shutil.rmtree, self.t, True)
+        self.s = os.path.join(self.t, "stick")
+        os.makedirs(self.s)
+        shutil.copy(os.path.join(WT, "stick", "boot-modes.sh"), os.path.join(self.s, "boot-modes.sh"))
+        wr(os.path.join(self.s, "boot-test.py"), self.STUB)
+        self.img = os.path.join(self.t, "x.img")
+        wr(self.img, "image bytes\n")
+        self.log = os.path.join(self.t, "stub.log")
+        self.out = os.path.join(self.t, "out")
+
+    def run_modes(self, *args, stub=None, modes=("bios", "uefi")):
+        env = dict(os.environ, STUB=json.dumps(stub or {}), STUB_LOG=self.log)
+        return subprocess.run([BASH, os.path.join(self.s, "boot-modes.sh")] + list(args) + ["linux", self.img, self.out] + list(modes),
+                              env=env, capture_output=True, text=True, timeout=60)
+
+    def events(self):
+        ev = {}
+        for line in rd(self.log).splitlines():
+            f = line.split()
+            if f[0] in ("start", "end"):
+                ev.setdefault(f[1], {})[f[0]] = float(f[2])
+                if f[0] == "start":
+                    ev[f[1]]["img"] = f[3]
+        return ev
+
+    def overlap(self, ev, a, b):
+        return ev[a]["start"] < ev[b]["end"] and ev[b]["start"] < ev[a]["end"]
+
+    def test_width_1_is_one_after_another_in_order(self):
+        r = self.run_modes()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        ev = self.events()
+        self.assertFalse(self.overlap(ev, "bios", "uefi"))
+        self.assertLess(ev["bios"]["start"], ev["uefi"]["start"])
+        self.assertIn("width: 1, modes: bios uefi", rd(os.path.join(self.out, "boot-modes.txt")))
+
+    def test_width_2_runs_two_at_once_and_no_more(self):
+        modes = ("bios", "uefi", "uefi-secureboot", "cdrom")
+        r = self.run_modes("--width", "2", modes=modes, stub={"bios": {"sleep": 1.5}, "uefi": {"sleep": 1.5}})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        ev = self.events()
+        self.assertTrue(self.overlap(ev, "bios", "uefi"))
+        # Never three at once: the third starts only once one of the first two ended.
+        for m in ("uefi-secureboot", "bios-cd"):
+            at = ev[m]["start"]
+            self.assertLessEqual(sum(1 for o in ev.values() if o["start"] <= at < o.get("end", 1e18)), 2, m)
+        for m in modes:
+            self.assertEqual(rd(os.path.join(self.out, f"boot-{m}.rc")).strip(), "0", m)
+        self.assertIn("bios --platform linux --media cdrom", rd(os.path.join(self.out, "boot-cdrom.out")))
+
+    def test_each_modes_verdict_is_its_own(self):
+        r = self.run_modes("--width", "2", stub={"uefi": {"rc": 1}})
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertEqual(rd(os.path.join(self.out, "boot-bios.rc")).strip(), "0")
+        self.assertEqual(rd(os.path.join(self.out, "boot-uefi.rc")).strip(), "1")
+        self.assertIn("failed: 1 of 2", rd(os.path.join(self.out, "boot-modes.txt")))
+
+    def test_the_manifest_is_the_first_modes(self):
+        mf = os.path.join(self.out, "manifest.json")
+        r = self.run_modes("--width", "2", "--manifest", mf)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(rd(mf)), {"kernel": "bios"})
+        self.assertIn("--manifest", rd(os.path.join(self.out, "boot-bios.out")))
+        self.assertNotIn("--manifest", rd(os.path.join(self.out, "boot-uefi.out")))
+        self.assertFalse(os.path.exists(os.path.join(self.out, "manifest-uefi.out")))
+
+    def test_a_first_mode_that_never_reached_its_checks_hands_the_manifest_on(self):
+        mf = os.path.join(self.out, "manifest.json")
+        modes = ("bios", "uefi", "cdrom")
+        r = self.run_modes("--width", "3", "--manifest", mf, modes=modes,
+                           stub={"bios": {"rc": 1, "reached": False}, "uefi": {"rc": 1, "reached": False}})
+        self.assertEqual(r.returncode, 1, r.stderr)
+        # cdrom is the next that completed its checks: booted once more, alone, after the batch.
+        self.assertEqual(json.loads(rd(mf)), {"kernel": "bios-cd"})
+        self.assertIn("--manifest", rd(os.path.join(self.out, "manifest-cdrom.out")))
+        self.assertNotIn("--manifest", rd(os.path.join(self.out, "boot-cdrom.out")))
+        starts = [l.split()[1] for l in rd(self.log).splitlines() if l.startswith("start")]
+        self.assertEqual(starts[-1], "bios-cd")
+        self.assertEqual(len(starts), 4)
+        ends = [float(l.split()[2]) for l in rd(self.log).splitlines() if l.startswith("end")]
+        self.assertGreaterEqual(float([l for l in rd(self.log).splitlines() if l.startswith("start")][-1].split()[2]), max(ends[:3]))
+        # The verdicts stay the batch's.
+        self.assertEqual([rd(os.path.join(self.out, f"boot-{m}.rc")).strip() for m in modes], ["1", "1", "0"])
+        self.assertFalse(os.path.exists(os.path.join(self.out, "boot-manifest-cdrom.rc")))
+
+    def test_the_modes_boot_a_checked_copy_in_the_ram_dir(self):
+        ram = os.path.join(self.t, "ram")
+        r = self.run_modes("--width", "2", "--ram", ram, "--sha256", sha_text("image bytes\n"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        ev = self.events()
+        for m in ("bios", "uefi"):
+            self.assertTrue(ev[m]["img"].startswith(ram + "/boot-modes."), ev[m]["img"])
+        self.assertEqual(os.listdir(ram), [])   # the copy is gone
+        self.assertIn("image: a copy in " + ram, rd(os.path.join(self.out, "boot-modes.txt")))
+
+    def test_no_copy_when_it_differs_or_has_no_room(self):
+        ram = os.path.join(self.t, "ram")
+        r = self.run_modes("--ram", ram, "--sha256", "0" * 64)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.events()["bios"]["img"], self.img)
+        self.assertIn("the copy's SHA-256 is", rd(os.path.join(self.out, "boot-modes.txt")))
+        self.assertEqual(os.listdir(ram), [])
+        os.unlink(self.log)
+        r = self.run_modes("--ram", ram, "--ram-gib", "0.4")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.events()["bios"]["img"], self.img)
+        self.assertIn("+ 0.5 GiB is over what", rd(os.path.join(self.out, "boot-modes.txt")))
+
+    def test_bad_usage(self):
+        for args, modes in ((["--width", "0"], ("bios",)), (["--width", "x"], ("bios",)), ([], ("floppy",)),
+                            (["--sha256", "abc"], ("bios",)), (["--nope", "1"], ("bios",))):
+            self.assertEqual(self.run_modes(*args, modes=modes).returncode, 2, args)
+        self.assertFalse(os.path.exists(self.log))
+
+    def test_a_stop_stops_the_modes_and_removes_the_copy(self):
+        ram = os.path.join(self.t, "ram")
+        env = dict(os.environ, STUB=json.dumps({"bios": {"sleep": 30}, "uefi": {"sleep": 30}}), STUB_LOG=self.log)
+        p = subprocess.Popen([BASH, os.path.join(self.s, "boot-modes.sh"), "--width", "2", "--ram", ram, "linux", self.img,
+                              self.out, "bios", "uefi"], env=env, start_new_session=True)
+        for _ in range(200):
+            if os.path.exists(self.log) and rd(self.log).count("start") == 2:
+                break
+            time.sleep(0.05)
+        p.send_signal(signal.SIGTERM)   # (the script alone, not its group)
+        self.assertEqual(p.wait(30), 143)
+        self.assertEqual(sorted(l for l in rd(self.log).splitlines() if l.startswith("term")), ["term bios", "term uefi"])
+        self.assertEqual(os.listdir(ram), [])
+
+
+class BootPlan(unittest.TestCase):
+    """img.boot_width and boot_reserve: the width from the host's ceiling (D8), the room for the copy."""
+
+    def test_width_by_ceiling(self):
+        self.assertEqual(img.boot_width((29.0, 23.2), 4), 4)    # a big host
+        self.assertEqual(img.boot_width((29.0, 23.2), 2), 2)    # never more than the modes
+        self.assertEqual(img.boot_width((9.0, 10.1), 4), 2)     # a small host
+        self.assertEqual(img.boot_width((3.0, 6.0), 4), 1)      # choubox
+        self.assertEqual(img.boot_width((3.0, 4.0), 4), 1)      # at least 1
+        self.assertEqual(img.boot_width((9.0, 9.0), 4), 2)
+        self.assertEqual(img.boot_width(None, 4), 1)            # not known
+
+    def test_reserve(self):
+        self.assertEqual(img.boot_reserve(1374389535, 4), (1.8, 18.0))   # Linux's 1.28 GB + 0.5, up to a tenth
+        self.assertEqual(img.boot_reserve(536870912, 2), (1.0, 9.0))
+        self.assertEqual(img.boot_reserve(None, 1), (2.0, 4.5))           # 1.6 GB, the largest
+        for ceil, n in (((29.0, 23.2), 4), ((9.0, 10.1), 4), ((3.0, 6.0), 4), ((9.0, 10.1), 2)):
+            w = img.boot_width(ceil, n)
+            self.assertLessEqual(img.boot_reserve(1374389535, w)[1], ceil[1], ceil)
+
+    def test_the_runner_reserves_by_host(self):
+        r = img.Runner.__new__(img.Runner)
+        r.ctx = type("C", (), {"facts": {
+            "chopin": {"preflight": {"ram": {"ceiling": [29.0, 23.2]}}, "images": {"linux": {"test": {"size": 1374389535}}}},
+            "cage": {"preflight": {"ram": {"ceiling": [9.0, 10.1]}}, "images": {"netbsd": {"test": {"size": 536870912}}}},
+            "choubox": {"preflight": {"ram": {"ceiling": [3.0, 6.0]}}}}})()
+        r.sf = None
+        r.modes = lambda plat: ("bios", "uefi", "uefi-secureboot", "cdrom") if plat == "linux" else ("bios", "uefi")
+        self.assertEqual(r.boot_plan("linux", "chopin"), (4, (1.8, 18.0)))
+        self.assertEqual(r.boot_plan("netbsd", "chopin"), (2, (2.0, 9.0)))
+        self.assertEqual(r.boot_plan("netbsd", "cage"), (2, (1.0, 9.0)))
+        self.assertEqual(r.boot_plan("linux", "choubox"), (1, (2.0, 4.5)))
 
 
 class ImgBoot(unittest.TestCase):

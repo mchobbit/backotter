@@ -887,6 +887,29 @@ whenever a guest is updated.
 - Gain: boot phases from 12.5 to about 6 image-minutes (est.: Linux 3.0 to
   about 1.0, the BSDs about halved), and the same again in each ImgTest2
   run.
+- **As built (I6).** One runner, `stick/boot-modes.sh` (a `tests` input in
+  `img-inputs.tsv`, and in ImgTest2's harness), serves both callers:
+  `--width N`, `--ram DIR` (the copy, checked against `--sha256` and made
+  only when the image + 0.5 GiB fits in what DIR has left of `--ram-gib`;
+  otherwise the modes boot the image itself and `boot-modes.txt` says why),
+  and `--manifest`. `img-one.sh` takes `BKO_BOOT_WIDTH` (default 1),
+  `BKO_BOOT_RAM` and `BKO_BOOT_RAM_GIB`, which `img-lanes.sh` sets to 2, its
+  RAM directory and its D. `img_round_facts.reserve_gib` mirrors the new
+  `size()`. In ImgTest2, `img.boot_width` and `img.boot_reserve` give the
+  job's `--width` and `--reserve` per host at its start (kept in the run's
+  state); the planner keeps an img cell off a host whose ceiling can't hold
+  width 1. An image size the facts don't give counts as 1.6 GB. A stop now
+  unwinds `boot-test.py` (TERM, HUP), so its QEMU is killed when only the
+  runner is signalled. `batchprof.IMG_RESERVE` (the batch planner's model of
+  an ImgTest2 job) is still (1, 5): widening it moves the batch schedules,
+  which is left to a later step. Proof, 2026-11-27: three sets (the current
+  one and the two before it) of all seven platforms, each image booted
+  serial and at its width on Chopin (Linux, 4), Cinqcent, Copland, Cage and
+  Czerny (2): 52 mode runs, every per-check verdict and every manifest the
+  same, no FAIL either way (flakes.json is empty, so its match rate stays
+  0 of 0); 45 reservations, none over its host's ceiling, the largest
+  scope peak 0.64 of its D + M. Linux's four modes took 46-48 s together
+  (151-164 s one by one), the BSDs about half.
 
 ## 10. Speedup 7: proof cells on all six amd64 hosts
 

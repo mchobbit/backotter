@@ -8,6 +8,7 @@ all	stick/img-one.sh	base
 all	stick/marker.py	base
 all	stick/config-partition/*	base
 all	stick/boot-test.py	tests
+all	stick/boot-modes.sh	tests
 # --- The six VM platforms: the builder script, stick/bsd/, vm-run, and all of stick/P/ but its test files
 vm	stick/make-img-bsd.sh	base
 vm	stick/bsd/*	base

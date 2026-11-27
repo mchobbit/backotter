@@ -7,9 +7,11 @@ For each due img:P, on a host its key still needs:
   2. pin: `t2-host tool img pin P...` on each host that may run it (tool_img.py), then the
      plan again, so that the keys name the pinned image.  A pin that is refused (a build
      under way, no image) makes the cell not-runnable.
-  3. the boot tests, one job per host per image: testvm/test2/img/boot.sh under
-     `cmp-run.sh --reserve 1 5`, WEAR_TAG=img:RUN:P, its records in
-     HOST_ROOT/runs/RUN/img/P/.  Their outcome is read per check from boot-MODE.out.  A FAIL
+  3. the boot tests, one job per host per image: testvm/test2/img/boot.sh --width N under
+     `cmp-run.sh --reserve D M`, WEAR_TAG=img:RUN:P, its records in HOST_ROOT/runs/RUN/img/P/.
+     N modes boot at once (stick/boot-modes.sh), from a copy of the pin in the RAM disk:
+     boot_width (as many 4.5-GiB guests as the host's ceiling holds, at most 4 and the
+     platform's modes), D the image + 0.5 GiB, M 4.5 x N (boot_reserve; img-speed.md §9, D8).  Their outcome is read per check from boot-MODE.out.  A FAIL
      runs once more as attempt 2 (RUN-r2); a PASS then is FLAKY-FAIL, or PASS/known-flake
      when attempt 1's FAILs match img/flakes.json.
   4. the manifest: manifest.json, BKO-MF lines typed in the first mode, kept in
@@ -25,17 +27,23 @@ The rows are written from the Mac through the copy's t2lib, on the host that ran
 
 import copy
 import json
+import math
 import os
 import re
 import threading
 import time
 
 from . import hostjob, utc_now
+from . import facts as factsmod
 from . import hosts as hosts_table
 from .gate_judge import counts_of, cut
 
 SUBDIR = "img"
-RESERVE = (1, 5)
+# The boot tests' reservation (img-speed.md §9, D8): each mode's guest is 4 GiB, held at 4.5;
+# at most BOOT_MAX_WIDTH at once; the RAM disk holds the image's copy and 0.5 GiB of overlays.
+BOOT_GUEST_GIB = 4.5
+BOOT_MAX_WIDTH = 4
+BOOT_IMAGE_BYTES = 1_600_000_000   # an image whose size the facts don't give: the largest (§9)
 JOB_TIMEOUT_S = 2 * 3600
 JOB_WAIT_S = 4 * 3600
 POLL_S = 20
@@ -49,6 +57,29 @@ CLASS = {"PASS": "pass", "FAIL": "fail", "FLAKY-FAIL": "fail", "HARNESS": "harne
 MODE_HEAD = re.compile(r"^(\S+) \((usb|cdrom)\): reached login in (\d+) s\s*$")
 CHECK_LINE = re.compile(r"^  (ok|FAIL)\s+(\S+)\s*(.*)$")
 FAILED_BOOT = re.compile(r"^(\S+): (.*?) \(see .*\)\s*$")
+
+
+def boot_width(ceiling, nmodes):
+    """How many modes boot at once on a host whose cmp-run.sh ceiling is CEILING (DISK, MEM
+    GiB): as many BOOT_GUEST_GIB guests as MEM holds, at most BOOT_MAX_WIDTH and NMODES, at
+    least 1 (1 when the ceiling isn't known)."""
+    if not ceiling:
+        return 1
+    return max(1, min(BOOT_MAX_WIDTH, max(1, int(nmodes)), int(float(ceiling[1]) / BOOT_GUEST_GIB + 1e-9)))
+
+
+def boot_reserve(size, width):
+    """(DISK, MEM) GiB of a boot job: the image of SIZE bytes (None: BOOT_IMAGE_BYTES) + 0.5,
+    rounded up to a tenth, and BOOT_GUEST_GIB a mode."""
+    d = (size or BOOT_IMAGE_BYTES) / 1073741824 + 0.5
+    return math.ceil(d * 10 - 1e-9) / 10, BOOT_GUEST_GIB * width
+
+
+def image_size(facts, host, plat):
+    """The test image's size on HOST (its facts' images.PLAT.test.size), or None."""
+    im = (((facts or {}).get(host) or {}).get("images") or {}).get(plat) or {}
+    n = (im.get("test") or {}).get("size")
+    return n if isinstance(n, int) and n > 0 else None
 
 
 # --- reading a job's records --------------------------------------------------------------------
@@ -407,12 +438,20 @@ class Runner:
         self.plan = plan
 
     # --- step 3: one job ----------------------------------------------------------------------------
-    def job_cmd(self, plat, host, attempt):
+    def boot_plan(self, plat, host):
+        """(width, (DISK, MEM)) of PLAT's boot job on HOST: boot_width from its facts'
+        ceiling, boot_reserve from its test image's size."""
+        w = boot_width(factsmod.ceiling((self.ctx.facts or {}).get(host)), len(self.modes(plat)))
+        return w, boot_reserve(image_size(self.ctx.facts, host, plat), w)
+
+    def job_cmd(self, plat, host, attempt, width=1, ram_gib=None):
         q = hostjob._q
         pin = f"{self.env.host_root.rstrip('/')}/img-pin/{plat}/rescuer.img"
         out = hostjob.job_dir(self.env, plat, attempt, SUBDIR)
         ram = f"/mnt/bko-ram/{self.env.attempt_run(attempt)}-img-{plat}"
-        return (f"bash testvm/test2/img/boot.sh --ram {q(ram)} {plat} {q(pin)} {q(out)} {' '.join(self.modes(plat))}", ram)
+        rg = f" --ram-gib {ram_gib:g}" if ram_gib else ""
+        return (f"bash testvm/test2/img/boot.sh --ram {q(ram)}{rg} --width {int(width)} {plat} {q(pin)} {q(out)}"
+                f" {' '.join(self.modes(plat))}", ram)
 
     def job_ended(self, host, out):
         """host_job's result once .exit has a status, else None."""
@@ -458,14 +497,16 @@ class Runner:
         return None, out, {}, hostjob.JobFailure(f"attempt {attempt}'s job on {host} still runs (resume)", still_running=True)
 
     def run_job(self, host, plat, attempt, st):
-        cmd, ram = self.job_cmd(plat, host, attempt)
         rec = st["attempts"].setdefault(str(attempt), {})
         if rec.get("started"):
             return self.reattach(rec.get("host") or host, plat, attempt)
+        width, reserve = self.boot_plan(plat, host)
+        cmd, ram = self.job_cmd(plat, host, attempt, width, reserve[0])
         rec["started"] = utc_now()
         rec["host"] = host
+        rec["width"], rec["reserve"] = width, list(reserve)
         self.state.save()
-        return hostjob.host_job(self.env, host, plat, attempt, cmd, reserve=RESERVE,
+        return hostjob.host_job(self.env, host, plat, attempt, cmd, reserve=reserve,
                                 wear_tag=f"img:{self.run_id}:{plat}", timeout_s=JOB_TIMEOUT_S, wait_s=JOB_WAIT_S,
                                 ram=ram, subdir=SUBDIR)
 

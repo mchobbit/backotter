@@ -17,9 +17,11 @@ BKO_WORK/images), BKO_BIN, BKO_HOLT_BIN, T2_HOST_ROOT (the pins, default /bkoscr
 BKO_DIGEST_CACHE, SL and ISO, as img_inputs.py and img-lanes.sh read them.
 """
 
+import glob
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import socket
@@ -72,11 +74,21 @@ def sums_img(path):
 
 
 def reserve_gib(d, plat):
-    """img-lanes.sh's RAM-disk figure for PLAT: 1.1 x the last peak + 0.25 GiB, else 6 (linux 1)."""
+    """img-lanes.sh's RAM-disk figure for PLAT: 1.1 x the last peak + 0.25 GiB, else 6 (linux 1),
+    and at least the test image + 0.5 GiB (the boot tests' copy in the RAM disk, img-speed.md §9)."""
     k = first_line(os.path.join(d, "peak-kib"))
     if k and k.isdigit() and int(k) > 0:
-        return round(int(k) * 1.1 / 1048576 + 0.25, 1)
-    return 1.0 if plat == "linux" else 6.0
+        g = round(int(k) * 1.1 / 1048576 + 0.25, 1)
+    else:
+        g = 1.0 if plat == "linux" else 6.0
+    tests = sorted(glob.glob(os.path.join(d, "test", "*.img")))
+    try:
+        b = os.stat(tests[-1]).st_size if tests else 0
+    except OSError:
+        b = 0
+    if b:
+        g = max(g, math.ceil((b / 1073741824 + 0.5) * 10 - 1e-9) / 10)
+    return g
 
 
 def pin_sha(host_root, plat, path):

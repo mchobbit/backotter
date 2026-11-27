@@ -25,6 +25,13 @@
 # 1), 2 when T2_HOST_ROOT is a test's and the images directory is the real
 # one, 3 when a build of this platform is already under way.
 #
+# The boot tests (stick/boot-modes.sh, img-speed.md §9): BKO_BOOT_WIDTH modes at
+# once (default 1, one after another; img-lanes.sh gives as many as its
+# reservation holds at 4.5 GiB each), each mode's boot-MODE.log, .out and .rc
+# in test/.  With BKO_BOOT_RAM (a directory in the reservation's RAM disk) the
+# test image is first copied there and the modes boot the copy, when it fits in
+# BKO_BOOT_RAM_GIB and has test/SHA256SUMS' SHA-256; else the image itself.
+#
 # Provenance (docs/design/img-speed.md §3, C7): the inputs' digests are taken
 # when the build starts (img_inputs.py digest; for FreeBSD once its builder is
 # up and fingerprinted), and the build is refused when its stick/ inputs, its
@@ -207,11 +214,18 @@ sums "$D" && sums "$D/test" || fail "couldn't write SHA256SUMS"
 echo "release: $(tail -n 1 build.log)" >>"$r"
 echo "test:    $(tail -n 1 test/build.log)" >>"$r"
 img=$(ls test/*.img) || fail "no test image"
+# The modes side by side, BKO_BOOT_WIDTH at once, from a copy in BKO_BOOT_RAM (img-speed.md §9).
+bopts=(--width "${BKO_BOOT_WIDTH:-1}")
+if [[ -n ${BKO_BOOT_RAM:-} ]]; then
+    bopts+=(--ram "$BKO_BOOT_RAM" --sha256 "$(cut -d' ' -f1 test/SHA256SUMS | head -n 1)")
+    [[ -z ${BKO_BOOT_RAM_GIB:-} ]] || bopts+=(--ram-gib "$BKO_BOOT_RAM_GIB")
+fi
+bash "$S/boot-modes.sh" "${bopts[@]}" "$P" "$img" test $modes 2>>"$r"
+echo "boot: $(grep -m 1 '^width' test/boot-modes.txt), $(grep -m 1 '^image' test/boot-modes.txt)" >>"$r"
 fails=0 boots=()
 for m in $modes; do
-    media=usb mm=$m; [[ $m == cdrom ]] && { media=cdrom; mm=bios; }
-    python3 "$S/boot-test.py" "$img" "$mm" --platform "$P" --media "$media" --log "test/boot-$m.log" >"test/boot-$m.out" 2>&1
-    rc=$?; [[ $rc -eq 0 ]] || fails=$((fails + 1)); boots+=(--boot "$m=$rc")
+    rc=$(cat "test/boot-$m.rc" 2>/dev/null); [[ $rc =~ ^[0-9]+$ ]] || rc=2
+    [[ $rc -eq 0 ]] || fails=$((fails + 1)); boots+=(--boot "$m=$rc")
     echo "boot $m rc=$rc ($(grep -c '^  ok' "test/boot-$m.out") ok, $(grep -c '^  FAIL' "test/boot-$m.out") FAIL) $(grep -E '^  FAIL|^  ok +(binaries|restic-bko|rustic-bko|bko-holt) ' "test/boot-$m.out" | tr -s ' ' | tr '\n' ' ')" >>"$r"
 done
 # A build that passed: with BKO_IMG_COMPRESS=1, its .xz for download and this

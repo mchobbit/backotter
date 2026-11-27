@@ -453,6 +453,26 @@ class Deal(unittest.TestCase):
         self.assertEqual(p["hosts"]["chopin"]["load_per_core"], 0.12)
 
 
+class ReserveGib(unittest.TestCase):
+    """img_round_facts.reserve_gib: img-lanes.sh's D, at least the test image + 0.5 GiB (I6, §9)."""
+
+    def setUp(self):
+        self.t = tempfile.mkdtemp(prefix="t2-i6-res-")
+        self.addCleanup(shutil.rmtree, self.t, True)
+        self.F = _load("img_round_facts_t", os.path.join(STICK, "img_round_facts.py"))
+
+    def test_the_peak_rule_or_the_image(self):
+        d = os.path.join(self.t, "linux")
+        os.makedirs(os.path.join(d, "test"))
+        self.assertEqual(self.F.reserve_gib(d, "linux"), 1.0)
+        with open(os.path.join(d, "test", "t.img"), "wb") as f:
+            f.truncate(1374389535)                      # 1.28 GiB, sparse
+        self.assertEqual(self.F.reserve_gib(d, "linux"), 1.8)
+        TI.wr(os.path.join(d, "peak-kib"), str(4 << 20) + "\n")   # 1.1 x 4 + 0.25 = 4.65: the peak's larger
+        self.assertEqual(self.F.reserve_gib(d, "linux"), 4.7)
+        self.assertEqual(self.F.reserve_gib(os.path.join(self.t, "netbsd"), "netbsd"), 6.0)
+
+
 class FactsScript(TI.EnvCase):
     """img_round_facts.py on a fixture host: what the planner reads, and it reads only."""
 

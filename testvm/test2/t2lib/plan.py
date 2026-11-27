@@ -1321,6 +1321,10 @@ class Planner:
             building = any(im and im.get("done_exit") is None for im in ims.values())
             v.why_not = (f"images/{v.name}/done.exit is missing: a build is under way, or stopped before its end"
                          if building else f"no current image of {v.name} on a reachable host")
+            return
+        # The boot job's reservation at width 1: the runner widens it only as far as the ceiling holds.
+        from . import img as imgmod
+        self.fit_ceilings(v, lambda h: imgmod.boot_reserve(imgmod.image_size(self.ctx.facts, h, v.name), 1))
 
     def place_img_panel(self, v):
         plat, e = self.panel_of(v.name)

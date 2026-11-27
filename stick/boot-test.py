@@ -40,6 +40,7 @@ import os
 import re
 import select
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -384,6 +385,9 @@ def main() -> int:
     ap.add_argument("--arch", choices=ARCHES, default=host_arch(),
                     help="the image's architecture (default: this host's, %(default)s)")
     args = ap.parse_args()
+    # A stop (stick/boot-modes.sh's, or a job's) unwinds run(): its finally kills QEMU.
+    for s in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(s, lambda n, _f: sys.exit(128 + n))
     if args.arch == "arm64" and args.mode not in FIRMWARE_ARM64:
         ap.error(f"arm64 has no {args.mode} mode: uefi or uefi-secureboot")
     if args.arch == "arm64" and args.platform != "linux":

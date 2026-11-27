@@ -6,7 +6,11 @@
 # Each image is img-one.sh (the one beside this script) under its own
 # `cmp-run.sh --reserve D 10`, WEAR_TAG=img:RUN:P: D GiB of RAM disk from
 # images/P/peak-kib (the last build's peak: 1.1 x it + 0.25 GiB), else 6
-# (linux 1).  TMPDIR=/mnt/bko-ram/img-RUN-P is set inside the reservation (its
+# (linux 1), and never less than the last test image + 0.5 GiB: the boot tests
+# copy the image there and boot it from the RAM disk (img-speed.md §9), as many
+# modes at once as the 10 GiB holds at 4.5 GiB each, two (BKO_BOOT_RAM,
+# BKO_BOOT_RAM_GIB and BKO_BOOT_WIDTH to img-one.sh).
+# TMPDIR=/mnt/bko-ram/img-RUN-P is set inside the reservation (its
 # sudo -E drops one given to cmp-run.sh), so a BUILD_VM_MODE=snapshot build's
 # QEMU file is inside what's reserved; the directory's peak, with what a QEMU
 # holds open there unlinked, is sampled every 5 s, as build-holt.sh --reserved
@@ -30,13 +34,24 @@ if [[ ${T2_HOST_ROOT:-/bkoscratch/test2} != /bkoscratch/test2 ]] && same_dir "$I
     echo "img-lanes: T2_HOST_ROOT=$T2_HOST_ROOT is a test's, and $I is the real set: set BKO_IMG_DIR to a world's" >&2; exit 2
 fi
 rm -f "$I/lanes.done"
-# 1.1 x the last peak + 0.25 GiB, rounded up to a tenth; else the default.
+# 1.1 x the last peak + 0.25 GiB, else the default; and at least the test
+# image's size + 0.5 GiB (its copy for the boot tests); rounded up to a tenth.
 size() {  # P
-    local k; k=$(cat "$I/$1/peak-kib" 2>/dev/null)
+    local k b t
+    k=$(cat "$I/$1/peak-kib" 2>/dev/null)
+    t=$(ls "$I/$1"/test/*.img 2>/dev/null | tail -n 1)
+    b=$( [[ -n $t ]] && stat -Lc %s -- "$t" 2>/dev/null); [[ $b =~ ^[0-9]+$ ]] || b=0
     if [[ $k =~ ^[0-9]+$ && $k -gt 0 ]]; then
-        awk -v k="$k" 'BEGIN { d = 1.1 * k / 1048576 + 0.25; c = int(d * 10); if (c < d * 10) c++; printf "%.1f\n", (c < 10 ? 10 : c) / 10 }'
-    elif [[ $1 == linux ]]; then echo 1; else echo 6; fi
+        awk -v k="$k" -v b="$b" 'BEGIN { d = 1.1 * k / 1048576 + 0.25; i = b / 1073741824 + 0.5; if (b > 0 && i > d) d = i
+            c = int(d * 10); if (c < d * 10) c++; printf "%.1f\n", (c < 10 ? 10 : c) / 10 }'
+    else
+        awk -v d="$([[ $1 == linux ]] && echo 1 || echo 6)" -v b="$b" 'BEGIN { i = b / 1073741824 + 0.5; if (b > 0 && i > d) d = i
+            c = int(d * 10); if (c < d * 10) c++; printf "%.1f\n", c / 10 }'
+    fi
 }
+# The boot tests' width: as many modes as MEM holds at 4.5 GiB each (D8).
+MEM=10
+WIDTH=$(awk -v m="$MEM" 'BEGIN { w = int(m / 4.5); print (w < 1 ? 1 : w) }')
 # The lane's image now: what clean removes, once this lane owns it.
 tmp="" pf="" sampler=""
 clean() {
@@ -65,7 +80,8 @@ one() {  # P
           sleep 5
       done ) </dev/null >/dev/null 2>&1 &
     sampler=$!
-    WEAR_TAG=img:$RUN:$p "$CMP" --reserve "$d" 10 env TMPDIR="$tmp" "${env[@]}" "$HERE/img-one.sh" "$p" >"$I/$p.lane.log" 2>&1
+    WEAR_TAG=img:$RUN:$p "$CMP" --reserve "$d" "$MEM" env TMPDIR="$tmp" BKO_BOOT_RAM="$tmp" BKO_BOOT_RAM_GIB="$d" BKO_BOOT_WIDTH="$WIDTH" \
+        "${env[@]}" "$HERE/img-one.sh" "$p" >"$I/$p.lane.log" 2>&1
     rc=$?
     : >"$pf.done"; wait "$sampler" 2>/dev/null; sampler=""
     # (Written after the build: img-one.sh moves images/P/'s old contents aside at its start.)

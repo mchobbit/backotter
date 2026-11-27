@@ -1,0 +1,169 @@
+#!/bin/sh
+# BackShot1's FreeBSD lane (docs/design/freebsd-bs1.md, D3): which disks a
+# FreeBSD step may touch, and the lane drive's one format.  POSIX sh, as
+# root, on the FreeBSD stick or the installed FreeBSD system.
+#
+#   bs1-lane guard [--lane]   stop unless every disk here is the internal
+#                             disk, the lane drive or the stick, by FreeBSD
+#                             ident (INTERNAL_SERIAL, LANE_SERIAL,
+#                             STICK_SERIAL), none is NEVER_SERIAL, none reads
+#                             XFS and no partition carries one of
+#                             NEVER_PARTUUIDS (mybig512's).  --lane: and
+#                             /dev/ufs/BACKUP_LABEL is on the lane drive
+#   bs1-lane format SERIAL [--yes]
+#                             the guard, then show the disk SERIAL names
+#                             (size, model); --yes: WIPE it and make it the
+#                             lane drive, one GPT partition, UFS2 with SU+J
+#                             labelled BACKUP_LABEL
+#
+# The settings come from bs1.conf beside it, or ahead of it on stdin: the
+# driver runs it as `{ cat CONF; cat bs1-lane; } | sh -s -- ...` on a machine
+# whose lane drive isn't staged yet.
+
+set -eu
+# BS1_LANE_PATH: the unit tests' fakes (test_bs1_drive.py).
+PATH=${BS1_LANE_PATH:-/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin}
+export LC_ALL=C
+
+if [ -z "${INTERNAL_SERIAL:-}" ]; then
+    # shellcheck disable=SC1091
+    . "$(dirname "$0")/bs1.conf"
+fi
+: "${LANE_SERIAL:=}" "${STICK_SERIAL:=}" "${NEVER_SERIAL:=}" "${NEVER_PARTUUIDS:=}" "${BACKUP_LABEL:?bs1.conf has no BACKUP_LABEL}"
+
+die() { echo "bs1-lane: $*" >&2; exit 1; }
+
+[ "$(uname -s)" = FreeBSD ] || die "this is $(uname -s), not FreeBSD"
+[ "$(id -u)" -eq 0 ] || die "run it as root (mdo on the stick)"
+
+ident() {
+    diskinfo -v "/dev/$1" 2>/dev/null | sed -n 's/^[[:space:]]*\([^[:space:]#][^[:space:]]*\)[[:space:]]*# Disk ident\..*/\1/p' | head -n 1
+}
+
+# The disk and every partition, slice and BSD partition of it, by /dev name.
+providers() {
+    # shellcheck disable=SC2010
+    ls /dev | grep -E "^$1((p|s)[0-9]+[a-h]?)?\$" || true
+}
+
+# umass DISK: on a umass-sim bus (a USB drive or stick).
+umass() {
+    camcontrol devlist -v 2>/dev/null | awk -v d="$1" '
+        /^scbus/ { u = ($3 ~ /^umass-sim/); next }
+        u && match($0, /\([^()]*\)$/) { n = split(substr($0, RSTART + 1, RLENGTH - 2), p, ","); for (i = 1; i <= n; i++) if (p[i] == d) f = 1 }
+        END { exit !f }'
+}
+
+# disk_of DEV: the whole disk under DEV (a label, a partition, a .eli).
+disk_of() {
+    p=${1#/dev/}
+    p=${p%.eli}
+    case $p in
+    */*) p=$(glabel status -s 2>/dev/null | awk -v l="$p" '$1 == l { print $3; exit }'); p=${p%.eli} ;;
+    esac
+    for d in $(sysctl -n kern.disks); do
+        if [ "$p" = "$d" ] || echo "$p" | grep -Eq "^$d((p|s)[0-9]+[a-h]?)\$"; then echo "$d"; return 0; fi
+    done
+}
+
+guard() {
+    [ -n "$INTERNAL_SERIAL" ] || die "bs1.conf has no INTERNAL_SERIAL"
+    for s in "$LANE_SERIAL" "$STICK_SERIAL"; do
+        [ -z "$s" ] || [ "$s" != "$NEVER_SERIAL" ] || die "bs1.conf names mybig512's serial $s as the lane drive's or the stick's"
+    done
+    bad=
+    for d in $(sysctl -n kern.disks); do
+        # An optical drive (QEMU's, or a laptop's) is no disk to write to.
+        case $d in cd[0-9]*) continue ;; esac
+        id=$(ident "$d")
+        case $id in
+        '') bad="$bad
+  $d: no ident (diskinfo -v), so it can't be told apart from mybig512" ;;
+        "$NEVER_SERIAL") bad="$bad
+  $d: ident $id is mybig512's (NEVER_SERIAL)" ;;
+        "$INTERNAL_SERIAL" | "$LANE_SERIAL" | "$STICK_SERIAL") ;;
+        *) bad="$bad
+  $d: ident $id is none of INTERNAL_SERIAL ($INTERNAL_SERIAL), LANE_SERIAL (${LANE_SERIAL:-unset}), STICK_SERIAL (${STICK_SERIAL:-unset})" ;;
+        esac
+        for p in $(providers "$d"); do
+            # XFS's superblock magic, in the first sector; read-only.
+            if [ "$(dd if="/dev/$p" bs=4096 count=1 2>/dev/null | head -c 4)" = XFSB ]; then
+                bad="$bad
+  $p: holds XFS (mybig512's file system)"
+            fi
+        done
+        for u in $(gpart list "$d" 2>/dev/null | awk '$1 == "rawuuid:" { print tolower($2) }'); do
+            for n in $NEVER_PARTUUIDS; do
+                [ "$u" != "$(echo "$n" | tr 'A-F' 'a-f')" ] || bad="$bad
+  $d: a partition's GUID $u is mybig512's (NEVER_PARTUUIDS)"
+            done
+        done
+    done
+    [ -z "$bad" ] || die "a disk here isn't one BackShot1's FreeBSD lane may touch: unplug it (D3).$bad"
+    if [ "${1:-}" = --lane ]; then
+        [ -e "/dev/ufs/$BACKUP_LABEL" ] || die "no /dev/ufs/$BACKUP_LABEL: the lane drive isn't plugged in, or isn't formatted (backshot1 format-lane)"
+        d=$(disk_of "/dev/ufs/$BACKUP_LABEL")
+        if [ -z "$d" ] || [ -z "$LANE_SERIAL" ] || [ "$(ident "$d")" != "$LANE_SERIAL" ]; then
+            die "/dev/ufs/$BACKUP_LABEL is on ${d:-no disk}, ident $( [ -n "$d" ] && ident "$d"), not the lane drive's LANE_SERIAL (${LANE_SERIAL:-unset})"
+        fi
+        umass "$d" || die "/dev/ufs/$BACKUP_LABEL is on $d, which isn't a USB disk"
+    fi
+    echo "bs1-lane: every disk here is the internal disk, the lane drive or the stick"
+}
+
+format() {
+    serial=$1
+    [ -n "$serial" ] || die "usage: bs1-lane format SERIAL [--yes]"
+    [ "$serial" = "$LANE_SERIAL" ] || die "format-lane $serial: bs1.conf's LANE_SERIAL is ${LANE_SERIAL:-unset}; the serial to format must be named there first (after a yes for it)"
+    if [ "$serial" = "$INTERNAL_SERIAL" ] || [ "$serial" = "$STICK_SERIAL" ]; then die "$serial is the internal disk's or the stick's"; fi
+    guard
+    disk='' n=0 others=0
+    for d in $(sysctl -n kern.disks); do
+        id=$(ident "$d")
+        if [ "$id" = "$serial" ]; then disk=$d; n=$((n + 1)); fi
+        if umass "$d" && [ "$id" != "$STICK_SERIAL" ]; then others=$((others + 1)); fi
+    done
+    [ "$n" -eq 1 ] || die "$n disks have ident $serial"
+    umass "$disk" || die "$disk ($serial) isn't a USB disk"
+    [ "$others" -eq 1 ] || die "$others USB disks here aren't the stick: only the lane drive may be plugged in besides it"
+    # Nothing on it in use.
+    mount -p | while read -r src _; do
+        case $src in /dev/*) [ "$(disk_of "$src")" != "$disk" ] || die "$src (on $disk) is mounted" ;; esac
+    done
+    swapctl -l 2>/dev/null | awk 'NR > 1 { print $1 }' | while read -r s; do
+        [ "$(disk_of "$s")" != "$disk" ] || die "$s (on $disk) is a swap in use"
+    done
+    for v in $(zpool list -vHP 2>/dev/null | awk '$1 ~ /^\// { print $1 }'); do
+        [ "$(disk_of "$v")" != "$disk" ] || die "$v (on $disk) is in an imported ZFS pool"
+    done
+    if [ -e "/dev/ufs/$BACKUP_LABEL" ] && [ "$(disk_of "/dev/ufs/$BACKUP_LABEL")" != "$disk" ]; then
+        die "another disk already has /dev/ufs/$BACKUP_LABEL"
+    fi
+    echo "the lane drive to format: /dev/$disk"
+    diskinfo -v "$disk" | grep -E '# (mediasize in bytes|Disk descr\.|Disk ident\.|Attachment)'
+    gpart show -l "$disk" 2>/dev/null || echo "  (no partition table)"
+    if [ "${2:-}" != --yes ]; then
+        echo "nothing written: run format-lane $serial --yes to WIPE $disk and make it the lane drive"
+        return 0
+    fi
+    echo "wiping $disk ($serial)"
+    gpart destroy -F "$disk" >/dev/null 2>&1 || true
+    dd if=/dev/zero of="/dev/$disk" bs=1m count=4 2>/dev/null
+    gpart create -s gpt "$disk"
+    gpart add -t freebsd-ufs -a 1m -l bs1lane "$disk"
+    newfs -j -L "$BACKUP_LABEL" "/dev/${disk}p1"
+    i=0
+    until [ -e "/dev/ufs/$BACKUP_LABEL" ]; do
+        i=$((i + 1))
+        [ "$i" -le 20 ] || die "newfs ran, but /dev/ufs/$BACKUP_LABEL didn't appear"
+        sleep 0.5
+    done
+    gpart show -l "$disk"
+    echo "LANE-FORMATTED /dev/ufs/$BACKUP_LABEL on $disk ($serial)"
+}
+
+case ${1:-} in
+guard) guard "${2:-}" ;;
+format) format "${2:-}" "${3:-}" ;;
+*) sed -n '2,20p' "$0" >&2; exit 2 ;;
+esac

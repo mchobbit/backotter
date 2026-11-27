@@ -3,6 +3,12 @@
 # Run from the controlling machine; README.md has the whole procedure.
 #
 #   backshot1 stage TOOLS_DIR     put the scripts, tools and keys on the backup drive
+#   backshot1 stage --rescue TOOLS_DIR
+#                                 FreeBSD lane: the same, through the stick, before
+#                                 any install exists
+#   backshot1 format-lane SERIAL [--yes]
+#                                 FreeBSD lane, on the stick: show the disk SERIAL
+#                                 names; --yes: WIPE it, make it the lane drive
 #   backshot1 adopt [--luks-off | --sleep-on]
 #                                 run bs1-adopt on the machine, over the old login
 #   backshot1 unlock              how this boot opened the LUKS volumes: UNLOCK=drive...
@@ -31,11 +37,20 @@
 #                                 round; stops at the first failure
 #
 # NAME is a run, or a distro for its newest backup: ubuntu-26.10, debian-13.
+#
+# BS1_CONF names the machine's conf (default thinkpad.conf, beside this);
+# BS1_CONF=thinkpad-bsd.conf is the FreeBSD lane (docs/design/freebsd-bs1.md).
 
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-# shellcheck disable=SC1091
-. "$here/thinkpad.conf"
+conf=${BS1_CONF:-$here/thinkpad.conf}
+[[ $conf == */* ]] || conf=$here/$conf
+# shellcheck disable=SC1090
+. "$conf"
+# The FreeBSD lane: its own drive (UFS, /dev/ufs/BACKUP_LABEL), the FreeBSD
+# stick (mdo for sudo, the marker at /.disk), bash from pkg or the tool root.
+BSD=
+[[ ${LANE_OS:-} != freebsd ]] || BSD=1
 
 HOST=${BS1_HOST:-thinkpad.local}
 MACS=(00:e0:4c:68:23:c3 c8:a3:62:50:99:10 84:a9:38:9f:66:52 1c:83:41:e8:f7:38)    # two USB Ethernet adapters, the X13's onboard port, the Lenovo A100's onboard port
@@ -59,6 +74,27 @@ on_rescue() {
     [[ -s $STATE/rescue-ip ]] || die "run find-rescue first"
     ssh "${OPTS[@]}" "backotter@$(cat "$STATE/rescue-ip")" "$@"
 }
+# FreeBSD: the stick and the installed system have one MAC and one host key,
+# so each side's command runs only where the stick's marker is absent
+# (on_host) or present (on_rescue).
+if [[ -n $BSD ]]; then
+    on_host() {
+        local rc=0
+        # shellcheck disable=SC2029
+        ssh "${OPTS[@]}" "root@$HOST" "test ! -e /.disk/backotter.json || exit 97;" "$@" || rc=$?
+        (( rc != 97 )) || echo "backshot1: root@$HOST is the rescue stick (/.disk/backotter.json), not the installed system" >&2
+        return $rc
+    }
+    on_rescue() {
+        local rc=0 ip
+        [[ -s $STATE/rescue-ip ]] || die "run find-rescue first"
+        ip=$(cat "$STATE/rescue-ip")
+        # shellcheck disable=SC2029
+        ssh "${OPTS[@]}" "backotter@$ip" "test -e /.disk/backotter.json || exit 97;" "$@" || rc=$?
+        (( rc != 97 )) || echo "backshot1: backotter@$ip has no /.disk/backotter.json: not the rescue stick" >&2
+        return $rc
+    }
+fi
 
 # Sets d to the drive's mount point on the machine, mounting it if nothing
 # has: at /mnt/bs1-backup, or at /run/bs1-backup where that can't be made
@@ -66,11 +102,30 @@ on_rescue() {
 # create directory '/mnt/bs1-backup': Read-only file system", 2026-11-23).
 # No single quote in it: run_on_drive passes it to the stick inside a pair.
 DRIVE="d=\$(findmnt -nro TARGET -S LABEL=$BACKUP_LABEL | head -n 1); if [ -z \"\$d\" ]; then d=/mnt/bs1-backup; mkdir -p \$d 2>/dev/null || { d=/run/bs1-backup; mkdir -p \$d || exit 1; }; modprobe -q xfs 2>/dev/null; mount LABEL=$BACKUP_LABEL \$d || exit 1; fi"
+# FreeBSD: the lane drive, /dev/ufs/BACKUP_LABEL, where it is mounted already
+# (GhostBSD's desktop may have), else checked (it is mounted by hand, so rc's
+# fsck never sees it, and an unclean UFS won't mount read-write) and mounted
+# at /mnt/bs1-backup.  POSIX sh, the same rule on quotes; fsck's words go to
+# stderr, as stage reads d from stdout.
+HBASH=bash PY3=python3 SUDO='sudo -n' RUNDIR=/run/backotter
+if [[ -n $BSD ]]; then
+    lane=/dev/ufs/$BACKUP_LABEL
+    DRIVE="d=\$(mount -p | while read -r s m _; do [ \"\$s\" != $lane ] || { echo \"\$m\"; break; }; done); if [ -z \"\$d\" ]; then d=/mnt/bs1-backup; mkdir -p \$d || exit 1; fsck -p -t ufs $lane >&2 || { echo \"backshot1: fsck -p $lane failed: is the lane drive plugged in? if it is, fsck_ufs -y it by hand\" >&2; exit 1; }; mount -t ufs $lane \$d || exit 1; fi"
+    # bash by its full path: pkg's on the installed system; on the stick the
+    # tool root's on the drive (run_on_drive).
+    HBASH=/usr/local/bin/bash PY3=/usr/local/bin/python3 SUDO=mdo RUNDIR=/var/run/backotter
+fi
 
 # run_on_drive SCRIPT ARGS...: on the installed system or the stick, whichever is up.
 run_on_drive() {
     local script=$1; shift
-    local cmd="$DRIVE; exec bash \"\$d/backshot1/$script\" $*"
+    local cmd="$DRIVE; exec $HBASH \"\$d/backshot1/$script\" $*"
+    if [[ -n $BSD ]]; then
+        if on_host true 2>/dev/null; then on_host "$cmd"; return; fi
+        cmd="$DRIVE; t=\$d/backshot1/freebsd/tools/usr/local; export LD_LIBRARY_PATH=\$t/lib; exec \$t/bin/bash \"\$d/backshot1/$script\" $*"
+        on_rescue "mdo sh -c '$cmd'"
+        return
+    fi
     if on_host true 2>/dev/null; then on_host "$cmd"; else on_rescue "sudo -n bash -c '$cmd'"; fi
 }
 resolve_run() { run_on_drive bs1-list --resolve "$1" || die "can't choose a backup for \"$1\""; }
@@ -118,18 +173,72 @@ wait_for() {
 }
 # The installed system, not the stick: both present the same host key.
 host_up() { on_host 'test ! -e /cdrom/.disk/backotter.json' </dev/null; }
+[[ -z $BSD ]] || host_up() { on_host 'test ! -e /.disk/backotter.json' </dev/null; }
+
+# lane WHERE ARGS...: bs1-lane ARGS (its guard, D3, or format) as root on the
+# installed system (WHERE host) or the stick (rescue).  The conf goes ahead
+# of the script on stdin, so it works before the drive is staged.
+lane() {
+    local where=$1; shift
+    { cat "$conf"; cat "$here/bs1-lane"; } | if [[ $where == host ]]; then on_host "sh -s -- $*"; else on_rescue "mdo sh -s -- $*"; fi
+}
+
+# stage_tree TOOLS_DIR DIR: what stage sends, laid out in DIR as it lands in
+# the drive's backshot1/.  TOOLS_DIR/freebsd/ (the tool root, the media)
+# goes to backshot1/freebsd/.
+stage_tree() {
+    local tools=$1 t=$2
+    mkdir -p "$t/bin" "$t/runs" "$t/keys"
+    chmod 700 "$t/keys"
+    cp "$here"/bs1-{common,common-freebsd,lane,backup,restore,verify,manifest,ostree,abroot,adopt,luks,unlock-key,list,to-stick,efi} "$here/../../ostree_paths.py" "$t/"
+    cp "$conf" "$t/bs1.conf"
+    cp "$tools/bko-holt" "$tools/rustic-bko" "$t/bin/"
+    cp "$KEYS/id_ed25519.pub" "$t/keys/authorized_keys"
+    cp "$KEYS/ssh_host_ed25519_key" "$KEYS/ssh_host_ed25519_key.pub" "$t/keys/"
+    chmod 755 "$t"/bs1-* "$t"/bin/*
+    chmod 600 "$t/keys/ssh_host_ed25519_key"
+    if [[ -d $tools/freebsd ]]; then cp -R "$tools/freebsd" "$t/"; fi
+}
+# tar_tree DIR: DIR as a tar stream, owned by root, without macOS's metadata.
+tar_tree() {
+    COPYFILE_DISABLE=1 tar -C "$1" --uid 0 --gid 0 --uname root --gname wheel --no-mac-metadata --no-xattrs -cf - .
+}
 rescue_up() { "$0" find-rescue </dev/null; }
 
 case ${1:-} in
 stage)
+    if [[ ${2:-} == --rescue ]]; then
+        # FreeBSD: no installed system yet, so through the stick, as root by
+        # mdo, behind the guard (D3).
+        [[ -n $BSD ]] || die "stage --rescue is the FreeBSD lane's (BS1_CONF=thinkpad-bsd.conf)"
+        tools=${3:?usage: backshot1 stage --rescue TOOLS_DIR}
+        for b in bko-holt rustic-bko; do [[ -x $tools/$b ]] || die "no $tools/$b"; done
+        lane rescue guard --lane </dev/null || die "the guard refused: nothing staged"
+        t=$(mktemp -d "${TMPDIR:-/tmp}/bs1-stage.XXXXXX")
+        trap 'rm -rf "$t"' EXIT
+        stage_tree "$tools" "$t"
+        tar_tree "$t" | on_rescue "mdo sh -c '$DRIVE; mkdir -p \$d/backshot1 && tar -xpf - -C \$d/backshot1 && cd \$d/backshot1 && { [ ! -e keys/disk-passphrase ] || chmod 600 keys/disk-passphrase; } && bin/bko-holt --version && bin/rustic-bko --version && ls -la'" ||
+            die "staging through the stick failed"
+        exit 0
+    fi
     tools=${2:?usage: backshot1 stage TOOLS_DIR}
     for b in bko-holt rustic-bko; do [[ -x $tools/$b ]] || die "no $tools/$b"; done
     old_login_if_new
+    if [[ -n $BSD ]]; then
+        # FreeBSD's installed system: the guard, then one tar stream.
+        lane host guard --lane </dev/null || die "the guard refused: nothing staged"
+        t=$(mktemp -d "${TMPDIR:-/tmp}/bs1-stage.XXXXXX")
+        trap 'rm -rf "$t"' EXIT
+        stage_tree "$tools" "$t"
+        tar_tree "$t" | on_host "$DRIVE; mkdir -p \$d/backshot1 && tar -xpf - -C \$d/backshot1 && cd \$d/backshot1 && { [ ! -e keys/disk-passphrase ] || chmod 600 keys/disk-passphrase; } && bin/bko-holt --version && bin/rustic-bko --version && ls -la" ||
+            die "staging failed"
+        exit 0
+    fi
     d=$(on_host "$DRIVE; echo \"\$d\"")
     on_host "mkdir -p '$d/backshot1/bin' '$d/backshot1/runs' '$d/backshot1/keys'; chmod 700 '$d/backshot1/keys'"
     scp -q "${OPTS[@]}" "$here"/bs1-{common,backup,restore,verify,manifest,ostree,abroot,adopt,luks,unlock-key,list,to-stick,efi} "root@$HOST:$d/backshot1/"
     scp -q "${OPTS[@]}" "$here/../../ostree_paths.py" "root@$HOST:$d/backshot1/"   # bs1-manifest's and bs1-ostree's
-    scp -q "${OPTS[@]}" "$here/thinkpad.conf" "root@$HOST:$d/backshot1/bs1.conf"
+    scp -q "${OPTS[@]}" "$conf" "root@$HOST:$d/backshot1/bs1.conf"
     scp -q "${OPTS[@]}" "$tools/bko-holt" "$tools/rustic-bko" "root@$HOST:$d/backshot1/bin/"
     scp -q "${OPTS[@]}" "$KEYS/id_ed25519.pub" "root@$HOST:$d/backshot1/keys/authorized_keys"
     scp -q "${OPTS[@]}" "$KEYS/ssh_host_ed25519_key" "$KEYS/ssh_host_ed25519_key.pub" "root@$HOST:$d/backshot1/keys/"
@@ -141,18 +250,24 @@ adopt)
     old_login_if_new
     on_host "$DRIVE; exec sh \"\$d/backshot1/bs1-adopt\" ${2:-}"
     ;;
+format-lane)
+    [[ -n $BSD ]] || die "format-lane is the FreeBSD lane's (BS1_CONF=thinkpad-bsd.conf)"
+    serial=${2:?usage: backshot1 format-lane SERIAL [--yes]}
+    [[ -z ${3:-} || $3 == --yes ]] || die "usage: backshot1 format-lane SERIAL [--yes]"
+    lane rescue format "$serial" ${3:+"$3"} </dev/null
+    ;;
 unlock)
-    on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-verify\" --unlock"
+    on_host "$DRIVE; exec $HBASH \"\$d/backshot1/bs1-verify\" --unlock"
     ;;
 phase1)
-    on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-backup\""
+    on_host "$DRIVE; exec $HBASH \"\$d/backshot1/bs1-backup\""
     ;;
 preflight)
-    on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-backup\" --preflight"
+    on_host "$DRIVE; exec $HBASH \"\$d/backshot1/bs1-backup\" --preflight"
     ;;
 to-stick)
     net_cidr >/dev/null    # remembered for find-rescue, which runs once this is down
-    on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-to-stick\""
+    on_host "$DRIVE; exec $HBASH \"\$d/backshot1/bs1-to-stick\""
     sleep 30
     wait_for "the stick" 420 "if the laptop came back up as it was, boot the stick by hand (F12), then find-rescue" rescue_up
     ;;
@@ -178,6 +293,22 @@ find-rescue)
     # Only the stick passes these.
     why=
     for ip in "${ips[@]}"; do
+        if [[ -n $BSD ]]; then
+            # The FreeBSD stick: mdo, its marker at /.disk, the disk's ident
+            # by diskinfo (which needs root).
+            if ! ssh "${OPTS[@]}" "backotter@$ip" 'mdo true && test -f /.disk/backotter.json && hostname' 2>/dev/null </dev/null; then
+                why+=" $ip (not an unlocked FreeBSD rescue stick)"
+                continue
+            fi
+            # shellcheck disable=SC2029
+            if ! ssh "${OPTS[@]}" "backotter@$ip" "for x in \$(sysctl -n kern.disks); do mdo diskinfo -v \$x; done 2>/dev/null | grep -q '^[[:space:]]*${INTERNAL_SERIAL}[[:space:]]*# Disk ident\.'" </dev/null; then
+                why+=" $ip (a rescue stick without disk $INTERNAL_SERIAL)"
+                continue
+            fi
+            echo "$ip" >"$STATE/rescue-ip"
+            echo "RESCUE=$ip"
+            exit 0
+        fi
         if ! ssh "${OPTS[@]}" "backotter@$ip" 'sudo -n true && test -f /cdrom/.disk/backotter.json && hostname' 2>/dev/null </dev/null; then
             why+=" $ip (not an unlocked rescue stick)"
             continue
@@ -214,22 +345,26 @@ phase2)
     until [[ -n $status ]]; do
         sleep 20
         # The remote side always succeeds, so a failure here is ssh's.
-        if out=$(on_rescue 'sudo -n cat /run/backotter/restore.exit 2>/dev/null; true' 2>/dev/null </dev/null); then
+        if out=$(on_rescue "$SUDO cat $RUNDIR/restore.exit 2>/dev/null; true" 2>/dev/null </dev/null); then
             status=$out misses=0
         elif (( ++misses >= 30 )); then
             die "the stick stopped answering (30 tries, 10 min) during the restore"
         fi
         [[ -n $status || $(date +%s) -lt $end ]] || die "no restore.exit from the stick within $limit min (BS1_RESTORE_LIMIT)"
     done
-    on_rescue 'sudo -n tail -n 30 /run/backotter/restore.out'
+    on_rescue "$SUDO tail -n 30 $RUNDIR/restore.out"
     exit "$status"
     ;;
 reboot)
-    on_rescue 'sudo -n systemctl reboot' || true
+    if [[ -n $BSD ]]; then on_rescue 'mdo shutdown -r now' || true; else on_rescue 'sudo -n systemctl reboot' || true; fi
     ;;
 wait-host)
     sleep 30
     wait_for "the restored system" 600 "it may be at an unlock prompt, or hung; it needs a person" host_up
+    if [[ -n $BSD ]]; then
+        on_host 'hostname -s; sed -n "s/^PRETTY_NAME=//p" /etc/os-release | tr -d "\""; if command -v efibootmgr >/dev/null; then efibootmgr | head -n 1; fi' </dev/null
+        exit
+    fi
     on_host 'cat /proc/sys/kernel/hostname; sed -n "s/^PRETTY_NAME=//p" /etc/os-release | tr -d "\""; if command -v efibootmgr >/dev/null; then efibootmgr | head -n 1; fi' </dev/null
     ;;
 cycle)
@@ -251,13 +386,13 @@ cycle)
     host_up || die "the installed system ($HOST) doesn't answer: the cycle starts from it"
     run=$(resolve_run "$name")
     # Refuse, before anything changes, what needs a person each round.
-    info=$(on_host 'bash -s' <<EOF
+    info=$(on_host "$HBASH -s" <<EOF
 $DRIVE
 r="\$d/backshot1/runs/$run"
 if [ -s "\$r/baseline/unlock.txt" ]; then echo "unlock \$(head -n 1 "\$r/baseline/unlock.txt" | cut -d: -f1)"; else echo "unlock missing"; fi
 if [ -e "\$r/baseline/deployments.txt" ]; then echo "ostree yes"; fi
 if [ -e "\$r/baseline/abroot.txt" ]; then echo "abroot yes"; fi
-python3 -c 'import json, sys; print("firmware", json.load(open(sys.argv[1])).get("firmware", {}).get("mode"))' "\$r/layout.json"
+$PY3 -c 'import json, sys; print("firmware", json.load(open(sys.argv[1])).get("firmware", {}).get("mode"))' "\$r/layout.json"
 EOF
     ) || die "can't read $run's baseline and layout"
     case $(awk '$1 == "unlock" { print $2 }' <<<"$info") in
@@ -288,10 +423,16 @@ EOF
         # before they fill the firmware's variable store.  Counted in efivarfs,
         # which every system has (AerynOS has no efibootmgr): Boot#### of the
         # global GUID, not BootNext or BootOrder.  Expanded on the laptop.
+        # FreeBSD: its efibootmgr's list, " Boot0001* ..." or "+Boot0001* ...".
         # shellcheck disable=SC2016
+        if [[ -n $BSD ]]; then
+            n=$(on_host 'l=$(efibootmgr) || exit 1; echo "$l" | grep -Ec "^[+ ]?Boot[0-9A-Fa-f]{4}" || true' </dev/null) ||
+                die "can't count the firmware's boot entries after round $i"
+        else
         n=$(on_host 'v=/sys/firmware/efi/efivars; findmnt -rn $v >/dev/null || mount -t efivarfs efivarfs $v || exit 1
             l=$(ls $v) || exit 1; echo "$l" | grep -c "^Boot[0-9A-F][0-9A-F][0-9A-F][0-9A-F]-8be4df61-93ca-11d2-aa0d-00e098032b8c" || true' </dev/null) ||
             die "can't count the firmware's boot entries after round $i"
+        fi
         first=${first:-$n}
         echo "=== round $i of $count: $n firmware boot entries (round 1: $first)"
         (( n - first <= ${BS1_ENTRY_GROWTH:-8} )) ||
@@ -302,15 +443,15 @@ EOF
 verify)
     run=$(resolve_run "${2:?usage: backshot1 verify NAME}")
     echo "backup: $run"
-    on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-verify\" '$run'"
+    on_host "$DRIVE; exec $HBASH \"\$d/backshot1/bs1-verify\" '$run'"
     ;;
 check-boot)
     run=$(resolve_run "${2:?usage: backshot1 check-boot NAME}")
     echo "backup: $run"
-    on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-verify\" --boot '$run'"
+    on_host "$DRIVE; exec $HBASH \"\$d/backshot1/bs1-verify\" --boot '$run'"
     ;;
 *)
-    sed -n '2,33p' "$0"
+    sed -n '2,42p' "$0"
     exit 2
     ;;
 esac

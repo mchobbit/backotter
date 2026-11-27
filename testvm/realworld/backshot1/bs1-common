@@ -913,3 +913,10 @@ luks_key_test() {
     done
     return $bad
 }
+
+# FreeBSD (docs/design/freebsd-bs1.md): its own versions of the functions
+# above, and the tool root's PATH; the Linux paths never read it.
+if [[ $OSTYPE == freebsd* ]]; then
+    # shellcheck source=bs1-common-freebsd
+    . "$HERE/bs1-common-freebsd" || { echo "no bs1-common-freebsd in $HERE" >&2; exit 2; }
+fi

@@ -501,6 +501,57 @@ check on chopin: `freebsd15` with the lane drive (vtbd1, UFS at
 `/mnt/bs1-backup`, tmpfs below, nullfs from it) and a USB stick (da0,
 mounted): the plain dump names both, `--only-disk vtbd0` neither.
 
+**F5 part 1 done 2026-11-27: bs1-common-freebsd and the driver.**
+bs1-common sources `bs1-common-freebsd` at its end when bash's `$OSTYPE` is
+freebsd* (no `uname` process on Linux). It puts the tool root
+(`BS1_TOOLS`, else `HERE/freebsd/tools` on the stick) first on PATH with
+`LD_LIBRARY_PATH`, and redefines the functions the table lists. Three
+things differ from the table:
+
+- `hold_periodic` runs through `hold_awake`, which bs1-backup and
+  bs1-verify already call. cron stops, and a `daemon -f` child starts it
+  again once the script exits, so the step scripts need no restart call.
+- `check_coverage` stops on an unattached GELI partition, a ZFS pool that
+  isn't imported, and any unmounted dataset over 1 MiB that isn't
+  `canmount=off` (an inactive BE among them). Smaller unmounted ones
+  (zroot/ROOT, mountpoint none) pass.
+- `unlock_mode` reports GELIBOOT as attended, a provider keyed only by key
+  files as own, and family F as drive only with `kenv bs1.unlock=drive*`
+  and `/etc/backshot1/geli-unlock` present (F11 finishes it).
+
+The driver takes `BS1_CONF` (a name beside it or a path), and
+`thinkpad-bsd.conf` sets `LANE_OS=freebsd`. With the default conf every
+command string the driver sends is unchanged (checked with ssh faked:
+identical). On FreeBSD:
+
+- `on_host`/`on_rescue` prefix the stick-marker test, and exit 97 says
+  which side it was.
+- `DRIVE` reuses an existing mount (by `mount -p`), else runs `fsck -p`
+  (output to stderr) and `mount -t ufs` at /mnt/bs1-backup.
+- bash is called by its full path; `stage` (on the installed system) and
+  `stage --rescue` send one tar stream behind the guard (`TOOLS_DIR/freebsd/`
+  becomes `backshot1/freebsd/`).
+
+D3's guard and the format are a new POSIX sh file, `bs1-lane` (`guard
+[--lane]`, `format SERIAL [--yes]`). The driver sends it with the conf
+ahead of it on stdin, so it runs before anything is staged.
+
+- `format-lane SERIAL` refuses unless SERIAL is the conf's `LANE_SERIAL`.
+  Without `--yes` it only shows the disk (size, descr, ident, attachment);
+  with `--yes` it runs gpart destroy, a 4 MiB dd, a GPT partition labelled
+  `bs1lane`, and `newfs -j -L BS1BSD`.
+- Optical drives (cdN) are skipped by the guard.
+
+Settled on a freebsd15 guest (chopin, `--ram`):
+
+- `geli attach -C` works on an attached provider (right key 0, wrong key
+  refused).
+- nullfs of / doesn't show the mounts below it.
+- QEMU usb-storage's `serial=` is da(4)'s ident, padded with blanks.
+- A 1 MiB write over QEMU's xHCI hung for over 4 minutes, so the
+  rehearsal's lane drive must be on EHCI, as the stick is
+  (stick/freebsd/README.md).
+
 F1 and F4 are independent and can run side by side; F2 needs F1; F5 needs
 F4; F6 needs F1 and F5; F7 needs F6; F3 needs F6; F8 needs F2, F3 and F7.
 Nothing writes to the A100's disks, NVRAM or a real USB drive before F3,

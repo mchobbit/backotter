@@ -1,0 +1,410 @@
+# BackShot1 on FreeBSD (docs/design/freebsd-bs1.md): bs1-common's Linux
+# functions, again for FreeBSD.  Sourced by bs1-common, after everything it
+# defines, when bash says the system is FreeBSD; the Linux paths never read
+# this file.  Nothing here runs anything when sourced but the PATH below.
+#
+# What changes: no /proc, /sys, /run, lsblk, findmnt, blkid or systemd.
+# Disks by `sysctl kern.disks` and their ident (`diskinfo -v`, "Disk ident."),
+# partitions by `gpart list`, labels by `glabel status`, mounts by `mount -p`,
+# file systems by `fstyp`, the tree by nullfs.  No LVM, md or LUKS; GELI
+# instead (geli list, geli dump).
+
+# The tool root on the lane drive (D5): pkg's bash and python3 for the stick,
+# whose image carries neither.  Ahead of bs1-common's PATH, which dropped
+# whatever the caller put first.  On the installed system they come from pkg
+# in /usr/local, already on bs1-common's PATH.  BS1_TOOLS moves it.
+BSD_MARKER=/.disk/backotter.json
+BSD_TOOLS=${BS1_TOOLS:-}
+if [[ -z $BSD_TOOLS && -e $BSD_MARKER && -x $HERE/freebsd/tools/usr/local/bin/bash ]]; then
+    BSD_TOOLS=$HERE/freebsd/tools
+fi
+if [[ -n $BSD_TOOLS ]]; then
+    PATH=$BSD_TOOLS/usr/local/bin:$PATH
+    export LD_LIBRARY_PATH=$BSD_TOOLS/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+fi
+
+# No /run: under /var/run, which is on the source's root, so the empty
+# directories are in the backup (var/run/* is on the manifest's churn list).
+TREE=/var/run/bs1-src
+RO_MOUNTS=/var/run/bs1-ro
+# shellcheck disable=SC2034
+UNLOCK_MARK=/var/run/backshot1-unlock
+REAL_FS='ufs|msdosfs|zfs'
+# The GELI record family F's adopt writes (F11), in the installed system.
+GELI_REC=/etc/backshot1/geli-unlock
+
+this_host() { local h; h=$(hostname -s); printf '%s\n' "${h%%.*}"; }
+
+# bsd_ident DISK: the disk's ident ("Disk ident." in diskinfo -v), or nothing.
+bsd_ident() {
+    diskinfo -v "/dev/${1#/dev/}" 2>/dev/null | sed -n 's/^[[:space:]]*\([^[:space:]#][^[:space:]]*\)[[:space:]]*# Disk ident\..*/\1/p' | head -n 1
+}
+
+bsd_disks() { sysctl -n kern.disks 2>/dev/null | tr ' ' '\n' | sed '/^$/d' | LC_ALL=C sort; }
+
+# bsd_provider DEV: the GEOM provider under DEV, by name: /dev/gpt/efiboot0
+# is nda0p1, /dev/nda0p3.eli is nda0p3.
+bsd_provider() {
+    local p=${1#/dev/}
+    p=${p%.eli}
+    if [[ $p == */* ]]; then
+        p=$(glabel status -s 2>/dev/null | awk -v l="$p" '$1 == l { print $3; exit }')
+        p=${p%.eli}
+    fi
+    printf '%s\n' "$p"
+}
+
+# The one disk with INTERNAL_SERIAL, by name.
+internal_disk() {
+    local found='' d
+    for d in $(bsd_disks); do
+        [[ $(bsd_ident "$d") == "$INTERNAL_SERIAL" ]] && found+=$d$'\n'
+    done
+    found=${found%$'\n'}
+    [[ -n $found && $(wc -l <<<"$found") -eq 1 ]] || return 1
+    echo "$found"
+}
+
+# disk_of DEV: the whole disk DEV is a partition, slice or label of.
+disk_of() {
+    local p d
+    p=$(bsd_provider "$1")
+    [[ -n $p ]] || return 0
+    for d in $(bsd_disks); do
+        if [[ $p == "$d" || $p =~ ^$d(p[0-9]+|s[0-9]+[a-h]?)$ ]]; then echo "$d"; return 0; fi
+    done
+}
+
+# bsd_umass DISK: DISK is a USB mass-storage disk (da on umass-sim).
+bsd_umass() {
+    camcontrol devlist -v 2>/dev/null | awk -v d="$1" '
+        /^scbus/ { u = ($3 ~ /^umass-sim/); next }
+        u && match($0, /\([^()]*\)$/) { n = split(substr($0, RSTART + 1, RLENGTH - 2), p, ","); for (i = 1; i <= n; i++) if (p[i] == d) f = 1 }
+        END { exit !f }'
+}
+
+# The lane drive's own disk, checked: on USB, and not the internal disk.
+backup_disk() {
+    local disk
+    [[ -e /dev/ufs/$BACKUP_LABEL ]] || return 1
+    disk=$(disk_of "/dev/ufs/$BACKUP_LABEL")
+    [[ -n $disk && $disk != "$1" ]] && bsd_umass "$disk" || return 1
+    echo "$disk"
+}
+
+# bsd_parts DISK: "NAME RAWTYPE RAWUUID START EFIMEDIA" for each of the
+# disk's partitions (slices on MBR), from gpart list; "-" for what it lacks.
+bsd_parts() {
+    gpart list "$1" 2>/dev/null | awk '
+        function out() { if (n != "") print n, (t == "" ? "-" : t), (u == "" ? "-" : u), (s == "" ? "-" : s), (e == "" ? "-" : e); n = t = u = s = e = "" }
+        /^Providers:/ { p = 1; next }
+        /^Consumers:/ { out(); p = 0; next }
+        !p { next }
+        /^[0-9]+\. Name: / { out(); n = $3; next }
+        $1 == "rawtype:" { t = $2 }
+        $1 == "rawuuid:" { u = tolower($2) }
+        $1 == "start:" { s = $2 }
+        $1 == "efimedia:" { e = $2 }
+        END { out() }'
+}
+
+bsd_scheme() { gpart show "$1" 2>/dev/null | awk 'NR == 1 { print $5; exit }'; }
+
+# disk_esps DISK: as bs1-common's: "DEVICE KEY", KEY the HD() node's name
+# for the partition in lower case: its GUID on GPT, mbr,0xSIG,0xSTART on MBR
+# (no leading zeros).  From gpart's efimedia where it has one.  On MBR the
+# EFI type (0xef, 239) first, then the FAT types (0x0b, 0x0c, 0x0e) holding
+# msdosfs.
+disk_esps() {
+    local scheme name type uuid start media sig key fat=''
+    scheme=$(bsd_scheme "$1")
+    case $scheme in
+    GPT)
+        while read -r name type uuid start media; do
+            [[ $(tr 'A-F' 'a-f' <<<"$type") == "$ESP_TYPE" && $uuid != - ]] || continue
+            printf '/dev/%s %s\n' "$name" "$uuid"
+        done < <(bsd_parts "$1")
+        ;;
+    MBR)
+        sig=$(dd if="/dev/$1" bs=512 count=1 2>/dev/null | od -An -tx4 -j440 -N4 | tr -d ' \n')
+        [[ $sig =~ ^[0-9a-fA-F]{1,8}$ ]] || return 1
+        while read -r name type uuid start media; do
+            case $type in
+            239 | 11 | 12 | 14) ;;
+            *) continue ;;
+            esac
+            [[ $(fstyp "/dev/$name" 2>/dev/null) == msdosfs ]] || continue
+            if [[ $media == HD\(*,MBR,* ]]; then
+                key=$(awk -F'[(,)]' '{ print "mbr," $4 "," $5 }' <<<"$media" | tr 'A-F' 'a-f' | sed -E 's/0x0+([0-9a-f])/0x\1/g')
+            else
+                [[ $start =~ ^[0-9]+$ ]] || return 1
+                key=$(printf 'mbr,0x%x,0x%x' "$((16#$sig))" "$start")
+            fi
+            if [[ $type == 239 ]]; then printf '/dev/%s %s\n' "$name" "$key"; else fat+="/dev/$name $key"$'\n'; fi
+        done < <(bsd_parts "$1")
+        printf '%s' "$fat"
+        ;;
+    esac
+}
+
+# boot_entry_for KEY: as bs1-common's, from FreeBSD's efibootmgr -v, whose
+# entries start with "+" (BootCurrent) or a space, and whose BootOrder line
+# is "BootOrder  : 0001, 0000"; Linux's form is read too.
+boot_entry_for() {
+    awk -v k="$1" '
+        /^BootOrder *:/ { s = $0; sub(/^[^:]*:/, "", s); gsub(/[ \t]/, "", s); n = split(s, ord, ",") }
+        /^[+ ]?Boot[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]/ {
+            l = tolower($0)
+            while (match(l, /0x0[0-9a-f]/)) l = substr(l, 1, RSTART + 1) substr(l, RSTART + 3)
+            i = index($0, "Boot")
+            if (index(l, k ",")) { e = toupper(substr($0, i + 4, 4)); has[e] = 1; if (first == "") first = e }
+        }
+        END {
+            for (i = 1; i <= n; i++) if (toupper(ord[i]) in has) { print toupper(ord[i]); exit }
+            if (first != "") print first
+        }'
+}
+
+removable_loader() {
+    local esp key tmp found
+    while read -r esp key; do
+        [[ -n $esp ]] || continue
+        tmp=$(mktemp -d) || return 1
+        if mount -t msdosfs -o ro "$esp" "$tmp"; then
+            found=$(find "$tmp" -maxdepth 3 -ipath "$tmp/efi/boot/bootx64.efi" | head -n 1)
+            umount "$tmp"
+        else
+            found=
+            say "can't mount $esp" >&2
+        fi
+        rmdir "$tmp"
+        if [[ -n $found ]]; then
+            printf '%s %s\n' "$esp" "${found#"$tmp"}"
+            return 0
+        fi
+    done < <(disk_esps "$1")
+    return 1
+}
+
+# mount -p: "SOURCE<tab>TARGET<tab>FSTYPE<tab>OPTIONS<tab>0<tab>0".
+bsd_mounts() { mount -p 2>/dev/null; }
+bsd_mounted() { bsd_mounts | awk -v m="$1" '$2 == m { f = 1 } END { exit !f }'; }
+root_source() { bsd_mounts | awk '$2 == "/" { s = $1 } END { print s }'; }
+
+# hold_snapshotters: nothing snapshots on a FreeBSD base system.
+hold_snapshotters() { return 0; }
+
+# hold_awake WHY: FreeBSD's base system doesn't suspend by itself; what
+# changes files under a backup or a verify is cron (periodic daily at 03:01,
+# save-entropy every 11 min, newsyslog), so cron stops until this script
+# exits, and starts again after, by a detached child that waits for it.
+hold_awake() { hold_periodic "$@"; }
+hold_periodic() {
+    service cron onestatus >/dev/null 2>&1 || { say "cron isn't running: nothing to hold"; return 0; }
+    service cron onestop >/dev/null 2>&1 || { say "WARNING: service cron onestop failed: periodic(8) could change files under this"; return 0; }
+    # shellcheck disable=SC2016
+    daemon -f sh -c 'while kill -0 "$1" 2>/dev/null; do sleep 5; done; service cron onestart' bs1-cron "$$" </dev/null >/dev/null 2>&1
+    say "holding cron (periodic, save-entropy, newsyslog) off while this runs: $1"
+}
+
+# on_disk SOURCE DISK: does this mount's source rest on DISK, through a
+# label, GELI, or a ZFS pool's vdevs?
+on_disk() {
+    local src=$1 disk=$2 v
+    if [[ $src == /dev/* ]]; then
+        [[ $(disk_of "$src") == "$disk" ]]
+        return
+    fi
+    command -v zpool >/dev/null || return 1
+    for v in $(zpool list -vHP "${src%%/*}" 2>/dev/null | awk '$1 ~ /^\// { print $1 }'); do
+        [[ $(disk_of "$v") == "$disk" ]] && return 0
+    done
+    return 1
+}
+
+# The real file systems mounted from DISK, parents first:
+# PATH<tab>FROM<tab>FSTYPE.  A ZFS dataset mounted twice is in it once.
+internal_mounts() {
+    local disk=$1 src target fs
+    bsd_mounts | while read -r src target fs _; do
+        [[ $fs =~ ^($REAL_FS)$ ]] || continue
+        on_disk "$src" "$disk" || continue
+        printf '%s\t%s\t%s\t%s\n' "$target" "$target" "$fs" "$([[ $fs == zfs ]] && printf '%s' "$src")"
+    done | LC_ALL=C sort | awk -F'\t' '$4 != "" && seen[$4]++ { next } { print $1 "\t" $2 "\t" $3 }'
+}
+
+# bsd_pools DISK: the imported pools with a vdev on DISK.
+bsd_pools() {
+    local pool v
+    command -v zpool >/dev/null || return 0
+    for pool in $(zpool list -Ho name 2>/dev/null); do
+        for v in $(zpool list -vHP "$pool" 2>/dev/null | awk '$1 ~ /^\// { print $1 }'); do
+            if [[ $(disk_of "$v") == "$1" ]]; then echo "$pool"; break; fi
+        done
+    done
+}
+
+# Stops if DISK holds a file system the running system hasn't mounted: it
+# would be erased without being in the backup.  A partition by fstyp (on its
+# .eli where GELI is attached: an unattached one stops it); a ZFS pool must be
+# imported, and its datasets mounted, but a canmount=off one (bsdinstall's
+# zroot/usr, zroot/var) and an unmounted one holding under 1 MiB (zroot/ROOT,
+# mountpoint none; the pool root): any other stops it (an inactive boot
+# environment: D9).
+check_coverage() {
+    local mounted pools name dev fs label pool ds mnt can mp ref
+    mounted=$(bsd_mounts | while read -r src _; do [[ $src == /dev/* ]] && bsd_provider "$src"; done)
+    pools=$(zpool list -Ho name 2>/dev/null)
+    while read -r name _; do
+        dev=/dev/$name
+        [[ -e $dev.eli ]] && dev=$dev.eli
+        fs=$(fstyp "$dev" 2>/dev/null) || continue
+        case $fs in
+        ufs | msdosfs)
+            grep -qxF "$name" <<<"$mounted" || die "$dev ($fs) isn't mounted, so it wouldn't be backed up"
+            ;;
+        zfs)
+            label=$(fstyp -l "$dev" 2>/dev/null | awk '{ print $2 }')
+            if [[ -z $label ]] || ! grep -qxF "$label" <<<"$pools"; then
+                die "$dev holds the ZFS pool ${label:-(no name)}, which isn't imported, so it wouldn't be backed up"
+            fi
+            ;;
+        geli) die "$dev is GELI and isn't attached, so it wouldn't be backed up" ;;
+        esac
+    done < <(bsd_parts "$1")
+    for pool in $(bsd_pools "$1"); do
+        while IFS=$'\t' read -r ds mnt can mp ref; do
+            [[ $mnt == yes || $can == off ]] && continue
+            (( ref < 1048576 )) && continue
+            die "the ZFS dataset $ds (mountpoint $mp, canmount $can, $ref bytes) isn't mounted, so it wouldn't be backed up$([[ $can == noauto ]] && printf ' (an inactive boot environment? bectl list)')"
+        done < <(zfs list -Hp -t filesystem -o name,mounted,canmount,mountpoint,referenced -r "$pool" 2>/dev/null)
+    done
+}
+
+# The read-only tree of DISK's file systems at $TREE: a read-only nullfs
+# mount of each one alone, parents first, so /dev, /tmp's tmpfs and the
+# lane drive aren't in it.
+make_tree() {
+    local path from list
+    bsd_mounted "$TREE" && die "$TREE is already mounted"
+    list=$(internal_mounts "$1") || die "can't tell which file systems to back up"
+    mkdir -p "$TREE"
+    while IFS=$'\t' read -r path from _; do
+        [[ -n $path ]] || continue
+        must mount -t nullfs -o ro "$from" "$TREE${path%/}"
+    done <<<"$list"
+    bsd_mounted "$TREE" || die "nothing on $1 is mounted"
+}
+
+# Deepest first.
+drop_tree() {
+    local m
+    bsd_mounts | awk -v t="$TREE" -v r="$RO_MOUNTS" '$2 == t || index($2, t "/") == 1 || index($2, r "/") == 1 { print $2 }' |
+        LC_ALL=C sort -r | while read -r m; do umount "$m"; done
+    sync
+}
+
+# pkg's packages (the base system's too, on pkgbase), NAME<tab>VERSION.  pkg -N
+# first: without a bootstrapped pkg, /usr/sbin/pkg would offer to fetch one.
+package_list() {
+    if pkg -N >/dev/null 2>&1; then pkg query '%n %v' | tr ' ' '\t'
+    else echo "no package manager known"
+    fi 2>/dev/null | LC_ALL=C sort
+}
+
+# No GRUB on LVM.
+lvmid_record() { echo "GRUBLV -"; }
+
+swap_names() { swapctl -l 2>/dev/null | awk 'NR > 1 { print $1 }' | LC_ALL=C sort; }
+
+# The enabled rc.d services that aren't running (ht1-bsd.sh's SERVICE_STATE).
+failed_units() {
+    local s o
+    for s in $(service -e 2>/dev/null); do
+        o=$("$s" status 2>&1)
+        case $o in *"is not running"*) echo "${s##*/}" ;; esac
+    done | LC_ALL=C sort
+}
+
+# No zvols are stacked on here (no LUKS on a zvol), no LUKS at all.
+zvols_on() { return 0; }
+disk_devices() {
+    local name
+    echo "/dev/$1"
+    bsd_parts "$1" | while read -r name _; do echo "/dev/$name"; [[ ! -e /dev/$name.eli ]] || echo "/dev/$name.eli"; done
+}
+luks_devices() { return 0; }
+luks_names() { return 0; }
+luks_key_test() { geli_key_test "$@"; }
+
+zfs_passphrase_roots() {
+    local pool
+    for pool in $(bsd_pools "$1"); do
+        zfs list -H -o name,encryptionroot,keyformat -r "$pool" 2>/dev/null | awk -F'\t' '$1 == $2 && $3 == "passphrase" { print $1 }'
+    done | LC_ALL=C sort -u
+}
+
+# geli_providers DISK: "PARTITION FLAGS ITERATIONS" for each GELI provider
+# on DISK's partitions, attached or not, but the onetime ones (swap keyed
+# from random at each boot).  ITERATIONS -1: no passphrase, key files only.
+geli_providers() {
+    local name dump flags it
+    while read -r name _; do
+        dump=$(geli dump "/dev/$name" 2>/dev/null) || continue
+        flags=$(awk '$1 == "flags:" { print $2; exit }' <<<"$dump")
+        it=$(awk '$1 == "iterations:" { print $2; exit }' <<<"$dump")
+        # G_ELI_FLAG_ONETIME 0x1; G_ELI_FLAG_GELIBOOT 0x80.
+        (( ${flags:-0} & 0x1 )) && continue
+        printf '%s %s %s\n' "$name" "${flags:-0}" "${it:-0}"
+    done < <(bsd_parts "$1")
+}
+
+# geli_key_test DISK KEY: KEY's passphrase opens every GELI provider on DISK
+# that asks for one: geli attach -C, a dry run that attaches nothing.  A
+# provider keyed by key files as well needs them: those come back with the
+# restore, so only the passphrase is tested where they are absent here.
+geli_key_test() {
+    local name flags it bad=0
+    while read -r name flags it; do
+        [[ -n $name && $it != -1 ]] || continue
+        geli attach -C -j "$2" "/dev/$name" >/dev/null 2>&1 || { echo "the drive's key doesn't open the GELI provider $name"; bad=1; }
+    done < <(geli_providers "$1")
+    return $bad
+}
+
+# unlock_mode DISK [LAYOUT]: as bs1-common's, for GELI and ZFS native
+# encryption.  A GELIBOOT provider makes the loader ask: attended.  One keyed
+# by key files alone opens by itself: own.  One that asks for a passphrase
+# without GELIBOOT (the boot-pool layout) is family F's, drive when the
+# loader's local.lua found the drive's key at this boot (kenv bs1.unlock,
+# F11), else typed.
+unlock_mode() {
+    local disk=$1 layout=${2:-} zfs name flags it how mode=own why='' lines='' n=0 kv
+    if [[ -n $layout ]]; then zfs=$(layout_zfs_passphrase "$layout" | tr '\n' ' ')
+    else zfs=$(zfs_passphrase_roots "$disk" | tr '\n' ' ')
+    fi
+    if [[ -n $zfs ]]; then echo "attended: ZFS native encryption asks for ${zfs% }"; return 0; fi
+    kv=$(kenv -q bs1.unlock 2>/dev/null)
+    while read -r name flags it; do
+        [[ -n $name ]] || continue
+        n=$((n + 1))
+        if (( flags & 0x80 )); then
+            how=typed mode=attended why="the loader asks for the passphrase of the GELIBOOT provider $name"
+        elif [[ $it == -1 ]]; then
+            how=own
+        elif [[ $kv == drive* && -r $GELI_REC ]]; then
+            how=drive
+            [[ $mode == attended ]] || mode=drive why="the lane drive's key opened every GELI provider that asks at this boot ($kv)"
+        else
+            how=typed mode=attended
+            why="$name asks for a passphrase and the drive's key didn't open it at this boot${kv:+ (bs1.unlock=$kv)}"
+        fi
+        lines+="  $name $how"$'\n'
+    done < <(geli_providers "$disk")
+    if (( n == 0 )); then echo "none: nothing on $disk is encrypted"; return 0; fi
+    [[ $mode != own ]] || why="every GELI provider opens with no one typing"
+    echo "$mode: $why"
+    printf '%s' "$lines"
+}
+
+:

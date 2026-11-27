@@ -554,7 +554,11 @@ class FactsScript(TI.EnvCase):
         self.assertEqual(f["images"]["haiku"]["why"], "no test image (a build moved it away)")
         self.assertEqual(f["sets"]["bko-bin"], sha("sums\n"))
         self.assertIsNone(f["sets"]["holt-bin"])
-        self.assertEqual(f["refresh"], {p: p in ("linux", "netbsd") for p in PLATS})   # I3, I4: Linux, NetBSD
+        # I3, I4: Linux, and each VM platform whose build.sh has its refresh (NetBSD first).
+        has = {p: subprocess.run(["grep", "-Eq", r"^[[:space:]]*refresh\)", os.path.join(w, "stick", p, "build.sh")]).returncode == 0
+               for p in PLATS if p != "linux"}
+        self.assertEqual(f["refresh"], dict(has, linux=True))
+        self.assertTrue(f["refresh"]["netbsd"])
         self.assertEqual(f["bin_sizes"]["netbsd"], {"restic-bko": 14, "rustic-bko": 14, "bko-holt": 12})
         self.assertEqual(before, sorted(os.path.join(a, x) for a, _, fs in os.walk(imgs) for x in fs))
 

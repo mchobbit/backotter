@@ -6,7 +6,8 @@
 # in its listing (swap_missing).  The layout, partition table, boot code and ESP are not listed here:
 # C2 compares them byte for byte, the config partition aside.  Tree `layout` (img_inputs.py layout: the
 # MBR and GPT, each partition's bytes, the system area, the El Torito images, positions and ids masked)
-# names the GPT partitions a refresh rewrites, /gpt/part/N; layout rows never enter the OS manifest.
+# names the partitions a refresh rewrites, /gpt/part/N (or /mbr/part/N on a disk with no GPT, FreeBSD's,
+# whose slices it hashes); layout rows never enter the OS manifest.
 # Linux's /boot.catalog holds only the boot images' positions, which move with the layer's size: the
 # layout compares it with those masked.
 linux	iso	/.disk/backotter.json	marker
@@ -23,6 +24,8 @@ freebsd	root	/usr/local/bin/restic-bko	bin
 freebsd	root	/usr/local/bin/rustic-bko	bin	optional
 freebsd	root	/usr/local/bin/bko-holt	bin
 freebsd	root	/.disk/backotter.json	marker
+freebsd	layout	/mbr/part/2	rewritten
+freebsd	layout	/mbr/part/3	rewritten
 netbsd	root	/usr/local/bin/restic-bko	bin
 netbsd	root	/usr/local/bin/rustic-bko	bin	optional
 netbsd	root	/usr/local/bin/bko-holt	bin
@@ -50,6 +53,8 @@ illumos	archive	/usr/local/bin/restic-bko	bin
 illumos	archive	/usr/local/bin/rustic-bko	bin
 illumos	archive	/usr/local/bin/bko-holt	bin
 illumos	archive	/.disk/backotter.json	marker
+illumos	layout	/gpt/part/3	rewritten
+illumos	layout	/gpt/part/4	rewritten
 haiku	bfs	/system/non-packaged/bin/rustic-bko	bin
 haiku	bfs	/system/non-packaged/bin/bko-holt	bin
 haiku	bfs	/.disk/backotter.json	marker

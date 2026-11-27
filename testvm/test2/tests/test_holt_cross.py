@@ -197,6 +197,41 @@ class E2Judges(unittest.TestCase):
         # unmet_versions: a library the sysroot lacks, or one without the version, is unmet.
         self.assertEqual(holt_e2.unmet_versions(["libc.so.8 DF506.0"], self.d), ["libc.so.8 DF506.0"])
 
+    def test_version_needs_explained_by_the_sysroot_alone(self):
+        # (DragonFly's: the VM build needs DF508.0, the cross build DF506.0, which the sysroot's
+        # libc.so.8 defines; one it doesn't define is a DIFF, and with no sysroot it is one too)
+        from unittest import mock
+        vm, x = elf(self.p("vm")), elf(self.p("x"))
+        sr = os.path.join(self.d, "sr")
+        os.makedirs(os.path.join(sr, "lib"))
+        with open(os.path.join(sr, "lib", "libc.so.8"), "w"):
+            pass
+        base = holt_e2.shape(vm)
+        need = {vm: ["libc.so.8 DF306.0", "libc.so.8 DF508.0"], x: ["libc.so.8 DF306.0", "libc.so.8 DF506.0"]}
+        with mock.patch.object(holt_e2, "shape", lambda p: dict(base, version_needs=need[p])), \
+                mock.patch.object(holt_e2, "version_defs", lambda p: {"DF306.0", "DF506.0", "DF508.0"}):
+            rc, out = self.run_cmd(["elf", "dragonfly", vm, x, sr])
+            self.assertEqual(rc, 0, out)
+            self.assertIn("explained version_needs: VM", out)
+            rc, out = self.run_cmd(["elf", "dragonfly", vm, x])
+            self.assertEqual(rc, 1, out)
+            self.assertIn("DIFF version_needs", out)
+        with mock.patch.object(holt_e2, "shape", lambda p: dict(base, version_needs=need[p])), \
+                mock.patch.object(holt_e2, "version_defs", lambda p: {"DF306.0", "DF508.0"}):
+            rc, out = self.run_cmd(["elf", "dragonfly", vm, x, sr])
+            self.assertEqual(rc, 1, out)
+            self.assertIn("DIFF version_needs", out)
+
+    def test_ibt_pads_count_the_file_bytes_of_code(self):
+        # (a code LOAD whose memsz exceeds its filesz: the density is of the bytes in the file)
+        p = self.ob("m")
+        e = holt_e2.Elf(p)
+        i = next(n for n, ph in enumerate(e.ph) if ph[0] == 1)
+        with open(p, "r+b") as f:
+            f.seek(64 + 56 * i + 40)   # p_memsz
+            f.write(struct.pack("<Q", e.ph[i][5] * 1000))
+        self.assertEqual(holt_e2.shape(p)["ibt"], "landing pads, GNU property IBT")
+
     def test_api_ignores_the_build_fields_only(self):
         a = {"api": 3, "documents": {"dump": 4}, "features": ["zfs"], "image": {"dump_schemas": [1]}, "platform": "freebsd"}
         b = dict(a, features=["zfs", "x"], image={"dump_schemas": [1, 2]})

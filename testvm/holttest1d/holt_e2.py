@@ -182,9 +182,8 @@ def ibt(e):
                     prop = prop or bool(struct.unpack_from("<I", desc, p + 8)[0] & X86_FEATURE_1_IBT)
                 p += 8 + ((ps + 7) & ~7)
     size = pads = 0
-    for t, fl, off, *_r in e.ph:
+    for t, fl, off, _va, _pa, filesz, _ms, _al in e.ph:
         if t == 1 and fl & 1:
-            filesz = _r[3]
             size += filesz
             pads += e.b.count(ENDBR64, off, off + filesz)
     words = ["landing pads" if pads and pads * 4096 >= size else "no landing pads"]

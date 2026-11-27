@@ -143,8 +143,8 @@ def disk_mode(host):
 POLL_S = 20
 BUILD_TIMEOUT_S = 4 * 3600
 # img-speed.md I10, I11 (§8.1, §8.3): the platforms whose VM build gets a cross check build beside
-# it (holt-cross.sh: tier 2, rustup's pinned 1.94.1; openbsd and dragonfly tier 3, a pinned
-# nightly that builds std too).  A check build is never tested by a cell nor shipped: it lands in
+# it (holt-cross.sh: tier 2, rustup's pinned 1.94.1; openbsd and dragonfly tier 3, the same
+# 1.94.1 building std from its rust-src, D10 as built).  A check build is never tested by a cell nor shipped: it lands in
 # CODE/cross/PLAT/ on its build host alone, and E2 (holt-e2.sh) runs on it privately.
 CROSS_PLATS = ("freebsd", "netbsd", "illumos", "openbsd", "dragonfly")
 # GiB of RAM disk a cross check build reserves: a tier-3 build's target/ holds std's build too.

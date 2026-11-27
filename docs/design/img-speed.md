@@ -1268,6 +1268,23 @@ this spec's speedups 2 and 7.
   `cmp-run.sh`'s QUEUE_HOST already lets the queue live anywhere. *Stays:*
   one queue host per run. *Gain:* reliability: a throttling or rebooting
   Chopin no longer stalls every host's pops.
+  *Built 2026-11-27:* `holt.py queue_host` takes, of the run's hosts, a
+  default host before one that is not, then F13's `hosts.py tie_key`
+  (class, heat, row): a big host first, the cooler before the hotter, so a
+  run with both big hosts queues on cinqcent (chopin's heat 1), one with
+  chopin and small hosts only on chopin, and the small hosts in the table's
+  order. No new role: tie_key already ranks reliability by the table's own
+  measures. The choice is kept in `holt.json` (`qhost`), so `t2 resume`
+  finds the todo where the run's queues put it (a run started before F15 on
+  chopin). Every host reaches cinqcent's queue over ssh (checked from all
+  five). *Proof:* `test_holt.py` (F15QueueHost, 5; the flow tests now read
+  the todo on cinqcent and chopin's runner's QHOST; resume keeps a recorded
+  chopin; `test_holt_img.py`'s flow reads it there too), the t2 suite (3248
+  on the Mac; 3 failures that HEAD has too, test_vm_update's boot.rs,
+  test_gate's layers and test_plandiff's variants), and t2h-20261127T0241-809f
+  on the six default hosts: `qhost` cinqcent, the todo on cinqcent, chopin's
+  runner `queue cinqcent.local`, alpine324 (copland), debian13 (chopin) and
+  netbsd11 (cinqcent) PASS.
 - **F16. H1 dump collection on chopin and cinqcent (yes).**
   `h1/collect-dumps.sh:53`. Change: the default hosts come from hosts.json
   (the default amd64 hosts with HoltTest records), and the collector is an

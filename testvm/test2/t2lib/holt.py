@@ -42,12 +42,13 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      and cells it no longer selects are dropped, those it adds added (with their
      image sums and platforms: step 1a and 1 again for them).
   3. cells.json on every host (RunState.write_cells, the rekeyed plan: R1).
-  4. The queue: the due cells' GVs as todo lines on the first host's
+  4. The queue: the due cells' GVs as todo lines on the queue host's (queue_host: the
+     run's default host first, then hosts.tie_key's order, kept in holt.json: F15)
      /bkoscratch/holttest1d/queue/RUN/todo, canaries first, then the guests whose
      golden plan changed, then the rest, each part biggest first
      (ht1-queue.sh --order); a runner on every host from the copy, as m,
      detached (BASEPORT 2600, MAXJOBS the host's holt_jobs in testvm/hosts.json, 3 by
-     default; the others with QHOST the first host),
+     default; the others with QHOST the queue host),
      ONLY_ELSEWHERE from the plan's per-host keys (pins, R17's UEFI rescuer, the hosts
      whose ceiling a cell's reservation fits: a cell no host fits isn't due at all), with
          HT_HOLT_BIN=HOST_ROOT/holt-bin/CODE HT_RAM=1 T2_RUN=RUN
@@ -642,6 +643,20 @@ class State:
         self.save()
 
 
+def queue_host(hosts, table=None):
+    """The host a run's queues live on (img-speed.md F15): its todo, the lines every other
+    host's runner pops over ssh (QHOST).  Of HOSTS, a default host before one that is not,
+    then hosts.tie_key's order (a big host before a small one, the cooler before the hotter,
+    then the table's): cinqcent before chopin, whose cooler throttles, so a throttling or
+    rebooting Chopin no longer stalls every host's pops.  None for no hosts."""
+    hs = list(hosts or [])
+    if not hs:
+        return None
+    t = table if table is not None else hosts_table.load()
+    dflt = set(hosts_table.names(default=True, table=t))
+    return min(hs, key=lambda h: (hosts_table.short(h) not in dflt, hosts_table.tie_key(h, t)))
+
+
 # --- the runner -----------------------------------------------------------------------------------
 
 class Runner:
@@ -655,11 +670,15 @@ class Runner:
         self.poll = poll
         self.run_id = self.rs.run
         self.hosts = list(self.rs.hosts)
-        self.qhost = self.hosts[0] if self.hosts else None
         self.sf = spec_of(ctx)
         self.cls = (ctx.classes or {}).get("holt") or {}
         self.opts = getattr(ctx, "options", None) or {}
         self.state = State(os.path.join(self.rs.mac_dir, "holt.json"))
+        # F15: the queue's host is the run's most reliable host (queue_host), no longer its first;
+        # kept in holt.json, so a resume finds the todo where its queues put it.
+        self.qhost = self.state["qhost"] or queue_host(self.hosts)
+        if self.qhost and not self.state["qhost"]:
+            self.state["qhost"] = self.qhost
         self.stops = []
         self.notes = []
         self.problems = []     # what makes the run fail that no stop rule said (a runner that didn't start ...)
@@ -1285,7 +1304,7 @@ class Runner:
         return env
 
     def start_queue(self, qrun, pcs, cells_name):
-        """The todo (on the first host) and a runner on every host.  holt.json is saved after
+        """The todo (on the queue host) and a runner on every host.  holt.json is saved after
         the todo and after each runner, so a resume neither writes the todo again (lines
         already taken would come back) nor starts a second runner on a host."""
         q = self.state["queues"].setdefault(qrun, {})

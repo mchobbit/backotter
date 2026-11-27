@@ -87,7 +87,7 @@ class Flow(unittest.TestCase):
         qs = [c for c in starts if "ht1-queue.sh" in c]
         self.assertEqual(len(qs), 2)
         self.assertTrue(all("HT_HOLT_BIN" not in c for c in qs), qs)
-        self.assertEqual(sorted(self.remote.written[("chopin", holt.QUEUE + "/t2h-20261108T0300-abcd/todo")].split()),
+        self.assertEqual(sorted(self.remote.written[("cinqcent", holt.QUEUE + "/t2h-20261108T0300-abcd/todo")].split()),   # (the queue host: F15)
                          ["aerynos+img", "debian12+img"])
         self.assertEqual(res["exit"], 0, res)
 

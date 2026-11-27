@@ -984,6 +984,46 @@ class FakePlan:
         self.cells, self.set, self.notes = cells, {"holt_code": "c" * 64}, []
 
 
+class F15QueueHost(unittest.TestCase):
+    """img-speed.md F15: the queue host is the run's most reliable host, not its first."""
+    T = {"v": 1, "classes": {"big": "", "small": ""}, "roles": {"build": "", "fleet": ""},
+         "limits": {"heat": ""}, "class_limits": {},
+         "hosts": [{"name": n, "ssh": f"m@{n}.local", "slot_range": "2700-2799", "stic_ports": [2780, 2799],
+                    "class": c, "roles": ["build"], "default": d, "enabled": True, **x}
+                   for n, c, d, x in (("chopin", "big", True, {"heat": 1}), ("cinqcent", "big", True, {}),
+                                      ("copland", "small", True, {}), ("czerny", "small", False, {}),
+                                      ("choubox", "small", True, {"heat": 3}))]}
+
+    def q(self, hs):
+        return holt.queue_host(hs, table=self.T)
+
+    def test_cooler_big_host_wins(self):
+        self.assertEqual(self.q(["chopin", "cinqcent", "copland"]), "cinqcent")
+        self.assertEqual(self.q(["cinqcent", "chopin"]), "cinqcent")
+
+    def test_big_before_small_even_hot(self):
+        self.assertEqual(self.q(["copland", "chopin"]), "chopin")
+        self.assertEqual(self.q(["choubox", "copland"]), "copland")
+
+    def test_default_host_before_one_that_is_not(self):
+        self.assertEqual(self.q(["czerny", "choubox"]), "choubox")
+        self.assertEqual(self.q(["czerny"]), "czerny")
+
+    def test_names_in_no_row_and_none(self):
+        self.assertEqual(self.q(["zed", "copland.local"]), "copland.local")
+        self.assertEqual(self.q(["zed", "abe"]), "abe")
+        self.assertIsNone(self.q([]))
+        self.assertIsNone(self.q(None))
+
+    def test_real_table_default_hosts(self):
+        """On the real table the default amd64 hosts' queue lives off chopin (its cooler, heat 1)."""
+        from t2lib import hosts as hosts_table
+        ds = hosts_table.names(default=True, arch="amd64")
+        if "chopin" in ds and "cinqcent" in ds:
+            self.assertNotEqual(holt.queue_host(ds), "chopin")
+            self.assertEqual(holt.queue_host(ds), "cinqcent")
+
+
 class U53HoltRun(unittest.TestCase):
     PC = U52Todo.PC
 
@@ -1027,7 +1067,7 @@ class U53HoltRun(unittest.TestCase):
             self.assertEqual(r.files[h][hb + "/SHA256SUMS"], r.files["chopin"][hb + "/SHA256SUMS"])
             self.assertTrue(r.files[h][hb + "/BUILD-INFO"].startswith("bko-holt code " + "c" * 64))
         # The todo: the canary first, then the rest in --order's order.
-        todo = r.written[("chopin", holt.QUEUE + "/t2h-20261108T0300-abcd/todo")].split()
+        todo = r.written[("cinqcent", holt.QUEUE + "/t2h-20261108T0300-abcd/todo")].split()
         self.assertEqual(todo, ["redox", "openbsd8", "mint22", "freebsd15", "debian13+oneshot", "debian13"])
         qs = [c[0] for h, c in starts if "ht1-queue.sh" in c[0]]
         self.assertEqual(len(qs), 4)   # attempt 1 and the rerun, on both hosts
@@ -1037,7 +1077,8 @@ class U53HoltRun(unittest.TestCase):
                             and "T2_CELLS=/bkoscratch/t2test/runs/t2h-20261108T0300-abcd/cells.json" in c for c in q1))
         self.assertIn("ONLY_ELSEWHERE=redox", q1[0])
         self.assertIn("ONLY_ELSEWHERE=openbsd8", q1[1])
-        self.assertTrue(q1[1].endswith("chopin.local"))
+        self.assertTrue(q1[0].endswith(" cinqcent.local"), "chopin pops from the queue host, cinqcent (F15)")
+        self.assertFalse(q1[1].endswith(".local"), "the queue host's own runner has no QHOST")
         # The job that left no row got one (R7); the FAIL a rerun with cells-r2.json, the
         # HARNESS none (a rerun that passed would read as FLAKY-FAIL).
         bf = [row for _, rows in r.appended for row in rows]
@@ -1068,6 +1109,25 @@ class U53HoltRun(unittest.TestCase):
         again = len([1 for _, op, *c in self.remote.calls if op == "start" and "--reserved" in c[0]])
         self.assertEqual(again, n_builds)
         self.assertEqual(len([1 for _, op, *c in self.remote.calls if op == "start" and "ht1-queue.sh" in c[0]]), 2)
+
+    def test_queue_host_from_holt_json_on_resume(self):
+        """F15: a run whose holt.json names its queue host keeps it on resume (its todo is there),
+        even when queue_host would choose another now (a run started before F15 queued on chopin)."""
+        os.makedirs(self.rs.mac_dir, exist_ok=True)
+        with open(os.path.join(self.rs.mac_dir, "holt.json"), "w", encoding="utf-8") as f:
+            json.dump({"v": 1, "qhost": "chopin"}, f)
+        res = self.go({})
+        self.assertEqual(res["exit"], 0, res)
+        self.assertIn(("chopin", holt.QUEUE + "/t2h-20261108T0300-abcd/todo"), self.remote.written)
+        self.assertNotIn(("cinqcent", holt.QUEUE + "/t2h-20261108T0300-abcd/todo"), self.remote.written)
+        qs = [c[0] for h, op, *c in self.remote.calls if op == "start" and "ht1-queue.sh" in c[0]]
+        self.assertEqual(sorted(c.endswith(" chopin.local") for c in qs), [False, True])
+        self.assertEqual(jload(os.path.join(self.rs.mac_dir, "holt.json"))["qhost"], "chopin")
+
+    def test_queue_host_recorded(self):
+        res = self.go({})
+        self.assertEqual(res["exit"], 0, res)
+        self.assertEqual(jload(os.path.join(self.rs.mac_dir, "holt.json"))["qhost"], "cinqcent")
 
     def test_stop_os(self):
         class Stops(FakeStops):
@@ -1134,7 +1194,7 @@ class U53HoltRun(unittest.TestCase):
                             for x in by["holt:openbsd8"]["reasons"]), by["holt:openbsd8"]["reasons"])
         for c in ("holt:debian13", "holt:debian13+oneshot", "holt:freebsd15", "holt:redox", "holt:mint22"):
             self.assertEqual((by[c]["outcome"], by[c]["verdict"]), ("ran", "PASS"), c)
-        todo = r.written[("chopin", holt.QUEUE + "/t2h-20261108T0300-abcd/todo")].split()
+        todo = r.written[("cinqcent", holt.QUEUE + "/t2h-20261108T0300-abcd/todo")].split()
         self.assertNotIn("openbsd8", todo)
         self.assertEqual(sorted(todo), sorted(["redox", "mint22", "freebsd15", "debian13+oneshot", "debian13"]))
         hb = "/bkoscratch/t2test/holt-bin/" + "c" * 64
@@ -1551,7 +1611,7 @@ class U53HoltRun(unittest.TestCase):
         builds = [re.search(r"--reserved \S+ (\S+)", c[0]).group(1) for _, op, *c in r.calls
                   if op == "start" and "--reserved" in c[0]]
         self.assertEqual(builds, ["linux", "freebsd", "openbsd", "netbsd"])
-        todo = r.written[("chopin", holt.QUEUE + "/t2h-20261108T0300-abcd/todo")].split()
+        todo = r.written[("cinqcent", holt.QUEUE + "/t2h-20261108T0300-abcd/todo")].split()
         self.assertIn("netbsd11", todo)
         self.assertNotIn("mint22", todo)
         self.assertTrue(any(n == "due after the re-plan: holt:netbsd11" for n in res["notes"]), res["notes"])

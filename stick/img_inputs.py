@@ -652,6 +652,15 @@ def layout(img, rewritten=(), xorriso=None, eltorito=True):
                             b = bytearray(f.read(16 * SECTOR))
                             b[SECTOR:2 * SECTOR] = bytes(SECTOR)
                             out.append(f"/mbr/part/{i + 1}/boot\tsha256={_sha(bytes(b))}")
+                        elif e[4] == 0x6C:
+                            # DragonFly's disklabel64 slice: its boot area, boot1 (sector 0) and
+                            # boot2 (0x1000 up to the partitions' base, 1 MiB), but the label
+                            # (sectors 1-7), whose name, disk id and storage UUID a refresh
+                            # rewrites (D2; build.sh refresh checks the rest).
+                            f.seek(first * SECTOR)
+                            b = bytearray(f.read(2048 * SECTOR))
+                            b[SECTOR:8 * SECTOR] = bytes(7 * SECTOR)
+                            out.append(f"/mbr/part/{i + 1}/boot\tsha256={_sha(bytes(b))}")
                     else:
                         line += f" size={n * SECTOR} sha256={_range_sha(f, first * SECTOR, n * SECTOR)}"
                 out.append(f"/mbr/part/{i + 1}\t{line}")

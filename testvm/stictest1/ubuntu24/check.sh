@@ -9,7 +9,9 @@
 #   NEED_FILTER  a regex: print only the needs it matches
 # In a throwaway overlay of ~/backotter-work/vms/ubuntu24 (vm-run --snapshot,
 # its overlay in /mnt/bko-ram/PREFIX), taken through guest-slot.sh and
-# cmp-run.sh --reserve 13 5 (the overlay grows to about 12 GiB):
+# cmp-run.sh --reserve 13 5 (the overlay grows to about 12 GiB; on a host whose
+# RAM disk can't hold it, --reserve-ssd 13 5 and the overlay in
+# /bkoscratch/PREFIX: scratch.sh):
 #   1. fs_roundtrip.py zfs-ds (datasets in the guest's own root pool), zfs
 #      (pools on files) and ext4 (the guest's /boot type): torture.sh's tree
 #      (xattrs, ACLs, inode flags, project IDs, DOS flags, sparse files,
@@ -33,21 +35,24 @@ SELF=$(readlink -f "$0")
 HERE=$(dirname "$SELF") STC_LOGS=${STC_LOGS:-$WORK/stictest1/$GUEST/logs}
 [[ -x $BIN/restic-bko && -x $BIN/rustic-bko ]] || { echo "no restic-bko/rustic-bko in $BIN" >&2; exit 2; }
 
+[[ $PREFIX =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "check.sh: PREFIX must be a plain name" >&2; exit 2; }
 if [[ -z ${CHECK_RESERVED:-} ]]; then
     . ${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh
+    . "$HERE/../scratch.sh"   # RAM first, the SSD for overflow (img-speed F9)
     slot_take 3 "$(slot_range_here)"
-    CHECK_RESERVED=1 HOT_C=90 $WORK/cmp-run.sh --reserve 13 5 "$SELF" "$BIN" "$PORT" "$PREFIX" "$FILTER"
+    stic_scratch 13 5
+    CHECK_RESERVED=1 STIC_SCRATCH=$STIC_SCRATCH HOT_C=90 $WORK/cmp-run.sh "${STIC_RES[@]}" "$SELF" "$BIN" "$PORT" "$PREFIX" "$FILTER"
     rc=$?
     slot_give
     exit $rc
 fi
 
-RAM=/mnt/bko-ram/$PREFIX/$GUEST
+RAM=${STIC_SCRATCH:-/mnt/bko-ram}/$PREFIX/$GUEST   # the RAM disk, or the SSD (scratch.sh)
 LOGS=$STC_LOGS/$(date +%Y%m%d-%H%M%S)
 mkdir -p "$RAM" "$LOGS"
 : >"$LOGS/verdicts.txt"
 . ${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh
-cleanup() { vm_halt; rm -rf "$RAM"; rmdir /mnt/bko-ram/$PREFIX 2>/dev/null; }
+cleanup() { vm_halt; rm -rf "$RAM"; rmdir "${STIC_SCRATCH:-/mnt/bko-ram}/$PREFIX" 2>/dev/null; }
 trap cleanup EXIT
 v() {  # VERDICT NEED DETAIL
     echo "$1 $2: $3" >>"$LOGS/verdicts.txt"

@@ -35,22 +35,27 @@
 # Copland 2800-2899, Cinqcent 2900-2999) and cmp-run.sh --reserve 23 MEM
 # itself (MEM: the guest's MEMORY, MB, default 4096, in GiB + 0.5): 23 GiB of
 # RAM disk for rpool's overlays and the spare, an estimate; ramdisk-peak-kib in the log dir is the run's peak.
+# On a host whose RAM disk can't hold 23 GiB (over its ceiling, or no room now
+# where scratch_mode is overflow), --reserve-ssd 23 MEM and the scratch in
+# /bkoscratch/PREFIX/ubuntu26-zfsmirror instead (scratch.sh; img-speed F9).
 set -uo pipefail
 G=ubuntu26-zfsmirror self=$(realpath "$0")
 WORK=${BKO_WORK:-$HOME/backotter-work}
 [[ $# -ge 3 ]] || { sed -n '2,31p' "$0" >&2; exit 2; }
 BIN=$(realpath "$1") PORT=$2 PREFIX=$3 FILTER=${4:-}
 [[ -x $BIN/restic-bko && -x $BIN/rustic-bko ]] || { echo "no restic-bko/rustic-bko in $BIN" >&2; exit 2; }
-# cleanup removes the scratch from a RAM disk other sessions share: it has to
-# stay inside /mnt/bko-ram/PREFIX.
+# cleanup removes the scratch from a RAM disk (or /bkoscratch) other sessions
+# share: it has to stay inside SCRATCH_ROOT/PREFIX.
 [[ $PREFIX =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "check.sh: PREFIX must be a plain name" >&2; exit 2; }
-[[ ! -L /mnt/bko-ram/$PREFIX ]] || { echo "check.sh: /mnt/bko-ram/$PREFIX is a symlink" >&2; exit 2; }
 
 if [[ -z ${STICK_INNER:-} ]]; then
     # shellcheck source=/dev/null
     source "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
+    source "$(dirname "$self")/../scratch.sh"   # RAM first, the SSD for overflow (img-speed F9)
     slot_take 3 "$(slot_range_here)"
-    STICK_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 23 "$(awk -v m="${MEMORY:-4096}" 'BEGIN { print m / 1024 + 0.5 }')" "$self" "$@"; rc=$?
+    stic_scratch 23 "$(awk -v m="${MEMORY:-4096}" 'BEGIN { print m / 1024 + 0.5 }')"
+    [[ ! -L $STIC_SCRATCH/$PREFIX ]] || { echo "check.sh: $STIC_SCRATCH/$PREFIX is a symlink" >&2; slot_give; exit 2; }
+    STICK_INNER=1 STIC_SCRATCH=$STIC_SCRATCH HOT_C=90 "$WORK/cmp-run.sh" "${STIC_RES[@]}" "$self" "$@"; rc=$?
     slot_give
     exit $rc
 fi
@@ -60,7 +65,9 @@ here=${BKO_TESTVM:-$WORK/testvm}/compare
 dir=$WORK/vms/$G
 LOGS=${STC_LOGS:-$WORK/stictest1/$G/logs}/$PREFIX-$(date +%Y%m%d-%H%M%S)
 mkdir -p "$LOGS"
-SCR=/mnt/bko-ram/$PREFIX/$G   # its own, even where PREFIX names a shared directory (tmp, holttest1d)
+SCRATCH_ROOT=${STIC_SCRATCH:-/mnt/bko-ram}   # the RAM disk, or the SSD (scratch.sh)
+[[ ! -L $SCRATCH_ROOT/$PREFIX ]] || { echo "check.sh: $SCRATCH_ROOT/$PREFIX is a symlink" >&2; exit 2; }
+SCR=$SCRATCH_ROOT/$PREFIX/$G   # its own, even where PREFIX names a shared directory (tmp, holttest1d)
 rm -rf "$SCR"; mkdir -p "$SCR"
 export TMPDIR=$SCR RAM_DIR=$SCR   # vm-run --ram's overlays (not /dev/shm); nothing here chroots
 SPARE=$SCR/spare.img   # vdc: /var/tmp in the guest (repositories, ext4 images), off the root pool; sparse
@@ -70,7 +77,7 @@ cleanup() {
     # The peak watcher goes last: if this shell is killed outright meanwhile,
     # it stops the VM and removes SCR.
     vm_halt 2>/dev/null; exec 9>&- 2>/dev/null
-    rm -rf "$SCR" "$LOGS/console.in"; rmdir "/mnt/bko-ram/$PREFIX" 2>/dev/null
+    rm -rf "$SCR" "$LOGS/console.in"; rmdir "$SCRATCH_ROOT/$PREFIX" 2>/dev/null
     kill "${PEAK:-}" 2>/dev/null
 }
 trap cleanup EXIT
@@ -93,7 +100,7 @@ peak() {
     done
     kill -0 $$ 2>/dev/null && return
     [[ $(stat -c %i "$SCR" 2>/dev/null) == "$ino" ]] || return
-    pkill -f "$vm"; rm -rf "$SCR"; rmdir "/mnt/bko-ram/$PREFIX" 2>/dev/null
+    pkill -f "$vm"; rm -rf "$SCR"; rmdir "$SCRATCH_ROOT/$PREFIX" 2>/dev/null
 }
 peak & PEAK=$!
 

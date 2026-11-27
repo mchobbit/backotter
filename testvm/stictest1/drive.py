@@ -259,11 +259,14 @@ T2_ENV = ("T2_HOST_ROOT", "T2_LEDGER")                 # passed on to the hosts'
 class Spec:
     """What a guest's check.sh needs: OS of BIN_DIR, --reserve DISK MEM, how
     many VMs it runs at once (n: each takes a slot, a reservation and a port),
-    and whether it takes guest slots at all."""
-    def __init__(self, os_, d, m, n=1, slotted=True):
+    whether it takes guest slots at all, and whether its scratch can overflow to
+    the SSD (overflow: it reserves through scratch.sh's stic_scratch DISK MEM,
+    img-speed F9)."""
+    def __init__(self, os_, d, m, n=1, slotted=True, overflow=False):
         self.os, self.d, self.m, self.n = os_, d, m, n
         self.slots = n if slotted else 0
         self.load = n
+        self.overflow = overflow
 
     def __repr__(self):
         return f"Spec({self.os}, {self.d}/{self.m} x{self.n}, slots {self.slots})"
@@ -287,7 +290,9 @@ def parse_check(text):
                     os_ = OS_WORDS[m.group(1)]
                 break
     os_ = os_ or "linux"
-    r = re.search(r"--reserve\s+([0-9.]+)\s+(\S+)", code)
+    # cmp-run.sh --reserve D M, or scratch.sh's stic_scratch D M (RAM first, the SSD for
+    # overflow: the --reserve, or a --reserve-ssd of the same figures; img-speed F9)
+    r = re.search(r"(?:--reserve|^\s*stic_scratch)\s+([0-9.]+)\s+(\S+)", code, re.M)
     if not r:
         raise ValueError("no cmp-run.sh --reserve")
     d, mt = float(r.group(1)), r.group(2)
@@ -300,7 +305,7 @@ def parse_check(text):
             raise ValueError(f"--reserve memory {mt!r} not understood")
         m = int(mm.group(1)) / 1024 + 0.5
     n = max(1, len(re.findall(r"^\s*admit\s+[A-Za-z]", code, re.M)))
-    return Spec(os_, d, m, n, "slot_take" in code)
+    return Spec(os_, d, m, n, "slot_take" in code, r.group(0).lstrip().startswith("stic_scratch"))
 
 
 def all_guests():
@@ -402,12 +407,43 @@ def able_hosts(g, s, hosts, probes):
             or (has_bins(s, probes[h]["have"]) and has_vm(g, probes[h].get("vms")))]
 
 
+def ssd_most(ceil):
+    """The most SSD scratch one job could ever get on the host (cmp-run.sh's ssd_room's MOST),
+    the ceiling's third figure; 0 when the host's scratch_mode gives the SSD none (or its
+    cmp-run.sh has no --reserve-ssd), or a ceiling of two figures."""
+    return ceil[2] if ceil and len(ceil) > 2 else 0
+
+
+def via_ssd(s, ceil):
+    """True when a check can take the SSD on a host: its scratch overflows (stic_scratch)
+    and the host's SSD could ever hold its DISK."""
+    return s.overflow and ssd_most(ceil) + 1e-3 >= s.d
+
+
 def over_ceiling(s, ceil):
     """True when a check's --reserve (each VM's) is over a host's ceiling (cmp-run.sh's
     ceiling(): it refuses such a --reserve at once); never while the ceiling is unknown.
     The tolerance is cmp-run.sh's EPS_GIB, the MiB its fits() allows, so this says no to
-    exactly what that host would refuse."""
-    return bool(ceil) and (s.d > ceil[0] + 1e-3 or s.m > ceil[1] + 1e-3)
+    exactly what that host would refuse.  A check whose scratch can go to the host's SSD
+    (via_ssd: stic_scratch's --reserve-ssd DISK MEM there) is over it only by its MEM."""
+    if not ceil:
+        return False
+    if via_ssd(s, ceil):
+        return s.m > ceil[1] + 1e-3
+    return s.d > ceil[0] + 1e-3 or s.m > ceil[1] + 1e-3
+
+
+def room_fits(s, room, ceil):
+    """True when room (DISK, MEM[, SSD]: the RAM disk, the memory for D + M, and the SSD's
+    room now, --ssd-free; no SSD figure: the SSD's most) holds the check's n VMs: in the RAM
+    disk (D within it and the ceiling, D + M of the memory), or, for one that can take the
+    SSD (via_ssd), on the SSD (D within its room, M of the memory) as scratch.sh would put it."""
+    if ram_fits(s, room, ceil):
+        return True
+    if not via_ssd(s, ceil):
+        return False
+    sr = room[2] if len(room) > 2 else ssd_most(ceil)
+    return s.n * s.d <= sr + 1e-9 and s.n * s.m <= room[1] + 1e-9
 
 
 def too_big(guests, spec, ceils):
@@ -435,6 +471,28 @@ def prefer(cands, h, able, ranks, first=()):
     return sorted(cands, key=lambda g: (g not in first, any(ranks.get(x, 0) > r for x in able(g))))
 
 
+def ram_fits(s, room, ceil):
+    """room_fits' RAM-disk half: D within the RAM disk's room and its ceiling, D + M of the memory."""
+    return (s.n * s.d <= room[0] + 1e-9 and s.n * (s.d + s.m) <= room[1] + 1e-9
+            and not (ceil and s.d > ceil[0] + 1e-3))
+
+
+def room_after(room, specs, ceil):
+    """room (DISK, MEM[, SSD]) less what specs (checks started there, in order) take of it:
+    each in the RAM disk when it fits there (D, and D + M of the memory), else, for one that
+    can take the SSD (via_ssd), on the SSD (D of its room, M of the memory), else in the RAM
+    disk anyway (a start that waited for room).  The SSD figure, when room has none, is the
+    SSD's most (ssd_most)."""
+    d, m = room[0], room[1]
+    sr = room[2] if len(room) > 2 else ssd_most(ceil)
+    for s in specs:
+        if not ram_fits(s, (d, m), ceil) and via_ssd(s, ceil) and s.n * s.d <= sr + 1e-9:
+            m, sr = m - s.n * s.m, sr - s.n * s.d
+        else:
+            d, m = d - s.n * s.d, m - s.n * (s.d + s.m)
+    return (d, m, sr)
+
+
 def pick(cands, spec, have, free_cap, free_slots, room, ceil, ports_fn=None, vms=None):
     """The first of cands (in queue order) that fits a host now: (guest, ports,
     why-not list).  room/ceil/vms None: not known, not checked."""
@@ -451,7 +509,7 @@ def pick(cands, spec, have, free_cap, free_slots, room, ceil, ports_fn=None, vms
             why.append(f"{g}:cap")
         elif s.slots > free_slots:
             why.append(f"{g}:slot")
-        elif room and (s.n * s.d > room[0] + 1e-9 or s.n * (s.d + s.m) > room[1] + 1e-9):
+        elif room and not room_fits(s, room, ceil):
             why.append(f"{g}:room")
         else:
             ports = ports_fn(g) if ports_fn else []
@@ -500,8 +558,7 @@ def simulate(guests, spec, est, hosts, cap, first=(), ranks=None):
             free_slots = v["slots_free"] - sum(spec[g].slots for _, g in run[h])
             room = None
             if v["room"] is not None and not relax:
-                room = (v["room"][0] - sum(spec[g].n * spec[g].d for _, g in run[h]),
-                        v["room"][1] - sum(spec[g].n * (spec[g].d + spec[g].m) for _, g in run[h]))
+                room = room_after(v["room"], [spec[g] for _, g in run[h]], v["ceil"])
             g, _, _ = pick(prefer(rem, h, able, ranks, first), spec, v["have"], free_cap, free_slots, room,
                            v["ceil"], vms=v.get("vms"))
             if g:
@@ -787,6 +844,13 @@ if [[ $MODE == full ]]; then
             fi
             read -r cd cm < <(ceiling) && [[ -n ${cm:-} ]] && echo "CEIL $cd $cm"
         )
+        # The SSD's room now and the most one job could ever get (scratch.sh's overflow,
+        # img-speed F9): none with a cmp-run.sh from before --reserve-ssd.
+        if grep -q -- '--reserve-ssd' "$W/cmp-run.sh"; then
+            sr=$("$W/cmp-run.sh" --ssd-free 2>/dev/null) || sr=""
+            sm=$(source <(sed -n '/^ssd_room()/,/^}/p' "$W/cmp-run.sh"); SSD=${CMP_SSD_DIR:-/bkoscratch}; ssd_room "" 2>/dev/null)
+            [[ $sr =~ ^[0-9.]+$ && ${sm#* } =~ ^[0-9.]+$ ]] && echo "SSD $sr ${sm#* }"
+        fi
         rm -rf "$tmp"
     else
         echo "NORAM"
@@ -977,7 +1041,7 @@ def status(host, full, mark, guests):
                               h["ports"][0], h["ports"][1], *guests)
     if rc != 0 or "END" not in out:
         return None
-    s = dict(full=full, temp=None, nvme=[], budget=None, room=None, ceil=None, noram=False, ledger=[],
+    s = dict(full=full, temp=None, nvme=[], budget=None, room=None, ceil=None, ssd=None, noram=False, ledger=[],
              waits=[], slots_other=0, slots_ours=[], qemu=[], listen=set(), jobs={}, slotwait=[])
     for line in out.splitlines():
         f = line.split()
@@ -995,6 +1059,8 @@ def status(host, full, mark, guests):
                 s["room"] = (float(f[1]), float(f[2]), int(f[3]), int(f[4]))
             elif k == "CEIL":
                 s["ceil"] = (float(f[1]), float(f[2]))
+            elif k == "SSD":   # (room now, most): the SSD's, for a check that can overflow there
+                s["ssd"] = (float(f[1]), float(f[2]))
             elif k == "NORAM":
                 s["noram"] = True
             elif k == "LEDGER":
@@ -1018,6 +1084,8 @@ def status(host, full, mark, guests):
                                        alive=f[6] != "0")
         except (IndexError, ValueError):
             continue
+    if s["ceil"] and s.get("ssd"):   # the ceiling's third figure: the SSD's most (ssd_most)
+        s["ceil"] = s["ceil"] + (s["ssd"][1],)
     return s
 
 
@@ -1348,15 +1416,19 @@ class Driver:
                 free_cap = slots_of(a.slots, host) - sum(spec[g].load for g in run)
                 free_slots = (guest_slots(host) - snap["slots_other"] - other_qemu(snap, host)
                               - sum(spec[g].slots for g in run))
-                room_d, room_m = snap["room"][0], snap["room"][1]
-                for g in run:   # less what our checks will still reserve
+                # less what our checks will still reserve: the memory is for D + M, and a check
+                # that can take the SSD (scratch.sh) takes it where room_after says it would
+                pend = []
+                for g in run:
                     k = spec[g].n - self.jobs()[g]["seen_ledger"]
                     if k > 0:
-                        room_d -= k * spec[g].d
-                        room_m -= k * (spec[g].d + spec[g].m)   # the memory is for D + M
+                        s = spec[g]
+                        pend.append(Spec(s.os, s.d, s.m, k, s.slots > 0, s.overflow))
+                room_d, room_m, room_s = room_after(
+                    (snap["room"][0], snap["room"][1], snap["ssd"][0] if snap.get("ssd") else 0.0), pend, snap["ceil"])
                 cands = prefer(order(self.remaining(), spec, self.est, a.first), host, self.able, ranks, a.first)
                 g, ports, why = pick(cands, spec, self.probes[host]["have"], free_cap, free_slots,
-                                     (room_d, room_m), snap["ceil"], lambda g: self.ports(host, g, snap),
+                                     (room_d, room_m, room_s), snap["ceil"], lambda g: self.ports(host, g, snap),
                                      vms=self.probes[host].get("vms"))
                 if g is None:
                     if free_cap > 0:
@@ -1591,7 +1663,8 @@ def dry_run(a, guests, spec, est, src, probes, wt, unrunnable):
         ceil_room = (snap["ceil"][0], snap["ceil"][0] + snap["ceil"][1]) if snap["ceil"] else None
         hosts_v[h] = dict(have=p["have"], slots_free=guest_slots(h), room=ceil_room, ceil=snap["ceil"], vms=p.get("vms"))
         hosts_now[h] = dict(have=p["have"], vms=p.get("vms"), slots_free=guest_slots(h) - snap["slots_other"] - oq,
-                            room=snap["room"][:2] if snap["room"] else (0, 0), ceil=snap["ceil"],
+                            room=(tuple(snap["room"][:2]) + ((snap["ssd"][0],) if snap.get("ssd") else ())
+                                  if snap["room"] else (0, 0)), ceil=snap["ceil"],
                             hot=(snap["temp"] or 0) > lim or any(t >= NVME_C for t in snap["nvme"]))
     if a.private_copy:
         private_copy(a.hosts, probes, True)
@@ -1637,8 +1710,7 @@ def dry_run(a, guests, spec, est, src, probes, wt, unrunnable):
         while not v["hot"]:
             free_cap = slots_of(a.slots, h) - sum(spec[g].load for g in started)
             free_slots = v["slots_free"] - sum(spec[g].slots for g in started)
-            room = (v["room"][0] - sum(spec[g].n * spec[g].d for g in started),
-                    v["room"][1] - sum(spec[g].n * (spec[g].d + spec[g].m) for g in started))
+            room = room_after(v["room"], [spec[g] for g in started], v["ceil"])
             g, _, why = pick(prefer(rem, h, able_now, ranks, a.first), spec, v["have"], free_cap, free_slots, room,
                              v["ceil"], vms=v.get("vms"))
             if not g:
@@ -1730,6 +1802,37 @@ def self_test():
           "too big: over the ceiling of every host")
     check(too_big(["big"], sp, {"copland": small, "chopin": (29.0, 20.1)}) == {}, "too big: not while one host fits")
     check(too_big(["big"], sp, {"copland": small, "cage": None}) == {}, "too big: not while a ceiling is unknown")
+    # img-speed F9: a check whose scratch overflows to the SSD (scratch.sh's stic_scratch)
+    for g, want in (("debian13-zfs", True), ("ubuntu24", True), ("ubuntu26-zfs", True),
+                    ("ubuntu26-zfsmirror", True), ("qubes43", False), ("mint22", False)):
+        if g in spec:
+            check(spec[g].overflow == want and (spec[g].d >= 13) == (g not in ("mint22",)),
+                  f"{g}: {'stic_scratch' if want else 'a plain --reserve'} {spec[g].d:g} {spec[g].m:g}")
+    ov, sm = Spec("linux", 13, 5, overflow=True), (9.0, 10.1, 300.0)
+    check(not over_ceiling(ov, sm) and over_ceiling(ov, (9.0, 10.1)) and over_ceiling(ov, (9.0, 10.1, 0.0))
+          and over_ceiling(sp["big"], sm) and over_ceiling(Spec("linux", 13, 11, overflow=True), sm)
+          and over_ceiling(Spec("linux", 13, 5, overflow=True), (9.0, 10.1, 12.0)),
+          "overflow: over the RAM-disk ceiling but not the SSD's most nor the memory's, it fits; "
+          "with no SSD (scratch_mode ram: most 0, or no figure) or a plain --reserve, it is over")
+    check(too_big(["ov"], {"ov": ov}, {"copland": sm, "cage": sm}) == {}
+          and too_big(["ov"], {"ov": ov}, {"copland": small}) == {"ov": {"copland": small}},
+          "too big: an overflow check is not, where a host's SSD can take it")
+    check(room_fits(ov, (9.0, 10.1, 100.0), sm) and not room_fits(ov, (9.0, 4.0, 100.0), sm)
+          and not room_fits(ov, (9.0, 10.1, 12.0), sm) and room_fits(ov, (20, 20, 0.0), (23.0, 40.0, 0.0))
+          and not room_fits(Spec("linux", 13, 5), (9.0, 10.1, 100.0), sm),
+          "room: over the RAM disk, on the SSD with its D there now and its M of the memory;"
+          " within it, the RAM disk as before; a plain --reserve never the SSD")
+    g, _, why = pick(["ov"], {"ov": ov}, have, 3, 3, (9.0, 10.1, 100.0), sm)
+    check(g == "ov" and pick(["ov"], {"ov": ov}, have, 3, 3, (9.0, 10.1, 5.0), sm)[2] == ["ov:room"],
+          "pick: an overflow check starts on a small host with SSD room, waits for it without")
+    r = room_after((9.0, 19.1, 300.0), [ov, ov], sm)
+    check(abs(r[0] - 9.0) < 1e-9 and abs(r[1] - 9.1) < 1e-9 and abs(r[2] - 274.0) < 1e-9
+          and room_after((20, 30), [ov], (23.0, 40.0, 100.0)) == (7, 12, 100.0),
+          f"room after: on the SSD only M of the memory and D of its room ({r}); in RAM as before")
+    hv = {"copland": dict(have=have, slots_free=3, room=(9.0, 19.1), ceil=sm),
+          "cage": dict(have=have, slots_free=3, room=(9.0, 19.1), ceil=(9.0, 10.1))}
+    rows, left = simulate(["ov"], {"ov": ov}, {"ov": 60}, hv, 2, ranks={"copland": 1, "cage": 1})
+    check(not left and [r[1] for r in rows] == ["copland"], f"simulate: on the host whose SSD can take it ({rows})")
     check(too_big_words(sp["big"], {"copland": small}) == "needs 13 6; copland 9.0 9.2", "too big: its words")
     g, p, why = pick(["long", "short"], sp, have, 3, 3, (50, 50), None, lambda g: None if g == "long" else [1])
     check(g == "short" and "long:port" in why, "no free port: the next one")

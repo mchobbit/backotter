@@ -358,6 +358,7 @@
    ],
    "harness": [
     "testvm/stictest1/debian13-zfs/**",
+    "testvm/stictest1/scratch.sh",
     "testvm/compare/boot-state.sh",
     "testvm/compare/compare.py",
     "testvm/compare/fs_roundtrip.py",
@@ -1359,6 +1360,7 @@
    ],
    "harness": [
     "testvm/stictest1/ubuntu24/**",
+    "testvm/stictest1/scratch.sh",
     "testvm/compare/boot-state.sh",
     "testvm/compare/compare.py",
     "testvm/compare/fs_roundtrip.py",
@@ -1455,6 +1457,7 @@
    ],
    "harness": [
     "testvm/stictest1/ubuntu26-zfs/**",
+    "testvm/stictest1/scratch.sh",
     "testvm/compare/boot-state.sh",
     "testvm/compare/compare.py",
     "testvm/compare/fs_roundtrip.py",
@@ -1479,6 +1482,7 @@
    ],
    "harness": [
     "testvm/stictest1/ubuntu26-zfsmirror/**",
+    "testvm/stictest1/scratch.sh",
     "testvm/compare/boot-state.sh",
     "testvm/compare/compare.py",
     "testvm/compare/fs_roundtrip.py",

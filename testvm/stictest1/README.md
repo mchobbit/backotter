@@ -112,6 +112,14 @@ What the script does:
   and 2 GiB, estimates), and log the run's peak use of it as
   `ramdisk-peak-kib` in the log dir. If the check's shell is killed
   outright, their sampler still stops the VM and removes that directory.
+- debian13-zfs, ubuntu24, ubuntu26-zfs (`13 5`) and ubuntu26-zfsmirror
+  (`23 MEM`) reserve through `scratch.sh`'s `stic_scratch DISK MEM`: RAM
+  first, the SSD for overflow (docs/design/img-speed.md F9). On a host whose
+  scratch_mode is overflow, a reservation over its RAM-disk ceiling (a small
+  host's 9.0), or one the RAM disk has no room for now while /bkoscratch
+  has, runs under `cmp-run.sh --reserve-ssd DISK MEM` with its scratch in
+  `/bkoscratch/PREFIX/GUEST` (the wear log's scratch=ssd); drive.py offers
+  such a check to the small hosts. qubes43 (`16 4`) stays big-only.
 - Most guests finish in 2 to 15 minutes.
 
 A recheck or a regression run is the same command with a newer round's

@@ -1372,6 +1372,36 @@ this spec's speedups 2 and 7.
   Chopin's vms/). *Proof:* each moved check PASSes on a small host with its
   scratch on SSD, and its wear is logged. *Gain:* five of the longest
   SticTest cells stop queueing for the big RAM disks.
+  *Built 2026-11-27:* four checks moved, not five: debian13-zfs, ubuntu24,
+  ubuntu26-zfs and ubuntu26-zfsmirror (the fifth of the list is qubes43,
+  which stays). They reserve through `testvm/stictest1/scratch.sh`'s
+  `stic_scratch DISK MEM`, placed as build-holt.sh's `place_scratch` places
+  a build, by the host's `scratch_mode`: in overflow the RAM disk when DISK
+  fits it now (`cmp-run.sh --free`'s "after"), else `--reserve-ssd DISK MEM`
+  when `--ssd-free` has the room, else the RAM disk's line; one over the
+  RAM-disk ceiling (`--ceiling`) goes to the SSD whatever its room now and
+  waits in the line for it. The scratch is `/bkoscratch/PREFIX/GUEST` there
+  (drive.py's sweep of `/bkoscratch/MARK-*` takes a dead run's), the
+  wear log's scratch=ssd. drive.py reads stic_scratch's figures (parse_check,
+  `Spec.overflow`; rows_stic's check_reserve too), the SSD's room and most in
+  its status read (`SSD ROOM MOST`, the most as the ceiling's third figure),
+  and offers such a check to a host whose SSD could hold its DISK, over the
+  RAM-disk ceiling or not (over_ceiling then checks its MEM only;
+  room_fits and room_after charge it M of the memory and D of the SSD). The
+  four manifests take scratch.sh. drive.py is SticTest plumbing, so every
+  stic cell is due once on this change. *Proof run 2026-11-27* (drive.py
+  from the working tree, checks from a private copy
+  `/bkoscratch/imgspeed/F9/copy` on each host, rows into a private
+  T2_HOST_ROOT; round rel16, mark f9p-20261127a, `--hosts
+  copland,cage,czerny`): all four started at once on the small hosts, each
+  under `--reserve-ssd` ("over this host's RAM-disk ceiling 9.0"), and all
+  PASSed: ubuntu26-zfs on copland 49/0/3 in 824 s, ubuntu24 on cage 49/0/3
+  in 842 s, debian13-zfs 49/0/4 in 783 s and ubuntu26-zfsmirror 28/0/2 in
+  596 s on czerny, side by side. jobs.log has each with its stic tag and
+  scratch=ssd: 38.6, 42.1, 38.8 and 26.3 GB written to nvme0n1. Nothing of
+  theirs was left on /bkoscratch. Tests: TestSticScratch (the placement rule
+  over a fake cmp-run.sh, the four checks taking it, the status's SSD line)
+  and drive.py's self-test (overflow ceilings, room, pick, simulate).
 - **F10. Audit and compare scripts default to Chopin (yes).** `rust-lint.sh:72`,
   `stock-baseline.sh:42`, `rustic-exact-round.sh` (a hard-coded Chopin IP,
   and a thermal wait for Chopin only) and `compress-images.sh:38`. Change:

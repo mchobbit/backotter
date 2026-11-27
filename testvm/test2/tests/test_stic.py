@@ -1582,5 +1582,104 @@ class TestDriveRows(unittest.TestCase):
             DRIVE.ssh, DRIVE.status, DRIVE.run_script = old
 
 
+# --- img-speed F9: scratch.sh's stic_scratch, RAM first and the SSD for overflow ----------------------
+
+FAKE_CMP_RUN_F9 = r"""#!/usr/bin/env bash
+# a fake cmp-run.sh (it knows --reserve-ssd): its figures from FAKE_CEIL, FAKE_SSD and FAKE_AFTER
+case $1 in
+    --ceiling) [[ -n ${FAKE_CEIL:-} ]] || exit 1; echo "$FAKE_CEIL" ;;
+    --ssd-free) [[ -n ${FAKE_SSD:-} ]] || exit 1; echo "$FAKE_SSD" ;;
+    --free) [[ -n ${FAKE_AFTER:-} ]] || exit 1; printf '9.0 9.0\nwaiting 0\nafter %s\n' "$FAKE_AFTER" ;;
+esac
+"""
+
+
+class TestSticScratch(unittest.TestCase):
+    """stic_scratch DISK MEM: the cmp-run.sh words and the scratch root a check takes, by the
+    host's scratch_mode and the room a (fake) cmp-run.sh says it has now; and the four checks
+    that take it."""
+    LIB = os.path.join(REPO, "testvm", "stictest1", "scratch.sh")
+    MOVED = ("debian13-zfs", "ubuntu24", "ubuntu26-zfs", "ubuntu26-zfsmirror")
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="t2-f9-")
+        self.addCleanup(shutil.rmtree, self.d, True)
+        self.cmp = os.path.join(self.d, "cmp-run.sh")
+        with open(self.cmp, "w") as f:
+            f.write(FAKE_CMP_RUN_F9)
+        os.chmod(self.cmp, 0o755)
+
+    def place(self, mode, d, m, ceil="9.0 10.1", ssd="300.0", after="9.0 19.1", cmp=None):
+        e = {k: v for k, v in os.environ.items() if not k.startswith(("FAKE_", "STIC_"))}
+        e.update({"SCRATCH_MODE": mode, "STIC_CMP_RUN": cmp or self.cmp, "STIC_RAM_ROOT": "/r",
+                  "STIC_SSD_ROOT": "/s"})
+        for k, v in (("FAKE_CEIL", ceil), ("FAKE_SSD", ssd), ("FAKE_AFTER", after)):
+            if v is not None:
+                e[k] = v
+        p = subprocess.run(["bash", "-c", '. "$1"; stic_scratch "$2" "$3"; echo "$STIC_WHERE $STIC_SCRATCH ${STIC_RES[*]}"',
+                            "-", self.LIB, str(d), str(m)], capture_output=True, text=True, env=e, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return p.stdout.strip(), p.stderr
+
+    def test_place(self):
+        ram, ssd = "ram /r --reserve 13 5", "ssd /s --reserve-ssd 13 5"
+        # scratch_mode ram: the RAM disk, whatever the room (every check before F9)
+        self.assertEqual(self.place("ram", 13, 5)[0], ram)
+        self.assertEqual(self.place("", 13, 5)[0], ram)
+        # overflow: over the RAM-disk ceiling, the SSD (with room now or not: it waits in the line)
+        out, err = self.place("overflow", 13, 5)
+        self.assertEqual(out, ssd)
+        self.assertIn("scratch on the SSD, under /s (--reserve 13 5 is over this host's RAM-disk ceiling 9.0)", err)
+        self.assertEqual(self.place("overflow", 13, 5, ssd="1.0")[0], ssd)
+        # within the ceiling: the RAM disk when D fits it now and D + M the memory, else the SSD with room
+        big = dict(ceil="23.0 40.0")
+        self.assertEqual(self.place("overflow", 13, 5, after="13.0 18.0", **big)[0], ram)
+        out, err = self.place("overflow", 13, 5, after="12.9 30.0", **big)
+        self.assertEqual(out, ssd)
+        self.assertIn("the RAM disk has no room for 13 GiB now", err)
+        self.assertEqual(self.place("overflow", 13, 5, after="20.0 17.9", **big)[0], ssd)
+        self.assertEqual(self.place("overflow", 13, 5, after="0 0", ssd="12.9", **big)[0], ram)   # no SSD room: the line
+        self.assertEqual(self.place("overflow", 13, 5, after=None, **big)[0], ssd)   # --free can't say: the SSD
+        # ssd: the SSD when it has the room now, else the RAM disk
+        self.assertEqual(self.place("ssd", 13, 5, after="20.0 40.0", **big)[0], ssd)
+        self.assertEqual(self.place("ssd", 13, 5, ssd="2", **big)[0], ram)
+        # a cmp-run.sh with no --reserve-ssd (not synced yet): mode ram
+        old = os.path.join(self.d, "old-cmp-run.sh")
+        with open(old, "w") as f:
+            f.write("#!/usr/bin/env bash\necho 9.0 9.0\n")
+        os.chmod(old, 0o755)
+        self.assertEqual(self.place("overflow", 13, 5, cmp=old)[0], ram)
+        # the zfsmirror's MEM is a figure the check computes
+        self.assertEqual(self.place("overflow", 23, 4.5)[0], "ssd /s --reserve-ssd 23 4.5")
+
+    def test_the_checks_take_it(self):
+        for g in self.MOVED:
+            with open(os.path.join(REPO, "testvm", "stictest1", g, "check.sh"), encoding="utf-8") as f:
+                text = f.read()
+            code = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
+            self.assertIn("scratch.sh", code, g)
+            self.assertRegex(code, r'"\$\{STIC_RES\[@\]\}"', g)
+            self.assertIn("STIC_SCRATCH=$STIC_SCRATCH", code, g)
+            self.assertNotRegex(code, r"--reserve\s+[0-9]", g)   # its only reservation is stic_scratch's
+            self.assertNotIn("/mnt/bko-ram/$PREFIX", code, g)     # its scratch root is STIC_SCRATCH's
+            self.assertTrue(DRIVE.parse_check(text).overflow, g)
+        self.assertEqual(rows_stic.check_reserve('    stic_scratch 13 5\n    cmp-run.sh "${STIC_RES[@]}" x\n'), [13.0, 5.0])
+        with open(os.path.join(REPO, "testvm", "stictest1", "qubes43", "check.sh"), encoding="utf-8") as f:
+            self.assertFalse(DRIVE.parse_check(f.read()).overflow, "qubes43 stays big-only")
+
+    def test_status_reads_the_ssd(self):
+        self.assertIn("SSD $sr", DRIVE.STATUS_SH)
+        old = DRIVE.run_script
+        try:
+            DRIVE.run_script = lambda *a, **k: (0, "CEIL 9.0 10.1\nSSD 250.5 380.0\nEND\n", "")
+            s = DRIVE.status(next(iter(DRIVE.HOSTS)), True, MARK, [])
+            DRIVE.run_script = lambda *a, **k: (0, "CEIL 9.0 10.1\nEND\n", "")
+            s0 = DRIVE.status(next(iter(DRIVE.HOSTS)), True, MARK, [])
+        finally:
+            DRIVE.run_script = old
+        self.assertEqual((s["ceil"], s["ssd"]), ((9.0, 10.1, 380.0), (250.5, 380.0)))
+        self.assertEqual((s0["ceil"], s0["ssd"]), ((9.0, 10.1), None))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -396,9 +396,10 @@ def changed_after(start, items, limit=4000):
 def check_reserve(text):
     """[DISK, MEM] GiB of a check.sh's cmp-run.sh --reserve, as drive.py's parse_check reads it
     (the first one outside comments; a check that admits N VMs, each under its own, reserves N
-    times it), MEM null when it is a shell expression; None without one."""
+    times it), MEM null when it is a shell expression; None without one.  scratch.sh's
+    stic_scratch D M (RAM first, the SSD for overflow: img-speed F9) is one too."""
     code = "\n".join(l for l in (text or "").splitlines() if not l.lstrip().startswith("#"))
-    r = re.search(r"--reserve\s+([0-9.]+)\s+(\S+)", code)
+    r = re.search(r"(?:--reserve|^\s*stic_scratch)\s+([0-9.]+)\s+(\S+)", code, re.M)
     if not r:
         return None
     try:

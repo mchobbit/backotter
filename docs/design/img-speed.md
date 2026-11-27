@@ -1281,7 +1281,23 @@ this spec's speedups 2 and 7.
 - **F19. BackShot1 QEMU rehearsals "on both hosts" (yes).** A docs and
   habit change: place them with `pick-host`, check the guest source is in
   the cache, and note that void's rootfs check needs minisign or signify on
-  the host.
+  the host. *As built (2026-11-27):* backshot1/README.md's "Rehearsal" gains
+  "Where to run one": `pick-host --reserve D 6 --guest GUEST` (its
+  `--guest` is the cache check), `--class small` when D fits a small host,
+  the run under `cmp-run.sh --reserve`, the tools from holt-bin and bko-bin,
+  and the test image copied from Chopin or Cinqcent until I8 fans images
+  out. The Void section's signature check named Cinqcent for both halves,
+  but `void-zbm/` is only in Chopin's rebuild-inputs (and
+  `void-musl-rootfs/` only in Cinqcent's), so it failed as written: it is
+  now two commands, each where its inputs are, and it says which tools each
+  needs (all five build hosts have minisign and signify-openbsd; Choubox
+  lacks minisign). *Proof:*
+  `pick-host --reserve 4 6 --guest alpine324-uefi --class small` chose Cage;
+  there `bs1-qemu.py --virtio` on alpine324-uefi, with Cinqcent's test image
+  (SHA-256 compared) and Cage's own holt-bin and bko-bin, under
+  `cmp-run.sh --reserve 4 6` in /mnt/bko-ram, PASS (25 checks ok, work dir
+  peak 1.9 GiB). Both signature checks print OK where the README now runs
+  them, and again on Copland from copies of the inputs.
 - **F20. Build-round collector and promote-bins source (partly).**
   `build-round.sh:56-66` and `promote-bins.sh:14-19`. Change: choose the
   collector by role or load. Relax promote-bins' big-class rule, since every

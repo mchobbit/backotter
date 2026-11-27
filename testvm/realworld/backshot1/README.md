@@ -585,13 +585,20 @@ a newer series, linux7.2 on 2026-11-19) and its clone `zroot/ROOT/void-6.18`
 header has the layout and the two musl gotchas.
 
 The inputs are pinned by SHA-256 in the script; their signatures are checked
-on Cinqcent, where minisign and signify are, as make-void-zfs.sh and
-make-bootstrap.sh check them (both lines must print OK):
+on a farm host, as make-void-zfs.sh and make-bootstrap.sh check them.  The
+rootfs check needs `minisign` (Void's key), the ZFSBootMenu check
+`signify-openbsd`: every build host (Chopin, Cinqcent, Copland, Cage,
+Czerny) has both, and Choubox has no minisign (2026-11-27).  Each check
+runs where its inputs are: `void-musl-rootfs/` is in Cinqcent's
+rebuild-inputs only and `void-zbm/` in Chopin's only, until rebuild-inputs
+are copied to every build host (docs/design/img-speed.md F12).  On a host
+that has both directories the two commands can go in one ssh.  Each line
+must print OK:
 
     ssh m@cinqcent.local 'cd /bkoscratch/rebuild-inputs/void-musl-rootfs &&
       minisign -q -V -P RWT5+SoQD+dWTeOdNuc4Q/jq2+3+jpql7+JJp4WukkxTdpsZlk2EGuPj -m sha256sum.txt -x sha256sum.sig &&
-      sha256sum -c --ignore-missing --quiet sha256sum.txt && echo VOID-SIG-OK
-      cd /bkoscratch/rebuild-inputs/void-zbm &&
+      sha256sum -c --ignore-missing --quiet sha256sum.txt && echo VOID-SIG-OK'
+    ssh m@chopin.local 'cd /bkoscratch/rebuild-inputs/void-zbm &&
       grep -qxF RWSUawlGznCLF8NxEb1EyrGpP2eIR9l7JIZgLzCdv+64uBDvfXNJm+cF zfsbootmenu.pub &&
       signify-openbsd -V -q -p zfsbootmenu.pub -x sha256.sig -m sha256.txt &&
       sha256sum -c --ignore-missing --quiet sha256.txt && echo ZBM-SIG-OK'
@@ -1289,6 +1296,30 @@ baseline taken before this has no attributes, and only the rest is compared.
 test guest, as three boots: source, rescue, restored.  `--bios` is for a guest
 that doesn't boot by UEFI, `--virtio` for one whose initramfs has no NVMe driver.
 
+**Where to run one.**  On any amd64 farm host that caches the guest, not
+just Chopin and Cinqcent, where the rehearsals below ran by habit.  Place it
+with `testvm/pick-host`.  Its `--guest` checks that the guest is in the
+host's cache (`vms/GUEST/*.qcow2`; a small host caches only the published
+guests, so a guest still unpublished is found only on its builder), and its
+`--reserve` checks the work dir and memory against the host's ceiling:
+
+    H=$(testvm/pick-host --reserve D 6 --guest GUEST)        # from ~/git/backotter
+
+D is the work dir's peak: the guest's overlay, the USB drive with the
+repository, the restored internal disk and the stick's copy (kinoite44
+peaked at 10.3 GiB, so `--reserve 12 6`; alpine324-uefi at 1.9 GiB, so `--reserve 4 6`).
+M is 6 because the VM gets 6 GiB.  A rehearsal under a small host's ceiling
+(9 GiB of RAM disk, 10.1 GiB memory) may add `--class small` to leave the
+big pair free.  On H, run it from /mnt/bko-ram under `cmp-run.sh --reserve D
+6` with a `WEAR_TAG=bs1:GUEST` and a `--port` of its own:
+
+  - TOOLS_DIR: a directory with `holt-bin/linux/bko-holt` and
+    `bko-bin/linux/rustic-bko`, which every host holds as the same set.
+  - TEST_IMG: `images/linux/test/*.img` on a host that has one.  The small
+    hosts have no `images/` yet (until the image fan-out, img-speed I8), so
+    copy one from Chopin or Cinqcent (`scp` host to host) and compare their
+    SHA-256 before the run.
+
 On a LUKS guest the harness's USB drive (`BKOBACKUPA`) stands in for
 `mybig512`, and the guest's passphrase goes into its
 `keys/disk-passphrase`.  When adopt sets up unlocking from the drive, the
@@ -1338,7 +1369,10 @@ family G, `--virtio --luks-typed`) on Cinqcent, run
 `guix-20261124-154640`: every boot with the drive was opened by GRUB with
 the drive's key and the initrd with the cpio's, nothing typed
 (`UNLOCK=drive`, the source's and the restored system's), and without the
-drive GRUB asked once.
+drive GRUB asked once.  On 2026-11-27, the first on a small host: `alpine324-uefi`
+(`--virtio`) on Cage, placed by `pick-host --reserve 4 6 --guest
+alpine324-uefi --class small`, run `alpine-3.24.4-20261127-012714`, 25
+checks ok.
 
 Every rehearsal also runs the preflight, and checks that the snapshot is named
 `/mnt/bs1-src` and keeps a file's real access time.  On an ostree guest

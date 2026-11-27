@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # img-seed-host.sh: img-seed.sh's half on a host (docs/design/img-speed.md §5.1, D5).
-# Run by stick/img_seed.py over ssh as `bash -s -- CMD ARGS` with this file on stdin, so
+# Run by stick/img_seed.py over ssh as `bash -c "$(cat this file)" img-seed-host CMD ARGS`, so
 # that a host needs no synced copy of it; it also runs here directly (the t2 tests).
 #
 #   facts                    what the host holds: tab-separated lines, said below

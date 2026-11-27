@@ -285,6 +285,21 @@ class Locks(unittest.TestCase):
         self.assertNotIn("let go", out)
 
 
+class Room(unittest.TestCase):
+    def test_dest_room_counts_the_rounds_copies_against_the_floor(self):
+        g = 1 << 30
+        room = {}
+        f = {"free": (R.FANOUT_FLOOR_GIB + 5) * g}
+        self.assertIsNone(R.dest_room(room, "choubox", f, "linux", {"bytes": 3 * g}))
+        self.assertIsNone(R.dest_room(room, "choubox", f, "netbsd", {"bytes": 2 * g}))
+        why = R.dest_room(room, "choubox", f, "freebsd", {"bytes": 1})
+        self.assertIn("no room: freebsd's copy is 0.0 GiB and its images/ has 15.0 GiB free, 0.0 of it above", why)
+        self.assertIsNone(R.dest_room(room, "cage", {"free": 100 * g}, "freebsd", {"bytes": 3 * g}))
+        # (no size or no free space known: not checked)
+        self.assertIsNone(R.dest_room({}, "cage", {"free": None}, "linux", {"bytes": 3 * g}))
+        self.assertIsNone(R.dest_room({}, "cage", {"free": 0}, "linux", {}))
+
+
 class Farm(unittest.TestCase):
     """img_round.py run end to end over five builders and choubox."""
 
@@ -397,6 +412,21 @@ class Farm(unittest.TestCase):
         for p in PLATS:
             self.assertIn("could roll it back", rnd["fanout"][p]["choubox"])
         self.assertEqual(os.listdir(self.p("choubox", "work/images")), [".round.lock"])
+
+    def test_a_dest_without_room_is_not_copied_to(self):
+        # D12 (I9): a DEST whose images/ can't take a copy above FANOUT_FLOOR_GIB is refused for it.
+        floor = R.FANOUT_FLOOR_GIB
+        self.addCleanup(setattr, R, "FANOUT_FLOOR_GIB", floor)
+        R.FANOUT_FLOOR_GIB = 1 << 40
+        self.assertEqual(R.do_run(self.ctx()), 1)
+        rnd = jl(os.path.join(self.t, "mac", "r8", "round.json"))
+        for p in PLATS:
+            b = rnd["units"][p]["host"]
+            self.assertEqual(rnd["fanout"][p][b], "ok", p)
+            for d in DESTS:
+                if d != b:
+                    self.assertTrue(rnd["fanout"][p][d].startswith(f"refused: no room: {p}'s copy is "), rnd["fanout"][p][d])
+                    self.assertFalse(os.path.exists(self.p(d, f"work/images/{p}/done.exit")))
 
     def test_a_copy_that_differs_is_said(self):
         wr(self.p("czerny", "corrupt-haiku"), "")

@@ -889,6 +889,18 @@ def mt(p):
         return os.stat(p).st_mtime
     except OSError:
         return None
+def size(d):
+    # What img-xcopy.sh sends of images/P: everything but prev-*.
+    n = 0
+    for top, dirs, files in os.walk(d):
+        if top == d:
+            dirs[:] = [x for x in dirs if not x.startswith("prev-")]
+        for f in files:
+            try:
+                n += os.lstat(os.path.join(top, f)).st_size
+            except OSError:
+                pass
+    return n
 out = {"now": time.time(), "images": I, "platforms": {}}
 for p in sys.argv[1:]:
     d = os.path.join(I, p)
@@ -902,7 +914,8 @@ for p in sys.argv[1:]:
         "bins": rd(os.path.join(d, "bko-bin.sha256")), "built": (pv or {}).get("built"), "mode": (pv or {}).get("mode"),
         "start": mt(os.path.join(d, "bko-bin.sha256")),
         "end": max([t for t in (mt(os.path.join(d, "done.exit")), mt(os.path.join(I, p + ".lane.log"))) if t] or [None]),
-        "lane_log": rd(os.path.join(I, p + ".lane.log"), 6), "result": rd(os.path.join(d, "result.txt"), 8)}
+        "lane_log": rd(os.path.join(I, p + ".lane.log"), 6), "result": rd(os.path.join(d, "result.txt"), 8),
+        "bytes": size(d)}
 print("status " + json.dumps(out, sort_keys=True))
 '''
 
@@ -922,7 +935,17 @@ def sha(p):
         return h.hexdigest()
     except OSError:
         return None
-out = {"holt_sums": sha(os.path.join(H, "SHA256SUMS")), "platforms": {}}
+I = os.environ.get("BKO_IMG_DIR") or os.path.join(work, "images")
+def free(d):
+    # The bytes free to this user where images/ is (its nearest existing ancestor).
+    while d and not os.path.isdir(d):
+        d = os.path.dirname(d)
+    try:
+        st = os.statvfs(d or "/")
+        return st.f_bavail * st.f_frsize
+    except OSError:
+        return None
+out = {"holt_sums": sha(os.path.join(H, "SHA256SUMS")), "free": free(I), "platforms": {}}
 for p in sys.argv[1:]:
     bd = os.path.join(B, p)
     try:
@@ -1090,7 +1113,8 @@ def unit_rows(plan, units, statuses, rdir):
                 s = (st.get("platforms") or {}).get(p) or {}
                 r = {"host": h, "action": plan["platforms"][p]["action"], "done_exit": s.get("done_exit"),
                      "built_run": (s.get("built") or {}).get("run"), "release_sums": s.get("release_sums"),
-                     "test_sums": s.get("test_sums"), "bins": s.get("bins"), "minutes": None, "waited": None}
+                     "test_sums": s.get("test_sums"), "bins": s.get("bins"), "bytes": s.get("bytes"), "minutes": None,
+                     "waited": None}
                 if s.get("start") and s.get("end") and s["end"] >= s["start"]:
                     r["minutes"] = round((s["end"] - s["start"]) / 60.0, 1)
                 if s.get("start") and prev_end and s["start"] >= prev_end:
@@ -1135,6 +1159,26 @@ def dest_why(dest_facts, p, row, plan_holt):
     return None
 
 
+FANOUT_FLOOR_GIB = 10    # GiB a fan-out leaves free on a DEST's images file system
+
+
+def dest_room(room, d, dest_facts, p, row):
+    """Why DEST D has no room for P's copy (D12), or None, and P's bytes taken from ROOM[D] (its
+    free bytes above FANOUT_FLOOR_GIB, less the copies already given it).  The old set moves to
+    prev-x and is not counted as freed.  A DEST or a unit that gave no size isn't checked."""
+    need, free = row.get("bytes"), dest_facts.get("free")
+    if not isinstance(need, int) or not isinstance(free, int):
+        return None
+    if d not in room:
+        room[d] = free - int(FANOUT_FLOOR_GIB * (1 << 30))
+    if need > room[d]:
+        return (f"no room: {p}'s copy is {need / (1 << 30):.1f} GiB and its images/ has {free / (1 << 30):.1f} GiB free,"
+                f" {max(room[d], 0) / (1 << 30):.1f} of it above the {FANOUT_FLOOR_GIB} GiB floor after this round's other"
+                f" copies (prune its prev-* sets: stick/img-retain.sh)")
+    room[d] -= need
+    return None
+
+
 def dest_env(remote_env):
     """img-xcopy.sh's DEST paths for the round's environment (the same layout on every host)."""
     e = dict(remote_env)
@@ -1159,12 +1203,14 @@ def fanout(table, plan, rows, dests, remote_env, rdir, jobs, say):
     rec = {p: {r["host"]: "builder"} for p, r in good.items()}
     others = [d for d in dests if any(good[p]["host"] != d for p in plats)]
     dfacts = dict(zip(others, pool_map(lambda d: run_py(table, d, remote_env, DEST_PY, plats, "dest"), others, jobs)))
-    pairs = {}
+    pairs, room = {}, {}
     for p in plats:
         for d in dests:
             if d == good[p]["host"]:
                 continue
             why = dest_why(dfacts[d], p, good[p], (plan.get("sets") or {}).get("holt-bin"))
+            if not why:
+                why = dest_room(room, d, dfacts[d], p, good[p])
             if why:
                 rec[p][d] = "refused: " + why
             else:

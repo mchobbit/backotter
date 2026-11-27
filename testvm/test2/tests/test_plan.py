@@ -1264,6 +1264,25 @@ class ImgRefusal(ImgCase):
         c = self.plan_img(self.good(), text="ImgTest2 release plan", facts=self.w.facts(images=im)).cell("img:netbsd")
         self.assertTrue(c.refused)      # release can't vouch for it
 
+    def test_the_proof_cells_wait_for_a_rounds_fan_out(self):
+        # img-speed.md §10 (I9): while a round holds images/.round.lock on any reached host, no img
+        # cell or +img line is placed anywhere, not only on the host still being copied to.
+        f = self.w.facts()
+        f["cinqcent"]["image_round"] = {"held": True, "round": "r9", "line": "r9 (img-round.sh from mac, since T, pid 7)"}
+        for text, cell in (("ImgTest2 plan", "img:netbsd"), ("HoltTest2 netbsd11+img plan", "holt:netbsd11+img")):
+            c = self.plan_img(self.good(), text=text, facts=f).cell(cell)
+            self.assertEqual(c.status, "not-runnable", text)
+            self.assertIn("image round r9 holds images/.round.lock on cinqcent", "; ".join(c.reasons), text)
+        f["cinqcent"]["image_round"] = {"held": False, "round": None, "line": None}
+        self.assertEqual(st(self.plan_img(self.good(), facts=f), "img:netbsd")[0], "due")
+        c = self.plan_img(self.good(), text="HoltTest2 netbsd11+img plan", facts=f).cell("holt:netbsd11+img")
+        self.assertEqual(c.status, "due")
+        # (a run whose --hosts leaves the held host out isn't kept waiting by it)
+        f["cinqcent"]["image_round"]["held"] = True
+        c = self.plan_img(self.good(), text="HoltTest2 netbsd11+img plan", facts=f,
+                          hosts=[h for h in world.HOSTS if h != "cinqcent"]).cell("holt:netbsd11+img")
+        self.assertEqual(c.status, "due")
+
     def test_a_named_image_that_cannot_run_exits_2_beside_one_that_can(self):
         im = self.w.images()
         im["linux"]["done_exit"] = None

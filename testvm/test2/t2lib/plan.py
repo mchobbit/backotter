@@ -1314,7 +1314,22 @@ class Planner:
                 continue
         return out
 
+    def image_round_why(self, hosts):
+        """Why the proof cells wait (img-speed.md §10, C10), or None: an img-round.sh round holds
+        images/.round.lock on one of HOSTS (its facts' image_round), so its images are being built
+        or fanned out, and ImgTest2 and the +img panel start only once its fan-out has ended."""
+        held = [(h, r) for h in hosts for r in [(self.ctx.facts.get(h) or {}).get("image_round") or {}] if r.get("held")]
+        if not held:
+            return None
+        names = sorted({r.get("round") or "?" for _, r in held})
+        return (f"image round {', '.join(names)} holds images/.round.lock on {', '.join(h for h, _ in held)}: its build"
+                f" or fan-out has not ended, and the proof cells start only once it has (img-speed.md §10); run again then")
+
     def place_img(self, v, reach):
+        why = self.image_round_why(reach)
+        if why:
+            v.hosts, v.why_not = [], why
+            return
         ims = {h: ((self.ctx.facts[h].get("images") or {}).get(v.name)) for h in reach}
         v.hosts = [h for h, im in ims.items() if im and im.get("done_exit") is not None]
         if not v.hosts:
@@ -1330,6 +1345,10 @@ class Planner:
         plat, e = self.panel_of(v.name)
         if e.get("blocked"):
             v.hosts, v.why_not = [], f"blocked: {e['blocked']}"
+            return
+        why = self.image_round_why(v.hosts)
+        if why:
+            v.hosts, v.why_not = [], why
             return
         ims = {h: ((self.ctx.facts.get(h) or {}).get("images") or {}).get(plat) for h in v.hosts}
         ok = [h for h, im in ims.items() if im and not (im.get("pin") or {}).get("bins_stale")]

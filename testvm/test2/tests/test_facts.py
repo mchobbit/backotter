@@ -211,6 +211,33 @@ class FactsHost(unittest.TestCase):
         _, j = self.probe({"guests": []}, extra=["--images", images, "--host-root", hr])
         self.assertNotIn("images", j)
 
+    def test_image_round_is_held_only_under_an_exclusive_flock(self):
+        # img-speed.md §10, C10 (I9): placement keeps the proof cells waiting while a round holds it.
+        import fcntl
+        images = os.path.join(_tmp, "imgs-round")
+        hr = os.path.join(_tmp, "hr-img-round")
+        self._image(images, "netbsd", hr)
+        free = {"held": False, "round": None, "line": None}
+        _, j = self.probe({"images": True, "guests": []}, extra=["--images", images, "--host-root", hr])
+        self.assertEqual(j["image_round"], free)                  # no file
+        self.assertFalse(os.path.exists(os.path.join(images, ".round.lock")))   # (not made)
+        lk = os.path.join(images, ".round.lock")
+        with open(lk, "w") as f:
+            f.write("r9 (img-round.sh from mac, since 2026-11-27T10:00:00Z, pid 7)\n")
+        with open(lk) as f:
+            fcntl.flock(f, fcntl.LOCK_SH)                         # a promotion's shared lock: no round
+            _, j = self.probe({"images": True, "guests": []}, extra=["--images", images, "--host-root", hr])
+            self.assertEqual(j["image_round"], free)
+        with open(lk) as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            _, j = self.probe({"images": True, "guests": []}, extra=["--images", images, "--host-root", hr])
+        self.assertEqual(j["image_round"], {"held": True, "round": "r9",
+                                            "line": "r9 (img-round.sh from mac, since 2026-11-27T10:00:00Z, pid 7)"})
+        _, j = self.probe({"images": True, "guests": []}, extra=["--images", images, "--host-root", hr])
+        self.assertEqual(j["image_round"], free)                  # let go: the stale line doesn't count
+        _, j = self.probe({"guests": []}, extra=["--images", images, "--host-root", hr])
+        self.assertNotIn("image_round", j)
+
     def test_an_image_that_cannot_be_read_costs_only_its_platform(self):
         images = os.path.join(_tmp, "imgs-bad")
         hr = os.path.join(_tmp, "hr-img-bad")

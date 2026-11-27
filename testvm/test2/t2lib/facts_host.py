@@ -18,7 +18,11 @@ from --work).  T2_FACTS_ROOT=DIR reads every system path (/proc, /sys, /etc,
 /var/lib/dpkg, /bkoscratch, /mnt/bko-ram) under DIR instead: a fake root for tests.
 
 Fields: host, machine, t, versions, preflight, sets, rounds, holt_bins, guests,
-rescuers, caps, plumbing, host_inputs, synced, copies, errors, took_s, and images when asked.
+rescuers, caps, plumbing, host_inputs, synced, copies, errors, took_s, and images and
+image_round when asked.  image_round is {"held": bool, "round": NAME or None, "line": TEXT
+or None}: whether an img-round.sh round holds IMAGES/.round.lock (an exclusive flock: its
+facts to the end of its fan-out, docs/design/img-speed.md C10), and the name and line the
+holder wrote; placement keeps the img cells and +img lines waiting while one does (§10).
 preflight.ram.ceiling is [DISK, MEM] GiB, the most one cmp-run.sh --reserve can ever get
 here (WORK/cmp-run.sh's ceiling(), run as it is), or null: placement leaves a cell off a
 host whose ceiling its reservation exceeds (facts.ceiling reads it).  caps is what else
@@ -31,6 +35,7 @@ under a fake root): placement keeps a cell off a host whose machine isn't the ar
 gives it (plan.Planner.arch_why); versions.qemu is that machine's qemu-system-MACHINE's.
 """
 
+import fcntl
 import glob
 import hashlib
 import json
@@ -780,6 +785,27 @@ def images_part(images, host_root, errors=None):
     return out
 
 
+def image_round(images):
+    """{"held", "round", "line"} of IMAGES/.round.lock (C10): held when an exclusive flock is on
+    it, which a shared one, tried without waiting and let go at once, finds (promote-bins.sh's
+    and img-refresh-holt.sh's shared ones don't count).  No file: not held.  Read only."""
+    path = os.path.join(images, ".round.lock")
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except FileNotFoundError:
+        return {"held": False, "round": None, "line": None}
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except OSError:
+            line = (os.read(fd, 512).decode("utf-8", "replace").splitlines() or [""])[0].strip()[:200] or None
+            return {"held": True, "round": line.split()[0] if line else None, "line": line}
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return {"held": False, "round": None, "line": None}
+    finally:
+        os.close(fd)
+
+
 def default_home():
     """The process's home; as root under sudo, SUDO_USER's (never $HOME)."""
     su = os.environ.get("SUDO_USER")
@@ -842,6 +868,7 @@ def collect(want=None, work=None, host_root=None, copy_root=None, user=None, hom
     part("caps", caps, work)
     if want.get("images"):
         part("images", images_part, images, host_root, f["errors"])
+        part("image_round", image_round, images)
     part("plumbing", lambda: {n: sha_file(os.path.join(work, n[len("shared:"):]))
                               for n in (want.get("plumbing") or DEFAULT_PLUMBING) if n.startswith("shared:")})
 

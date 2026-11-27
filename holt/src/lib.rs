@@ -29,6 +29,7 @@ pub mod other;
 pub mod parttable;
 pub mod probe;
 pub(crate) mod qubes;
+pub mod rawpart;
 pub mod recovery;
 pub mod recoverycmd;
 pub mod redact;

@@ -16,6 +16,7 @@ const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
        bko-holt recovery-words OUT --json
        bko-holt luks-headers LAYOUT DIR --repo REPO [--password-file FILE] [--json] ...
        bko-holt snapshot-layout OUT --repo REPO [--password-file FILE] [--json] ...
+       bko-holt rawpart-stage [--dev-dir DIR] LAYOUT DIR
        bko-holt -h | --help | -V | --version | --license
 
   dump        writes a JSON description of this system's disk layout
@@ -39,6 +40,10 @@ const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
   snapshot-layout
               writes the disk layout a snapshot's own system.json carries
               to a new private file, for load
+  rawpart-stage
+              copies the raw partitions a dump lists (sparse, checked
+              against its sizes and SHA-256s) into DIR, for a backup to
+              take with DIR bind-mounted at TREE/.bko-holt/rawpart
 
 `bko-holt dump --help`, `bko-holt load --help` and `bko-holt report-bug --help`
 say more.
@@ -162,6 +167,7 @@ fn main() -> ExitCode {
         Some("grub-prefix") => ExitCode::from(bko_holt::load::grubprefix::main(&args[1..])),
         Some("luks1-digest") => ExitCode::from(bko_holt::load::luks1digest::main(&args[1..])),
         Some("raw-write") => ExitCode::from(bko_holt::load::rawvol::main(&args[1..])),
+        Some("rawpart-stage") => ExitCode::from(bko_holt::rawpart::main(&args[1..])),
         Some("write-table") => ExitCode::from(bko_holt::load::writetable::main(&args[1..])),
         Some("rewrite") => ExitCode::from(bko_holt::load::rewrite::main(&args[1..])),
         Some("fat-set") => ExitCode::from(bko_holt::load::fatset::main(&args[1..])),

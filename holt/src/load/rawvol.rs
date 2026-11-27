@@ -97,6 +97,21 @@ fn raw_write_script(
     chunk: u64,
     image: &str,
 ) -> String {
+    raw_write_script_sha(dump, exe, dev, bytes, chunk, image, None)
+}
+
+/// `raw_write_script`, with `--sha256 SHA` when the image's SHA-256 is
+/// known (a raw partition's, crate::rawpart): a stream of another one is
+/// a failure.
+fn raw_write_script_sha(
+    dump: &[String],
+    exe: &str,
+    dev: &str,
+    bytes: u64,
+    chunk: u64,
+    image: &str,
+    sha: Option<&str>,
+) -> String {
     let dump = dump
         .iter()
         .map(|w| shell_quote(w))
@@ -113,8 +128,10 @@ fn raw_write_script(
         format!("\"{q}\"")
     };
     format!(
-        "rm -f {st}; udevadm settle; {{ {dump}; echo $? > {st}; }} | {} raw-write --size {bytes} --chunk {chunk} {}; w=$?; [ \"$(cat {st} 2>/dev/null)\" = 0 ] || {{ echo \"the archiver's dump of {shown} failed\" >&2; exit 1; }}; exit $w",
+        "rm -f {st}; udevadm settle; {{ {dump}; echo $? > {st}; }} | {} raw-write --size {bytes}{} --chunk {chunk} {}; w=$?; [ \"$(cat {st} 2>/dev/null)\" = 0 ] || {{ echo \"the archiver's dump of {shown} failed\" >&2; exit 1; }}; exit $w",
         shell_quote(exe),
+        sha.map(|h| format!(" --sha256 {}", shell_quote(h)))
+            .unwrap_or_default(),
         shell_quote(dev)
     )
 }
@@ -130,20 +147,122 @@ impl Builder<'_> {
             .collect()
     }
 
-    /// Whether source device SRC is a raw volume: format leaves it alone.
+    /// Whether source device SRC is a raw volume or a raw partition
+    /// (crate::rawpart): format leaves it alone.
     pub(crate) fn is_raw_volume(&self, src: &str) -> bool {
         self.raw_dms()
             .iter()
             .any(|d| s(d, "name").as_deref() == Some(src))
+            || crate::rawpart::of_layout(&self.layout.v)
+                .iter()
+                .any(|(n, _, _)| n == src)
     }
 
-    /// The main restore leaves the raw volumes' images out: they go to
-    /// their LVs, not into the tree.
+    /// The main restore leaves the raw volumes' and raw partitions' images
+    /// out: they go to their LVs and partitions, not into the tree.
     pub(crate) fn raw_globs(&self) -> Vec<String> {
-        if self.raw_dms().is_empty() {
-            Vec::new()
-        } else {
-            vec![format!("!{}/**", crate::qubes::RAW_DIR)]
+        let mut g = Vec::new();
+        if !self.raw_dms().is_empty() {
+            g.push(format!("!{}/**", crate::qubes::RAW_DIR));
+        }
+        if !crate::rawpart::of_layout(&self.layout.v).is_empty() {
+            g.push(format!("!{}/**", crate::rawpart::RAWPART_DIR));
+        }
+        g
+    }
+
+    /// Raw partitions (crate::rawpart): sizes are exact, so a plan whose
+    /// raw partition isn't the dump's size (an edited layout; --fit-largest
+    /// never chooses one) is refused, as is one whose image has no SHA-256
+    /// in the dump (it couldn't read the partition), which the restore
+    /// checks.
+    pub(crate) fn rawpart_problems(&mut self) {
+        for d in self.layout.arr(&["storage", "disks"]).to_vec() {
+            for p in d
+                .get("partitions")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let Some(r) = p.get("raw_partition").filter(|r| !r.is_null()) else {
+                    continue;
+                };
+                let name = s(p, "name").unwrap_or_default();
+                let want = r.get("size_bytes").and_then(Value::as_u64);
+                let have = p.get("size_bytes").and_then(Value::as_u64);
+                if want != have {
+                    self.problems.push(format!(
+                        "{name} is a raw partition ({}), which comes back byte for byte, so its size is exact: {} in this plan, {} in the dump",
+                        s(r, "why").unwrap_or_default(),
+                        have.map_or("none".into(), crate::report::human),
+                        want.map_or("none".into(), crate::report::human)
+                    ));
+                }
+                let empty = r.get("empty").and_then(Value::as_bool) == Some(true);
+                if !empty && r.get("sha256").and_then(Value::as_str).is_none() {
+                    self.problems.push(format!(
+                        "{name} is a raw partition, but the dump has no SHA-256 of it (it couldn't read the partition: dump as root), so its image couldn't be checked"
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Without --repo: what the restore stage would have done for the raw
+    /// partitions.
+    pub(crate) fn rawpart_by_hand_note(&self) -> Option<Cmd> {
+        let raws = crate::rawpart::of_layout(&self.layout.v);
+        (!raws.is_empty()).then(|| {
+            Cmd::note(format!(
+                "no --repo: the {} raw partitions are written only by the restore stage with --repo (`bko-holt raw-write --size BYTES --sha256 SHA` of the backup's {}/PARTUUID.img onto each, zeros onto an empty slot); by hand, do the same",
+                raws.len(),
+                crate::rawpart::RAWPART_DIR
+            ))
+        })
+    }
+
+    /// After the main restore: each raw partition's image written to its
+    /// partition (only the chunks that differ), its length and SHA-256
+    /// checked against the dump's; an empty slot made zero (R6: its GPT
+    /// entry is the table's, its old bytes aren't kept).
+    pub(crate) fn rawpart_restore(&mut self, prefix: &[String], out: &mut Vec<Cmd>) {
+        let raws = crate::rawpart::of_layout(&self.layout.v);
+        if raws.is_empty() {
+            return;
+        }
+        let exe = std::env::current_exe()
+            .map_or_else(|_| "bko-holt".into(), |p| p.to_string_lossy().into_owned());
+        out.push(Cmd::new(&["mkdir", "-p", "-m", "700", RUN_DIR]));
+        for (name, _, r) in raws {
+            let Some(dev) = self.names.dev(&name) else {
+                self.problems.push(format!(
+                    "{name} is a raw partition, but nothing in this plan makes it"
+                ));
+                continue;
+            };
+            let bytes = r.get("size_bytes").and_then(Value::as_u64).unwrap_or(0);
+            let why = s(&r, "why").unwrap_or_default();
+            if r.get("empty").and_then(Value::as_bool) == Some(true) {
+                let script = format!(
+                    "udevadm settle; {} raw-write --size 0 --chunk {} {} < /dev/null",
+                    shell_quote(&exe),
+                    1u64 << 20,
+                    shell_quote(&dev)
+                );
+                out.push(
+                    Cmd::new(&["sh", "-c", &script])
+                        .why(format!("{dev} ({name}): zeros where it isn't zero ({why})")),
+                );
+                continue;
+            }
+            let image = s(&r, "image").unwrap_or_default();
+            let dump = dump_argv(prefix, &self.opts.archiver, &self.opts.snapshot, &image);
+            let sha = s(&r, "sha256");
+            let script =
+                raw_write_script_sha(&dump, &exe, &dev, bytes, 1 << 20, &image, sha.as_deref());
+            out.push(Cmd::new(&["sh", "-c", &script]).why(format!(
+                "{image} written to {dev} ({name}, a raw partition: {why}), only the chunks that differ, its {bytes} bytes and SHA-256 checked against the dump's"
+            )).archiver());
         }
     }
 
@@ -457,6 +576,20 @@ pub fn write_diff(
     size: Option<u64>,
     chunk: usize,
 ) -> Result<Stats, String> {
+    write_diff_sha(input, dev, size, chunk, None)
+}
+
+/// `write_diff`, the input's SHA-256 checked against SHA when given (a
+/// raw partition's, crate::rawpart): another is an error, after the
+/// writes, so the device is then known not to be the dump's.
+pub fn write_diff_sha(
+    input: &mut dyn Read,
+    dev: &File,
+    size: Option<u64>,
+    chunk: usize,
+    sha: Option<&str>,
+) -> Result<Stats, String> {
+    let mut hasher = crate::bytes::Sha256::new();
     let chunk = chunk.max(512);
     let dev_size = {
         use std::io::{Seek, SeekFrom};
@@ -492,6 +625,7 @@ pub fn write_diff(
                 "the image is longer than the device ({dev_size} bytes)"
             ));
         }
+        hasher.update(&img[..n]);
         same_or_write(dev, at, &img[..n], &mut cur[..n], &mut st)?;
         at += n as u64;
         if n < chunk {
@@ -514,6 +648,14 @@ pub fn write_diff(
         at += n as u64;
     }
     dev.sync_all().map_err(|e| format!("sync: {e}"))?;
+    if let Some(want) = sha {
+        let got = hasher.hex();
+        if !got.eq_ignore_ascii_case(want) {
+            return Err(format!(
+                "the image's SHA-256 is {got}, not the dump's {want}: the device now holds an image that isn't the dump's"
+            ));
+        }
+    }
     Ok(st)
 }
 
@@ -540,13 +682,25 @@ fn same_or_write(
 /// standard input written to DEV, only where it differs (load's restore
 /// stage runs it; docs/design/qubes.md).
 pub fn main(args: &[String]) -> u8 {
-    let usage = "usage: bko-holt raw-write [--size BYTES] [--chunk BYTES] DEV < IMAGE";
+    let usage =
+        "usage: bko-holt raw-write [--size BYTES] [--sha256 HEX] [--chunk BYTES] DEV < IMAGE";
     let (mut size, mut chunk, mut dev) = (None, 64usize << 10, None);
+    let mut sha: Option<String> = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--size" => match it.next().and_then(|v| v.parse::<u64>().ok()) {
                 Some(n) => size = Some(n),
+                None => {
+                    eprintln!("{usage}");
+                    return 2;
+                }
+            },
+            "--sha256" => match it
+                .next()
+                .filter(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit()))
+            {
+                Some(h) => sha = Some(h.clone()),
                 None => {
                     eprintln!("{usage}");
                     return 2;
@@ -585,7 +739,13 @@ pub fn main(args: &[String]) -> u8 {
             return 1;
         }
     };
-    match write_diff(&mut std::io::stdin().lock(), &f, size, chunk) {
+    match write_diff_sha(
+        &mut std::io::stdin().lock(),
+        &f,
+        size,
+        chunk,
+        sha.as_deref(),
+    ) {
         Ok(st) => {
             eprintln!(
                 "bko-holt raw-write: {dev}: {} bytes; {} chunks written, {} already as the image",
@@ -677,6 +837,42 @@ mod tests {
                 .contains("more than the device")
         );
         std::fs::remove_file(p).unwrap();
+    }
+
+    /// --sha256: the image's own is fine, another is an error (after the
+    /// writes); the script passes it.
+    #[test]
+    fn sha256_checked() {
+        let (p, f) = dev(&[0u8; 4096]);
+        let img = vec![5u8; 4096];
+        let good = crate::bytes::sha256_hex(&img);
+        assert!(write_diff_sha(&mut &img[..], &f, Some(4096), 512, Some(&good)).is_ok());
+        let bad = "0".repeat(64);
+        assert!(
+            write_diff_sha(&mut &img[..], &f, Some(4096), 512, Some(&bad))
+                .unwrap_err()
+                .contains("not the dump's")
+        );
+        // An empty slot: no image, the device made zero.
+        let st = write_diff(&mut std::io::empty(), &f, Some(0), 512).unwrap();
+        assert_eq!(st.written, 8);
+        assert!(std::fs::read(&p).unwrap().iter().all(|&b| b == 0));
+        std::fs::remove_file(p).unwrap();
+        let sc = raw_write_script_sha(
+            &["d".into()],
+            "/b",
+            "/dev/vda3",
+            4096,
+            1 << 20,
+            "/x.img",
+            Some(&good),
+        );
+        assert!(
+            sc.contains(&format!(
+                "raw-write --size 4096 --sha256 {good} --chunk 1048576 /dev/vda3"
+            )),
+            "{sc}"
+        );
     }
 
     #[test]

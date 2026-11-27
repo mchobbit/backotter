@@ -552,6 +552,7 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
     b.qubes_note();
     b.qubes_problems();
     b.thin_problems();
+    b.rawpart_problems();
     // --reformat's findings (reformat.rs), carried in the edited layout
     // with their codes.
     for p in layout
@@ -5503,6 +5504,7 @@ impl Builder<'_> {
                 crate::luksfetch::BKO_DIR
             ))];
             v.extend(self.thin_by_hand_note());
+            v.extend(self.rawpart_by_hand_note());
             return v;
         };
         let mut a = vec![
@@ -5690,6 +5692,8 @@ impl Builder<'_> {
         // Thin snapshots and raw volumes (load/rawvol.rs), once their
         // origins' content is restored.
         self.thin_restore(&dump_prefix, &mut out);
+        // Raw GPT partitions (load/rawvol.rs, crate::rawpart).
+        self.rawpart_restore(&dump_prefix, &mut out);
         out.push(
             Cmd::new(&["sh", "-c", &self.atimes(&self.opts.target, "before")])
                 .why("the atimes the restore set, for boot to put back after its reads"),

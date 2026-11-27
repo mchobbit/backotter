@@ -15268,3 +15268,241 @@ fn loop_mount_of_a_file_is_an_alias() {
         .collect();
     assert_eq!(paths, ["/"]);
 }
+
+// ---- raw GPT partitions (crate::rawpart, docs/design/gnome-os.md GN3) ----
+
+const RAWPART_USR_A: &str = "a5a50001-0000-4000-8000-0000000000a1";
+const RAWPART_VERITY_A: &str = "a5a50002-0000-4000-8000-0000000000a2";
+const RAWPART_USR_B: &str = "a5a50003-0000-4000-8000-0000000000b1";
+
+/// A Debian on GPT (ESP, ext4 root) whose disk also holds an A/B /usr of
+/// Discoverable Partitions types, as a sysupdate system's: A's usr and
+/// usr-verity with content bko-holt doesn't make, and B an empty slot
+/// (`_empty`) still holding stale old bytes.  Generic: no system's names.
+fn rawpart_tree() -> (Tree, Vec<u8>, Vec<u8>) {
+    let usr_t = crate::rawpart::DPS_USR_TYPES[0];
+    let verity_t = crate::rawpart::DPS_USR_TYPES[1];
+    let t = Tree::new("scn-rawpart");
+    t.debian13();
+    let mut img = vec![0u8; 128 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "a5a50000-0000-4000-8000-00000000aaaa",
+            parts: vec![
+                (
+                    ESP,
+                    "a5a50000-0000-4000-8000-000000000001",
+                    2048,
+                    73727,
+                    0,
+                    "esp",
+                ),
+                (
+                    LINUX,
+                    "a5a50000-0000-4000-8000-000000000002",
+                    73728,
+                    204_799,
+                    0,
+                    "root",
+                ),
+                (usr_t, RAWPART_USR_A, 204_800, 212_991, 0, "os_usr_1.0"),
+                (
+                    verity_t,
+                    RAWPART_VERITY_A,
+                    212_992,
+                    215_039,
+                    0,
+                    "os_usr_v_1.0",
+                ),
+                (usr_t, RAWPART_USR_B, 215_040, 223_231, 0, "_empty"),
+            ],
+        },
+    );
+    put(&mut img, 2048, &fat::sample::fat32(71680, 0x1234_abcd, ""));
+    put(
+        &mut img,
+        73728,
+        &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""),
+    );
+    // A's bytes (zero runs in them, as an erofs has), B's stale old ones.
+    let usr_a: Vec<u8> = (0..8192 * 512usize)
+        .map(|i| {
+            if (i / 4096) % 3 == 0 {
+                0
+            } else {
+                (i % 241) as u8 + 1
+            }
+        })
+        .collect();
+    let verity_a: Vec<u8> = (0..2048 * 512usize).map(|i| (i % 199) as u8).collect();
+    put(&mut img, 204_800, &usr_a);
+    put(&mut img, 212_992, &verity_a);
+    put(&mut img, 215_040, &vec![0x5au8; 8192 * 512]);
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
+        .partition("vda", "vda2", "254:2", 2, 73728, 131_072, &img)
+        .partition("vda", "vda3", "254:3", 3, 204_800, 8192, &img)
+        .partition("vda", "vda4", "254:4", 4, 212_992, 2048, &img)
+        .partition("vda", "vda5", "254:5", 5, 215_040, 8192, &img)
+        .file("/sys/block/vda/device/model", "")
+        .file("/proc/self/mountinfo", "26 1 254:2 / / rw,relatime shared:1 - ext4 /dev/vda2 rw,errors=remount-ro\n27 26 254:1 / /boot/efi rw,relatime shared:2 - vfat /dev/vda1 rw,fmask=0077\n")
+        .file("/etc/fstab", "UUID=10111213-1415-1617-1819-1a1b1c1d1e1f / ext4 errors=remount-ro 0 1\nUUID=1234-ABCD /boot/efi vfat umask=0077 0 1\n")
+        .file("/boot/efi/EFI/debian/grubx64.efi", vec![2u8; 400])
+        .file("/boot/grub/x86_64-efi/normal.mod", "x")
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(
+            &format!("/sys/firmware/efi/efivars/SecureBoot-{}", crate::efi::GLOBAL),
+            crate::efi::real::unhex("06000000 00"),
+        )
+        .file("/var/lib/dpkg/status", "Package: grub-efi-amd64-bin\nStatus: install ok installed\nArchitecture: amd64\nVersion: 2.12-9\n");
+    (t, usr_a, verity_a)
+}
+
+fn rawpart_plan(v: &Value, repo: bool) -> crate::load::commands::Built {
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
+    let l = Layout::from_json(v.clone()).unwrap();
+    let mut a: Vec<String> = vec!["l.json".into()];
+    if repo {
+        a.extend(["--repo".into(), "/srv/bko-repo".into()]);
+    }
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else {
+        unreachable!()
+    };
+    commands::build(
+        &l,
+        &o,
+        &Mapping {
+            pairs: vec![("vda".into(), "vdb".into())],
+            ..Mapping::default()
+        },
+    )
+}
+
+/// dump: the DPS /usr partitions are raw, each with its exact size and
+/// the SHA-256 of its bytes; A's two are backup sources at
+/// /.bko-holt/rawpart/<PARTUUID>.img, B (`_empty`) only its GPT entry.
+/// load: format leaves them alone, the main restore leaves their images
+/// out, the restore stage writes A's (size and SHA-256 checked) and zeros
+/// B; a raw partition of another size, or without a SHA-256, is refused.
+#[test]
+fn raw_gpt_partitions() {
+    use crate::load::{Stage, commands::Cmd};
+    let (t, usr_a, verity_a) = rawpart_tree();
+    let v = run(&t, true, FakeRunner::default());
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+    let parts = arr(&v, &["storage", "disks", "0", "partitions"]);
+    let raw = |n: usize| {
+        parts[n]
+            .get("raw_partition")
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    assert!(raw(0).is_null() && raw(1).is_null());
+    assert_eq!(
+        s(&raw(2), &["image"]),
+        format!("/.bko-holt/rawpart/{RAWPART_USR_A}.img")
+    );
+    assert_eq!(u(&raw(2), &["size_bytes"]), 8192 * 512);
+    assert_eq!(s(&raw(2), &["sha256"]), crate::bytes::sha256_hex(&usr_a));
+    assert_eq!(s(&raw(3), &["sha256"]), crate::bytes::sha256_hex(&verity_a));
+    assert_eq!(raw(4).get("empty"), Some(&Value::Bool(true)));
+    assert!(raw(4).get("image").is_some_and(Value::is_null));
+    assert!(raw(4).get("sha256").is_some_and(Value::is_null));
+    let srcs = arr(&v, &["storage", "backup_sources"]);
+    let rs: Vec<&Value> = srcs
+        .iter()
+        .filter(|b| b.get("fstype").and_then(Value::as_str) == Some("raw"))
+        .collect();
+    assert_eq!(rs.len(), 2);
+    assert!(rs.iter().all(|b| b.get("from").is_some_and(Value::is_null)));
+    assert_eq!(
+        s(rs[0], &["source"]),
+        format!("/dev/disk/by-partuuid/{RAWPART_USR_A}")
+    );
+    // Redacted, the PARTUUID in the image path is the redacted one.
+    let (red, _) = crate::redact::redact(&v);
+    let ru = s(&red, &["storage", "disks", "0", "partitions", "2", "uuid"]);
+    assert_eq!(
+        s(
+            &red,
+            &[
+                "storage",
+                "disks",
+                "0",
+                "partitions",
+                "2",
+                "raw_partition",
+                "image"
+            ]
+        ),
+        format!("/.bko-holt/rawpart/{ru}.img")
+    );
+
+    let b = rawpart_plan(&v, true);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let fmt: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
+    for p in ["vdb3", "vdb4", "vdb5"] {
+        assert!(!fmt.contains(&format!("/dev/{p}")), "{fmt}");
+    }
+    let rest: String = b
+        .stage(Stage::Restore)
+        .iter()
+        .map(|c| c.shell() + "\n")
+        .collect();
+    assert!(rest.contains("!/.bko-holt/rawpart/**"), "{rest}");
+    for (u, n, img) in [
+        (RAWPART_USR_A, "vdb3", &usr_a),
+        (RAWPART_VERITY_A, "vdb4", &verity_a),
+    ] {
+        assert!(
+            rest.contains(&format!(
+                "dump latest:/.bko-holt/rawpart/{u}.img; echo $? > {RUN_DIR}/raw-dump.status; }} | {} raw-write --size {} --sha256 {} --chunk 1048576 /dev/{n};",
+                unflag_exe(),
+                img.len(),
+                crate::bytes::sha256_hex(img)
+            )),
+            "{rest}"
+        );
+    }
+    assert!(
+        rest.contains(&format!(
+            "raw-write --size 0 --chunk 1048576 /dev/vdb5 < /dev/null"
+        )),
+        "{rest}"
+    );
+    // Without --repo, the note says what to do by hand.
+    let b = rawpart_plan(&v, false);
+    let rest: String = b.stage(Stage::Restore).iter().map(Cmd::shell).collect();
+    assert!(
+        rest.contains("the 3 raw partitions are written only by the restore stage"),
+        "{rest}"
+    );
+
+    // Sizes are exact; a SHA-256 is needed.
+    let mut edited = v.clone();
+    edited
+        .at_mut(&["storage", "disks", "0", "partitions", "2"])
+        .unwrap()
+        .put("size_bytes", 4096 * 512u64);
+    edited
+        .at_mut(&["storage", "disks", "0", "partitions", "3", "raw_partition"])
+        .unwrap()
+        .put("sha256", Value::Null);
+    let b = rawpart_plan(&edited, true);
+    assert!(
+        b.problems
+            .iter()
+            .any(|p| p.contains("vda3 is a raw partition") && p.contains("its size is exact")),
+        "{:?}",
+        b.problems
+    );
+    assert!(
+        b.problems
+            .iter()
+            .any(|p| p.contains("vda4 is a raw partition, but the dump has no SHA-256")),
+        "{:?}",
+        b.problems
+    );
+}

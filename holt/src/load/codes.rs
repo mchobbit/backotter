@@ -230,6 +230,7 @@ pub const FIT_REASONS: &[&str] = &[
     "member",
     "multi_device",
     "fs_unsupported",
+    "raw_partition",
     "no_usage",
     "other",
 ];

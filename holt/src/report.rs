@@ -1283,14 +1283,22 @@ pub fn build_with(
             })
             .collect()
     };
-    let disks = section(&[Kind::Disk, Kind::Nbd, Kind::Ram], &|_| None);
+    let mut disks = section(&[Kind::Disk, Kind::Nbd, Kind::Ram], &|_| None);
     let md = section(&[Kind::Md], &|d| Some(("md", md_json(sys, d))));
     let mut dm = section(&[Kind::Dm], &|d| Some(("dm", dm_json(d))));
     // Thin usage, Qubes's volumes and the raw volumes (crate::qubes).
     let mut lvm = lvm_json(&ctx);
     crate::qubes::thin_usage(sys, &mut lvm, &dm);
     let qubes = crate::qubes::read(sys, os.and_then(|o| o.get("ID")));
-    let raw_sources = crate::qubes::raw_volumes(&mut dm, &lvm, qubes.as_ref());
+    let mut raw_sources = crate::qubes::raw_volumes(&mut dm, &lvm, qubes.as_ref());
+    // Raw GPT partitions (crate::rawpart, docs/design/gnome-os.md GN3): by
+    // the rule the system's detection chooses.
+    raw_sources.extend(crate::rawpart::mark(
+        sys,
+        &mut disks,
+        &mountinfo,
+        &crate::rawpart::rule_for(os.and_then(|o| o.get("ID"))),
+    ));
     let loops = section(&[Kind::Loop], &|d| {
         Some(("backing_file", Value::from(d.b.loop_backing_file.clone())))
     });

@@ -61,6 +61,15 @@ Haiku; Redox and Sculpt OS from Linux):
   stick's copy for it only (`src/snaplayout.rs`; holt-json.md,
   "bko-holt-snapshot-layout", open question 15).  load's restore leaves
   `/.bko-holt/system.json` out of every tree.
+- `bko-holt rawpart-stage [--dev-dir DIR] LAYOUT DIR` is an online
+  backup's staging step for raw GPT partitions (`src/rawpart.rs`;
+  docs/design/gnome-os.md, GN3): each partition the dump LAYOUT takes raw
+  (`raw_partition`, not an empty slot) copied sparse from
+  `/dev/disk/by-partuuid/PARTUUID` to `DIR/PARTUUID.img`, checked against
+  the dump's size and SHA-256, a line "PARTUUID BYTES SHA256" each; the
+  caller bind-mounts DIR at `TREE/.bko-holt/rawpart` while it backs up
+  TREE.  load writes the images back (`raw-write --size --sha256`), zeros
+  an empty slot, and leaves `/.bko-holt/rawpart` out of the tree.
 
 ```
 sudo bko-holt dump > layout.json

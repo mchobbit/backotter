@@ -1126,6 +1126,20 @@ fn one_with(v: &Value, t: &Target, pct: u64, strict: bool) -> Result<Outcome, Ve
             ),
         ));
     }
+    // A raw partition (crate::rawpart) comes back byte for byte: its size
+    // is exact, so the fit never chooses it.
+    if disk
+        .at(&["partitions", &big.i.to_string(), "raw_partition"])
+        .is_some_and(|r| !r.is_null())
+    {
+        return no(why(
+            "raw_partition",
+            format!(
+                "--fit-largest: the largest partition {} is a raw partition, which comes back byte for byte, so its size is exact",
+                big.name
+            ),
+        ));
+    }
     if big.logical {
         return no(why(
             "logical",
@@ -3031,6 +3045,27 @@ mod tests {
         );
         // Nothing shrinks, so how full it is doesn't come into it.
         assert!(f.disks[0].fits.is_empty());
+    }
+
+    /// A raw partition (crate::rawpart) is never the one fit resizes: its
+    /// size is exact.
+    #[test]
+    fn a_raw_largest_is_refused() {
+        let small = G;
+        let big = 8 * G;
+        let total = 2048 + small + big + 34;
+        let v = D::gpt(total)
+            .part(1, 2048, small, &ext4_on(small, GIB), "")
+            .part(
+                2,
+                2048 + small,
+                big,
+                "null",
+                &format!(r#""raw_partition": {{"image": "/.bko-holt/rawpart/x.img", "why": "w", "empty": false, "size_bytes": {}, "sha256": null}}"#, big * 512),
+            )
+            .build();
+        let why = refused(&v, (total - M) * 512, 50).is("raw_partition");
+        assert!(why.contains("vda2 is a raw partition"), "{why}");
     }
 
     #[test]

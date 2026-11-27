@@ -453,6 +453,95 @@ it as `boot.sysupdate`.
   slots hold a version (two usr at 4 GiB, two verity at 275 MiB; half
   that with B empty, R6), counted in the RAM and disk costs below.
 
+### What GN3 built (raw GPT partitions, generic)
+
+`holt/src/rawpart.rs`, with its load half in `holt/src/load/rawvol.rs`.
+Nothing in it is GNOME OS's.
+
+**The API GN2 calls.** dump marks raw partitions in `report::build_with` by
+`rawpart::mark(sys, &mut disks, &mountinfo, &rawpart::rule_for(os_id))`,
+once the disks' JSON is built and beside Qubes's raw volumes. GN2 changes
+only `rule_for`, giving `org.gnome.os` its own rule:
+
+```rust
+pub struct Rule {
+    pub dps_usr: bool,                          // DPS usr / usr-verity / usr-verity-sig types
+    pub unmade: bool,                           // content not in rawpart::MADE (or none)
+    pub empty_labels: &'static [&'static str],  // exact GPT names of an empty slot
+    pub empty_prefixes: &'static [&'static str],// GPT names starting so
+}
+Rule::GENERIC = { dps_usr: true, unmade: false, empty_labels: &["_empty"], empty_prefixes: &[] }
+// GNOME OS (GN2), e.g.:
+Rule { unmade: true, empty_labels: &["_empty", "gnomeos_usr_empty", "gnomeos_usr_v_empty"], ..Rule::GENERIC }
+```
+
+A partition mounted read-write itself (by devno, not through a dm device
+on it) is never raw, and neither is an MBR one. `Rule::decide(part_json, rw)
+-> Option<Pick>` (`Pick::Image(why)` or `Pick::Empty(why)`) is public, and
+`rawpart::mark_with(sys, disks, mounts, &dyn Fn(&Value, bool) ->
+Option<Pick>)` takes any decision, should GN2 need one a `Rule` can't say
+(by the verity hash partitions' blkid type, say). `Rule::GENERIC` is on for
+every system. No corpus or golden dump has a DPS usr partition, so no plan
+changed. `unmade` is off by default because a BIOS boot partition or
+another system's partition holds such content too.
+
+**dump** gives each picked partition `raw_partition` {`image`
+(`/.bko-holt/rawpart/<partuuid>.img`, lower case; null for an empty slot),
+`why`, `empty`, `size_bytes` (the GPT entry's), `sha256` (read off the
+partition device by dump, a MiB at a time; null with a warning when it
+can't read it, unprivileged say)}. A partition that isn't an empty slot is
+also a `backup_sources` row: `fstype: "raw"`, `from: null`, `source:
+/dev/disk/by-partuuid/<partuuid>`. An empty slot has no source: its GPT
+entry stays in the table, and its old bytes are neither backed up nor kept
+(R6). Redaction rewrites the image path's PARTUUID as it rewrites the
+partition's.
+
+**load:**
+- `format` leaves a raw partition alone (`is_raw_volume` covers both).
+- `--fit-largest` refuses when the largest partition is raw (new
+  `fit_refused` reason `raw_partition`, in holt-json.md).
+- `rawpart_problems` refuses a plan whose raw partition's `size_bytes`
+  isn't its `raw_partition.size_bytes` (an edited layout), and one whose
+  image has no SHA-256 in the dump.
+- The main restore leaves `!/.bko-holt/rawpart/**` out.
+- The restore stage then writes each image: `ARCHIVER dump
+  SNAP:/.bko-holt/rawpart/<partuuid>.img | bko-holt raw-write --size N
+  --sha256 H --chunk 1048576 /dev/<target partition>`. Only the chunks
+  that differ are written. A short stream, or a SHA-256 that isn't the
+  dump's, fails the stage. An empty slot gets `bko-holt raw-write --size 0
+  ... < /dev/null`, which writes zeros wherever it isn't already zero.
+- Without `--repo`, a note says to do the same by hand.
+
+**Staging (the shared helper for GN7 and GN10):** `bko-holt rawpart-stage
+[--dev-dir DIR] LAYOUT DIR`. It copies each non-empty raw partition of
+the dump LAYOUT sparse (4 KiB zero blocks become holes) from
+`/dev/disk/by-partuuid/<partuuid>` (or `--dev-dir`) to
+`DIR/<partuuid>.img`. Each image is checked against the dump's size and
+SHA-256; a partition that changed since the dump fails with exit 1. It
+removes DIR's other `.img` files and prints "PARTUUID BYTES SHA256" for
+each image. The caller does the rest:
+
+```sh
+bko-holt dump > system.json
+bko-holt rawpart-stage system.json "$STAGE"
+mkdir -p "$TREE/.bko-holt/rawpart" && mount --bind "$STAGE" "$TREE/.bko-holt/rawpart"
+rustic-bko backup ... "$TREE"; umount "$TREE/.bko-holt/rawpart"; rm -rf "$STAGE"
+```
+
+In ht1.sh (GN7) the dump runs in the guest and the backup on the host,
+from the mounted overlay. `--dev-dir` then points at the host's view of
+the guest's partitions, or by-partuuid works as it is once udev has seen
+the overlay's partitions.
+
+**Tests:** `rawpart::tests` (rules, mark and stage with a changed or short
+device, unprivileged), `bytes::sha256_tests::streaming_matches`,
+`load::rawvol::tests::sha256_checked`,
+`load::fit::tests::a_raw_largest_is_refused`, and the scenario
+`scenarios::raw_gpt_partitions`. That scenario is a Debian on GPT with an
+A/B DPS `/usr` (A's usr and usr-verity, B `_empty` holding stale bytes),
+taken from dump through redaction to the plan's format and restore
+stages, plus the exact-size and missing-SHA-256 refusals.
+
 ### `load` on GNOME OS
 
 - **The table:** the generic sfdisk one, exact. Under `--fit-largest` only

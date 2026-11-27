@@ -1343,7 +1343,7 @@ lists every one.
 | `pool_left_out` | target.rs `left_out_pool_problems` | `disk`, `pool` | another disk |
 | `wedge_clash` | other/load.rs | `disk`, `target` | the shell |
 | `layout_inconsistent` | sizes.rs | `dev` | report |
-| `fit_refused` | fit.rs `one` (about 50 refusal sites) | `disk`, `target`, `reason` (`other_family`, `no_table`, `no_partition`, `tied`, `logical`, `moves_bytes`, `fat_start`, `mbr_reach`, `table_too_small`, `inodes`, `xfs_ag`, `kept_luks_header`, `swap`, `member` (an md or ZFS member), `multi_device` (btrfs), `fs_unsupported`, `no_usage`, `other`); an unknown or `other` reason shows the text | another disk |
+| `fit_refused` | fit.rs `one` (about 50 refusal sites) | `disk`, `target`, `reason` (`other_family`, `no_table`, `no_partition`, `tied`, `logical`, `moves_bytes`, `fat_start`, `mbr_reach`, `table_too_small`, `inodes`, `xfs_ag`, `kept_luks_header`, `swap`, `member` (an md or ZFS member), `multi_device` (btrfs), `fs_unsupported`, `raw_partition` (a raw GPT partition, crate::rawpart: its size is exact), `no_usage`, `other`); an unknown or `other` reason shows the text | another disk |
 | `fit_over_pct` | fit.rs `one` | `disk`, `target`, `needed_pct`, `given_pct` | a second plan with the needed percentage |
 | `data_wont_fit` | fit.rs `data_fits` (new figures) | `disk`, `target`, `dev`, `mount`, `used_bytes`, `margin_bytes`, `needed_bytes`, `most_bytes` | another disk |
 | `data_unknown` | fit.rs `data_fits` | `disk`, `dev` | another disk (where the space used comes from) |

@@ -795,35 +795,96 @@ fn sha256_compress(h: &mut [u32; 8], block: &[u8], w: &mut [u32; 64]) {
 /// The file's open or read error.
 pub fn sha256_file(path: &Path) -> std::io::Result<String> {
     let mut f = File::open(path)?;
-    let mut h = SHA256_H0;
-    let mut w = [0u32; 64];
+    let mut h = Sha256::new();
     let mut buf = vec![0u8; 1 << 20];
-    let mut have = 0usize; // bytes of buf not yet compressed
-    let mut total: u64 = 0;
     loop {
-        let n = f.read(&mut buf[have..])?;
+        let n = f.read(&mut buf)?;
         if n == 0 {
             break;
         }
-        total += n as u64;
-        have += n;
-        let whole = have / 64 * 64;
-        for block in buf[..whole].chunks_exact(64) {
-            sha256_compress(&mut h, block, &mut w);
+        h.update(&buf[..n]);
+    }
+    Ok(h.hex())
+}
+
+/// A streaming SHA-256: bytes given in pieces of any size, the digest at
+/// the end (`bko-holt raw-write --sha256`, the raw partitions' dump and
+/// staging, crate::rawpart).
+#[derive(Clone)]
+pub struct Sha256 {
+    h: [u32; 8],
+    w: [u32; 64],
+    buf: [u8; 64],
+    have: usize,
+    total: u64,
+}
+
+impl Default for Sha256 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Sha256 {
+    pub fn new() -> Self {
+        Self {
+            h: SHA256_H0,
+            w: [0; 64],
+            buf: [0; 64],
+            have: 0,
+            total: 0,
         }
-        buf.copy_within(whole..have, 0);
-        have -= whole;
     }
-    let mut tail = buf[..have].to_vec();
-    tail.push(0x80);
-    while tail.len() % 64 != 56 {
-        tail.push(0);
+
+    pub fn update(&mut self, mut data: &[u8]) {
+        self.total = self.total.wrapping_add(data.len() as u64);
+        if self.have > 0 {
+            let n = (64 - self.have).min(data.len());
+            self.buf[self.have..self.have + n].copy_from_slice(&data[..n]);
+            self.have += n;
+            data = &data[n..];
+            if self.have < 64 {
+                return;
+            }
+            let block = self.buf;
+            sha256_compress(&mut self.h, &block, &mut self.w);
+            self.have = 0;
+        }
+        let whole = data.len() / 64 * 64;
+        for block in data[..whole].chunks_exact(64) {
+            sha256_compress(&mut self.h, block, &mut self.w);
+        }
+        let rest = &data[whole..];
+        self.buf[..rest.len()].copy_from_slice(rest);
+        self.have = rest.len();
     }
-    tail.extend(total.wrapping_mul(8).to_be_bytes());
-    for block in tail.chunks_exact(64) {
-        sha256_compress(&mut h, block, &mut w);
+
+    /// The bytes given so far.
+    pub fn len(&self) -> u64 {
+        self.total
     }
-    Ok(hex(&sha256_digest(h)))
+
+    pub fn is_empty(&self) -> bool {
+        self.total == 0
+    }
+
+    pub fn finish(mut self) -> [u8; 32] {
+        let mut tail = self.buf[..self.have].to_vec();
+        tail.push(0x80);
+        while tail.len() % 64 != 56 {
+            tail.push(0);
+        }
+        tail.extend(self.total.wrapping_mul(8).to_be_bytes());
+        for block in tail.chunks_exact(64) {
+            sha256_compress(&mut self.h, block, &mut self.w);
+        }
+        sha256_digest(self.h)
+    }
+
+    /// The digest as `sha256sum` prints it.
+    pub fn hex(self) -> String {
+        hex(&self.finish())
+    }
 }
 
 fn sha256_digest(h: [u32; 8]) -> [u8; 32] {
@@ -838,12 +899,42 @@ fn sha256_digest(h: [u32; 8]) -> [u8; 32] {
 mod sha256_tests {
     use super::{hex, sha256, sha256_file, sha256_hex, sha256_short};
 
+    /// The streaming hasher agrees with the one-shot one whatever the
+    /// pieces it's given.
+    #[test]
+    fn streaming_matches() {
+        let data: Vec<u8> = (0..5000u32).map(|i| (i as u8).wrapping_mul(7)).collect();
+        for step in [1usize, 3, 63, 64, 65, 1000, 5000] {
+            let mut h = super::Sha256::new();
+            for c in data.chunks(step) {
+                h.update(c);
+            }
+            assert_eq!(h.len(), 5000);
+            assert_eq!(h.hex(), sha256_hex(&data), "step {step}");
+        }
+        assert_eq!(
+            super::Sha256::new().hex(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
     /// The streaming file hash agrees with the in-memory one across block
     /// and buffer boundaries.
     #[test]
     fn file_matches() {
         let t = crate::testutil::Tree::new("sha256-file");
-        for n in [0usize, 1, 55, 56, 63, 64, 65, (1 << 20) - 1, 1 << 20, (1 << 20) + 77] {
+        for n in [
+            0usize,
+            1,
+            55,
+            56,
+            63,
+            64,
+            65,
+            (1 << 20) - 1,
+            1 << 20,
+            (1 << 20) + 77,
+        ] {
             let data: Vec<u8> = (0..n).map(|i| (i as u8).wrapping_mul(31)).collect();
             t.file(&format!("/f{n}"), &data);
             assert_eq!(

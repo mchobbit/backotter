@@ -263,5 +263,64 @@ class HoltCrossRefuses(unittest.TestCase):
             self.assertIn(why, r.stderr)
 
 
+FLOCK = shutil.which("flock") and shutil.which("sha256sum") and BASH
+
+
+@unittest.skipUnless(FLOCK, "needs flock, sha256sum and GNU stat (the test hosts')")
+class HoltCrossSysrootLock(unittest.TestCase):
+    """A build holds CACHE/.lock-VM shared to its end, so that no maker replaces the sysroot
+    it links against (a fake world: rustup, cargo, clang and ld.lld stubs, a current sysroot)."""
+
+    def test_build_holds_the_sysroot_lock_shared(self):
+        d = tempfile.mkdtemp(prefix="t2-i10l-")
+        self.addCleanup(shutil.rmtree, d, True)
+        home, work, cache, bind = (os.path.join(d, x) for x in ("home", "work", "cache", "bin"))
+        lockf, probe = os.path.join(cache, ".lock-freebsd14"), os.path.join(d, "probe")
+
+        def put(path, text, mode=0o644):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(text)
+            os.chmod(path, mode)
+        put(os.path.join(home, ".cargo", "bin", "rustup"),
+            '#!/bin/sh\ncase $1 in run) echo "rustc 1.94.1 (fake)" ;; target) echo x86_64-unknown-freebsd ;; esac\n', 0o755)
+        put(os.path.join(home, ".cargo", "bin", "cargo"),
+            '#!/usr/bin/env bash\nif flock -n -x "$LOCKF" true; then echo free >"$PROBE"; else echo held >"$PROBE"; fi\n'
+            'mkdir -p "$CARGO_TARGET_DIR/x86_64-unknown-freebsd/release"\n'
+            'echo fake >"$CARGO_TARGET_DIR/x86_64-unknown-freebsd/release/bko-holt"\n', 0o755)
+        put(os.path.join(bind, "clang"), '#!/bin/sh\necho "fake clang 1"\n', 0o755)
+        put(os.path.join(bind, "ld.lld"), '#!/bin/sh\necho "fake lld 1"\n', 0o755)
+        img = os.path.join(work, "vms", "freebsd14", "freebsd14.qcow2")
+        put(img, "image")
+        put(os.path.join(work, "vms", "freebsd14", "id_ed25519"), "key")
+        st = os.stat(img)
+        sr = os.path.join(cache, "sysroot", "freebsd14")
+        put(os.path.join(sr, ".image"), f"vms/freebsd14/freebsd14.qcow2\nfreebsd14.qcow2 {st.st_size} {int(st.st_mtime)}\n")
+        put(os.path.join(sr, ".digest"), "ab" * 32 + "\n")
+        src = os.path.join(d, "src")
+        for n in ("Cargo.toml", "Cargo.lock", "LICENSE", "src/main.rs", "tests/t.rs"):
+            put(os.path.join(src, n), "")
+        os.makedirs(os.path.join(d, "tmp"))
+        out, info = os.path.join(d, "t2", "CODE", "cross", "freebsd"), os.path.join(d, "info.json")
+        env = dict(os.environ, HOME=home, BKO_WORK=work, HOLT_CROSS_CACHE=cache, HOLT_SRC=src, HOLT_OUT=out,
+                   HOLT_LOGS=os.path.join(d, "logs"), HOLT_INFO=info, TMPDIR=os.path.join(d, "tmp"),
+                   PATH=bind + os.pathsep + os.environ["PATH"], LOCKF=lockf, PROBE=probe)
+        r = subprocess.run([BASH, os.path.join(H1D, "holt-cross.sh"), "freebsd"], capture_output=True, text=True,
+                           env=env, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        with open(probe) as f:
+            self.assertEqual(f.read().strip(), "held", "the lock is held while cargo builds")
+        self.assertTrue(os.path.isfile(os.path.join(out, "bko-holt")))
+        self.assertEqual(subprocess.run(["flock", "-n", "-x", lockf, "true"]).returncode, 0, "let go at the end")
+        j = jload_file(info)
+        self.assertEqual((j["build"], j["kind"]), ("cross:1.94.1:freebsd14@" + "ab" * 6, "cross"))
+        self.assertTrue(j["clang"] and j["lld"], j)
+
+
+def jload_file(path):
+    with open(path) as f:
+        return json.load(f)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -35,7 +35,8 @@
 # SYSROOT, the sha256 over its sorted "path<TAB>sha256" lines: the same files
 # on two hosts give the same SYSROOT.  The guest takes a port of 2600-2689
 # under ht1-queue.sh's /tmp/bko-ht1-ports locks.  One maker per cache at a
-# time (CACHE/.lock-VM).
+# time (CACHE/.lock-VM, exclusive), and never while a build uses that sysroot
+# (each holds the lock shared to its end).
 #
 # The output: HOLT_OUT/bko-holt, where HOLT_OUT must end in cross/PLATFORM
 # (HoltTest2's HOST_ROOT/holt-bin/CODE/cross/PLATFORM, §8.2a): a cross build
@@ -46,7 +47,8 @@
 # CACHE/logs/PLATFORM): build.log, the sysroot guest's logs.  HOLT_INFO=FILE
 # gets build-holt.sh's JSON (platform, sha256, rustc, host, time, src, out)
 # and kind "cross", build (the build kind), toolchain, target, sysroot,
-# sysroot_guest, sysroot_image.  HOLT_SRC: the holt tree (default
+# sysroot_guest, sysroot_image, clang and lld (their --version lines: the
+# linker is not in the kind).  HOLT_SRC: the holt tree (default
 # WORK/holt-src).  HOLT_CROSS_CACHE: the cache (default WORK/holt-cross).
 #
 # --reserved RUN PLATFORM (testvm/test2/t2lib/holt.py starts it, detached):
@@ -193,14 +195,18 @@ esac
 PREP=true
 [[ $PLATFORM != illumos ]] ||
     PREP='PATH=/usr/bin:/usr/sbin:/sbin:/bin; export PATH; pkg install -q developer/gcc14; s=$?; [ $s -eq 0 ] || [ $s -eq 4 ]'
+sysroot_current() { [[ -f $sysroot/.image && $(cat "$sysroot/.image") == "$(image_id)" && -f $sysroot/.digest ]]; }
+# CACHE/.lock-VM: a build holds it shared from here to its end (it links against the sysroot,
+# and its kind names the sysroot's digest), a maker exclusive, so that a sysroot is never
+# replaced under a build that is using it (a vm-update of the image between two builds).
 make_sysroot() {
     [[ -f $image ]] || die "no image for $VM ($WORK/vms-bko-build/$VM-rust.qcow2 or $WORK/vms/$VM/$VM.qcow2)"
-    local lk port="" plk="" p
-    exec {lk}>"$CACHE/.lock-$VM"
-    flock -n "$lk" || { echo "holt-cross: waiting for the other sysroot maker of $VM" >&2; flock "$lk"; }
-    if [[ -f $sysroot/.image && $(cat "$sysroot/.image") == "$(image_id)" && -f $sysroot/.digest ]]; then
-        exec {lk}>&-; return 0
-    fi
+    local port="" plk="" p
+    exec {SYSLK}>>"$CACHE/.lock-$VM"
+    flock -s "$SYSLK"
+    sysroot_current && return 0
+    flock -n "$SYSLK" || { echo "holt-cross: waiting for the other builds or sysroot maker of $VM" >&2; flock "$SYSLK"; }
+    if sysroot_current; then flock -s "$SYSLK"; return 0; fi
     mkdir -p /tmp/bko-ht1-ports
     for p in $(seq 2600 2689); do
         [[ -z $(ss -Hltn "sport = :$p" 2>/dev/null) ]] || continue
@@ -239,7 +245,7 @@ make_sysroot() {
     rm -rf "$sysroot" && mv "$sysroot.part" "$sysroot"
     sysroot_digest >"$sysroot/.digest"
     image_id >"$sysroot/.image"
-    exec {lk}>&-
+    flock -s "$SYSLK"   # (shared again, to this script's end)
 }
 
 if [[ $mode == kind ]]; then
@@ -333,6 +339,7 @@ fi
 } >"$ccw"
 chmod 755 "$ccw"
 clang_version=$("$ccw" --version | head -n 1)
+lld_version=$(${llvm_libs:+env LD_LIBRARY_PATH=$llvm_libs} "$lld" --version | head -n 1)
 
 # --- The build -------------------------------------------------------------------------------
 t=${TARGET//-/_}
@@ -373,12 +380,13 @@ mv "$OUT/bko-holt.part" "$OUT/bko-holt"
 sha=$(sha256sum "$OUT/bko-holt" | cut -d' ' -f1)
 if [[ -n ${HOLT_INFO:-} ]]; then
     python3 -I -c 'import json, socket, sys, time
-p, sha, rustc, src, out, kind, tc, target, sysroot, vm, image = sys.argv[1:12]
-print(json.dumps({"platform": p, "sha256": sha, "rustc": rustc, "host": socket.gethostname().split(".")[0],
+p, sha, rustc, src, out, kind, tc, target, sysroot, vm, image, clang, lld = sys.argv[1:14]
+print(json.dumps({"platform": p, "sha256": sha, "rustc": rustc, "clang": clang, "lld": lld,
+                  "host": socket.gethostname().split(".")[0],
                   "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "src": src, "out": out,
                   "kind": "cross", "build": kind, "toolchain": tc, "target": target, "sysroot": sysroot,
                   "sysroot_guest": vm, "sysroot_image": image}, sort_keys=True))' \
         "$PLATFORM" "$sha" "$rustc_version" "$SRC" "$OUT/bko-holt" "$KIND" "$TC" "$TARGET" "$SYSROOT" "$VM" \
-        "${image#"$WORK"/}" >"$HOLT_INFO.part" && mv -f "$HOLT_INFO.part" "$HOLT_INFO"
+        "${image#"$WORK"/}" "$clang_version" "$lld_version" >"$HOLT_INFO.part" && mv -f "$HOLT_INFO.part" "$HOLT_INFO"
 fi
 ls -l "$OUT/bko-holt"

@@ -1294,6 +1294,29 @@ class U53HoltRun(unittest.TestCase):
         self.assertFalse([c for c in r.calls if c[1] == "retire"])
         self.assertEqual(r.files["cinqcent"][hb + "/freebsd/bko-holt"], vm)
 
+    def test_a_cross_build_goes_aside_when_its_platform_is_back_on_its_vm_build(self):
+        """D11: freebsd's VM reference FAILed after its switch, so the plan ships its VM build.
+        The cross build in CODE/freebsd/ (shipped by the switched run) goes to CODE/retired/ and
+        a VM build is made: never tested under the VM key, never left for img-refresh-holt.sh."""
+        r, hb = FakeRemote({}), self.HB
+        body = "cross bko-holt freebsd (shipped before the reference failed)"
+        sha = hashlib.sha256(body.encode()).hexdigest()
+        for h in ("chopin", "cinqcent"):
+            r.files[h][hb + "/freebsd/bko-holt"] = body
+            r.files[h][hb + "/build-freebsd.json"] = json.dumps(
+                {"platform": "freebsd", "sha256": sha, "kind": "cross", "build": self.KIND})
+            r.files[h][hb + "/SHA256SUMS"] = f"{sha} *freebsd/bko-holt\n"
+        res = self.go({}, r)   # (nothing switched: the plan's set has no holt_build)
+        self.assertEqual(res["exit"], 0, res)
+        starts = [c[0] for h, op, *c in r.calls if op == "start"]
+        self.assertEqual(len([c for c in starts if "build-holt.sh --reserved" in c and c.endswith(" freebsd")]), 1)
+        for h in ("chopin", "cinqcent"):
+            self.assertEqual(r.files[h][f"{hb}/retired/{sha[:12]}/freebsd/bko-holt"], body)
+            self.assertEqual(r.files[h][hb + "/freebsd/bko-holt"], "bko-holt freebsd")
+            self.assertNotEqual(json.loads(r.files[h][hb + "/build-freebsd.json"]).get("kind"), "cross")
+            self.assertNotIn(sha, r.files[h][hb + "/SHA256SUMS"])
+        self.assertTrue(any("ships its VM build" in t for t in self.rs.logged), self.rs.logged)
+
     def test_a_check_build_of_the_kind_is_shipped_not_built_again(self):
         r, hb = FakeRemote({}), self.HB
         body = "cross bko-holt freebsd (an earlier run's check build)"

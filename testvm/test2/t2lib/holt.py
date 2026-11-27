@@ -902,6 +902,11 @@ class Runner:
             err = self.retire_other_kinds(hd, every, kinds)
             if err:
                 return err
+        back = [p for p in plats if p in holtbuild.CROSS_ABLE and p not in kinds]
+        if back:   # (and a cross build of a platform on its VM build: D11, its VM reference failed)
+            err = self.retire_cross_builds(hd, every, back)
+            if err:
+                return err
         infos = self.known_infos(hd, every)
         builds = self.state["builds"]
         for p, b in builds.items():   # this run's own builds win (a resume)
@@ -1053,6 +1058,34 @@ class Runner:
                     self.notes.append(f"{h}: {path} is a {got} build, not {kinds[p]}, and couldn't be moved aside")
                     continue
                 self.log(f"bko-holt {p}: {h}'s {got} build moved to {d} (this run ships {kinds[p]})")
+        return None
+
+    def retire_cross_builds(self, hd, every, plats):
+        """On each host, a cross build in CODE/PLAT/ (its CODE/build-PLAT.json says so) of a PLAT
+        this run ships the VM build of goes to CODE/retired/SHA12/, so that the run builds the VM
+        build anew.  That is a platform whose VM reference failed after its switch (D11: back on
+        its VM build until a reference passes again), or T2_HOLT_BUILD=vm.  Without this, the
+        cross build would stay the one shipped and copied into images, its rows keyed cross
+        under a plan that keys vm.  A VM build, or one with no build json, stays as before.
+        Returns None, or why not."""
+        for h in every:
+            jsons = self.remote.glob_read(h, os.path.join(hd, "build-*.json"))
+            for p in sorted(plats):
+                try:
+                    info = json.loads(jsons.get(os.path.join(hd, f"build-{p}.json")) or "null")
+                except ValueError:
+                    info = None
+                got = holtbuild.kind_of(info)
+                if got == "vm" or not self.remote.exists(h, os.path.join(hd, holt_rel(p))):
+                    continue
+                d = self.remote.retire(h, hd, holt_rel(p), f"build-{p}.json")
+                if d:
+                    self.log(f"bko-holt {p}: {h}'s {got} build moved to {d} (this run ships its VM build)")
+                elif h in self.hosts:
+                    return f"{h}: couldn't move {os.path.join(hd, holt_rel(p))} ({got}, not vm) to {hd}/retired/"
+                else:
+                    self.notes.append(f"{h}: {os.path.join(hd, holt_rel(p))} is a {got} build, not a VM "
+                                      f"build, and couldn't be moved aside")
         return None
 
     def ready_cross(self, hd, p, kind, every):

@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(HERE, "fixtures", "p2"))
 
 import t2lib  # noqa: E402
-from t2lib import carry, estimates, keys, ledger, plan, run   # noqa: E402
+from t2lib import carry, estimates, holtbuild, keys, ledger, plan, run   # noqa: E402
 import world                                     # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
@@ -1199,6 +1199,31 @@ class ImgRefusal(ImgCase):
                 self.assertEqual((st(p, "img:netbsd")[0], b["state"]), ("due", state), used)
             else:
                 self.assertEqual((st(p, "img:netbsd")[0], b["state"]), ("not-runnable", "none"))
+
+    def test_a_cross_row_speaks_for_none_once_its_platform_is_back_on_its_vm_build(self):
+        """img-speed.md I12, D11: a holt row that tested netbsd's cross build vouches for the
+        image's bko-holt while netbsd ships its cross build, and for none once its VM reference
+        FAILed (the platform is back on its VM build): the image waits, it isn't let in."""
+        kind = "cross:1.94.1:netbsd11@0123456789ab"
+        im = self.w.images()["netbsd"]
+        with tempfile.TemporaryDirectory() as mr, mock.patch.dict(os.environ, {"T2_MAC_ROOT": mr}):
+            self.w.edit("testvm/test2/holt/builds.json", json.dumps(
+                {"schema": 1, "reference_days": 7, "cross": {"netbsd": {"kind": kind, "since": "2026-11-27"}}}),
+                commit=True)
+            for ref, state in ((None, "real"), ("FAIL", None), ("PASS", "real")):
+                if ref:
+                    holtbuild.write_ref(mr, "netbsd", {"when": "2026-11-27T12:00:00Z", "result": ref,
+                                                       "kind": kind, "why": "test"})
+                rows = self.good()
+                hr = next(r for r in rows if r["cell"].startswith("holt:"))
+                hr["inputs"]["bin"]["netbsd/bko-holt-build"] = "ver:" + kind
+                hr.setdefault("meta", {}).setdefault("holt", {})["sha256"] = {"netbsd": im["bins"]["bko-holt"]}
+                p = self.plan_img(rows)
+                b = p.cell("img:netbsd").binaries["bko-holt"]
+                if state:
+                    self.assertEqual((st(p, "img:netbsd")[0], b["state"]), ("due", state), ref)
+                else:
+                    self.assertEqual((st(p, "img:netbsd")[0], b["state"]), ("not-runnable", "none"), ref)
 
     def test_gate_rows_do_not_count(self):
         im = self.w.images()["netbsd"]

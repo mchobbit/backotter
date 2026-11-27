@@ -2176,6 +2176,13 @@ class Planner:
         out["command"] = (f"{cmd}, then " if cmd else "") + refresh.format(commit or "COMMIT")
         return out
 
+    def holt_kinds(self):
+        """holtbuild.kinds' {PLAT: KIND}: the platforms that ship their cross build now."""
+        if getattr(self, "_holt_kinds", None) is None:
+            from . import holtbuild
+            self._holt_kinds = holtbuild.kinds(self.ctx.src)[0]
+        return self._holt_kinds
+
     def judge_binary(self, plat, name, hexd, im):
         """{state, digest, why, canary, command} of one of an image's binaries (contract 1.7's four
         steps).  canary is the first cell the command runs (the one bko.py's carried canaries take)."""
@@ -2199,7 +2206,13 @@ class Planner:
             # (img-speed.md I12: a code: row speaks for the binary it tested, by the sha256 it
             # records, so that a VM build's PASS never vouches for a cross build of the same
             # CODE, or the other way round; a row that records none speaks for the CODE, as before)
-            def row_ok(r, plat=plat, hexd=hexd):
+            # (and a row that tested a cross build speaks for none while the platform ships its
+            # VM build, D11: its VM reference failed, so its cross build waits for one to pass)
+            vm_only = plat not in self.holt_kinds()
+
+            def row_ok(r, plat=plat, hexd=hexd, vm_only=vm_only):
+                if vm_only and ((r.get("inputs") or {}).get("bin") or {}).get(f"{plat}/bko-holt-build"):
+                    return False
                 if r.get("kind") != "run":   # (a carried row speaks for a code it never ran)
                     return True
                 used = (((r.get("meta") or {}).get("holt") or {}).get("sha256") or {}).get(plat)

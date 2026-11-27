@@ -58,3 +58,5 @@ illumos	layout	/gpt/part/4	rewritten
 haiku	bfs	/system/non-packaged/bin/rustic-bko	bin
 haiku	bfs	/system/non-packaged/bin/bko-holt	bin
 haiku	bfs	/.disk/backotter.json	marker
+haiku	layout	/mbr/part/1	rewritten
+haiku	layout	/mbr/part/3	rewritten

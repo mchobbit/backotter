@@ -8,7 +8,8 @@
 # It composes the hook files, runs vm-update, keeps a failed run's state, and writes the row
 # with t2-host row guest (row.id: its id; row-summary.json: what the Mac reads).
 # Environment: T2_GUEST_RULES (the guest's rule codes), T2_GUEST_NEW=1 (established: false),
-# T2_GUEST_PLAT, T2_GUEST_CPUS, T2_GUEST_MEMORY, T2_GUEST_HOSTS, T2_CELLS, T2_WORK or BKO_WORK,
+# T2_GUEST_PLAT, T2_GUEST_CPUS, T2_GUEST_MEMORY, T2_GUEST_HOSTS, T2_GUEST_SHIP=1 (update: vm-update
+# --ship, on a host that caches the guest), T2_CELLS, T2_WORK or BKO_WORK,
 # VM_UPDATE_RAM and, in update rounds, VM_UPDATE_ROUND.
 # TERM goes to vm-update once, and this waits for it, so the reservation outlasts a merge: vm-update
 # runs in a session of its own (a TERM to this job's group doesn't reach it twice over), and from
@@ -97,6 +98,8 @@ try|probe|update)
     probe)
         args+=(--probe --keep-failed) ;;
     update)
+        # T2_GUEST_SHIP=1: a host that caches the guest; the overlay goes to the fleet (img-speed F1)
+        [[ ${T2_GUEST_SHIP:-0} == 1 ]] && args+=(--ship)
         args+=(--write-fingerprint --merge-gate "python3 -B $T2/t2-host tool guest gate --guest $G --out $OUT") ;;
     esac
     trap on_term TERM INT HUP

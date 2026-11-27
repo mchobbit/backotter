@@ -664,7 +664,10 @@ def guests(work, host_root, only=None):
                 ok = False
             else:
                 sums[os.path.basename(p)] = h
+        # state_sha256: the disks' SHA-256s its image-state records (a vm-store cache's: the objects'
+        # own names): an update round's --ship hosts are those whose equal the fleet's (img-speed F1)
         out[g] = {"generation": (st or {}).get("generation"), "updates": (st or {}).get("updates"),
+                  "state_sha256": (st or {}).get("sha256") if isinstance((st or {}).get("sha256"), dict) else None,
                   "files": files, "disks": disks, "imgsum": combine(sums) if ok and sums else None,
                   "firmware": "uefi" if "--uefi" in (opts or "").split() else "bios",
                   "fw": fw_of((opts or "").split()), "stat": stat_of(gdir),

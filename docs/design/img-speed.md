@@ -1358,7 +1358,12 @@ this spec's speedups 2 and 7.
   unchanged freebsd15-geli-bios and Chopin's own alpine324) PASSed every
   check: t2v-20261127T0959-d590, alpine324 in t2v-20261127T0955-1c4e, haiku6
   on a rerun once its varying boot lines were accepted. The round took
-  8 min from its start to its report, for 7 guests est. 20 guest-minutes. Tests: test_vm_update (TestShip,
+  8 min from its start to its report, for 7 guests est. 20 guest-minutes.
+  The round showed one defect, fixed: a shipping host kept its own copy of
+  each shipped overlay in its RAM disk, outside any reservation (the merge
+  that deletes it there never runs); it now goes once step 5 ends, merged or
+  not. A `--ship` of alpine324 from cinqcent with the fix left no RAM folder
+  on either host, and gave fingerprint b2df5cbe a third time. Tests: test_vm_update (TestShip,
   TestShipArguments, TestShipScripts, TestCheckHostsRef: 27), test_guest
   (UpdateSpread: 9, and a shipped row's fingerprint and count). Rescue images built on all build hosts (yes).** This is speedup 2:
   §5, steps I7 and I8.

@@ -4872,7 +4872,7 @@ class TestFlow(World):
         ps = (FIX / "pkgset" / "debian12.txt").read_text()
         FakeVM.listing_after = ps
         p = [mock.patch.object(VU, "VM", FakeVM),
-             mock.patch.object(VU, "check_hosts", lambda g, h, start, exclude=None: {None: self.state}),
+             mock.patch.object(VU, "check_hosts", lambda g, h, start, exclude=None, ref=None: {None: self.state}),
              mock.patch.object(VU, "ship_and_commit", self.ship),
              mock.patch.object(VU, "host_mount", self.mount),
              mock.patch.object(VU, "by_hand_row", lambda *a: None),
@@ -4893,8 +4893,9 @@ class TestFlow(World):
         self.mounted = overlays
         return dict(self.mount_rec)
 
-    def ship(self, g, hosts, overlays, states, rec, dump, listing):
+    def ship(self, g, hosts, overlays, states, rec, dump, listing, ref=None):
         self.shipped.append(rec)
+        self.ship_to = (list(hosts), ref)
         FakeVM.last.calls.append("ship")
         return "c" * 64
 
@@ -5251,7 +5252,7 @@ class TestMerges(World):
         self.pending = {}
         p = [mock.patch.object(VU, "on_host", self.on_host),
              mock.patch.object(VU, "sha256_on", lambda h, p: "sum"),
-             mock.patch.object(VU, "check_hosts", lambda g, h, start, exclude=None: self.states),
+             mock.patch.object(VU, "check_hosts", lambda g, h, start, exclude=None, ref=None: self.states),
              mock.patch.object(VU, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", "")),
              mock.patch.object(VU, "read_json", lambda h, n, name: self.pending.get((h, name))),
              mock.patch.object(VU, "write_json", self.write_json),
@@ -5282,6 +5283,24 @@ class TestMerges(World):
 
     def ship(self, hosts=(None, "other"), rec=None):
         return VU.ship_and_commit(self.g, list(hosts), {"/orig": str(self.overlay)}, self.states, rec, None, None)
+
+    def ship_elsewhere(self):
+        self.states = {"other": {"generation": "a" * 64, "updates": 1, "sha256": {"g1.qcow2": "t"}}}
+        return VU.ship_and_commit(self.g, ["other"], {"/orig": str(self.overlay)}, self.states, None, None, None, ref="other")
+
+    def test_ship_merges_on_the_fleet_alone_and_keeps_no_copy_here(self):
+        # vm-update --ship (img-speed F1): seen on 2026-11-27, each shipped overlay stayed in this host's RAM disk
+        gen = self.ship_elsewhere()
+        self.assertEqual(self.order, ["other"])
+        self.assertEqual(gen, hashlib.sha256(("a" * 64 + json.dumps({"g1.qcow2": "sum"}, sort_keys=True)).encode()).hexdigest())
+        self.assertEqual([p.name for p in self.d.iterdir() if p.name.startswith(".vm-update.")], [], "the shipped copy here is gone")
+
+    def test_ship_whose_merge_fails_keeps_no_copy_here_either(self):
+        self.fail_on = "other"
+        with self.assertRaisesRegex(VU.Failed, "--finish g1 on other"):
+            self.ship_elsewhere()
+        self.assertEqual([p.name for p in self.d.iterdir() if p.name.startswith(".vm-update.")], [])
+        self.assertIn(("other", VU.PENDING_FILE), self.pending, "the merge left undone is the fleet's")
 
     def test_one_at_a_time_this_host_last(self):
         self.assertEqual(VU.merge_order([None, "a", "b"]), ["a", "b", None])
@@ -5570,6 +5589,250 @@ class TestRoomScript(TempDir):
     def test_the_held_command_is_one_line(self):
         held = re.search(r"sh -c '(.*?)' sh", VU.ROOM_SCRIPT, re.S)[1]
         self.assertNotIn("\n", held)
+
+
+# --- img-speed F1: --ship, an update on a host that caches the guest --------------------------------
+
+class FakeGuestLock:
+    made: list = []
+
+    def __init__(self, host, guest):
+        self.host, self.guest, self.gone, self.released = host, guest, False, False
+        FakeGuestLock.made.append(self)
+
+    def lost(self):
+        return self.gone
+
+    def release(self):
+        self.released = True
+
+
+class TestShip(TestFlow):
+    """--ship's flow: the guest's lock on the fleet host before the boot, the cached copy held to
+    the fleet's image-state byte for byte, the fleet lock (by hand) only for the merge, and step 5
+    shipping to the fleet alone, with the fleet's state as the base."""
+
+    def setUp(self):
+        super().setUp()
+        FakeGuestLock.made = []
+        FakeVM.last = None
+        self.order = []
+        self.fleet_state = dict(self.state)
+        self.sums = {"g1.qcow2": "b" * 64}
+        p = [mock.patch.object(VU, "RemoteGuestLock", self.lock),
+             mock.patch.object(VU, "check_hosts", self.check),
+             mock.patch.object(VU, "sha256_on", lambda h, path: self.sums[os.path.basename(path)]),
+             mock.patch.object(VU, "take_fleet_lock", self.fleet)]
+        for x in p:
+            x.start()
+            self.addCleanup(x.stop)
+
+    def lock(self, host, guest):
+        self.order.append(("guest-lock", host, FakeVM.last is None))
+        return FakeGuestLock(host, guest)
+
+    def check(self, g, hosts, start, exclude=None, ref=None):
+        self.order.append(("check", tuple(hosts), ref, start))
+        return {ref: self.fleet_state}
+
+    def fleet(self, shared_run, wait=0):
+        self.order.append(("fleet-lock", shared_run, wait, list(FakeVM.last.calls)))
+        return mock.Mock(spec=[])
+
+    def ship(self, g, hosts, overlays, states, rec, dump, listing, ref=None):
+        self.order.append(("ship", tuple(hosts), ref))
+        return super().ship(g, hosts, overlays, states, rec, dump, listing, ref)
+
+    def run_ship(self, **kw):
+        msg = VU.update("g1", self.args(ship=True, **kw), ["fleet.local"])
+        return msg, json.loads((self.out / "result.json").read_text())
+
+    def test_the_lock_then_the_check_then_the_boot(self):
+        msg, res = self.run_ship()
+        self.assertEqual(self.order[0], ("guest-lock", "fleet.local", True), "the guest's lock comes before any boot")
+        self.assertEqual(self.order[1], ("check", ("fleet.local",), "fleet.local", False))
+        self.assertEqual(self.ship_to, (["fleet.local"], "fleet.local"), "step 5 ships to the fleet alone")
+        self.assertIn("shipped to fleet.local", msg)
+        self.assertEqual(res["shipped_to"], "fleet.local")
+        self.assertTrue(res["merged"])
+        self.assertTrue(FakeGuestLock.made[0].released, "the guest's lock goes with the guest's run")
+
+    def test_by_hand_the_fleet_lock_only_for_the_merge(self):
+        self.run_ship()
+        took = [o for o in self.order if o[0] == "fleet-lock"]
+        self.assertEqual(len(took), 1)
+        _, shared, wait, calls = took[0]
+        self.assertIsNone(shared, "by hand: exclusive")
+        self.assertEqual(wait, VU.SHIP_FLEET_WAIT)
+        self.assertIn("host-mount", calls, "taken after the update and the host's mount check")
+        self.assertNotIn("ship", calls)
+        self.assertLess(self.order.index(took[0]), [o[0] for o in self.order].index("ship"))
+
+    def test_a_rounds_job_takes_no_fleet_lock_of_its_own_here(self):
+        with mock.patch.dict(os.environ, {"VM_UPDATE_ROUND": "t2v-x"}):
+            self.run_ship()
+        self.assertFalse([o for o in self.order if o[0] == "fleet-lock"], "main() took it shared, as on the fleet")
+
+    def test_another_generation_here_is_refused_before_the_boot(self):
+        self.fleet_state = dict(self.state, generation="f" * 64)
+        e, res = self.fails(VU.Failed, ship=True)
+        self.assertIn("only a copy of the fleet's generation", str(e))
+        self.assertIsNone(FakeVM.last, "nothing booted")
+
+    def test_other_bytes_here_are_refused_before_the_boot(self):
+        self.sums = {"g1.qcow2": "9" * 64}
+        e, res = self.fails(VU.Failed, ship=True)
+        self.assertIn("aren't fleet.local's", str(e))
+        self.assertIsNone(FakeVM.last)
+
+    def test_no_image_state_on_the_fleet_is_refused(self):
+        self.fleet_state = None
+        e, res = self.fails(VU.Failed, ship=True)
+        self.assertIn("its first update runs on fleet.local", str(e))
+
+    def test_a_lost_guest_lock_merges_nothing(self):
+        real = self.lock
+
+        def lock(host, guest):
+            gl = real(host, guest)
+            gl.gone = True
+            return gl
+        with mock.patch.object(VU, "RemoteGuestLock", lock):
+            e, res = self.fails(VU.Failed, ship=True)
+        self.assertIn("was lost", str(e))
+        self.assertNotIn("ship", [o[0] for o in self.order])
+        self.assertFalse(res.get("merged"))
+
+    def fails(self, exc, **kw):
+        with self.assertRaises(exc) as c:
+            VU.update("g1", self.args(**kw), ["fleet.local"])
+        return c.exception, json.loads((self.out / "result.json").read_text())
+
+    def test_nothing_changed_writes_the_fleets_sidecar_and_dump(self):
+        FakeVM.listings = (BEFORE, BEFORE)
+        wrote, kept = [], []
+        with mock.patch.object(VU, "write_json", lambda h, n, name, data: wrote.append((h, name))), \
+                mock.patch.object(VU, "read_json", lambda h, n, name: dict(self.state) if name == VU.STATE_FILE else None), \
+                mock.patch.object(VU, "keep_dump", lambda g, h, gen, d, l: kept.append(h)):
+            msg, res = self.run_ship()
+        self.assertIn("nothing changed", msg)
+        self.assertEqual(wrote, [("fleet.local", VU.FP_FILE)], "never this host's copy, a cache's")
+        self.assertEqual(kept, ["fleet.local"])
+
+    def test_no_architecture_on_the_fleet_is_refused(self):
+        with mock.patch.object(VU, "arch_hosts", lambda name, hosts: []), self.assertRaisesRegex(VU.Failed, "nowhere to merge"):
+            VU.update("g1", self.args(ship=True), ["fleet.local"])
+
+
+for _n in [n for n in dir(TestFlow) if n.startswith("test") and n not in TestShip.__dict__]:
+    setattr(TestShip, _n, None)                # (TestFlow's own tests run there, not again here)
+
+
+class TestShipArguments(TestArguments):
+    def test_ship_is_a_real_update(self):
+        for mode in ("--try", "--probe", "--status", "--finish", "--reproject"):
+            self.assertIn("--ship is a real update", self.refused("--ship", mode, "g"), mode)
+
+    def test_ship_takes_no_hosts(self):
+        self.assertIn("takes no --hosts", self.refused("--ship", "--hosts", "a", "g"))
+
+    def test_ship_refuses_on_the_fleet_host(self):
+        with mock.patch.object(VU, "on_first_host", lambda: True):
+            rc, text = self.main("--ship", "g")
+        self.assertEqual(rc, 2)
+        self.assertIn("not a fleet host", text)
+
+    def test_help_names_ship(self):
+        rc, text = self.main("--help")
+        self.assertIn("--ship", text)
+        self.assertIn("[--try | --probe | --ship]", VU.USAGE)
+
+
+class TestShipScripts(World):
+    """The shell parts run for real: the guest's lock as the fleet host holds it, the dump kept
+    there, and the fleet lock's wait."""
+
+    def holder(self, d):
+        return subprocess.Popen(["bash", "-c", VU.GUEST_LOCK_SCRIPT, "bash", str(d)], stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    def test_one_update_of_a_guest_at_a_time_across_hosts(self):
+        d = self.guest_dir()
+        a = self.holder(d)
+        self.assertEqual(a.stdout.readline().strip(), "held")
+        b = self.holder(d)
+        self.assertEqual(b.stdout.readline().strip(), "busy")
+        self.assertEqual(b.wait(10), 75)
+        # ... and a vm-update on the fleet host itself (Guest's lock) is refused while a --ship holds it
+        with self.assertRaisesRegex(VU.Failed, ".vm-update.lock is held"):
+            VU.Guest("g1")
+        a.stdin.close()
+        self.assertEqual(a.wait(10), 0)
+        g = VU.Guest("g1")                     # let go with the ssh: free again
+        c = self.holder(d)
+        self.assertEqual(c.stdout.readline().strip(), "busy", "and the other way round")
+        c.wait(10)
+        g.lock.close()
+
+    def test_a_guest_the_fleet_host_lacks(self):
+        p = self.holder(self.vms / "nope")
+        self.assertIn("no ", p.stdout.readline())
+        self.assertEqual(p.wait(10), 66)
+
+    def test_the_dump_is_kept_on_the_fleet_host(self):
+        g = FakeGuest(d=self.guest_dir())
+        d = dump_of("debian12")
+        raw = json.dumps(d).encode()
+        # (run here: the fleet host's half of the ssh)
+        with mock.patch.object(VU, "on_host", lambda host, script, *a, input=None: REAL_ON_HOST(None, script, *a, input=input)):
+            VU.keep_dump(g, "fleet.local", "gen1", raw, "base pm dpkg\npkg a 1\n")
+        dd = self.root / "guest-dumps" / "g1"
+        self.assertEqual(json.loads((dd / "gen1.json").read_bytes()), d)
+        self.assertEqual((dd / "gen1.pkgset").read_text(), "base pm dpkg\npkg a 1\n")
+        for f in ("gen1.json", "gen1.pkgset"):
+            self.assertEqual(stat.S_IMODE((dd / f).stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(dd.stat().st_mode), 0o700)
+
+    def test_the_fleet_lock_is_waited_for_when_asked(self):
+        lock, rnd = self.vms / VU.FLEET_LOCK, self.vms / VU.FLEET_ROUND
+        held = subprocess.Popen(["flock", "-x", str(lock), "sleep", "30"]) if shutil.which("flock") else None
+        if held is None:
+            self.skipTest("no flock(1) here")
+        try:
+            time.sleep(0.3)
+            t0 = time.monotonic()
+            r = subprocess.run(["bash", "-c", VU.FLEET_SCRIPT, "bash", str(lock), str(rnd), "-x", "1"], stdin=subprocess.DEVNULL,
+                               capture_output=True, text=True, timeout=20)
+            self.assertEqual(r.returncode, 75)
+            self.assertGreaterEqual(time.monotonic() - t0, 0.9, "it waited")
+            r = subprocess.run(["bash", "-c", VU.FLEET_SCRIPT, "bash", str(lock), str(rnd), "-x", "0"], stdin=subprocess.DEVNULL,
+                               capture_output=True, text=True, timeout=20)
+            self.assertEqual(r.returncode, 75)
+        finally:
+            held.kill()
+            held.wait()
+
+
+REAL_ON_HOST = VU.on_host
+
+
+class TestCheckHostsRef(World):
+    """check_hosts holds every host to REF's image-state: --ship's fleet host, not this one."""
+
+    def test_the_reference_is_ref(self):
+        g = FakeGuest(d=self.guest_dir())
+        g.images = ["g1.qcow2"]
+        st = {"generation": "a" * 64, "updates": 2, "sha256": {"g1.qcow2": "s"}}
+        other = dict(st, generation="b" * 64, updates=1)
+        states = {"fleet": st, "two": other}
+        with mock.patch.object(VU, "on_host", lambda host, script, *a, input=None: "yes" if "-d $1" in script else ""), \
+                mock.patch.object(VU, "busy", lambda *a, **k: []), \
+                mock.patch.object(VU, "sha256_on", lambda h, p: "s"), \
+                mock.patch.object(VU, "machine_id", lambda h, n: h), \
+                mock.patch.object(VU, "read_json", lambda h, n, name: states[h] if name == VU.STATE_FILE else None):
+            self.assertEqual(VU.check_hosts(g, ["fleet"], start=False, ref="fleet"), {"fleet": st})
+            with self.assertRaisesRegex(VU.Failed, r"two is at update 1 .*fleet at 2"):
+                VU.check_hosts(g, ["fleet", "two"], start=False, ref="fleet")
 
 
 if __name__ == "__main__":

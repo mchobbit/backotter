@@ -1308,6 +1308,95 @@ class Waves(unittest.TestCase):
         self.assertEqual(res["exit"], 2)
 
 
+class UpdateSpread(unittest.TestCase):
+    """img-speed F1: an update round's guest may update on any host of the run that caches its base
+    (vm-update --ship), the fleet's first host always among them."""
+
+    def runner(self, facts, cells=("debian12",), hosts=("chopin", "cinqcent", "copland")):
+        r, rs, ctx, io = make(list(cells), word=Word(update=True), hosts=hosts)
+        ctx.facts = facts
+        for pc in r.plan.cells:
+            pc.keys = {h: "a" * 64 for h in hosts}
+        return r
+
+    def facts(self, **copies):
+        out = {h: {"guests": {}} for h in ("chopin", "cinqcent", "copland")}
+        for h, v in copies.items():
+            gen, imgsum = v[:2]
+            sums = v[2] if len(v) > 2 else {"debian12.qcow2": "s-" + str(gen)}
+            out[h]["guests"]["debian12"] = {"generation": gen, "imgsum": imgsum, "state_sha256": sums}
+        return out
+
+    def test_a_host_at_the_fleets_generation_may_update_it(self):
+        r = self.runner(self.facts(chopin=("g1", "img:s1"), cinqcent=("g1", "img:s1"), copland=("g0", "img:s0")))
+        self.assertEqual(r.item_of(r.plan.cells[0]).allowed, ["chopin", "cinqcent"])
+
+    def test_other_bytes_keep_it_off_and_an_unknown_sum_leaves_it_to_vm_update(self):
+        r = self.runner(self.facts(chopin=("g1", "img:s1"), cinqcent=("g1", "img:sX"), copland=("g1", None)))
+        self.assertEqual(r.item_of(r.plan.cells[0]).allowed, ["chopin", "copland"])
+
+    def test_one_generation_of_other_bytes_stays_off(self):
+        # (seen 2026-11-27: devuan6, freebsd14 and artix-s6 at the cache's generation, their bytes
+        # on chopin not the published objects')
+        r = self.runner(self.facts(chopin=("g1", None, {"d.qcow2": "a"}), cinqcent=("g1", None, {"d.qcow2": "b"}),
+                                   copland=("g1", None, None)))
+        self.assertEqual(r.item_of(r.plan.cells[0]).allowed, ["chopin"])
+
+    def test_no_generation_on_the_fleet_updates_there_only(self):
+        r = self.runner(self.facts(chopin=(None, "img:s1"), cinqcent=(None, "img:s1")))
+        self.assertEqual(r.item_of(r.plan.cells[0]).allowed, ["chopin"])
+
+    def test_sculpt_stays_on_the_fleet(self):
+        f = {h: {"guests": {"sculpt2610": {"generation": "g1", "imgsum": "img:s", "state_sha256": {"s.qcow2": "s"}}}}
+             for h in ("chopin", "cinqcent", "copland")}
+        r = self.runner(f, cells=("sculpt2610",))
+        self.assertEqual(r.item_of(r.plan.cells[0]).allowed, ["chopin"])
+
+    def test_a_host_the_cell_may_not_run_on_stays_off(self):
+        r = self.runner(self.facts(chopin=("g1", "img:s1"), cinqcent=("g1", "img:s1"), copland=("g1", "img:s1")))
+        r.plan.cells[0].host = "copland"   # allowed_hosts: that host alone; the fleet stays
+        self.assertEqual(r.item_of(r.plan.cells[0]).allowed, ["chopin", "copland"])
+
+    def test_the_job_on_another_host_ships(self):
+        r = self.runner(self.facts(chopin=("g1", "img:s1"), cinqcent=("g1", "img:s1")))
+        it = r.item_of(r.plan.cells[0])
+        e = r.job_env(it, "cells.json", "update", "cinqcent")
+        self.assertEqual(e.get("T2_GUEST_SHIP"), "1")
+        self.assertNotIn("T2_GUEST_HOSTS", e)      # --ship takes no --hosts: it merges on the fleet
+        e = r.job_env(it, "cells.json", "update", "chopin")
+        self.assertNotIn("T2_GUEST_SHIP", e)
+        self.assertNotIn("T2_GUEST_HOSTS", e, "the cache hosts of the run are no hosts to merge on")
+        with mock.patch.object(hosts_table, "with_role", lambda role: ["chopin", "cinqcent", "cage"] if role == "fleet" else []):
+            e = r.job_env(it, "cells.json", "update", "chopin")
+        self.assertEqual(e.get("T2_GUEST_HOSTS"), "chopin.local,cinqcent.local")   # a fleet the word names only part of
+        self.assertNotIn("T2_GUEST_SHIP", r.job_env(it, "cells.json", "console-update", "cinqcent"))
+
+    def test_a_host_whose_tree_differs_is_left_out(self):
+        r = self.runner(self.facts(chopin=("g1", "img:s1"), cinqcent=("g1", "img:s1"), copland=("g1", "img:s1")))
+        items = [r.item_of(r.plan.cells[0])]
+        r.tree_matches = lambda h: "the synced tree differs from this checkout: testvm/vm-update" if h == "cinqcent" else None
+        r.drop_unsynced("chopin", items)
+        self.assertEqual(items[0].allowed, ["chopin", "copland"])
+        self.assertEqual(sum("cinqcent left out" in n for n in r.notes), 1, r.notes)
+
+    def test_jobs_spread_and_ship_in_a_round(self):
+        names = ["debian12", "mint22", "arch", "cachyos", "rocky10", "fedora44"]
+        f = {h: {"guests": {g: {"generation": "g-" + g, "imgsum": "img:" + g, "state_sha256": {g: "s"}} for g in names}}
+             for h in ("chopin", "cinqcent", "copland")}
+        io, jobs = FakeIO(), FakeJobs()
+        for g in names:
+            io.summ[g] = summary(merged=True)
+        r, rs, ctx, _ = make(names, io, jobs, word=Word(update=True), hosts=("chopin", "cinqcent", "copland"),
+                             fleet=mock.Mock(take=lambda: True))
+        ctx.facts = f
+        with mock.patch.object(guest.Runner, "tree_matches", lambda *a: None), mock.patch.object(guest.Runner, "reproject_if_needed", lambda *a: None):
+            r.run()
+        self.assertEqual(sorted(c["guest"] for c in jobs.calls), sorted(names), "each guest updated once")
+        self.assertGreater(len({c["host"] for c in jobs.calls}), 1, "the round stayed on one host")
+        for c in jobs.calls:
+            self.assertEqual(c["env"].get("T2_GUEST_SHIP") == "1", c["host"] != "chopin", c)
+
+
 # --- the row builder ---------------------------------------------------------------------------------
 
 class HC:
@@ -1726,6 +1815,25 @@ class Rows(unittest.TestCase):
         self.assertTrue(r["extra"]["merged"])
         self.assertFalse(r["extra"]["try_ran"])
         self.assertEqual(r["verdict"], "PASS")
+
+    def test_a_shipped_update_reads_its_fingerprint_and_count_from_the_result(self):
+        # vm-update --ship (img-speed F1): this host's copy is a cache's, untouched by the merge on the fleet
+        d = os.path.join(self.work, "vms", "debian12")
+        with open(os.path.join(d, "image-state"), "w", encoding="utf-8") as f:
+            json.dump({"generation": "g" * 64, "updates": 1}, f)
+        with open(os.path.join(d, "image-fingerprint.json"), "w", encoding="utf-8") as f:
+            json.dump({"generation": "g" * 64, "holt": {"digest": "o" * 64}}, f)
+        self.result(mode="update", merged=True, shipped_to="chopin.local", fingerprint="n" * 64,
+                    merge={"decided": True, "why": "pkgs", "pkg_changed": True, "steps": ["s"], "unknown": False, "gate": 0})
+        self.baseline([])
+        r = self.build(mode="update")
+        self.assertEqual(r["extra"]["fingerprint"], "n" * 64, "the shipped update's, not the cache's old sidecar")
+        self.assertNotIn("image:sources", r["extra"]["skips"], "the count is the booted copy's: 1, not 0")
+        self.result(mode="update", merged=True, fingerprint="n" * 64,
+                    merge={"decided": True, "why": "pkgs", "pkg_changed": True, "steps": ["s"], "unknown": False, "gate": 0})
+        r = self.build(mode="update")
+        self.assertEqual(r["extra"]["fingerprint"], "o" * 64, "on the fleet: the sidecar the merge wrote")
+        self.assertEqual(r["needs"]["image:sources"], "SKIP")
 
     def test_an_update_that_merged_nothing_is_a_try(self):
         self.result(mode="update")

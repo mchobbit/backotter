@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bring BackOtter test guests up to date, on every test host at once.
 
-Usage: vm-update [--try | --probe] [--hosts H,...] [--jobs N] [--cpus N] [--memory MB]
+Usage: vm-update [--try | --probe | --ship] [--hosts H,...] [--jobs N] [--cpus N] [--memory MB]
                  [--out DIR] [--hook before=FILE]... [--hook after=FILE]... [--push LOCAL=REMOTE]...
                  [--write-fingerprint] [--merge-gate CMD] [--keep-failed] GUEST...
        vm-update --status|--finish [--hosts H,...] GUEST...
@@ -116,6 +116,19 @@ update (NetBSD: a release's base sets) is reported and left alone.
                 a real update's last word, run with sh on this host after the
                 after-hooks and before the trim: exit 0 merges, exit 10 is a
                 blocked merge, anything else a failure that doesn't merge
+  --ship        a real update on a host that isn't the fleet's (a vm-store
+                cache: Copland, Cage, ...), of its copy of the guest: steps
+                1-4 run here, on this host's copy, which must be the fleet's
+                generation byte for byte (the SHA-256s in the first fleet
+                host's image-state); step 5 copies only the overlay to the
+                fleet and merges it there, never here (this host's copy is
+                vm-store's, read only; it takes the new generation by
+                `vm-store link` once Chopin publishes it).  The guest's
+                .vm-update.lock on the first fleet host is held from step 1
+                to the end, so that no two hosts update one guest at once;
+                the fleet lock, by hand, only for step 5 (waited for up to
+                30 min); a round's job holds it shared throughout.  Its
+                dumps go to the first fleet host.  No --hosts
   --keep-failed with --try or --probe: a run that fails leaves its folder
                 (its overlays and logs) for the caller, named in result.json
   --status      only step 1's checks: whether the hosts agree, and what uses
@@ -239,6 +252,7 @@ STAT_FILE = "image-stat.json"           # each disk's size, mtime and inode at i
 FLEET_LOCK = ".vm-update.fleet.lock"
 FLEET_ROUND = ".vm-update.fleet.round"
 HEARTBEAT_TIMEOUT = 120                 # --hold-fleet-lock: a line on stdin at least this often
+SHIP_FLEET_WAIT = 1800                  # a by-hand --ship waits this long for the fleet lock at step 5
 DEFAULT_HOST_ROOT = "/bkoscratch/test2"
 DEFAULT_HOLT_BIN = "/bkoscratch/holttest1d/bin"
 HOOK_SENTINEL = "=== end"               # the last thing a hook prints
@@ -1292,12 +1306,14 @@ m=$(dirname "$i")/.vm-update.$(basename "$i").merging
 rm -f -- "$m" "$m.committed"
 """
 
-def check_hosts(g: Guest, hosts: list[str | None], start: bool, exclude: dict | None = None) -> dict:
+def check_hosts(g: Guest, hosts: list[str | None], start: bool, exclude: dict | None = None,
+                ref: str | None = None) -> dict:
     """Check that nothing uses the images and every host holds the same
     generation of them (EXCLUDE: {host: overlays of ours not to count}); each
     host's image-state.  Before the first update there is none: with START,
     make it (on every host) once the hosts' images are found identical;
-    without, return {host: None}."""
+    without, return {host: None}.  REF is the host the others are held to
+    (this one, but for --ship: the fleet's first host; REF is one of HOSTS)."""
     def one(host):
         if not on_host(host, '[[ -d $1 ]] && echo yes || true', guest_dir_on(host, g.name)).strip():
             raise Failed(f"{where(host)} has no {g.name}; copy it there first")
@@ -1322,13 +1338,13 @@ def check_hosts(g: Guest, hosts: list[str | None], start: bool, exclude: dict | 
     if problems:
         raise Failed("in use: " + "; ".join(problems))
 
-    here_sums, here_state = results[None][1], results[None][2]
+    here_sums, here_state = results[ref][1], results[ref][2]
     if here_state is None:
         for host, (_, sums, state, *_) in results.items():
             if state is not None:
-                raise Failed(f"{where(host)} has an {STATE_FILE} but this host has none")
+                raise Failed(f"{where(host)} has an {STATE_FILE} but {where(ref)} has none")
             if sums != here_sums:
-                raise Failed(f"{where(host)}'s images differ from this host's; copy them there again")
+                raise Failed(f"{where(host)}'s images differ from {where(ref)}'s; copy them there again")
         if not start:
             return {host: None for host in hosts}
         generation = hashlib.sha256(json.dumps(here_sums, sort_keys=True).encode()).hexdigest()
@@ -1344,7 +1360,7 @@ def check_hosts(g: Guest, hosts: list[str | None], start: bool, exclude: dict | 
             raise Failed(f"{where(host)}'s images changed since vm-update last recorded them; copy them there again")
         if state["generation"] != here_state["generation"]:
             raise Failed(f"{where(host)} is at update {state['updates']} ({state['generation'][:12]}), "
-                         f"this host at {here_state['updates']} ({here_state['generation'][:12]})")
+                         f"{where(ref)} at {here_state['updates']} ({here_state['generation'][:12]})")
     return {host: results[host][2] for host in hosts}
 
 
@@ -1600,9 +1616,13 @@ def remove_empty_ram_dir(g: Guest, host: str | None = None) -> None:
 
 
 def ship_and_commit(g: Guest, hosts: list[str | None], overlays: dict[str, str], states: dict,
-                    rec: dict | None = None, dump: bytes | None = None, listing: str | None = None) -> str:
+                    rec: dict | None = None, dump: bytes | None = None, listing: str | None = None,
+                    ref: str | None = None) -> str:
     """Step 5; the new generation.  REC: fingerprint.py's record of this
-    update, with DUMP and LISTING what it was made from."""
+    update, with DUMP and LISTING what it was made from.  REF: the host whose
+    image-state the update began from (check_hosts'); with --ship the fleet's
+    first host, and HOSTS the fleet alone: this host's copy, a vm-store
+    cache's, is only read, and nothing merges here."""
     others = [h for h in hosts if h is not None]
     changed = [img for img in g.images if g.path(img) in overlays]   # an image nothing wrote has none
     in_ram = ram_gib() is not None
@@ -1653,11 +1673,11 @@ def ship_and_commit(g: Guest, hosts: list[str | None], overlays: dict[str, str],
             sums = {img: sha256_on(None, local[img]) for img in changed}
             say(g.name, f"copying the update ({', '.join(f'{os.path.getsize(o) >> 20} MiB' for o in local.values())})"
                         f" to {', '.join(others) or 'no other host'}")
-            generation = hashlib.sha256((states[None]["generation"] + json.dumps(sums, sort_keys=True)).encode()).hexdigest()
-            new_state = {"generation": generation, "updates": states[None]["updates"] + 1}
+            generation = hashlib.sha256((states[ref]["generation"] + json.dumps(sums, sort_keys=True)).encode()).hexdigest()
+            new_state = {"generation": generation, "updates": states[ref]["updates"] + 1}
             side = None
             if rec is not None:
-                side = fingerprint_mod().sidecar(rec, generation, "update", utc_now(), read_json(None, g.name, FP_FILE))
+                side = fingerprint_mod().sidecar(rec, generation, "update", utc_now(), read_json(ref, g.name, FP_FILE))
             pend = {h: {"overlays": dict(local if h is None else remote), "before": states[h]["sha256"], "state": new_state,
                         "overlay_sums": sums, "wear_tag": wear_tag(g), "fingerprint": side}
                     for h in hosts}
@@ -1672,12 +1692,12 @@ def ship_and_commit(g: Guest, hosts: list[str | None], overlays: dict[str, str],
             # Step 1 again: the images may have changed, or come into use, since.
             exclude = {None: [os.path.realpath(p) for p in local.values()]}
             exclude.update({h: [on_host(h, 'realpath -- "$1"', remote[img]).strip() for img in changed] for h in others})
-            now = check_hosts(g, hosts, start=False, exclude=exclude)
+            now = check_hosts(g, hosts, start=False, exclude=exclude, ref=ref)
             if now != states:
                 raise Failed("the hosts' image-state changed during the update")
             if stopping.is_set():
                 raise Failed("stopped")
-            save_dump(g, generation, dump, listing)
+            keep_dump(g, ref, generation, dump, listing)
             # Recorded on every host before any merges, so that a merge that
             # fails or is cut short can be finished later (--finish).
             for host in hosts:
@@ -1711,10 +1731,18 @@ def ship_and_commit(g: Guest, hosts: list[str | None], overlays: dict[str, str],
                 raise e
             raise Failed(f"the merge failed on {where(host)} ({e if isinstance(e, Failed) else f'{type(e).__name__}: {e}'})"
                          ", so the hosts may now differ.  The overlays are kept there: once the cause is gone,"
-                         f" vm-update --finish {g.name} completes it")
+                         f" vm-update --finish {g.name}{'' if ref is None else f' on {ref}'} completes it")
     finally:
         for room in rooms:
             room.release()
+        if None not in hosts:
+            # --ship: this host merges nothing, so its copy of the overlay
+            # (shipped) is done with, whatever happened there: a merge left
+            # undone is the fleet's, with the fleet's copy (--finish there).
+            for path in local.values():
+                Path(path).unlink(missing_ok=True)
+            if in_ram:
+                remove_empty_ram_dir(g)
         if in_ram:
             for host in others:
                 remove_empty_ram_dir(g, host)
@@ -1788,6 +1816,47 @@ def save_dump(g: Guest, generation: str, dump: bytes | None, listing: str | None
         g.note(f"couldn't keep the dump for --reproject: {e}")
 
 
+# On another host (--ship's fleet host): the dump and listing as save_dump
+# writes them here, from stdin ($1 the folder, $2 the generation; the listing
+# follows the dump after a line of its own, $3).
+KEEP_DUMP_SCRIPT = r"""
+set -euo pipefail
+umask 077
+d=$1 gen=$2 sep=$3
+mkdir -p "$d"
+chmod 0700 "$(dirname "$d")" "$d"
+python3 -I -c '
+import os, sys
+d, gen, sep = sys.argv[1:4]
+data = sys.stdin.buffer.read()
+dump, _, listing = data.partition(b"\n" + sep.encode() + b"\n")
+for name, part in ((gen + ".json", dump), (gen + ".pkgset", listing)):
+    tmp = os.path.join(d, name + ".tmp")
+    with open(tmp, "wb") as f:
+        f.write(part)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, os.path.join(d, name))
+' "$d" "$gen" "$sep"
+"""
+
+
+def keep_dump(g: Guest, host: str | None, generation: str, dump: bytes | None, listing: str | None) -> None:
+    """save_dump on HOST: with --ship the dumps go to the fleet's first host,
+    where --reproject and tool_guest pkgdiff read them (they never stay on a
+    cache host).  Best effort, as save_dump."""
+    if host is None:
+        save_dump(g, generation, dump, listing)
+        return
+    if dump is None:
+        return
+    sep = "--vm-update-listing-" + hashlib.sha256(dump).hexdigest()[:16] + "--"
+    try:
+        on_host(host, KEEP_DUMP_SCRIPT, str(dumps_dir(g.name)), generation, sep,
+                input=dump.decode("utf-8", errors="replace") + "\n" + sep + "\n" + (listing or ""))
+    except Failed as e:
+        g.note(f"couldn't keep the dump on {host} for --reproject: {e}")
+
+
 def make_record(g: Guest, res: dict, dump: bytes | None, why: str, listing: str) -> dict | None:
     """fingerprint.py's record of a dump, or None with res saying why.  No
     fingerprint is never an error: the generation stands in."""
@@ -1815,8 +1884,9 @@ def sidecar_current(side: dict | None, generation: str | None) -> bool:
     return bool(side) and generation is not None and side.get("generation") == generation
 
 
-def write_sidecars(g: Guest, hosts: list[str | None], rec: dict, generation: str, source: str) -> None:
-    side = fingerprint_mod().sidecar(rec, generation, source, utc_now(), read_json(None, g.name, FP_FILE))
+def write_sidecars(g: Guest, hosts: list[str | None], rec: dict, generation: str, source: str,
+                   ref: str | None = None) -> None:
+    side = fingerprint_mod().sidecar(rec, generation, source, utc_now(), read_json(ref, g.name, FP_FILE))
     for host in hosts:
         write_json(host, g.name, FP_FILE, side)
 
@@ -2317,10 +2387,12 @@ def round_name() -> str:
 
 
 # On the first host, for a driver on another: take the lock on fd 9 and hold
-# it for as long as ssh keeps our stdin open.  $3 -x or -s.
+# it for as long as ssh keeps our stdin open.  $3 -x or -s; $4 how many
+# seconds to wait for it (0: not at all).
 FLEET_SCRIPT = r"""
 exec 9>>"$1"
-flock -n "$3" 9 || { echo "$(cat -- "$2" 2>/dev/null)"; exit 75; }
+if (( ${4:-0} > 0 )); then flock -w "$4" "$3" 9; else flock -n "$3" 9; fi ||
+    { echo "$(cat -- "$2" 2>/dev/null)"; exit 75; }
 echo held
 echo "$(cat -- "$2" 2>/dev/null)"
 exec cat >/dev/null
@@ -2331,10 +2403,11 @@ def fleet_held_error(by: str) -> Failed:
     return Failed(f"the fleet lock is held, by a by-hand update or a round: {FLEET_ROUND} says {by or 'nothing'}")
 
 
-def take_fleet_lock(shared_run: str | None):
+def take_fleet_lock(shared_run: str | None, wait: int = 0):
     """The fleet lock for this process's life: exclusive for a by-hand
     driver, shared for SHARED_RUN's job, which must be that round's.  What
-    keeps it held is returned, to be kept referenced."""
+    keeps it held is returned, to be kept referenced.  WAIT: seconds a
+    driver on another host waits for it (a by-hand --ship, at its step 5)."""
     if on_first_host():
         lock, _ = fleet_paths()
         f = open(lock, "a")
@@ -2347,7 +2420,7 @@ def take_fleet_lock(shared_run: str | None):
         keep = f
     else:
         remote = " ".join(shlex.quote(a) for a in ["bash", "-c", FLEET_SCRIPT, "bash", f"{REMOTE_VMS}/{FLEET_LOCK}",
-                                                   f"{REMOTE_VMS}/{FLEET_ROUND}", "-s" if shared_run else "-x"])
+                                                   f"{REMOTE_VMS}/{FLEET_ROUND}", "-s" if shared_run else "-x", str(wait)])
         p = subprocess.Popen(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15",
                               ALL_HOSTS[0], remote], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True, start_new_session=True)
@@ -2364,6 +2437,80 @@ def take_fleet_lock(shared_run: str | None):
     if shared_run and by != shared_run:
         raise Failed(f"this job is of round {shared_run}, but the round in progress is {by or 'none'}")
     return keep
+
+
+# On the fleet's first host, for a --ship driver: the guest's own
+# .vm-update.lock there (Guest's: what a vm-update of the guest on that host,
+# or an image build that boots it, holds), for as long as ssh keeps our stdin
+# open.  $1 the guest's folder.
+GUEST_LOCK_SCRIPT = r"""
+[[ -d $1 ]] || { echo "no $1"; exit 66; }
+exec python3 -I -c '
+import fcntl, sys
+f = open(sys.argv[1] + "/.vm-update.lock", "a")
+try:
+    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    print("busy", flush=True)
+    sys.exit(75)
+print("held", flush=True)
+while sys.stdin.buffer.read(65536):
+    pass
+' "$1"
+"""
+
+
+class RemoteGuestLock:
+    """The per-guest lock of an update that runs on another host than the
+    fleet's (--ship): GUEST's .vm-update.lock on HOST, held from step 1 to the
+    end, so that no two hosts update one guest at once, and no update on
+    HOST (nor a build booting the guest there) runs beside it."""
+
+    def __init__(self, host: str, guest: str):
+        self.host = host
+        remote = " ".join(shlex.quote(a) for a in ["bash", "-c", GUEST_LOCK_SCRIPT, "bash", f"{REMOTE_VMS}/{guest}"])
+        self.proc = subprocess.Popen(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15",
+                                      host, remote], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, text=True, start_new_session=True)
+        first = self.proc.stdout.readline().strip()
+        if first != "held":
+            self.release()
+            if self.proc.returncode == 75:
+                raise Failed(f"its .vm-update.lock on {host} is held: another vm-update of it (here, there or on"
+                             " another host), or an image build that boots it, is working on it")
+            if self.proc.returncode == 66:
+                raise Failed(f"{host} has no {guest}")
+            raise Failed(f"taking its .vm-update.lock on {host}: "
+                         f"{self.proc.stderr.read().strip() or first or f'exit status {self.proc.returncode}'}")
+
+    def lost(self) -> bool:
+        return self.proc.poll() is not None
+
+    def release(self) -> None:
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.proc.wait(30)
+        except subprocess.TimeoutExpired:
+            self.proc.terminate()
+            self.proc.wait()
+
+
+def check_cached_base(g: Guest, state: dict, ref: str) -> None:
+    """--ship's step 1 here: this host's copy of the guest is the fleet's
+    generation STATE, byte for byte (its disks' SHA-256s those REF recorded),
+    so that the overlay made on it merges into REF's image as into its own."""
+    here = read_json(None, g.name, STATE_FILE)
+    gen = (here or {}).get("generation")
+    if gen != state["generation"]:
+        raise Failed(f"this host's copy is at {(gen or 'no generation')[:12]}, {ref}'s at {state['generation'][:12]}:"
+                     f" only a copy of the fleet's generation is updated here (once it is published, vm-store link"
+                     f" {g.name}; else update it on {ref})")
+    sums = {img: sha256_on(None, g.path(img)) for img in g.images}
+    if sums != state.get("sha256"):
+        raise Failed(f"this host's images of {g.name} aren't {ref}'s: their SHA-256s differ from its {STATE_FILE}")
 
 
 def hold_fleet_lock(run_id: str) -> int:
@@ -2436,7 +2583,11 @@ def clear_round(rnd: Path, run_id: str) -> None:
 def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, hold: list) -> str:
     g = Guest(name, out, log_here=bool(args.out))
     hold.append(g)
-    mode = "--try" if args.try_ else "--probe" if args.probe else ""
+    ship = bool(getattr(args, "ship", False))
+    # --ship: HOSTS is the fleet alone, and its first host the one the update
+    # is held to and merged into first; this host's copy is only read.
+    ref = hosts[0] if ship else None
+    mode = "--try" if args.try_ else "--probe" if args.probe else "--ship" if ship else ""
     g.note(f"vm-update {mode} on {socket.gethostname()}, hosts {[where(h) for h in hosts]}")
     # A guest whose sshd serves no logins (Redox today), or that has no sshd
     # (Sculpt: sculpt-update updates it), can't be updated over SSH: refused
@@ -2475,6 +2626,14 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
         if args.write_fingerprint:
             generations(g, hosts)              # before spending a boot on it
         state_now = read_json(None, name, STATE_FILE)
+    elif ship:
+        hold.append(RemoteGuestLock(ref, name))
+        states = check_hosts(g, hosts, start=False, ref=ref)
+        if states[ref] is None:
+            raise Failed(f"{ref} has no {STATE_FILE} for it: its first update runs on {ref}")
+        check_cached_base(g, states[ref], ref)
+        state_now = states[ref]
+        res["shipped_to"] = ref
     else:
         states = check_hosts(g, hosts, start=True)
         state_now = states[None]
@@ -2588,12 +2747,12 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
             # only with it.  The guest stands as it was: nothing to merge,
             # but what it is can still be recorded.
             generation = state_now["generation"]
-            if not sidecar_current(read_json(None, name, FP_FILE), generation):
+            if not sidecar_current(read_json(ref, name, FP_FILE), generation):
                 res["phase"] = "dump"
                 dump, why = vm.dump(uname)
                 if (rec := make_record(g, res, dump, why, listing_after)) is not None:
-                    write_sidecars(g, hosts, rec, generation, "update-nochange")
-                    save_dump(g, generation, dump, listing_after)
+                    write_sidecars(g, hosts, rec, generation, "update-nochange", ref=ref)
+                    keep_dump(g, ref, generation, dump, listing_after)
             res["phase"] = "poweroff"
             vm.poweroff()
             res["phase"] = "done"
@@ -2639,9 +2798,19 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
         # never reaches an image.
         mounts = check_host_mount(g, res, overlays, uname)
         res["phase"] = "ship"
-        generation = ship_and_commit(g, hosts, overlays, states, rec, dump, listing_after)
+        if ship:
+            if any(callable(getattr(h, "lost", None)) and h.lost() for h in hold[1:]):
+                raise Failed(f"its .vm-update.lock on {ref} was lost (the ssh holding it ended): nothing merged")
+            if not os.environ.get("VM_UPDATE_ROUND"):
+                # By hand, the fleet lock only for the merge: the guest's own
+                # lock kept the update to itself up to here.
+                say(name, f"waiting for the fleet lock on {ref}")
+                hold.append(take_fleet_lock(None, wait=SHIP_FLEET_WAIT))
+        generation = ship_and_commit(g, hosts, overlays, states, rec, dump, listing_after, ref=ref)
         res["merged"], res["generation_after"] = True, generation
         res["phase"] = "done"
+        if ship:
+            return f"updated ({uname}), {mounts}, shipped to {ref} and merged on {len(hosts)} host(s) there"
         return f"updated ({uname}), {mounts}, merged on {len(hosts)} host(s)"
     except BaseException as e:
         g.log.write(traceback.format_exc())
@@ -2668,6 +2837,8 @@ def arch_hosts(name: str, hosts: list[str | None]) -> list[str | None]:
 
 def update(name: str, args, hosts: list[str | None]) -> str:
     hosts = arch_hosts(name, hosts)
+    if getattr(args, "ship", False) and not hosts:
+        raise Failed("no fleet host runs this guest's architecture: --ship has nowhere to merge it")
     if args.status or args.finish or args.reproject:
         g = Guest(name)
         what = "--status" if args.status else "--finish" if args.finish else "--reproject"
@@ -2703,6 +2874,15 @@ def update(name: str, args, hosts: list[str | None]) -> str:
             res["tail"] = [l.strip() for l in str(e).strip().splitlines()][-8:]
         raise
     finally:
+        for h in reversed(hold[1:]):           # --ship's locks on the fleet host, once this guest is done
+            try:
+                if callable(getattr(h, "release", None)):     # RemoteGuestLock
+                    h.release()
+                elif isinstance(h, subprocess.Popen):
+                    h.stdin.close()
+                    h.wait(30)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
         res["wall_s"] = round(time.monotonic() - t0, 1)
         write_result(out, res)
         if hold:
@@ -2711,7 +2891,7 @@ def update(name: str, args, hosts: list[str | None]) -> str:
 
 # argparse's usage line: the docstring's Usage paragraph, which test_vm_update holds it to.  Only
 # --help reads the docstring, so that GuestTest2's keys can leave it out (keys.python_code).
-USAGE = """vm-update [--try | --probe] [--hosts H,...] [--jobs N] [--cpus N] [--memory MB]
+USAGE = """vm-update [--try | --probe | --ship] [--hosts H,...] [--jobs N] [--cpus N] [--memory MB]
                  [--out DIR] [--hook before=FILE]... [--hook after=FILE]... [--push LOCAL=REMOTE]...
                  [--write-fingerprint] [--merge-gate CMD] [--keep-failed] GUEST...
        vm-update --status|--finish [--hosts H,...] GUEST...
@@ -2740,6 +2920,7 @@ def main() -> int:
     p.add_argument("--write-fingerprint", action="store_true")
     p.add_argument("--merge-gate")
     p.add_argument("--keep-failed", action="store_true")
+    p.add_argument("--ship", action="store_true")
     p.add_argument("guests", nargs="*")
     args = p.parse_args()
     if args.hold_fleet_lock:
@@ -2751,6 +2932,10 @@ def main() -> int:
     if sum([args.try_, args.probe, args.status, args.finish, args.reproject]) > 1:
         p.error("--try, --probe, --status, --finish and --reproject don't combine")
     real_update = not (args.try_ or args.probe or args.status or args.finish or args.reproject)
+    if args.ship and not real_update:
+        p.error("--ship is a real update: not with --try, --probe, --status, --finish or --reproject")
+    if args.ship and args.hosts is not None:
+        p.error("--ship merges on the fleet (testvm/hosts.json's fleet role): it takes no --hosts")
     for spec in args.hook or ():
         phase, eq, path = spec.partition("=")
         if phase not in ("before", "after") or not eq or not os.path.isfile(path):
@@ -2773,6 +2958,12 @@ def main() -> int:
     names = ALL_HOSTS if args.hosts is None else [h for h in args.hosts.split(",") if h]
     others = list(dict.fromkeys(h for h in names if h.split(".")[0].casefold() != me))
     hosts: list[str | None] = [None, *others]
+    if args.ship:
+        if on_first_host() or len(others) != len(ALL_HOSTS):
+            print(f"vm-update: --ship is for a host that caches the guests, not a fleet host: on"
+                  f" {socket.gethostname()} update them without it", file=sys.stderr)
+            return 2
+        hosts = list(others)                   # the fleet alone: nothing merges on this host
     guests = args.guests = list(dict.fromkeys(name.rstrip("/") for name in args.guests))
     boots = not (args.status or args.finish or args.reproject)
     if boots and os.environ.get("VM_UPDATE_RAM") and len(guests) > 1:
@@ -2792,7 +2983,9 @@ def main() -> int:
             refuse_unaimed_world(others, takes_lock and not on_first_host())
         if args.finish or writes_sidecars:
             refuse_on_real_tree()
-        if takes_lock:
+        # A by-hand --ship takes the fleet lock only for its merge (run_guest);
+        # a round's job holds it shared throughout, as on the fleet.
+        if takes_lock and not (args.ship and not round_run):
             _fleet_lock = take_fleet_lock(round_run)
     except Failed as e:
         print(f"vm-update: {e}", file=sys.stderr)

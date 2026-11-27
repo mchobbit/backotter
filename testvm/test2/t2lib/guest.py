@@ -1035,9 +1035,39 @@ class Runner:
         g = pc.cell.split(":", 1)[1]
         e = self.sf.entry(g)
         d, m = reserve_for(self.ctx.ledger, pc.cell, e, self.policy, self.update)
-        fh = first_host()
-        allowed = [fh if fh in self.hosts else self.hosts[0]] if self.update else self.allowed_hosts(pc)
+        allowed = self.update_hosts(pc, g, e) if self.update else self.allowed_hosts(pc)
         return Item(g, pc, e, d, m, allowed)
+
+    def update_hosts(self, pc, g, entry):
+        """Where an update round may update guest G (img-speed F1, FD1): the fleet's first host,
+        and every host of the run that caches G's base: its facts' copy at that host's generation
+        with the same disk SHA-256s in its image-state (one generation can be other bytes: a cache
+        holds what was published, and the fleet's image can have been rewritten since) and, where
+        both are known, the same disks' sum; vm-update --ship checks the bytes again before it boots.  Those update in a --keep overlay and ship only the overlay to the
+        first host, which merges it.  sculpt2610 (sculpt-update) and a host the cell may not run on
+        (allowed_hosts) stay off; a host whose synced tree differs is dropped later (run_update)."""
+        fh = first_host()
+        if fh not in self.hosts:
+            return [self.hosts[0]]
+        if mode_of(entry, True) != "update":
+            return [fh]
+        def copy_of(h):
+            return (((self.ctx.facts or {}).get(h) or {}).get("guests") or {}).get(g) or {}
+        base = copy_of(fh)
+        if not base.get("generation"):
+            return [fh]
+        may = set(self.allowed_hosts(pc))
+        out = [fh]
+        for h in self.hosts:
+            c = copy_of(h)
+            if h == fh or h not in may or c.get("generation") != base["generation"]:
+                continue
+            if not base.get("state_sha256") or c.get("state_sha256") != base["state_sha256"]:
+                continue
+            if base.get("imgsum") and c.get("imgsum") and c["imgsum"] != base["imgsum"]:
+                continue
+            out.append(h)
+        return out
 
     def pm_of(self, it):
         return (it.entry.get("checks") or {}).get("pm")
@@ -1120,7 +1150,7 @@ class Runner:
             raise RuntimeError(f"the cells file {path} wasn't written on {host}: {why}")
         return path
 
-    def job_env(self, it, cells, mode):
+    def job_env(self, it, cells, mode, host=None):
         c = it.entry.get("checks") or {}
         rules = " ".join(v for v in (c.get("rules") or {}).values() if v)
         e = {"T2_GUEST_RULES": rules, "T2_GUEST_PLAT": it.entry.get("plat") or "linux", "T2_CELLS": cells,
@@ -1139,8 +1169,16 @@ class Runner:
             e["VM_UPDATE_RAM"] = f"{it.d:g}"
         if self.update:
             e["VM_UPDATE_ROUND"] = self.rs.run
-            if set(self.hosts) != set(hostjob_hosts()):   # --hosts of the word: merge on those only
-                e["T2_GUEST_HOSTS"] = ",".join(f"{h}.local" for h in self.hosts)
+            # The run's hosts are where its updates run (update_hosts); they merge on the fleet only,
+            # never into a cache host's copy (vm-store's, read only): a word's --hosts that leaves out
+            # some of the fleet merges on the fleet hosts it names.
+            from . import hosts as hosts_table
+            fleet = hosts_table.with_role("fleet")
+            named = [h for h in self.hosts if h in fleet]
+            if mode == "update" and host is not None and host != first_host():
+                e["T2_GUEST_SHIP"] = "1"   # vm-update --ship: the overlay goes to the fleet, which merges it
+            elif named and set(named) != set(fleet):
+                e["T2_GUEST_HOSTS"] = ",".join(f"{h}.local" for h in named)
         return e
 
     # --- one attempt ------------------------------------------------------------------------------
@@ -1179,7 +1217,7 @@ class Runner:
                                                        "host_requeued": it.host_requeued, "lost_host": it.lost_host,
                                                        "allowed": list(it.allowed)}
                 self.save()
-                extra = self.job_env(it, cells, mode)
+                extra = self.job_env(it, cells, mode, host)
                 rc, odir, t, why = self.job(self.env, host, it.guest, it.attempt, cmd, (it.d, it.m), tag, timeout, 4 * 3600, extra, None, "guest",
                                             on_began=on_began)
             # a job the runner's TERM ended (its timeout) wrote its row as it ended: that row is the result
@@ -1564,6 +1602,21 @@ class Runner:
             return "the synced tree differs from this checkout: " + ", ".join(sorted({k for k, _ in bad})[:6])
         return None
 
+    def drop_unsynced(self, fh, items):
+        """The other hosts an update may run on (update_hosts) run it from their synced tree too,
+        so each must match this checkout as FH's does (tree_matches); one that doesn't is noted and
+        left out of every item, which then updates on the hosts left."""
+        others = sorted({h for it in items for h in it.allowed if h != fh})
+        bad = {}
+        for h in others:
+            why = self.tree_matches(h)
+            if why:
+                bad[h] = why
+                self.notes.append(f"GuestTest2 update: {h} left out, its guests update on {fh}: {why}")
+        for it in items:
+            if bad and not it.resumed:
+                it.allowed = [h for h in it.allowed if h not in bad] or [fh]
+
     def reproject_if_needed(self, host, items):
         rules_now = fingerprint_rules(self.ctx.checkout)
         stale = sorted({it.guest for it in items for h in self.hosts
@@ -1603,6 +1656,7 @@ class Runner:
             return 2
         self.held_fleet = fleet
         try:
+            self.drop_unsynced(host, items)
             items = self.adopt(items)
             w1, w2 = self.waves(items)
             first = self.state.get("wave1")
@@ -1653,7 +1707,8 @@ class Runner:
         if mode_of(self.sf.entry(guest_name), True) != "update":   # sculpt-update: no package lists; its steps say which image
             return ""
         try:
-            rc, text = remote_tool(self.io, c.get("host"), ["pkgdiff", guest_name, a, b], timeout=60)
+            # On the fleet's first host, where every update's dumps are kept (vm-update --ship sends them there)
+            rc, text = remote_tool(self.io, first_host(), ["pkgdiff", guest_name, a, b], timeout=60)
         except Exception as e:   # noqa: BLE001 - the report only loses a detail
             return f"; changed: unknown ({e})"
         d = _json_out(text) if rc == 0 else None

@@ -475,7 +475,9 @@ def build(argv, hostctx=None):
     policy = policy_of(base)
     classed = classed_of(base, guest)
     updates = _updates(work, guest)
-    if (result or {}).get("merged") and isinstance(updates, int):   # image-state was written by the merge: the boot judged had one less
+    # image-state was written by the merge: the boot judged had one less.  (Not here when the update
+    # shipped to the fleet, vm-update --ship: this host's copy is a cache's, still the one it booted.)
+    if (result or {}).get("merged") and not (result or {}).get("shipped_to") and isinstance(updates, int):
         updates = max(updates - 1, 0)
     stopped_mark = os.path.exists(os.path.join(a.out, ".stopped"))
     needs, details, harness_why, hook_failed = judge_job(guest, a.mode, result, a.out, entry, policy, classed, updates, a.rc, stopped_mark)
@@ -525,7 +527,7 @@ def build(argv, hostctx=None):
         "mode": a.mode, "try_ran": bool(try_ran), "merged": merged, "merge_why": None if merged else merge.get("why"),
         "merge": {"decided": merge.get("decided"), "why": merge.get("why"), "gate": merge.get("gate")},
         "pkg_changed": merge.get("pkg_changed"), "steps": merge.get("steps"), "new_lines": len(new_lines),
-        "fingerprint": _fingerprint(work, guest), "reserved_gib": r.get("reserved_gib"), "overrun": bool(r.get("overrun")),
+        "fingerprint": r.get("fingerprint") if r.get("shipped_to") else _fingerprint(work, guest), "reserved_gib": r.get("reserved_gib"), "overrun": bool(r.get("overrun")),
         "generation_before": r.get("generation_before"), "generation_after": r.get("generation_after"),
         "trim_rc": r.get("trim_rc"), "phase": r.get("phase"), "to_class_only": bool(to_class), "standing": standing, "hook_failed": hook_failed,
         "skips": skips, "notes": need_notes,

@@ -19,7 +19,8 @@
 #       removed, as a full build installs only what it has.  A file that is
 #       there keeps its inode (owner, mode, flags), its bytes rewritten in
 #       place; a new one is 0555 (the marker 0444), as a full build installs
-#       it.  Each is then compared with its source.
+#       it, or BKO_BIN_MODE where the platform's full build installs another
+#       mode.  Each is then compared with its source.
 #   bko_room ROOT BINDIR FREE_KIB TOTAL_KIB NAME...
 #       The line make-img-bsd.sh records (provenance's room): BKO-ROOM
 #       free_kib=N total_kib=N bins_kib=N, BINS_KIB the binaries' blocks now.
@@ -75,7 +76,7 @@ bko_swap() {
     [ -f "$_root/.disk/backotter.json" ] || { echo "refresh: no /.disk/backotter.json in the parent" >&2; return 1; }
     for _n in "$@"; do
         if [ -f "$in/$_n" ]; then
-            bko_put "$in/$_n" "$_root$_bin/$_n" 555 || return 1
+            bko_put "$in/$_n" "$_root$_bin/$_n" "${BKO_BIN_MODE:-555}" || return 1
             echo "refresh: $_bin/$_n replaced"
         elif [ -e "$_root$_bin/$_n" ]; then
             rm -f "$_root$_bin/$_n" || return 1

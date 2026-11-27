@@ -1124,6 +1124,18 @@ class U53HoltRun(unittest.TestCase):
         self.assertEqual(sorted(c.endswith(" chopin.local") for c in qs), [False, True])
         self.assertEqual(jload(os.path.join(self.rs.mac_dir, "holt.json"))["qhost"], "chopin")
 
+    def test_queue_host_pre_f15_resume(self):
+        """F15: a holt.json with queues but no qhost (a run started before F15) resumes on its
+        first host, where that run's todo is, not on queue_host's choice."""
+        os.makedirs(self.rs.mac_dir, exist_ok=True)
+        with open(os.path.join(self.rs.mac_dir, "holt.json"), "w", encoding="utf-8") as f:
+            json.dump({"v": 1, "queues": {"t2h-20261108T0300-abcd": {}}}, f)
+        res = self.go({})
+        self.assertEqual(res["exit"], 0, res)
+        self.assertIn(("chopin", holt.QUEUE + "/t2h-20261108T0300-abcd/todo"), self.remote.written)
+        self.assertNotIn(("cinqcent", holt.QUEUE + "/t2h-20261108T0300-abcd/todo"), self.remote.written)
+        self.assertEqual(jload(os.path.join(self.rs.mac_dir, "holt.json"))["qhost"], "chopin")
+
     def test_queue_host_recorded(self):
         res = self.go({})
         self.assertEqual(res["exit"], 0, res)

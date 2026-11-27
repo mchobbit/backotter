@@ -675,8 +675,10 @@ class Runner:
         self.opts = getattr(ctx, "options", None) or {}
         self.state = State(os.path.join(self.rs.mac_dir, "holt.json"))
         # F15: the queue's host is the run's most reliable host (queue_host), no longer its first;
-        # kept in holt.json, so a resume finds the todo where its queues put it.
-        self.qhost = self.state["qhost"] or queue_host(self.hosts)
+        # kept in holt.json, so a resume finds the todo where its queues put it.  A holt.json with
+        # queues but no qhost is a run started before F15: its todo is on its first host.
+        self.qhost = self.state["qhost"] or (self.hosts[0] if self.state["queues"] and self.hosts
+                                             else queue_host(self.hosts))
         if self.qhost and not self.state["qhost"]:
             self.state["qhost"] = self.qhost
         self.stops = []

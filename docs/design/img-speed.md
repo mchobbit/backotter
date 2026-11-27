@@ -1275,11 +1275,12 @@ this spec's speedups 2 and 7.
   chopin and small hosts only on chopin, and the small hosts in the table's
   order. No new role: tie_key already ranks reliability by the table's own
   measures. The choice is kept in `holt.json` (`qhost`), so `t2 resume`
-  finds the todo where the run's queues put it (a run started before F15 on
-  chopin). Every host reaches cinqcent's queue over ssh (checked from all
+  finds the todo where the run's queues put it; a holt.json with queues but
+  no `qhost` (a run started before F15) keeps its first host, where that
+  run's todo is (review fix: the first build chose anew there). Every host reaches cinqcent's queue over ssh (checked from all
   five). *Proof:* `test_holt.py` (F15QueueHost, 5; the flow tests now read
   the todo on cinqcent and chopin's runner's QHOST; resume keeps a recorded
-  chopin; `test_holt_img.py`'s flow reads it there too), the t2 suite (3248
+  chopin, and a pre-F15 holt.json its first host; `test_holt_img.py`'s flow reads it there too), the t2 suite (3248
   on the Mac; 3 failures that HEAD has too, test_vm_update's boot.rs,
   test_gate's layers and test_plandiff's variants), and t2h-20261127T0241-809f
   on the six default hosts: `qhost` cinqcent, the todo on cinqcent, chopin's

@@ -5,6 +5,12 @@
 #
 #   build.sh info       KERNEL=, from the kernel the image gets
 #   build.sh assemble   out/image.img
+#   build.sh list       out/image.img's root, read-only, as a tar on stdout
+#   build.sh room       out/image.img's root: its free space (BKO-ROOM)
+#   build.sh refresh    out/image.img, the parent, with the binaries and the
+#                       marker swapped in place, a new DUID in its disklabel
+#                       and /etc/fstab (docs/design/img-speed.md §4.2): exit 3
+#                       when they don't fit
 #
 # OpenBSD has no live system, so this makes one the way the installer makes
 # a system: the base set, bsd.mp as /bsd, the etc set (inside base) for /etc,
@@ -31,12 +37,28 @@ ESP_START=2048 ESP_SIZE=32768           # 1 MiB in, 16 MiB
 CFG_START=34816 CFG_SIZE=524288         # marker.py's 256 MiB
 ROOT_START=$((CFG_START + CFG_SIZE))    # 559104, 1 MiB aligned; to the end of the image
 LIB=/usr/local/lib/backotter
+BINS="restic-bko rustic-bko bko-holt"   # in /usr/local/bin
+HEADROOM_MIN_KIB=65536                  # the root's free space: at least this (img-speed.md §4.2)
+in=$PWD/in                              # (stick/bsd/refresh-lib.sh's)
 
-# The release's sets, checked again here against SHA256.sig with this
-# system's copy of the release's key.
-cmd=${1:-}
+# kernel_version KERNEL: as uname -rv prints it, "8.0 GENERIC.MP#84".
+kernel_version() {
+    grep -a -o 'OpenBSD [0-9.]* ([A-Z.]*) #[0-9]*' "$1" | head -n 1 |
+        sed 's/^OpenBSD \([0-9.]*\) (\([A-Z.]*\)) /\1 \2/'
+}
+
+# headroom: the root's free space the headroom rule asks, in KiB: max(64 MiB,
+# half the binaries' size).
+headroom() {
+    b=0
+    for n in $BINS; do
+        [ ! -f "in/$n" ] || b=$((b + ($(wc -c <"in/$n") + 1023) / 1024))
+    done
+    if [ $((b / 2)) -gt $HEADROOM_MIN_KIB ]; then echo $((b / 2)); else echo $HEADROOM_MIN_KIB; fi
+}
+
 # list: out/image.img's root (disklabel partition a), read-only, as a tar.
-if [ "$cmd" = list ]; then
+list() {
     mkdir -p lst/root
     vnd=$(vnconfig out/image.img)
     trap 'umount lst/root 2>/dev/null; vnconfig -u "$vnd" 2>/dev/null' EXIT
@@ -45,8 +67,107 @@ if [ "$cmd" = list ]; then
     umount lst/root
     vnconfig -u "$vnd"
     trap - EXIT
-    exit 0
-fi
+}
+
+# room: out/image.img's root, read-only: its free space (size less what is
+# used) and the binaries' blocks, as refresh-lib.sh's BKO-ROOM line.
+room() {
+    . in/refresh-lib.sh
+    mkdir -p rmt/root
+    vnd=$(vnconfig out/image.img)
+    trap 'umount rmt/root 2>/dev/null; vnconfig -u "$vnd" 2>/dev/null' EXIT
+    mount -r "/dev/${vnd}a" rmt/root
+    # shellcheck disable=SC2046
+    set -- $(df -k rmt/root | awk 'NR == 2 { print $2 - $3, $2 }')
+    # shellcheck disable=SC2086
+    bko_room "$PWD/rmt/root" /usr/local/bin "$1" "$2" $BINS
+    umount rmt/root
+    vnconfig -u "$vnd"
+    trap - EXIT
+}
+
+# fsck_clean WHEN: fsck_ffs -n -f of the root ($vnd's a), which must find
+# nothing: no error, and no question it answered no to.
+fsck_clean() {
+    fsck_ffs -n -f "/dev/r${vnd}a" >fsck.out 2>&1 && ! grep -q '? no$' fsck.out ||
+        { cat fsck.out >&2; die "fsck_ffs $1 the swap: the root is not clean"; }
+    echo "fsck $1: $(tail -n 1 fsck.out)"
+}
+
+# refresh: out/image.img, the parent (make-img-bsd.sh puts it there), with the
+# binaries and the marker swapped in place in its root (img-speed.md §4.2),
+# and a new DUID (D2): in the disklabel (the label editor's i, its other
+# lines checked to be the parent's) and in /etc/fstab, which mounts the root by
+# it, rewritten in place.  The MBR, the ESP and the boot code stay as they
+# are; the host writes config.img into its partition.  The release and the
+# test copy are each refreshed from their own parent, so TEST plays no part.
+refresh() {
+    for f in backotter.json bko-holt refresh-lib.sh; do
+        [ -e "in/$f" ] || die "no in/$f"
+    done
+    [ -f out/image.img ] || die "no out/image.img, the parent"
+    . in/refresh-lib.sh
+    mkdir -p mnt
+    vnd=$(vnconfig out/image.img)
+    trap 'umount mnt 2>/dev/null; vnconfig -u "$vnd" 2>/dev/null' EXIT
+    disklabel "$vnd" >label.before
+    old=$(sed -n 's/^duid: //p' label.before)
+    [ -n "$old" ] && [ "$old" != 0000000000000000 ] || die "the parent's disklabel has no DUID"
+    new=
+    while [ -z "$new" ] || [ "$new" = "$old" ] || [ "$new" = 0000000000000000 ]; do
+        new=$(od -An -tx1 -N8 /dev/urandom | tr -d ' \n')
+    done
+    fsck_clean before
+    mount "/dev/${vnd}a" mnt
+    # The marker's kernel is the parent's (marker.py was given it): it must
+    # still be the parent's /bsd.
+    k=$(kernel_version mnt/bsd)
+    m=$(sed -n 's/.*"kernel": "\([^"]*\)".*/\1/p' in/backotter.json)
+    [ -n "$k" ] && [ "$k" = "$m" ] || die "the parent's /bsd is OpenBSD '$k', its marker says '$m'"
+    echo "kernel: $k, as the parent's marker says"
+    [ "$(cat mnt/etc/fstab)" = "$old.a / ffs ro 0 0" ] ||
+        die "the parent's /etc/fstab doesn't mount the root by its DUID $old: $(cat mnt/etc/fstab)"
+    # shellcheck disable=SC2046
+    set -- $(df -k mnt | awk 'NR == 2 { print $2 - $3 }')
+    rc=0
+    # shellcheck disable=SC2086
+    bko_fit "$PWD/mnt" /usr/local/bin "$1" $BINS || rc=$?
+    if [ $rc -ne 0 ]; then
+        umount mnt; vnconfig -u "$vnd"; trap - EXIT
+        exit $rc
+    fi
+    BKO_BIN_MODE=755            # a binary the parent lacks, as assemble installs it
+    # shellcheck disable=SC2086
+    bko_swap "$PWD/mnt" /usr/local/bin $BINS || die "the swap failed"
+    echo "$new.a / ffs ro 0 0" >mnt/etc/fstab       # (the same inode)
+    echo "refresh: /etc/fstab mounts the root by $new"
+    sync
+    umount mnt
+    # The label editor's i (disklabel -R would draw a DUID of its own, whatever
+    # its file says).
+    printf 'i\n%s\nw\nq\n' "$new" | disklabel -E "$vnd" >label.edit 2>&1 ||
+        { cat label.edit >&2; die "disklabel -E couldn't set the DUID"; }
+    disklabel "$vnd" >label.after
+    [ "$(sed -n 's/^duid: //p' label.after)" = "$new" ] || { cat label.edit >&2; die "the disklabel's DUID isn't $new"; }
+    sed '/^duid: /d' label.before >label.b
+    sed '/^duid: /d' label.after >label.a
+    cmp -s label.b label.a || { diff label.b label.a >&2 || :; die "the label editor changed more than the DUID"; }
+    echo "disklabel: DUID $old -> $new, the rest as it was"
+    fsck_clean after
+    vnconfig -u "$vnd"
+    trap - EXIT
+}
+
+# The parent's subcommands, which read no media.
+cmd=${1:-}
+case $cmd in
+list) list; exit 0 ;;
+room) room; exit 0 ;;
+refresh) refresh; exit 0 ;;
+esac
+
+# The release's sets, checked again here against SHA256.sig with this
+# system's copy of the release's key.
 set -- in/base[0-9][0-9].tgz
 [ $# -eq 1 ] && [ -f "$1" ] || die "need exactly one in/baseNN.tgz"
 base=${1#in/}
@@ -93,13 +214,12 @@ fi
 case $cmd in
 info)
     # As uname -rv prints it: "8.0 GENERIC.MP#84".
-    k=$(grep -a -o 'OpenBSD [0-9.]* ([A-Z.]*) #[0-9]*' bsd | head -n 1 |
-        sed 's/^OpenBSD \([0-9.]*\) (\([A-Z.]*\)) /\1 \2/')
+    k=$(kernel_version bsd)
     [ -n "$k" ] || die "no version string in the kernel"
     echo "KERNEL=$k"
     exit 0 ;;
 assemble) ;;
-*) die "usage: build.sh info|assemble|list" ;;
+*) die "usage: build.sh info|assemble|list|room|refresh" ;;
 esac
 command -v cc >/dev/null || die "no cc: the build VM needs OpenBSD's comp set"
 for f in console remote-access sshd_config.backotter restic-bko bko-holt backotter.json config.img; do
@@ -302,19 +422,23 @@ EOF
 cc -O2 -Wall -Werror -o "$root$LIB/autologin" autologin.c -lutil
 
 # --- The image ------------------------------------------------------------------
-# The root's size, plus an eighth for FFS's own and 32 MiB, in whole MiB.
+# The root's size, plus an eighth for FFS's own and 32 MiB, in whole MiB; and
+# more if that leaves the root less free space than the headroom rule asks
+# (img-speed.md §4.2, D1: a refresh swaps the binaries in place).
 kb=$(du -sk "$root" | cut -f1)
 root_size=$(( (kb + kb / 8 + 32768) / 1024 * 2048 ))
-total=$((ROOT_START + root_size))
 img=$PWD/out/image.img
 mnt=$PWD/mnt
-rm -f "$img"
 mkdir -p "$mnt"
+
+# make_image: $img with a root of $root_size sectors; $free, its free KiB.
+make_image() {
+total=$((ROOT_START + root_size))
+rm -f "$img"
 dd if=/dev/zero of="$img" bs=512 count=0 seek=$total status=none
 vnd=$(vnconfig "$img")
 cleanup() { umount "$mnt" 2>/dev/null || true; vnconfig -u "$vnd" 2>/dev/null || true; }
 trap cleanup EXIT
-
 fdisk -iy -b $ESP_SIZE@$ESP_START -f "$root/usr/mdec/mbr" "$vnd" >/dev/null
 # fdisk -e asks: id, edit in CHS mode, offset, size.
 printf '%s\n' "edit 3" A6 n $ROOT_START $root_size \
@@ -351,7 +475,20 @@ echo "Copying $((kb / 1024)) MiB into the root file system"
 (cd "$root" && pax -rw -pe . "$mnt")
 installboot -r "$mnt" "$vnd" "$root/usr/mdec/biosboot" "$root/usr/mdec/boot"
 df -h "$mnt" | tail -n 1
+free=$(df -k "$mnt" | awk 'NR == 2 { print $2 - $3 }')
 umount "$mnt"
 vnconfig -u "$vnd"
 trap - EXIT
+}
+
+want=$(headroom)
+make_image
+if [ "$free" -lt "$want" ]; then
+    # The shortfall, in whole MiB and one more.
+    root_size=$((root_size + ((want - free) / 1024 + 2) * 2048))
+    echo "Headroom: $free KiB free in the root, under the rule's $want: made again with $((root_size / 2048)) MiB"
+    make_image
+    [ "$free" -ge "$want" ] || die "the root has $free KiB free, under the headroom rule's $want"
+fi
+echo "Headroom: $free KiB free in the root (the rule: $want)"
 rm -rf "$root"

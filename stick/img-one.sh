@@ -287,19 +287,16 @@ for m in $modes; do
     echo "boot $m rc=$rc ($(grep -c '^  ok' "test/boot-$m.out") ok, $(grep -c '^  FAIL' "test/boot-$m.out") FAIL) $(grep -E '^  FAIL|^  ok +(binaries|restic-bko|rustic-bko|bko-holt) ' "test/boot-$m.out" | tr -s ' ' | tr '\n' ' ')" >>"$r"
 done
 # A build that passed: with BKO_IMG_COMPRESS=1, its .xz for download and this
-# platform's old images compressed; then the old sets past the last two
-# deleted (D6).  The boot tests' verdict in done.exit doesn't depend on this.
+# platform's old images compressed; then, once the provenance is written, the
+# old sets past the last two deleted (D6).  The boot tests' verdict in
+# done.exit doesn't depend on either.
 if [[ $fails -eq 0 ]]; then
     if [[ ${BKO_IMG_COMPRESS:-0} == 1 ]]; then
         if "$S/compress-images.sh" -p "$P" "${D%/*}" >compress.log 2>&1; then c=ok; else c="FAILED (compress.log)"; fi
         echo "compress: $c" >>"$r"
     fi
-    if [[ ${BKO_IMG_RETAIN:-1} != 0 ]]; then
-        if BKO_RETAIN_HELD=$P "$S/img-retain.sh" -p "$P" "${D%/*}" >retain.log 2>&1; then c=$(tail -n 1 retain.log); else c="FAILED (retain.log)"; fi
-        echo "retain: $c" >>"$r"
-    fi
 fi
-# The provenance, last before done.exit: a failure to write it leaves the
+# The provenance, last before done.exit but for retention: a failure to write it leaves the
 # image as built (a plan treats an image without one as due a full build).
 # --start: inputs that moved after the build's check (a vm-update or a sync
 # during the boot tests) refuse it, rather than record inputs the image was
@@ -310,6 +307,12 @@ if pv=$(dig provenance --platform "$P" --dir "$D" --release "${rel#./}" --test "
     echo "$pv" >>"$r"
 else
     echo "provenance: FAILED: $pv" >>"$r"
+fi
+# Retention after the provenance: a refresh's parent may be an older prev-*
+# set that the rule deletes, and the provenance reads the parent's.
+if [[ $fails -eq 0 && ${BKO_IMG_RETAIN:-1} != 0 ]]; then
+    if BKO_RETAIN_HELD=$P "$S/img-retain.sh" -p "$P" "${D%/*}" >retain.log 2>&1; then c=$(tail -n 1 retain.log); else c="FAILED (retain.log)"; fi
+    echo "retain: $c" >>"$r"
 fi
 rm -f .inputs-start.json
 [[ -s inputs.log ]] || rm -f inputs.log

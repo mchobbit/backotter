@@ -347,6 +347,29 @@ mkdir -p "$d" && tail -c +32769 "$i" | tar -xf - -C "$d"
         self.assertEqual(c.returncode, 0, c.stderr + rd(self.d("result.txt")))
         self.assertEqual(self.prov()["parent"]["mode"], "refresh")
 
+    def test_a_parent_the_retention_rule_deletes_still_gets_its_provenance(self):
+        """A parent in an older prev-* set, which D6's rule deletes once the refresh passes: the
+        provenance (which reads the parent's) is written before the rule runs."""
+        import shutil
+        shutil.copy(os.path.join(HERE, "..", "..", "..", "stick", "img-retain.sh"),
+                    os.path.join(self.w, "stick", "img-retain.sh"))
+        a = self.full()
+        old = self.d("prev-20260101-000000")
+        os.mkdir(old)
+        for n in os.listdir(self.d()):
+            if not n.startswith("prev-"):
+                os.rename(self.d(n), os.path.join(old, n))
+        wr(self.d("prev-20260102-000000", "x.img"), "older\n")
+        self.full()
+        self.new_bins()
+        r = self.run_one("--refresh-from", a["test"]["sha256"], "linux")
+        res = rd(self.d("result.txt"))
+        self.assertEqual(r.returncode, 0, r.stderr + res)
+        self.assertIn("retain: deleted 1 set(s)", res)
+        self.assertFalse(os.path.exists(old))
+        self.assertNotIn("provenance: FAILED", res)
+        self.assertEqual(self.prov()["parent"]["test_sha256"], a["test"]["sha256"])
+
     def test_an_extra_change_in_the_layer_is_refused(self):
         a = self.full()
         self.new_bins()

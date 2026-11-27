@@ -814,7 +814,9 @@ due by the harness digest.
   `prev-xSTAMP` alike; older hand-made names such as `prev-20261106-pass1`
   by their date), removes empty ones (img-xcopy makes one when DEST had
   nothing), and leaves any other name alone. It runs after every passing
-  `img-one.sh` (inside the build's own lock), and on DEST after `img-xcopy.sh`
+  `img-one.sh` (inside the build's own lock; after its provenance since I3's
+  review, because a refresh's parent may be an older `prev-*` set the rule
+  deletes, and the provenance reads it), and on DEST after `img-xcopy.sh`
   copied a platform whose `done.exit` is 0 (from `BKO_DEST_STICK`);
   `BKO_IMG_RETAIN=0` skips it. A failed build runs no retention, so a run of
   failures cannot push the last good set out. `stick/img-publish.sh` runs on

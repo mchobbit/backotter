@@ -753,6 +753,90 @@ class QueueShell(unittest.TestCase):
         self.assertEqual([r.split("\t")[3] for r in done[1:]], ["1", "1"])   # the one that stayed, the plain failure
 
 
+@unittest.skipUnless(flock_bash(), "needs bash 4 or newer with timeout, realpath and flock (the test hosts')")
+class QueueIdleEnds(unittest.TestCase):
+    """run_loop with no job of ours and a reason to start none now (under MINFREE_GB, max 0,
+    hot, no slot, no port): an empty todo ends the runner, as a pop's @EMPTY does, and a line
+    it can't start stays in the todo, never taken (copland, 77-79 GB free under MINFREE_GB 80,
+    hung three t2 HoltTest2 runs on 2026-11-27)."""
+
+    def setUp(self):
+        self.t = tempfile.mkdtemp(prefix="t2-idle-")
+        self.addCleanup(shutil.rmtree, self.t, True)
+        self.q = os.path.join(self.t, "q")
+        os.makedirs(self.q)
+
+    def loop(self, todo=None, free=77, maxjobs=1, temp=50, port=True, slots=True, cant="", runs="",
+             at_tick="", ticks=8):
+        """The loop's output (say's lines, POP for a pop, TICK n for each sleep, HUNG when it
+        is still waiting after TICKS sleeps), its rc."""
+        if todo is not None:
+            wr(os.path.join(self.q, "todo"), todo)
+        src = rd(QUEUE)
+        names = ["waiting", "todo_text", "run_loop"] + [n for n in ("idle_done",) if f"\n{n}() {{" in src]
+        script = (shell_line(QUEUE, "LINE_RE=")
+                  + f"Q={self.q} L={self.t} H=copland QHOST='' MAX={maxjobs} MINFREE_GB=80 MODE=ram RAM=1\n"
+                  + "BINSUM=x binfile=x changed=0 paused=0 newbig=0 BIGNAMES='' WHY='' BROKE='' CANTWHY='' CANTSAID=''\n"
+                  + "RSFREE=1 SSFREE=1 NEWLK='' skip=() REFUSED=() NOTNOW=()\n"
+                  + f"CANT=({cant})\n"
+                  + "declare -A JOB=() GVS=() BASEG=() PORT_OF=() PLK=() JD=() JM=() T0=() TA=() WARN=() SIG=() LINE_OF=() JR=()\n"
+                  + "say() { echo \"SAY $*\"; }\n"
+                  + "reap() { :; }; admitted() { :; }; sweep() { :; }; hold() { :; }; abort_jobs() { :; }; unline() { :; }\n"
+                  + "bignames() { echo ''; }; binsum() { echo x; }; stop_why() { :; }; close_locks() { :; }\n"
+                  + "in_line() { return 1; }; nobig() { echo 0; }; cant_scan() { :; }\n"
+                  + f"temp() {{ echo {temp}; }}; freegb() {{ echo {free}; }}\n"
+                  + f"slots_now() {{ RSFREE={int(slots)} SSFREE={int(slots)}; }}\n"
+                  + f"free_port() {{ return {0 if port else 1}; }}\n"
+                  + f"host_runs() {{ printf %s {runs!r}; }}\n"
+                  + "pop() { echo POP >>\"$L/calls\"; if grep -q '[^[:space:]]' \"$Q/todo\" 2>/dev/null; then head -n 1 \"$Q/todo\"; else echo @EMPTY; fi; }\n"
+                  + "launch() { echo \"LAUNCH $1\"; return 1; }\n"
+                  + f"tick=0; sleep() {{ ((++tick)); echo \"TICK $tick\"; {at_tick} ((tick < {ticks})) || {{ echo HUNG; cat \"$L/calls\" 2>/dev/null; exit 3; }}; }}\n"
+                  + shell_funcs(QUEUE, *names)
+                  + "run_loop; echo \"END rc $?\"; cat \"$L/calls\" 2>/dev/null\n")
+        p = subprocess.run([flock_bash(), "-c", script], capture_output=True, text=True, timeout=120)
+        return p.stdout, p.returncode
+
+    def test_low_space_empty_todo_ends(self):
+        for todo in (None, "", "# only a comment\n\n"):
+            out, rc = self.loop(todo=todo)
+            self.assertNotIn("HUNG", out, f"todo {todo!r}: the runner never ended")
+            self.assertIn("SAY queue done", out)
+            self.assertNotIn("POP", out)
+            self.assertIn("END rc 0", out)
+
+    def test_low_space_keeps_its_line_until_the_todo_empties(self):
+        out, rc = self.loop(todo="debian13\n", at_tick=f'((tick == 4)) && : >"{self.q}/todo";')
+        self.assertNotIn("POP", out)            # a line it can't hold is never taken
+        self.assertIn("TICK 4", out)            # it waited while the line was there
+        self.assertNotIn("HUNG", out)
+        self.assertIn("SAY queue done", out)
+        out, rc = self.loop(todo="debian13\n")
+        self.assertIn("HUNG", out)              # (the line stays: it waits for the room)
+        self.assertNotIn("POP", out)
+        self.assertEqual(rd(os.path.join(self.q, "todo")), "debian13\n")
+
+    def test_other_waits_end_on_an_empty_todo(self):
+        for kw in ({"maxjobs": 0}, {"temp": 92}, {"port": False}, {"slots": False}):
+            out, rc = self.loop(todo="", free=500, **kw)
+            self.assertNotIn("HUNG", out, kw)
+            self.assertIn("SAY queue done", out, kw)
+
+    def test_only_lines_for_other_hosts(self):
+        out, rc = self.loop(todo="gentoo\nmint22+bigger\n", cant="gentoo =mint22+bigger")
+        self.assertIn("SAY queue done: what is left is for other hosts", out)
+        self.assertNotIn("POP", out)
+        out, rc = self.loop(todo="gentoo\n", cant="gentoo", runs="gentoo 5\n")
+        self.assertIn("HUNG", out)              # a HoltTest run here: as @SKIPPED, it waits
+        out, rc = self.loop(todo="gentoo\nmint22\n", cant="gentoo")
+        self.assertIn("HUNG", out)              # mint22 could run here once there is room
+
+    def test_healthy_runner_unchanged(self):
+        out, rc = self.loop(todo="", free=500)
+        self.assertIn("POP", out)
+        self.assertIn("SAY queue done", out)
+        self.assertNotIn("HUNG", out)
+
+
 @unittest.skipUnless(BASH, "no bash")
 class Ht1Refuses(unittest.TestCase):
     """ht1.sh refuses (exit 2, nothing made) a rebuild without the rescuer and a backup or a

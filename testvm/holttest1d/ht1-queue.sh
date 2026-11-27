@@ -67,7 +67,9 @@
 # (2690-2699 are for runs by hand).
 # Nothing new starts while the CPU (k10temp Tctl, or coretemp's) is at 90 C or more, or less
 # than MINFREE_GB (default 80; a failed run is moved there) is free on
-# /bkoscratch; above 95 C every running job (its ht1 tree and its QEMU) is
+# /bkoscratch (a runner with no job of its own that waits so, or on max 0,
+# heat or no port, still ends on an empty todo, or one left for other hosts,
+# without taking a line: idle_done); above 95 C every running job (its ht1 tree and its QEMU) is
 # stopped (SIGSTOP) until it's back under 85 C, or until the runner ends
 # (any way but kill -9: README "Stop and abort").  Runs that died in RAM are
 # swept to /bkoscratch (ht1-lib.sh --sweep) at the start and every loop.
@@ -891,6 +893,38 @@ abort_jobs() {
     done
 }
 
+# A runner with no job of ours and a reason to start none now (under
+# MINFREE_GB, max 0, hot, no slot, no port) never pops, so no pop's @EMPTY
+# ever ended it: copland, 77-79 GB free under MINFREE_GB 80, hung three t2
+# HoltTest2 runs on 2026-11-27.  So it reads the todo itself, never taking a
+# line, and ends as a pop would: rc 0 on a todo with no good line, or with
+# only lines this host never runs (skip, CANT and REFUSED, as the pop skips
+# them) and no HoltTest run here, as on a pop's @SKIPPED (DONEWHY says so);
+# rc 1 while a line is left for it, or when the todo can't be read.
+idle_done() {
+    local text l s nm g c
+    local -a lines=()
+    DONEWHY=""
+    text=$(close_locks; todo_text) && [[ $text == END || $text == *$'\n'END ]] || return 1
+    while IFS= read -r l; do
+        s=${l%%#*}; s=${s#"${s%%[![:space:]]*}"}; s=${s%"${s##*[![:space:]]}"}
+        [[ $s =~ $LINE_RE ]] && lines+=("$s")
+    done <<<"${text%END}"
+    ((${#lines[@]})) || return 0
+    cant_scan   # (CANT as of now: no scan runs while it waits)
+    for s in "${lines[@]}"; do
+        nm=${s%%[=%]*} g=${s%%[+=%]*}
+        for c in "${skip[@]}" "${CANT[@]}" "${REFUSED[@]}"; do
+            [[ $c == "$s" || $c == "=$s" || $c == "$nm" || $c == "$g" ]] && continue 2
+        done
+        return 1
+    done
+    [[ -z $(host_runs) ]] || return 1
+    DONEWHY=": what is left is for other hosts"
+}
+
+# The runner's loop (a function: the tests run it with stubs).
+run_loop() {
 while :; do
     reap
     if ((newbig)); then   # a run's peaks can change who is big
@@ -956,6 +990,9 @@ while :; do
         fi
     fi
     if ((${#JOB[@]} == 0)); then
+        case $WHY in max|slots|hot|space|port)   # (it never pops now: idle_done)
+            if idle_done; then say "queue done$DONEWHY (seen while waiting: $WHY)"; break; fi ;;
+        esac
         if [[ -e $Q/abort ]]; then say aborted; break
         elif [[ -e $Q/stop ]]; then say "stopped$(stop_why)"; break
         elif ((changed)); then say "stopped: the binaries changed"; break
@@ -963,4 +1000,6 @@ while :; do
     fi
     sleep 15
 done
+}
+run_loop
 exit 0

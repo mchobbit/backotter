@@ -1502,6 +1502,11 @@ as root, no RAM disk) says why in its `.out` file only: its log,
   that RUN's runner again, which would otherwise end at once.
   `queue/RUN/max-HOST` holds a new MAXJOBS for HOST.  Nothing starts at
   90 °C or more, or with less than `MINFREE_GB` (80) free on /bkoscratch;
+  a runner with no job of its own waiting so (or on max 0, or no free port)
+  still ends on an empty todo, or on one left for other hosts, as a pop's
+  would (`queue done ... (seen while waiting: space)`), never taking a line
+  (before 2026-11-27 it waited for ever: copland at 77-79 GB hung three
+  HoltTest2 runs);
   above 95 °C the running jobs pause (SIGSTOP) until it's back under
   85 °C.  A runner that ends (TERM, INT, HUP) resumes the jobs it paused;
   one killed with -9 while they are paused leaves them stopped (state T in

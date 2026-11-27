@@ -8,7 +8,7 @@ roots) and Bazzite (docs/design/bazzite.md, ostree) were, and borrows
 PikaOS's (docs/design/pikaos.md) LUKS guest and bootstrap-from-the-stick
 pattern. GNOME OS (docs/design/gnome-os.md, a sibling spec written the same
 week) shares most of the new machinery; "Shared lines" says what is built
-once. **This spec awaits the user's approval** (the last section).
+once. **Approved by the user 2026-11-27, every recommendation (the last section); building waits until the user says to proceed.**
 
 **Conventions.** est. marks an estimate. Every KDE Linux fact carries where
 it comes from:
@@ -787,7 +787,7 @@ per caching host; K6 and K7 about 2 h of queue per host on `/bkoscratch`.
 
 ## Decisions for the user
 
-**Not yet approved: this spec awaits the user's approval.**
+**Approved by the user 2026-11-27: every recommendation as written. No milestone (K0 included) starts until the user says to proceed.**
 
 1. **What is supported:** `kde-linux` `*`, the `testing` edition with
    RootFSv3 and etc-mstack only, refusing every other layout by marker

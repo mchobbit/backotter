@@ -1,6 +1,6 @@
-# BackShot1 on FreeBSD: the A100, FreeBSD 15 first, GhostBSD next (draft)
+# BackShot1 on FreeBSD: the A100, FreeBSD 15 first, GhostBSD next
 
-2026-11-27. Not yet approved, nothing built. BackShot1 (testvm/realworld/backshot1/)
+2026-11-27. Approved by the user 2026-11-27, every recommendation (D1-D10, Q8 no); ON HOLD: nothing is built until the user says proceed. BackShot1 (testvm/realworld/backshot1/)
 has done its bare-metal round trip on the Thinkpad, the Lenovo A100, for
 about 35 Linux distros. This spec plans the same round trip for FreeBSD
 15.1 on the same machine, and then for GhostBSD. bko-holt already dumps and

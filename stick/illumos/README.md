@@ -25,7 +25,12 @@ Linux image's.
   downloaded: the system comes from OmniOS's package repository
   (pkg.omnios.org/r151058/core), every package signed.
 - `build.sh`: runs in the VM.  `info` gives the VM's kernel and ZFS features;
-  `assemble` makes the image (below).
+  `assemble` makes the image (below); `list` and `room` read an image;
+  `refresh` swaps new binaries into a built image in place
+  (`../make-img-bsd.sh --refresh-from`, docs/design/img-speed.md §4.2): into
+  the boot archive, which goes back onto s2 with its hash, the marker and
+  `.volsetid` rewritten; it exits 3 when they don't fit.  A full build leaves
+  max(64 MiB, half the binaries) free in both the archive and s2 for that.
 - `pkglist.backotter`, `keep.backotter`, `services.backotter`: what the image
   has beyond kayak's installer: packages, files kept from them, SMF services.
 - `console.xml`, `on-tty`: the console service; `network.xml`, `net-up`: DHCP.

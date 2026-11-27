@@ -45,6 +45,9 @@ shares() {
     elementary8-luks) echo elementary8 ;;   # built from elementary8's ISO
     void-zbm-enc) echo void-zbm ;;          # built from void-zbm's inputs
     slackware15-uefi) echo slackware15 ;;   # built from slackware15's tree
+    pclinuxos-bios) echo pclinuxos ;;       # built from pclinuxos's ISO and RPM
+    gnomeos51-tpm) echo gnomeos51 ;;        # built from gnomeos51's ISO and feed copy
+    omnios60-mirror) echo omnios60 ;;       # built from omnios60's cloud image
     esac
 }
 MODE=build
@@ -151,6 +154,11 @@ nixos2605)  cmd=(asm $T/make-bootstrap.sh nixos "$W") ;;
 # Slackware's key; the 15.0 patches come later, by vm-update.
 slackware15) cmd=(asm env SLACKWARE_TREE=/bkoscratch/rebuild-inputs/slackware15 $T/make-bootstrap.sh slackware "$W") ;;
 slackware15-uefi) cmd=(asm env SLACKWARE_TREE=/bkoscratch/rebuild-inputs/slackware15 $T/make-bootstrap.sh slackware-uefi "$W") ;;
+# pclinuxos, pclinuxos-bios: PCLinuxOS's KDE ISO and the openssh-server RPM in
+# /bkoscratch/rebuild-inputs/pclinuxos (both SHA-256s pinned in make-bootstrap.sh,
+# with the Arch ISO it boots), by pclinuxos/install.sh; the ISO's packages only.
+pclinuxos)  cmd=(asm $T/make-bootstrap.sh pclinuxos "$W") ;;
+pclinuxos-bios) cmd=(asm $T/make-bootstrap.sh pclinuxos-bios "$W") ;;
 arch)       cmd=(asm $T/make-arch.sh 2026.10.01 "$W") ;;
 cachyos)    cmd=(asm $T/make-arch.sh --cachyos --root-fs jfs 2026.10.01 "$W") ;;
 # cachyos-zfs: from CachyOS's live ISO in /bkoscratch/rebuild-inputs/cachyos-zfs
@@ -182,6 +190,12 @@ qubes43)    cmd=(asm $T/make-qubes.sh --iso-dir /bkoscratch/rebuild-inputs/qubes
 # ghcr.io/vanilla-os/gnome:latest as it is at the rebuild (pulled by albius;
 # the builder's abroot upgrade --force fills root B from it). ~22 GiB at its peak.
 vanilla3)   cmd=(asm $T/make-vanilla.sh --iso-dir "$SRC" vanilla3 "$W") ;;
+# kdelinux: KDE Linux installed by kdelinux/install.sh from the rescue stick's
+# test image (the newest ~m/backotter-work/images/linux/test/*.img) under QEMU,
+# V1 202611240254 then V2 202611270255 by systemd-sysupdate, both from the
+# mirrored sysupdate sets in /bkoscratch/rebuild-inputs/kdelinux/sysupdate (every
+# SHA-256 pinned in the builder; upstream keeps 4 dailies). ~20 GB in W.
+kdelinux)   cmd=(asm $T/make-kdelinux.sh --iso-dir /bkoscratch/rebuild-inputs/kdelinux kdelinux "$W") ;;
 # anduinos2: from AnduinOS's live ISO in /bkoscratch/rebuild-inputs/anduinos2 (or
 # the guest's own dir), its SHA-256 pinned in the builder; the ISO's packages only.
 anduinos2)  cmd=(asm $T/make-anduinos.sh "$SRC/AnduinOS-2.0.5-amd64.iso" "$W" anduinos2) ;;
@@ -203,6 +217,16 @@ guix15|guix15-bios|guix15-luks) cmd=(asm $T/make-guix.sh --iso-dir /bkoscratch/r
 # every test boot of it does: the same machine, so it unlocks unattended.
 uc24)       cmd=(asm $T/make-ubuntu-core.sh uc24 /bkoscratch/rebuild-inputs/ubuntu-core24/ubuntu-core-24-amd64.img.xz "$W") ;;
 uc24-fde)   cmd=(asm $T/make-ubuntu-core.sh --recovery-key-file "$W.recovery" uc24-fde /bkoscratch/rebuild-inputs/ubuntu-core24/ubuntu-core-24-amd64.img.xz "$W") ;;
+# gnomeos51, gnomeos51-tpm: upstream's raw pre-install (systemd-repart --image)
+# of GNOME OS 51.1's ISO in /bkoscratch/rebuild-inputs/gnomeos51 (its SHA-256
+# pinned in make-gnomeos.sh; GNOME publishes none), then the one update into
+# slot B from the local copy of the feed's 51.1-66 files beside it
+# (sysupdate-51.1-66: the signed SHA256SUMS and that build's usr, verity, UKI),
+# so the build is the same whatever the feed holds today. gnomeos51-tpm's
+# recovery key goes beside W (W.recovery), as uc24-fde's; its boot check boots
+# on copies of W's uefi-vars.fd (GNOME's keys enrolled) and tpm/.
+gnomeos51)  cmd=(asm $T/make-gnomeos.sh gnomeos51 $IN/gnomeos51/gnome_os_51.1-x86_64.iso "$W") ;;
+gnomeos51-tpm) cmd=(asm $T/make-gnomeos.sh --recovery-key-file "$W.recovery" gnomeos51-tpm $IN/gnomeos51/gnome_os_51.1-x86_64.iso "$W") ;;
 endeavouros) cmd=(asm $T/make-arch.sh --live endeavouros "$SRC/EndeavourOS_Titan-Nova-2026.08.15.iso" 2026.10.01 "$W") ;;
 endeavouros-grub) cmd=(asm $T/make-arch.sh --live endeavouros-grub /bkoscratch/rebuild-inputs/endeavouros/EndeavourOS_Titan-Nova-2026.08.15.iso 2026.10.01 "$W") ;;
 manjaro)    cmd=(asm $T/make-arch.sh --live manjaro "$SRC/manjaro-xfce-26.1.1-minimal-260825-linux71.iso" 2026.10.01 "$W") ;;
@@ -239,6 +263,11 @@ netbsd11)   cmd=(asm $T/make-netbsd.sh 11.1 "$W") ;;
 alpinebsd)  cmd=(asm $T/make-netbsd.sh --alpinebsd 11.0 "$W") ;;
 dragonfly6) cmd=(asm $T/make-dragonfly.sh 6.4.2 "$W") ;;
 omnios58)   cmd=(asm $T/make-omnios.sh r151058 "$W") ;;
+# omnios60, omnios60-mirror: OmniOS r151060's cloud image in
+# /bkoscratch/rebuild-inputs/omnios60, checked by make-omnios.sh against its
+# .sha256 (OmniOS signs neither). r151060 has illumos 18322's virtio notify fix.
+omnios60)   cmd=(asm $T/make-omnios.sh r151060 "$W") ;;
+omnios60-mirror) cmd=(asm $T/make-omnios.sh --rpool-mirror r151060 "$W") ;;
 # oi2610: OpenIndiana's text ISO and its installer, driven over the console;
 # oi2610-bios: OpenIndiana's supplemental cloud image. Both in
 # /bkoscratch/rebuild-inputs/GUEST, their SHA-256s pinned in make-openindiana.sh
@@ -262,6 +291,7 @@ proxmox9|proxmox9-mirror) ISO=$IN/proxmox9/proxmox-ve_9.2-1.iso ;;
 truenas25|truenas25-mirror) ISO=$IN/truenas25/TrueNAS-SCALE-25.10.6.iso ;;
 qubes43) ISO=$IN/qubes43/Qubes-R4.3.2-x86_64.iso ;;
 uc24|uc24-fde) ISO=$IN/ubuntu-core24/ubuntu-core-24-amd64.img.xz what=image ;;
+gnomeos51|gnomeos51-tpm) ISO=$IN/gnomeos51/gnome_os_51.1-x86_64.iso ;;
 esac
 if [ $MODE = inputs ]; then
     # own: GUEST's folder, then the one it shares; uses: every other folder the

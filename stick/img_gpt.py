@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """A VM platform's image's GPT, on the host (docs/design/img-speed.md §4.2, D2).
 
-    img_gpt.py part IMG N    partition N's first sector and its size in sectors
+    img_gpt.py part IMG N    partition N's first sector and its size in sectors (the MBR's
+                             on a disk with no GPT: FreeBSD's)
     img_gpt.py ids IMG       the disk's GUID and each partition's, one "N GUID" a line (0: the disk)
     img_gpt.py new-ids IMG   new random GUIDs for the disk and every partition, in both tables
 
@@ -75,7 +76,28 @@ def parts(hdr):
     return out
 
 
+def mbr_part(img, n):
+    """Partition N (1-4) of the MBR of IMG, a disk with no GPT (FreeBSD's): (first, sectors)."""
+    with open(img, "rb") as f:
+        m = f.read(SECTOR)
+    if len(m) < SECTOR or m[510:512] != b"\x55\xaa":
+        raise Refused(f"{img} has neither a GPT nor an MBR")
+    if any(m[446 + 16 * i + 4] == 0xEE for i in range(4)):
+        raise Refused(f"{img}'s MBR is a GPT's protective one, and its GPT is gone")
+    if not 1 <= n <= 4 or not m[446 + 16 * (n - 1) + 4]:
+        raise Refused(f"no partition {n} in {img}'s MBR")
+    first, size = struct.unpack_from("<II", m, 446 + 16 * (n - 1) + 8)
+    if not first or not size:
+        raise Refused(f"partition {n} of {img}'s MBR is empty")
+    return first, size
+
+
 def part(img, n):
+    """Partition N's (first, sectors): the GPT's, or the MBR's on a disk with no GPT."""
+    with open(img, "rb") as f:
+        f.seek(SECTOR)
+        if f.read(8) != b"EFI PART":
+            return mbr_part(img, n)
     p, _ = read(img)
     for num, first, last, _, _ in parts(p):
         if num == n:

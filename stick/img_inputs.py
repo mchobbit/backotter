@@ -620,20 +620,34 @@ def catalog_view(data):
 
 def layout(img, rewritten=(), xorriso=None, eltorito=True):
     """IMG's layout as listing lines (tree `layout`, PATH, VALUE), sorted: the MBR's entries and
-    signature; the GPT's header and entries, each partition's bytes but for REWRITTEN's
-    (partition numbers); the system area (boot code) with the partition tables masked; and
-    with ELTORITO (Linux's hybrid ISO; the VM platforms' images have none) the El Torito boot
-    images, the catalog with its positions masked.  Positions (start
-    and end LBAs) and the random ids (GUIDs) are never listed: a refresh that rewrites one
-    partition moves those after it, and draws new ids (C2, D2)."""
+    signature (on a disk with no GPT, each slice's bytes but for REWRITTEN's); the GPT's header
+    and entries, each partition's bytes but for REWRITTEN's (partition numbers); the system
+    area (boot code) with the partition tables masked; and with ELTORITO (Linux's hybrid ISO;
+    the VM platforms' images have none) the El Torito boot images, the catalog with its
+    positions masked.  Positions (start and end LBAs) and the random ids (GUIDs) are never
+    listed: a refresh that rewrites one partition moves those after it, and draws new ids (C2,
+    D2)."""
     out = []
     with open(img, "rb") as f:
         sysarea = bytearray(f.read(32768))
         mbr = bytes(sysarea[:SECTOR])
+        gpt = sysarea[SECTOR:SECTOR + 8] == b"EFI PART"
         for i in range(4):
             e = mbr[446 + 16 * i:462 + 16 * i]
             if len(e) == 16 and e[4]:
-                out.append(f"/mbr/part/{i + 1}\tstatus={e[0]:02x} type={e[4]:02x}")
+                line = f"status={e[0]:02x} type={e[4]:02x}"
+                if not gpt:
+                    # An MBR disk (FreeBSD's): each slice's bytes, as the GPT's partitions'
+                    # below; a rewritten FreeBSD slice keeps its first 8 KiB, the boot
+                    # blocks and the BSD label, which a refresh never touches.
+                    first, n = struct.unpack_from("<II", e, 8)
+                    if i + 1 in rewritten:
+                        line += " rewritten"
+                        if e[4] == 0xA5:
+                            out.append(f"/mbr/part/{i + 1}/boot\tsha256={_range_sha(f, first * SECTOR, 16 * SECTOR)}")
+                    else:
+                        line += f" size={n * SECTOR} sha256={_range_sha(f, first * SECTOR, n * SECTOR)}"
+                out.append(f"/mbr/part/{i + 1}\t{line}")
         out.append(f"/mbr/signature\t{mbr[510:512].hex()}")
         sysarea[440:446] = bytes(6)      # the disk signature: an id
         sysarea[446:510] = bytes(64)     # the MBR's entries, listed above
@@ -686,10 +700,11 @@ def layout(img, rewritten=(), xorriso=None, eltorito=True):
 
 
 def layout_rewritten(platform, root=None):
-    """The partition numbers img-swap.tsv's layout rows say a refresh rewrites."""
+    """The partition numbers img-swap.tsv's layout rows say a refresh rewrites: /gpt/part/N, or
+    /mbr/part/N on a disk with no GPT (whose slices layout() hashes instead)."""
     out = set()
     for r in swap_rows(platform, root):
-        m = re.fullmatch(r"/gpt/part/(\d+)", r["path"]) if r["tree"] == "layout" else None
+        m = re.fullmatch(r"/(?:gpt|mbr)/part/(\d+)", r["path"]) if r["tree"] == "layout" else None
         if m:
             out.add(int(m.group(1)))
     return out
@@ -1137,7 +1152,7 @@ def main(argv=None):
         elif a.cmd == "same-base":
             same_base(a.provenance, a.iso, a.slim, a.image)
         elif a.cmd == "layout":
-            for line in layout(a.image, layout_rewritten(a.platform)):
+            for line in layout(a.image, layout_rewritten(a.platform), eltorito=a.platform == "linux"):
                 sys.stdout.write(line + "\n")
         elif a.cmd == "refresh-check":
             for line in refresh_check(a.platform, a.parent, a.dir):

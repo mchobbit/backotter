@@ -333,9 +333,14 @@ class NetbsdImgOne(T.ImgOne):
         self.assertIn("don't fit the parent's free space", rd(self.d("result.txt")))
 
     def test_a_platform_without_a_refresh_is_refused(self):
-        r = self.one("--refresh-from", "ab" * 32, "freebsd")
+        # (FreeBSD refreshes since its I4: the first VM platform that doesn't, if any.)
+        left = [p for p in ("haiku", "openbsd", "dragonfly", "illumos")
+                if subprocess.run(["grep", "-Eq", r"^[[:space:]]*refresh\)", os.path.join(STICK, p, "build.sh")]).returncode]
+        if not left:
+            self.skipTest("every VM platform refreshes now")
+        r = self.one("--refresh-from", "ab" * 32, left[0])
         self.assertEqual(r.returncode, 2)
-        self.assertIn("no refresh of freebsd yet", r.stderr)
+        self.assertIn(f"no refresh of {left[0]} yet", r.stderr)
 
 
 # ImgOne's own tests run once, in test_img_inputs: not again here with this stub.

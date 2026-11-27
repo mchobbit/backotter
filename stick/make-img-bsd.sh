@@ -91,7 +91,7 @@
 # listing must equal) and its marker read; the new marker (a new image_id)
 # keeps the parent's base, release, kernel and ZFS fields, which build.sh
 # refresh checks against the parent's tree.  The host then writes the new
-# config.img into partition CONFIG_PART with dd, and with GPT_IDS=random gives
+# config.img into partition CONFIG_PART (the GPT's, or the MBR's) with dd, and with GPT_IDS=random gives
 # the GPT new GUIDs (img_gpt.py).  Exit 6 when the new binaries don't fit the
 # parent's free space (build.sh refresh's exit 3): the planner gives the
 # platform a full build.
@@ -338,7 +338,7 @@ ssh_vm "cat $rdir/out/image.img" >"$OUT_IMG.part" || die "couldn't copy the imag
 if [[ -n $parent ]]; then
     # The new config.img into its partition, at the offset the parent's table gives.
     read -r cfg_first cfg_sectors < <(python3 "$here/img_gpt.py" part "$OUT_IMG.part" "$CONFIG_PART") ||
-        die "no partition $CONFIG_PART in the parent's GPT"
+        die "no partition $CONFIG_PART in the parent's partition table"
     [[ $((cfg_sectors * 512)) -eq $(stat -c %s "$work/marker/config.img") ]] ||
         die "partition $CONFIG_PART is $cfg_sectors sectors, not config.img's size"
     dd if="$work/marker/config.img" of="$OUT_IMG.part" bs=512 seek="$cfg_first" conv=notrunc,fsync status=none ||

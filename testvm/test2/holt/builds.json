@@ -1,5 +1,136 @@
 {
- "cross": {},
+ "cross": {
+  "dragonfly": {
+   "e2": [
+    {
+     "code": "645364aedbec749fa29e2d0f20c49bfbc6d784109fba10292b65a2a45aba2e55",
+     "commit": "547cec4",
+     "cross_sha256": "00e4a1794a86155e47f300d6c3cc25d340022a4f7b8dab0ad66172ff78f04198",
+     "result": "PASS",
+     "runs": [
+      "t2h-20261127T1021-5a3b",
+      "t2h-20261127T1109-a9f0"
+     ]
+    },
+    {
+     "code": "16832911747be31fb868316d97b82502f40ddd8bfc09b4f8bde0da02f79973a1",
+     "commit": "d66770a",
+     "cross_sha256": "00e4a1794a86155e47f300d6c3cc25d340022a4f7b8dab0ad66172ff78f04198",
+     "result": "PASS",
+     "runs": [
+      "t2h-20261127T1132-3a07",
+      "t2h-20261127T1221-23be"
+     ]
+    }
+   ],
+   "kind": "cross:1.94.1:dragonfly6@57e4b2ad557d",
+   "since": "2026-11-27"
+  },
+  "freebsd": {
+   "e2": [
+    {
+     "code": "645364aedbec749fa29e2d0f20c49bfbc6d784109fba10292b65a2a45aba2e55",
+     "commit": "547cec4",
+     "cross_sha256": "97d0440145cb7c84df4e3942111a37a93b4b0f28ee30f8882c75293c1013b852",
+     "result": "PASS",
+     "runs": [
+      "t2h-20261127T1021-5a3b",
+      "t2h-20261127T1109-a9f0"
+     ]
+    },
+    {
+     "code": "16832911747be31fb868316d97b82502f40ddd8bfc09b4f8bde0da02f79973a1",
+     "commit": "d66770a",
+     "cross_sha256": "97d0440145cb7c84df4e3942111a37a93b4b0f28ee30f8882c75293c1013b852",
+     "result": "PASS",
+     "runs": [
+      "t2h-20261127T1132-3a07",
+      "t2h-20261127T1221-23be"
+     ]
+    }
+   ],
+   "kind": "cross:1.94.1:freebsd14@32199a051848",
+   "since": "2026-11-27"
+  },
+  "illumos": {
+   "e2": [
+    {
+     "code": "645364aedbec749fa29e2d0f20c49bfbc6d784109fba10292b65a2a45aba2e55",
+     "commit": "547cec4",
+     "cross_sha256": "dd7e807e84552fe3e45b1548b0ccb3334c964a48570ef52a7dacd8dda0c717e1",
+     "result": "PASS",
+     "runs": [
+      "t2h-20261127T1021-5a3b",
+      "t2h-20261127T1109-a9f0"
+     ]
+    },
+    {
+     "code": "16832911747be31fb868316d97b82502f40ddd8bfc09b4f8bde0da02f79973a1",
+     "commit": "d66770a",
+     "cross_sha256": "dd7e807e84552fe3e45b1548b0ccb3334c964a48570ef52a7dacd8dda0c717e1",
+     "result": "PASS",
+     "runs": [
+      "t2h-20261127T1132-3a07",
+      "t2h-20261127T1221-23be"
+     ]
+    }
+   ],
+   "kind": "cross:1.94.1:omnios58@06184f98220a",
+   "since": "2026-11-27"
+  },
+  "netbsd": {
+   "e2": [
+    {
+     "code": "645364aedbec749fa29e2d0f20c49bfbc6d784109fba10292b65a2a45aba2e55",
+     "commit": "547cec4",
+     "cross_sha256": "70d33f2e5817db671d286b79f528c0d3bda09a5b5cc857fe62db7251ab3e027c",
+     "result": "PASS",
+     "runs": [
+      "t2h-20261127T1021-5a3b",
+      "t2h-20261127T1109-a9f0"
+     ]
+    },
+    {
+     "code": "16832911747be31fb868316d97b82502f40ddd8bfc09b4f8bde0da02f79973a1",
+     "commit": "d66770a",
+     "cross_sha256": "70d33f2e5817db671d286b79f528c0d3bda09a5b5cc857fe62db7251ab3e027c",
+     "result": "PASS",
+     "runs": [
+      "t2h-20261127T1132-3a07",
+      "t2h-20261127T1221-23be"
+     ]
+    }
+   ],
+   "kind": "cross:1.94.1:netbsd11@bcec88bbe419",
+   "since": "2026-11-27"
+  },
+  "openbsd": {
+   "e2": [
+    {
+     "code": "645364aedbec749fa29e2d0f20c49bfbc6d784109fba10292b65a2a45aba2e55",
+     "commit": "547cec4",
+     "cross_sha256": "9a2140db5bdfa93dac24018a6ae48ff62d5272f9b502dc3eeba531aca58676d5",
+     "result": "PASS",
+     "runs": [
+      "t2h-20261127T1021-5a3b",
+      "t2h-20261127T1109-a9f0"
+     ]
+    },
+    {
+     "code": "16832911747be31fb868316d97b82502f40ddd8bfc09b4f8bde0da02f79973a1",
+     "commit": "d66770a",
+     "cross_sha256": "9a2140db5bdfa93dac24018a6ae48ff62d5272f9b502dc3eeba531aca58676d5",
+     "result": "PASS",
+     "runs": [
+      "t2h-20261127T1132-3a07",
+      "t2h-20261127T1221-23be"
+     ]
+    }
+   ],
+   "kind": "cross:1.94.1:openbsd8@851ed0d8e527",
+   "since": "2026-11-27"
+  }
+ },
  "reference_days": 7,
  "schema": 1
 }

@@ -1218,7 +1218,7 @@ class Runner:
         pidfile = os.path.join(logs, "wrapper.pid")
         pid = self.remote.start(host, cmd, os.path.join(logs, "wrapper.out"), pidfile)
         pid = self.started_pid(host, pid, pidfile, tool)
-        what = "cross check build" if cross else "building"
+        what = ("cross build" if plat in self.kinds() else "cross check build") if cross else "building"
         self.log(f"bko-holt {plat}: {what} on {host} (pid {pid}, --reserve {res:g} 4, code {self.code[:12]})")
         # (Its scratch: the RAM disk's, or the SSD's when the RAM disk had no room: build-holt.sh
         # picks, so both are recorded for a dead run's sweep; holt-cross.sh's is the RAM disk's.)

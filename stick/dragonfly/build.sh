@@ -4,6 +4,11 @@
 #
 #   build.sh info      unpacks and checks the official USB image, prints KERNEL=
 #   build.sh assemble  writes out/image.img
+#   build.sh list      out/image.img's root, read-only, as a tar on stdout
+#   build.sh room      out/image.img's root: its free space (BKO-ROOM)
+#   build.sh refresh   out/image.img, the parent, with the binaries, the marker
+#                      and the label swapped in place (docs/design/img-speed.md
+#                      §4.2): exit 3 when the binaries don't fit
 #
 # The image is laid out like DragonFly's own USB image (nrelease's mkimg
 # target): an MBR with
@@ -30,6 +35,7 @@ HEADS=256 SECTORS=63            # nrelease's geometry: 16128-sector cylinders
 CONFIG_SECTORS=524288           # marker.py's config.img, 256 MiB
 ROOM_MB=256                     # free space in the root file system
 console_dir=usr/local/lib/backotter
+BINS="restic-bko rustic-bko bko-holt"   # in /usr/local/bin
 
 vns=
 mounts=
@@ -248,9 +254,121 @@ list() {
     tar -C lst -cf - root
 }
 
+# room: out/image.img's root, read-only: its free space (its size less what is
+# used) and the binaries' blocks, as refresh-lib.sh's BKO-ROOM line.  ROOM_MB
+# keeps it well over the headroom rule's max(64 MiB, half the binaries' size)
+# (img-speed.md §4.2), which make-img-bsd.sh checks.
+room() {
+    in=$PWD/in
+    . in/refresh-lib.sh
+    attach out/image.img rm_vn
+    mkdir -p rm/root
+    mnt -o ro "/dev/${rm_vn}s2a" rm/root
+    # shellcheck disable=SC2046
+    set -- $(df -k rm/root | awk 'NR == 2 { print $2 - $3, $2 }')
+    # shellcheck disable=SC2086
+    bko_room rm/root /usr/local/bin "$1" "$2" $BINS
+}
+
+# fsck_clean VN WHEN: fsck -n of the root, which must check all five phases
+# and find nothing (its exit status is 0 even for a device that isn't there).
+fsck_clean() {
+    fsck -n "/dev/${1}s2a" >fsck.out 2>&1 || { cat fsck.out >&2; die "fsck $2 the swap failed"; }
+    # (Its summary, "N files, N used, N free", may come before the phases: stdout.)
+    if ! grep -q '^\*\* Phase 5' fsck.out || ! grep -q '[0-9] files, [0-9]* used, [0-9]* free' fsck.out ||
+        grep -q '? no$' fsck.out; then
+        cat fsck.out >&2
+        die "fsck $2 the swap: the root is not clean"
+    fi
+    echo "fsck $2: $(grep -o '[0-9]* files, [0-9]* used, [0-9]* free' fsck.out | head -n 1)"
+}
+
+# label_of VN: slice 2's disklabel64 label.
+label_of() { disklabel64 -r "${1}s2" | sed -n 's/^label: *//p'; }
+
+# relabel VN LABEL: slice 2's disklabel64 given LABEL and a new disk id and
+# storage UUID for partition a, as a full build's `disklabel64 -w` draws them
+# (img-speed.md D2): only the label's sectors change, not the boot code.
+relabel() {
+    disklabel64 -r "${1}s2" >label-old.txt
+    sed -e "s/^label:.*/label: $2/" -e "s/^diskid: .*/diskid: $(uuidgen)/" \
+        -e "s/^\(  a-stor_uuid:\) .*/\1 $(uuidgen)/" label-old.txt >label.txt
+    [ "$(grep -c -e '^label: ' -e '^diskid: ' -e '^  a-stor_uuid: ' label.txt)" = 3 ] ||
+        die "slice 2's disklabel64 has no label, diskid or a-stor_uuid line to rewrite"
+    disklabel64 -R -r "${1}s2" label.txt
+    disklabel64 -r "${1}s2" >label-new.txt
+    [ "$(label_of "$1")" = "$2" ] || die "slice 2's label is not $2 after disklabel64 -R"
+    for k in '^diskid: ' '^  a-stor_uuid: '; do
+        [ "$(grep "$k" label-old.txt)" != "$(grep "$k" label-new.txt)" ] &&
+            [ "$(grep "$k" label.txt)" = "$(grep "$k" label-new.txt)" ] || die "disklabel64 -R didn't take the new '$k'"
+        echo "id: $(grep "$k" label-new.txt | sed 's/^ *//')"
+    done
+}
+
+# id_site FILE OLD NEW: OLD, the parent's label, rewritten to NEW in FILE, in
+# place (its inode, owner and mode kept); it must name OLD once and NEW after.
+id_site() {
+    [ "$(grep -c "$2" "$1")" = 1 ] || die "${1#mnt/} doesn't name the parent's label $2 once"
+    sed "s/$2/$3/" "$1" >id-site.tmp
+    cat id-site.tmp >"$1"
+    [ "$(grep -c "$3" "$1")" = 1 ] && ! grep -q "$2" "$1" || die "couldn't rewrite ${1#mnt/}"
+    echo "id: ${1#mnt/} names $3"
+}
+
+# refresh: out/image.img, the parent (make-img-bsd.sh puts it there), with the
+# binaries and the marker swapped in place in its root, and its id sites (the
+# disklabel64 label, and etc/fstab and boot/loader.conf, which mount root by
+# it) given the new image id (img-speed.md §4.2, D2).  The MBR, the ESP and
+# slice 2's boot code stay as they are; the host writes config.img into slice
+# 3.  The release and the test copy are each refreshed from their own parent,
+# so TEST plays no part.
+refresh() {
+    in=$PWD/in
+    for f in backotter.json bko-holt refresh-lib.sh; do
+        [ -e "in/$f" ] || die "no in/$f"
+    done
+    [ -f out/image.img ] || die "no out/image.img, the parent"
+    . in/refresh-lib.sh
+    image_id=$(json_field image_id in/backotter.json)
+    [ -n "$image_id" ] || die "no image_id in in/backotter.json"
+    label=BKO_$(echo "$image_id" | tr -d -)
+    attach out/image.img img_vn
+    old=$(label_of "$img_vn")
+    case $old in BKO_????????????????????????????????) ;; *) die "the parent's slice 2 is labelled '$old', not BKO_<32 hex>" ;; esac
+    [ "$old" != "$label" ] || die "the new image id is the parent's"
+    fsck_clean "$img_vn" before
+    mkdir -p mnt
+    mount -o noatime "/dev/${img_vn}s2a" mnt
+    mounts="mnt $mounts"
+    # The marker's kernel is the parent's (marker.py was given it): it must
+    # still be the parent's /boot/kernel/kernel.
+    k=$(strings mnt/boot/kernel/kernel | sed -n 's/^DragonFly v\([^ ]*\) .*/\1/p' | head -n 1)
+    m=$(json_field kernel in/backotter.json)
+    [ -n "$k" ] && [ "$k" = "$m" ] || die "the parent's kernel is DragonFly '$k', its marker says '$m'"
+    echo "kernel: $k, as the parent's marker says"
+    # shellcheck disable=SC2046
+    set -- $(df -k mnt | awk 'NR == 2 { print $2 - $3 }')
+    rc=0
+    # shellcheck disable=SC2086
+    bko_fit mnt /usr/local/bin "$1" $BINS || rc=$?
+    [ $rc -eq 0 ] || exit $rc
+    # shellcheck disable=SC2086
+    BKO_BIN_MODE=755 bko_swap mnt /usr/local/bin $BINS || die "the swap failed"
+    id_site mnt/etc/fstab "$old" "$label"
+    id_site mnt/boot/loader.conf "$old" "$label"
+    sync
+    umount mnt
+    mounts=$(echo " $mounts " | sed 's/ mnt / /')
+    relabel "$img_vn" "$label"
+    fsck_clean "$img_vn" after
+    [ -e "/dev/part-by-label/$label.a" ] || die "no /dev/part-by-label/$label.a after the relabel"
+}
+
 case ${1:-} in
 info) info ;;
 assemble) assemble ;;
 list) list ;;
-*) die "usage: build.sh info|assemble|list" ;;
+room) room ;;
+refresh) refresh ;;
+*) die "usage: build.sh info|assemble|list|room|refresh" ;;
 esac

@@ -45,6 +45,8 @@ freebsd	root	/conf/base/etc/fstab	id
 openbsd	root	/etc/fstab	id
 dragonfly	root	/etc/fstab	id
 dragonfly	root	/boot/loader.conf	id
+dragonfly	layout	/mbr/part/2	rewritten
+dragonfly	layout	/mbr/part/3	rewritten
 illumos	stick	/platform/i86pc/amd64/boot_archive.gz	rewritten
 illumos	stick	/platform/i86pc/amd64/boot_archive.hash	rewritten
 illumos	stick	/.volsetid	id

@@ -5329,11 +5329,30 @@ impl Builder<'_> {
                 ms.push((file.clone(), Cmd::new(&["mount", "-t", &ty, &dev, &dir])));
                 continue;
             }
+            // A btrfs whose compression nothing the restore sees gave
+            // (btrfs_forces_zstd): written through compress-force=zstd.
+            let force = ty == "btrfs"
+                && self
+                    .btrfs_fs_on(&src)
+                    .is_some_and(|fs| self.btrfs_forces_zstd(&fs));
+            if force {
+                opts = if opts == "defaults" {
+                    "compress-force=zstd".to_string()
+                } else {
+                    format!("{opts},compress-force=zstd")
+                };
+            }
+            let c = Cmd::new(&["mount", "-t", &ty, "-o", &opts, &dev, &dir]);
             ms.push((
                 file.clone(),
-                Cmd::new(&["mount", "-t", &ty, "-o", &opts, &dev, &dir]),
+                if force {
+                    c.why("compress-force=zstd: the source's btrfs is zstd-compressed, and no property or fstab option says so")
+                } else {
+                    c
+                },
             ));
         }
+        self.btrfs_fit_problems();
         let bootfs: Vec<String> = self
             .layout
             .v
@@ -6916,6 +6935,150 @@ impl Builder<'_> {
         )
     }
 
+    /// The dump's `storage.btrfs` entry of the filesystem on source device
+    /// DEV.
+    pub(crate) fn btrfs_fs_on(&self, dev: &str) -> Option<Value> {
+        self.layout
+            .arr(&["storage", "btrfs"])
+            .iter()
+            .find(|fs| {
+                fs.get("devices")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .any(|d| d.as_str() == Some(dev))
+            })
+            .cloned()
+    }
+
+    /// Whether some fstab line mounting the btrfs FS gives a `compress`
+    /// option (compress=, compress-force=).
+    fn btrfs_fstab_compresses(&self, fs: &Value) -> bool {
+        let devs: Vec<&str> = fs
+            .get("devices")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        self.layout.arr(&["storage", "fstab"]).iter().any(|e| {
+            s(e, "type").as_deref() == Some("btrfs")
+                && s(e, "resolves_to").is_some_and(|d| devs.contains(&d.as_str()))
+                && s(e, "options").is_some_and(|o| {
+                    o.split(',').any(|x| {
+                        x == "compress"
+                            || x.starts_with("compress=")
+                            || x.starts_with("compress-force")
+                    })
+                })
+        })
+    }
+
+    /// Whether the btrfs FS, or a subvolume of it, has a compression
+    /// property (`btrfs property get -t i`'s, its root directory's).
+    fn btrfs_has_compression_property(fs: &Value) -> bool {
+        let has = |v: Option<&Value>| {
+            v.and_then(|p| p.get("compression"))
+                .and_then(Value::as_str)
+                .is_some_and(|c| !c.is_empty() && c != "none")
+        };
+        has(fs.at(&["top_level", "properties"]))
+            || fs
+                .get("subvolumes")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|v| has(v.get("properties")))
+    }
+
+    /// The superblock content (probe's) of the btrfs FS: its first device's.
+    fn btrfs_super(&self, fs: &Value) -> Option<Value> {
+        let uuid = s(fs, "uuid")?;
+        self.leaves().into_iter().map(|(_, c)| c).find(|c| {
+            s(c, "type").as_deref() == Some("btrfs")
+                && s(c, "uuid").is_some_and(|u| u.eq_ignore_ascii_case(&uuid))
+        })
+    }
+
+    /// Whether the restore writes the btrfs FS through `compress-force=zstd`
+    /// (docs/design/steamos.md, "The read-only top level and compression"):
+    /// its superblock has `compress_zstd`, and neither a compression
+    /// property nor an fstab `compress` option says how it got there, so
+    /// something mounted it compressed that the restore can't see (SteamOS
+    /// mounts its rootfs itself, with no fstab line).  Without it the files
+    /// would come back uncompressed and may not fit.  A filesystem whose
+    /// fstab says compress (every corpus dump with `compress_zstd`) keeps
+    /// fstab's options as they are.
+    pub(crate) fn btrfs_forces_zstd(&self, fs: &Value) -> bool {
+        let feature = |c: Option<&Value>| {
+            c.and_then(|c| c.get("features"))
+                .and_then(Value::as_array)
+                .is_some_and(|f| f.iter().any(|x| x.as_str() == Some("compress_zstd")))
+        };
+        (feature(self.btrfs_super(fs).as_ref()) || feature(Some(fs)))
+            && !Self::btrfs_has_compression_property(fs)
+            && !self.btrfs_fstab_compresses(fs)
+    }
+
+    /// The plan problem for a btrfs whose top level's files can't fit the
+    /// filesystem as the restore writes them: uncompressed (the dump's
+    /// `top_level.uncompressed_bytes`) where nothing compresses them, else
+    /// at the source's ratio (its superblock's `bytes_used`), against the
+    /// smaller of its device's `total_bytes` and the partition holding it.
+    /// Before anything is partitioned: it's a plan problem.
+    fn btrfs_fit_problems(&mut self) {
+        for fs in self.layout.arr(&["storage", "btrfs"]).to_vec() {
+            let Some(unc) = fs
+                .at(&["top_level", "uncompressed_bytes"])
+                .and_then(Value::as_u64)
+            else {
+                continue;
+            };
+            let Some(sb) = self.btrfs_super(&fs) else {
+                continue;
+            };
+            let first = fs
+                .at(&["devices", "0"])
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let part = self
+                .layout
+                .disks
+                .iter()
+                .flat_map(|d| d.parts.iter().map(move |p| (p, d.sector_size.max(512))))
+                .find(|(p, _)| p.name == first)
+                .map(|(p, ss)| p.sectors * ss);
+            let size = [
+                sb.at(&["device", "total_bytes"]).and_then(Value::as_u64),
+                part,
+            ]
+            .into_iter()
+            .flatten()
+            .filter(|&n| n > 0)
+            .min();
+            let Some(size) = size else { continue };
+            let compressed = self.btrfs_forces_zstd(&fs)
+                || Self::btrfs_has_compression_property(&fs)
+                || self.btrfs_fstab_compresses(&fs);
+            let need = if compressed {
+                sb.get("bytes_used").and_then(Value::as_u64).unwrap_or(0)
+            } else {
+                unc
+            };
+            if need > size {
+                let uuid = s(&fs, "uuid").unwrap_or_default();
+                self.problem_once(format!(
+                    "btrfs {uuid}: its top level's files take {} {}, more than its {} ({}): the restore can't fit them",
+                    crate::report::human(need),
+                    if compressed { "at the source's compression ratio" } else { "uncompressed, and nothing would compress them" },
+                    crate::report::human(size),
+                    first
+                ));
+            }
+        }
+    }
+
     /// How every Linux boot stage ends (ostree's too, load/ostree.rs): the
     /// atimes put back, then the read-only btrfs subvolumes made so.
     pub(crate) fn boot_tail(&mut self, t: &str) -> Vec<Cmd> {
@@ -6942,7 +7105,10 @@ impl Builder<'_> {
                 })
                 .filter(|p| !plan.is_shared(p)) // the restore stage did those
                 .collect();
-            if ro.is_empty() {
+            // The top level's own ro (docs/design/steamos.md, S3): last, once
+            // the subvolumes under it are done.
+            let top_ro = fs.at(&["top_level", "readonly"]).and_then(Value::as_bool) == Some(true);
+            if ro.is_empty() && !top_ro {
                 continue;
             }
             let Some(dev) = self.btrfs_dev(&uuid, Some(&fs)) else {
@@ -6968,6 +7134,12 @@ impl Builder<'_> {
                     "ro",
                     "true",
                 ]));
+            }
+            if top_ro {
+                out.push(
+                    Cmd::new(&["btrfs", "property", "set", "-ts", &top, "ro", "true"])
+                        .why("the top level (subvolume 5) read-only, as the source's was"),
+                );
             }
             out.push(Cmd::new(&["umount", &top]));
         }

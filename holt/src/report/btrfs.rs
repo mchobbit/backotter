@@ -73,6 +73,32 @@ pub(super) fn btrfs_json(sys: &Sys, ctx: &Ctx<'_>, known: &[(String, Value)]) ->
         let mut subvols = Value::Null;
         let mut default = Value::Null;
         let mut qgroups = Value::Null;
+        let features: Option<Vec<String>> = sys
+            .is_dir(&sysfs)
+            .then(|| sys.list(&format!("{sysfs}/features")));
+        // The top level (subvolume 5, FS_TREE), where a mount reaches it:
+        // its ro and compression, which `btrfs subvolume list` (256 and up)
+        // never shows (SteamOS's `holo-readonly enable` sets ro on it).
+        let top_level = btrfs_reachable_path(&mounts, "").map_or(Value::Null, |p| {
+            let props = btrfs_properties(sys, &p);
+            let props = props.build();
+            let ro = props.get("ro").and_then(Value::as_str) == Some("true");
+            // What its own files take uncompressed (du's apparent size, the
+            // subvolumes under it not counted), where the filesystem has
+            // compressed with zstd: load's doesn't-fit check.
+            let zstd = features
+                .as_ref()
+                .is_some_and(|f| f.iter().any(|x| x == "compress_zstd"));
+            let uncompressed = zstd
+                .then(|| sys.run("du", &["-sxb", &p]))
+                .flatten()
+                .and_then(|o| o.split_whitespace().next()?.parse::<u64>().ok());
+            Obj::new()
+                .set("readonly", ro)
+                .set("properties", props)
+                .set("uncompressed_bytes", uncompressed)
+                .build()
+        });
         if let Some(m) = mounts.first() {
             if let Some(out) = sys.run(
                 "btrfs",
@@ -133,11 +159,7 @@ pub(super) fn btrfs_json(sys: &Sys, ctx: &Ctx<'_>, known: &[(String, Value)]) ->
                     devs.iter().map(|d| d.b.name.clone()).collect::<Vec<_>>(),
                 )
                 .set("mounted", !all.is_empty())
-                .set(
-                    "features",
-                    sys.is_dir(&sysfs)
-                        .then(|| sys.list(&format!("{sysfs}/features"))),
-                )
+                .set("features", features)
                 .set("allocation_profiles", alloc.unwrap_or(Value::Null))
                 .set("mounted_subvolumes", {
                     // By mount point: the mount order isn't the layout's.
@@ -152,6 +174,7 @@ pub(super) fn btrfs_json(sys: &Sys, ctx: &Ctx<'_>, known: &[(String, Value)]) ->
                 })
                 .set("subvolumes", subvols)
                 .set("default_subvolume", default)
+                .set("top_level", top_level)
                 .set(
                     "quota_enabled",
                     sys.is_dir(&sysfs)

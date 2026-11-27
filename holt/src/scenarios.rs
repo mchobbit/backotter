@@ -14973,3 +14973,139 @@ fn set_in(v: &mut Value, path: &[&str], x: Value) {
         _ => panic!("no object or array at {last}"),
     }
 }
+
+/// `bios_btrfs`'s Debian with / on the btrfs top level itself (subvolid=5,
+/// no subvolumes), made read-only as SteamOS's `holo-readonly enable`
+/// does, and compressed with zstd by a mount fstab doesn't give
+/// (docs/design/steamos.md, S3): FSTAB_OPTS is fstab's for /.
+fn btrfs_top_level(fstab_opts: &str) -> (Tree, FakeRunner) {
+    let t = bios_btrfs();
+    let boot_uuid = "10111213-1415-1617-1819-1a1b1c1d1e1f";
+    let root_uuid = "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
+    let swap_uuid = "c0c1c2c3-c4c5-c6c7-c8c9-cacbcccdcecf";
+    let fs = format!("/sys/fs/btrfs/{root_uuid}");
+    t.file("/proc/self/mountinfo", "26 1 0:25 / / ro,relatime shared:1 - btrfs /dev/vda6 ro,compress-force=zstd:3,space_cache=v2,subvolid=5,subvol=/\n27 26 254:1 / /boot rw,relatime shared:2 - ext4 /dev/vda1 rw\n28 26 0:5 / /dev rw - devtmpfs udev rw\n")
+        .file("/proc/cmdline", format!("BOOT_IMAGE=/vmlinuz-6.12.48+deb13-amd64 root=UUID={root_uuid} ro quiet\n"))
+        .file("/etc/fstab", format!("UUID={root_uuid} / btrfs {fstab_opts} 0 0\nUUID={boot_uuid} /boot ext4 defaults 0 2\nUUID={swap_uuid} none swap sw 0 0\n"))
+        .file(&format!("{fs}/features/compress_zstd"), "0\n")
+        .file(&format!("{fs}/features/no_holes"), "0\n")
+        .dir(&format!("{fs}/allocation/data/single"))
+        .dir(&format!("{fs}/allocation/metadata/dup"))
+        .dir(&format!("{fs}/allocation/system/dup"));
+    let r = FakeRunner::default()
+        .with("btrfs subvolume list -a -p -u -q /", "")
+        .with("btrfs subvolume get-default /", "ID 5 (FS_TREE)\n")
+        .with("btrfs subvolume list -a -r /", "")
+        .with("btrfs property get -t s /", "ro=true\n")
+        .with("btrfs property get -t i /", "")
+        .with("du -sxb /", "7340032\t/\n");
+    (t, r)
+}
+
+fn btrfs_top_level_plan(v: &Value) -> crate::load::commands::Built {
+    use crate::load::{Parsed, commands, layout::Layout, target::Mapping};
+    let l = Layout::from_json(v.clone()).unwrap();
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else {
+        unreachable!()
+    };
+    commands::build(
+        &l,
+        &o,
+        &Mapping {
+            pairs: vec![("vda".into(), "vdb".into())],
+            ..Mapping::default()
+        },
+    )
+}
+
+/// A read-only btrfs top level (docs/design/steamos.md, S3), on a system
+/// that isn't SteamOS: dump records subvolume 5's ro, its properties and
+/// what its files take uncompressed; load sets ro back as the boot stage's
+/// very last write, and, with nothing in fstab or a property saying how the
+/// filesystem got its zstd, writes it through compress-force=zstd.
+#[test]
+fn btrfs_read_only_top_level() {
+    let root_uuid = "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
+    let (t, r) = btrfs_top_level("defaults");
+    let v = run(&t, true, r);
+    let b = v.at(&["storage", "btrfs", "0"]).unwrap();
+    assert_eq!(b.at(&["top_level", "readonly"]), Some(&Value::Bool(true)));
+    assert_eq!(s(b, &["top_level", "properties", "ro"]), "true");
+    assert_eq!(u(b, &["top_level", "uncompressed_bytes"]), 7_340_032);
+    let built = btrfs_top_level_plan(&v);
+    assert!(built.problems.is_empty(), "{:?}", built.problems);
+    let text = plan_text(&built);
+    assert!(
+        text.contains("mount -t btrfs -o compress-force=zstd /dev/vdb6 /mnt/bko-target\n"),
+        "{text}"
+    );
+    let boot: Vec<String> = built
+        .stage(crate::load::Stage::Boot)
+        .iter()
+        .map(crate::load::commands::Cmd::shell)
+        .collect();
+    let top = format!("{RUN_DIR}/btrfs/{root_uuid}");
+    let n = boot.len();
+    assert_eq!(
+        boot[n - 3..],
+        [
+            format!("mount -t btrfs -o subvolid=5 /dev/vdb6 {top}\n"),
+            format!(
+                "# the top level (subvolume 5) read-only, as the source's was\nbtrfs property set -ts {top} ro true\n"
+            ),
+            format!("umount {top}\n"),
+        ],
+        "{boot:?}"
+    );
+    assert!(boot[n - 4].contains("atimes"), "{}", boot[n - 4]);
+
+    // fstab compresses: its options as they are, and ro still set.
+    let (t, r) = btrfs_top_level("defaults,compress=zstd:1");
+    let v = run(&t, true, r);
+    let built = btrfs_top_level_plan(&v);
+    let text = plan_text(&built);
+    assert!(!text.contains("compress-force"), "{text}");
+    assert!(
+        text.contains("mount -t btrfs -o compress=zstd:1 /dev/vdb6 /mnt/bko-target\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "btrfs property set -ts {RUN_DIR}/btrfs/{root_uuid} ro true\n"
+        )),
+        "{text}"
+    );
+
+    // A writable top level (dev mode): no ro line at all.
+    let (t, r) = btrfs_top_level("defaults");
+    let r = r.with("btrfs property get -t s /", "ro=false\n");
+    let v = run(&t, true, r);
+    assert_eq!(
+        v.at(&["storage", "btrfs", "0", "top_level", "readonly"]),
+        Some(&Value::Bool(false))
+    );
+    let text = plan_text(&btrfs_top_level_plan(&v));
+    assert!(!text.contains("ro true"), "{text}");
+    assert!(!text.contains("subvolid=5"), "{text}");
+}
+
+/// The doesn't-fit plan problem (S3): a top level whose files take more
+/// uncompressed than the filesystem holds, where the restore wouldn't
+/// compress them; at the source's ratio (compress-force=zstd) they fit.
+#[test]
+fn btrfs_top_level_that_cant_fit() {
+    let (t, r) = btrfs_top_level("defaults");
+    let mut v = run(&t, true, r.with("du -sxb /", "10737418240\t/\n"));
+    // Forced to zstd: the source's bytes_used, which fits.
+    assert!(btrfs_top_level_plan(&v).problems.is_empty());
+    // No zstd anywhere: uncompressed, 10 GiB into 35 MiB.
+    let Some(Value::Arr(fss)) = v.at_mut(&["storage", "btrfs"]) else {
+        panic!("no storage.btrfs")
+    };
+    set_at(&mut fss[0], &["features"], Value::Arr(vec![]));
+    let p = btrfs_top_level_plan(&v).problems;
+    assert!(
+        p.iter().any(|x| x.starts_with("btrfs b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf: its top level's files take 10 GiB uncompressed, and nothing would compress them, more than its ")),
+        "{p:?}"
+    );
+}

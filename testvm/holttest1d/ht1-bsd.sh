@@ -1119,6 +1119,150 @@ list_tree() { # DIR
         echo "cd $1 && mtree -c -k $MTREE_KEYS -p $1 | awk '{ l = l \$0 } /\\\\\$/ { sub(/\\\\\$/, \"\", l); next } { if (l !~ / type=socket( |\$)/) print l; l = \"\" }'"
     fi
 }
+# illumos: list_tree's listing of DIR into OUT (its stderr into ERR) under a
+# watchdog, not one ssh session that waits up to an hour.  On
+# t2h-20261127T1312-9ca9 (omnios58-mirror, copland) the verify's listing
+# of /mnt/dst stopped, the rescuer idle (no CPU, no write) and its ssh
+# session open, until the job's 30-minute stall stopped the run with
+# nothing to say why (the cause: list_diag_sh, below).  Here the listing runs in the rescuer by itself
+# (nohup, /tmp/ht1-list.*), and every HT_LIST_POLL_SEC (15) an ssh of its
+# own asks how it does: done (its exit status), or the CPU time of its
+# find, sha256sum and sort and what the pools but the rescuer's own rpool
+# have read (kstat zfs:0:POOL:nread; the rescuer's own disk is read all
+# the time, if only for the polls' commands).  When neither has changed
+# for HT_LIST_STALL_SEC (300; a healthy listing of a 525M tree takes 10 to
+# 30 s and uses CPU all along), or the listing
+# has taken HT_LIST_MAX_SEC (3600, the old ssh's limit), the rescuer's
+# state goes to DIAG (list_diag_sh: the listing's kernel stacks, mdb's
+# ::stacks, ::zio_state, the vioblk queues' indexes, iostat, the system
+# log; a lost virtio notify, the cause found, named in LIST_WHY too) and
+# the listing is a FAIL that says so, at once.
+# The start and the fetch are tried 3 times (an ssh that got no answer, as
+# the old loop did).  Returns the listing's exit status; 124 when it
+# stalled, 125 when it ran too long, 255 when it couldn't be started or
+# read back; LIST_WHY says it.
+list_tree_watched() { # KEY DIR OUT ERR DIAG
+    local lkey=$1 ldir=$2 lout=$3 lerr=$4 ldiag=$5 g=/tmp/ht1-list
+    local stall=${HT_LIST_STALL_SEC:-300} cap=${HT_LIST_MAX_SEC:-3600} poll=${HT_LIST_POLL_SEC:-15}
+    local t0=$SECONDS lmark=$SECONDS lsig="" lst rc li tok
+    LIST_WHY=""
+    : > "$lout"; : > "$lerr"
+    # (TOK: a start tried again after one whose answer was lost has a token
+    # of its own, so the polls never take the other one's end for its own.)
+    for li in 1 2 3; do
+        [[ $li == 1 ]] || sleep 3
+        tok=$$.$li.$RANDOM
+        TMO=60 sshk "$lkey" "rm -f $g.*
+cat > $g.sh <<'HT1EOF'
+( $(list_tree "$ldir") ) > $g.out 2> $g.err
+echo \"$tok \$?\" > $g.rc.t; mv $g.rc.t $g.rc
+HT1EOF
+cat > $g.poll <<'HT1EOF'
+$(list_poll_sh)
+HT1EOF
+cat > $g.diag <<'HT1EOF'
+$(list_diag_sh)
+HT1EOF
+nohup /bin/sh $g.sh < /dev/null > /dev/null 2>&1 &
+echo started" 2>> "$lerr" | grep -qx started && break
+        ((li < 3)) || { LIST_WHY="it could not be started in the rescuer"; return 255; }
+    done
+    t0=$SECONDS lmark=$SECONDS
+    while :; do
+        sleep "$poll"
+        lst=$(TMO=60 sshk "$lkey" "/bin/sh $g.poll $tok" 2>/dev/null)
+        case $lst in
+            "done "*) break ;;
+            "run "*) [[ $lst == "$lsig" ]] || { lsig=$lst; lmark=$SECONDS; } ;;
+        esac
+        if ((SECONDS - lmark >= stall || SECONDS - t0 >= cap)); then
+            if ((SECONDS - lmark >= stall)); then
+                rc=124 LIST_WHY="no progress for $((SECONDS - lmark)) s (${lsig:-no answer from the rescuer}), the rescuer's state in $(basename "$ldiag")"
+            else
+                rc=125 LIST_WHY="still running after $((SECONDS - t0)) s (${lsig:-no answer from the rescuer}), the rescuer's state in $(basename "$ldiag")"
+            fi
+            { echo "ht1-bsd: the listing of $ldir: $LIST_WHY"; TMO=300 sshk "$lkey" "/bin/sh $g.diag" 2>&1; } > "$ldiag"
+            # (list_diag_sh's verdict: the illumos virtio lost notify.)
+            lst=$(grep -m 1 '^HT1-LOSTKICK ' "$ldiag") &&
+                LIST_WHY+="; the rescuer's virtio queue lost a notify (illumos): ${lst#HT1-LOSTKICK }"
+            return "$rc"
+        fi
+    done
+    # (The fetch: a 12 MiB listing takes seconds; 5 minutes is a stall too.)
+    rc=${lst#done }
+    for li in 1 2 3; do
+        [[ $li == 1 ]] || sleep 3
+        TMO=300 sshk "$lkey" "cat $g.err >&2; cat $g.out" > "$lout" 2>> "$lerr" && break
+        lst=$?
+        ((li < 3)) || { LIST_WHY="it finished (exit $rc), but its output could not be read back (ssh exit $lst)"; return 255; }
+    done
+    TMO=60 sshk "$lkey" "rm -f $g.*" 2>/dev/null
+    [[ $rc =~ ^[0-9]+$ ]] || rc=255
+    return "$rc"
+}
+# The rescuer's half of list_tree_watched: how the listing does (illumos).
+list_poll_sh() {
+    cat <<'EOF'
+if [ -f /tmp/ht1-list.rc ]; then set -- "$1" $(cat /tmp/ht1-list.rc); [ "$2" != "$1" ] || { echo "done $3"; exit 0; }; fi
+c=$(ps -e -o time= -o comm= 2>/dev/null | awk '$2 ~ /(^|\/)(find|sha256sum|sort)$/ { printf "%s,", $1 }')
+r=$(kstat -p -m zfs -c disk -s nread 2>/dev/null | awk '$1 !~ /:rpool:nread$/ { s += $2 } END { print s + 0 }')
+echo "run cpu=${c:-none} nread=$r"
+EOF
+}
+# ... and its state when the listing stalled: mdb -k first (it takes no
+# lock, and it reads a process that pstack and pfiles would hang on: one in
+# zio_wait); then every vioblk queue's indexes (a request the driver put in
+# the avail ring that the device never took, with used's NO_NOTIFY clear,
+# is a lost notify: HT1-LOSTKICK, below); a 4 KiB read of each disk, which
+# notifies its queue again, and the indexes after it; zpool status last.
+# Found on t2h-20261127T1312-9ca9's rescuer, reproduced in the bugfix loop
+# of 2026-11-27 (copland, iteration 26): sha256sum in zio_wait on a 4 KiB
+# read of bkodisk-0 for 365 s, vioblk#1's avail idx 2fea and used idx 2fe9,
+# one request in flight, used flags 0; one read of that disk and it went
+# on.  OmniOS r151058's virtio_queue_flush_locked stores avail->idx and then
+# tests used->flags with only membar_producer between (no full fence), so
+# the CPU may read flags before its store is seen and skip the notify while
+# QEMU, done with its batch, re-enables notifies and finds no new request.
+list_diag_sh() {
+    cat <<'EOF'
+k() { echo "== mdb -k: $1"; echo "$1" | mdb -k 2>&1 | head -n "${2:-300}"; }
+vq() {
+    for d in $(echo "::prtconf -d vioblk" | mdb -k 2>/dev/null | awk '/driver name: vioblk/ { for (i = 1; i <= NF; i++) if ($i ~ /^fffff[0-9a-f]+$/) { print $i; break } }'); do
+        v=$(echo "$d::print struct dev_info devi_driver_data | ::print vioblk_t vib_vq" | mdb -k 2>/dev/null | awk '{ print $NF }')
+        id=$(echo "$d::print struct dev_info devi_driver_data | ::print vioblk_t vib_devid" | mdb -k 2>/dev/null | sed -n 's/.*\[ "\(.*\)" \].*/\1/p')
+        in=$(echo "$d::print -d struct dev_info devi_instance" | mdb -k 2>/dev/null | awk '{ print $NF }')
+        echo "$v::print virtio_queue_t viq_dma_driver viq_dma_device viq_inflight.avl_numnodes" | mdb -k 2>/dev/null | awk '{ print $1, $NF }' > /tmp/ht1-list.vq
+        drv=$(awk '$1 == "viq_dma_driver" { print $2 }' /tmp/ht1-list.vq)
+        dev=$(awk '$1 == "viq_dma_device" { print $2 }' /tmp/ht1-list.vq)
+        nf=$(awk '$1 ~ /avl_numnodes/ { print $2 }' /tmp/ht1-list.vq)
+        a=$(echo "$drv/2x" | mdb -k 2>/dev/null | awk '{ print $3 }')
+        u=$(echo "$dev/2x" | mdb -k 2>/dev/null | awk '{ print $2, $3 }')
+        echo "vioblk#$in $id: in flight $nf, avail idx $a, used flags/idx $u"
+    done; }
+echo "== date, uptime"; date; uptime
+pids=$(ps -e -o pid= -o comm= | awk '$2 ~ /(^|\/)(find|sha256sum|sort)$/ { print $1 }')
+echo "== the listing's processes"; ps -e -o pid,ppid,s,time,etime,wchan,args | awk 'NR == 1 || /find|sha256sum|sort|ht1-list/'
+for p in $pids; do
+    k "0t$p::pid2proc | ::walk thread | ::findstack -v"
+    k "0t$p::pid2proc | ::pfiles"
+done
+echo "== the vioblk queues"; vq > /tmp/ht1-list.vq0; cat /tmp/ht1-list.vq0
+k "::stacks -m zfs"
+k "::stacks -m blkdev"
+k "::zio_state -r"
+k "::spa -v"
+k "::stacks" 600
+echo "== iostat -xn"; iostat -xn 2>&1
+echo "== /var/adm/messages"; tail -n 60 /var/adm/messages 2>&1
+echo "== a read of each disk, and the queues after it"
+for r in /dev/rdsk/c*t0d0p0; do dd if="$r" of=/dev/null bs=4k count=1 iseek=1 2>/dev/null; done
+sleep 5; vq > /tmp/ht1-list.vq1; cat /tmp/ht1-list.vq1
+# A queue with requests in flight, the avail ring ahead of the used one and
+# used's flags 0 before the reads, whose used idx moved after them.
+awk 'NR == FNR { gsub(/,/, ""); b[$1] = $0; next } { gsub(/,/, ""); split(b[$1], o, " "); if (o[5] > 0 && o[8] != o[12] && o[11] == 0 && $12 != o[12]) print "HT1-LOSTKICK " $1 " " $2 " avail idx " o[8] ", used idx " o[12] " until a read of the disk notified it again (used idx " $12 " after)" }' /tmp/ht1-list.vq0 /tmp/ht1-list.vq1
+echo "== zpool status -v"; zpool status -v 2>&1
+EOF
+}
 
 phase_source() {
     say "== source: $G"
@@ -1210,14 +1354,20 @@ phase_backup() {
     # only reads: an ssh that got no answer (255, nothing on either stream)
     # is tried again, and an empty listing is never one (a tree has its
     # root's line at least).
+    # (illumos: under list_tree_watched's watchdog.)
     local lrc li
-    for li in 1 2 3; do
-        [[ $li == 1 ]] || { echo "ht1-bsd: no answer listing the source's files (exit $lrc), try $li of 3" >&2; sleep 3; }
-        TMO=3600 sshk "$rkey" "$(list_tree /mnt/src)" > "$R/src.listing" 2> "$R/logs/fsmeta-src.log"; lrc=$?
-        [[ $lrc == 255 && ! -s $R/src.listing && ! -s $R/logs/fsmeta-src.log ]] || break
-    done
+    LIST_WHY=""
+    if [[ $PLAT == illumos ]]; then
+        list_tree_watched "$rkey" /mnt/src "$R/src.listing" "$R/logs/fsmeta-src.log" "$R/logs/backup-list-stall.txt"; lrc=$?
+    else
+        for li in 1 2 3; do
+            [[ $li == 1 ]] || { echo "ht1-bsd: no answer listing the source's files (exit $lrc), try $li of 3" >&2; sleep 3; }
+            TMO=3600 sshk "$rkey" "$(list_tree /mnt/src)" > "$R/src.listing" 2> "$R/logs/fsmeta-src.log"; lrc=$?
+            [[ $lrc == 255 && ! -s $R/src.listing && ! -s $R/logs/fsmeta-src.log ]] || break
+        done
+    fi
     if [[ $lrc != 0 ]]; then
-        bad "the listing of the source's files: exit $lrc$([[ -s $R/logs/fsmeta-src.log ]] && echo ": $(tail -1 "$R/logs/fsmeta-src.log")")"
+        bad "the listing of the source's files: exit $lrc${LIST_WHY:+, $LIST_WHY}$([[ -s $R/logs/fsmeta-src.log ]] && echo ": $(tail -1 "$R/logs/fsmeta-src.log")")"
     elif [[ ! -s $R/src.listing ]]; then
         bad "the listing of the source's files: empty (logs/fsmeta-src.log)"
     fi
@@ -1591,8 +1741,14 @@ phase_verify() {
                     # says why): mtree -f on an empty spec reads the whole
                     # restored tree as one "extra: .".
                     bad "mtree: not compared: no listing of the source's files (the backup's)"
+                elif [[ $PLAT == illumos ]] && { list_tree_watched "$rkey" /mnt/dst "$R/dst.listing" "$R/logs/fsmeta-dst.log" "$R/logs/verify-list-stall.txt"; [[ $? =~ ^(124|125|255)$ ]]; }; then
+                    # (illumos: list_tree_watched's watchdog, its state of the
+                    # rescuer in logs/verify-list-stall.txt.)
+                    bad "mtree: not compared: the listing of the restored files in the rescuer: $LIST_WHY"
                 else
-                    if [[ $PLAT == haiku || $PLAT == illumos ]]; then
+                    if [[ $PLAT == illumos ]]; then
+                        diff "$R/src.listing" "$R/dst.listing" | sed -n 's/^< /missing: /p; s/^> /extra: /p' > "$R/logs/fsmeta-compare.txt"
+                    elif [[ $PLAT == haiku ]]; then
                         TMO=3600 sshk "$rkey" "$(list_tree /mnt/dst)" > "$R/dst.listing" 2>/dev/null
                         diff "$R/src.listing" "$R/dst.listing" | sed -n 's/^< /missing: /p; s/^> /extra: /p' > "$R/logs/fsmeta-compare.txt"
                     else

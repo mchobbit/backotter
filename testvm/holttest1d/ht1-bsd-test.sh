@@ -19,7 +19,7 @@ BSD=$HERE/ht1-bsd.sh
 
 # The functions under test, by name: each from its "name() {" to the next
 # line that is a "}" of its own (none of their heredocs has one).
-want=(geli_provs sr_vols geli_fstab_mp onetime_swaps geli_files_list geli_slot1_script mount_script umount_script log_panicked wait_why vm_wait resc_up backup_failed put)
+want=(geli_provs sr_vols geli_fstab_mp onetime_swaps geli_files_list geli_slot1_script mount_script umount_script log_panicked wait_why vm_wait resc_up backup_failed put list_tree list_tree_watched list_poll_sh list_diag_sh)
 src=""
 for f in "${want[@]}"; do
     one=$(sed -n "/^$f() {/,/^}$/p" "$BSD")
@@ -401,6 +401,77 @@ SSH_RCS=(1) NSSH=0; put key "$T/f" /root/f 2>/dev/null; rc=$?
 chk "put: the remote's own failure isn't tried again" eval '((rc == 1 && NSSH == 1))'
 SSH_RCS=(255 255 0) NSSH=0; put key "$T/f" /root/f 2>/dev/null; rc=$?
 chk "put: two 255s are a 255, with no third" eval '((rc == 255 && NSSH == 2))'
+
+# list_tree_watched: the illumos listing under a watchdog
+# (t2h-20261127T1312-9ca9: omnios58-mirror's verify listing hung, the
+# rescuer idle, until the job's 30-minute stall).  sshk stubbed as the
+# rescuer: the start, the polls (POLLS, one a poll, the last one again
+# when they run out; "" an ssh that got no answer), the diag, the fetch.
+# (The polls run in a command substitution: their count goes in a file.)
+# shellcheck disable=SC2034
+PLAT=illumos
+POLLS=() NPOLLS=0 STARTED=0 DIAGS=0
+# shellcheck disable=SC2329,SC2317
+sshk() { local c=$2
+    case $c in
+        *"nohup /bin/sh /tmp/ht1-list.sh"*) STARTED=$((STARTED + 1)); echo "$c" > "$T/start.sh"; echo started ;;
+        "/bin/sh /tmp/ht1-list.poll "*) echo x >> "$T/npolls"; local i; i=$(($(wc -l < "$T/npolls") - 1)); ((i < ${#POLLS[@]})) || i=$((${#POLLS[@]} - 1)); [[ -n ${POLLS[i]} ]] || return 255; echo "${POLLS[i]}" ;;
+        "/bin/sh /tmp/ht1-list.diag") DIAGS=$((DIAGS + 1)); echo "== mdb -k: 0t4242::pid2proc"; echo "zio_wait+0x5d"; echo "${LOSTKICK:-}" ;;
+        "cat /tmp/ht1-list.err"*) echo "f 644 0 0 1 1.0  ./a" ;;
+        *) return 1 ;;
+    esac
+}
+export HT_LIST_POLL_SEC=0
+lw() { local r; : > "$T/npolls"; list_tree_watched key /mnt/dst "$T/lw.out" "$T/lw.err" "$T/lw-stall.txt"; r=$?; NPOLLS=$(wc -l < "$T/npolls"); return $r; }
+rm -f "$T/lw-stall.txt"
+POLLS=("run cpu=0:00,0:00, nread=10" "run cpu=0:01,0:00, nread=20" "done 0") NPOLLS=0 HT_LIST_STALL_SEC=5 HT_LIST_MAX_SEC=60; lw; rc=$?
+chk "list_tree_watched: a listing that finishes is its exit status (0)" eval '((rc == 0 && NPOLLS == 3))'
+chk "list_tree_watched: and its output read back" hasx "$T/lw.out" "f 644 0 0 1 1.0  ./a"
+chk "list_tree_watched: and no stall report" eval '[[ ! -e $T/lw-stall.txt ]]'
+chk "list_tree_watched: the rescuer runs list_tree's listing of DIR by itself" eval 'grep -qF "( cd /mnt/dst && { find . " "$T/start.sh" && grep -qF "> /tmp/ht1-list.out 2> /tmp/ht1-list.err" "$T/start.sh"'
+chk "list_tree_watched: its exit status kept as the rescuer's \$?, after this start's token" eval 'grep -qE "^echo \"[0-9]+\.1\.[0-9]+ \\\$\?\" > /tmp/ht1-list.rc.t; mv /tmp/ht1-list.rc.t /tmp/ht1-list.rc\$" "$T/start.sh"'
+POLLS=("done 2") NPOLLS=0; lw; rc=$?
+chk "list_tree_watched: a listing that failed is its exit status (2)" eval '((rc == 2))'
+# shellcheck disable=SC2034  # (read by the eval'd checks and list_tree_watched)
+t0=$SECONDS
+# shellcheck disable=SC2034  # (read by the eval'd checks and list_tree_watched)
+POLLS=("run cpu=0:00,0:00, nread=10" "run cpu=0:01,0:00, nread=12") NPOLLS=0 DIAGS=0 HT_LIST_STALL_SEC=2 HT_LIST_MAX_SEC=60 LIST_WHY=""; lw; rc=$?
+chk "list_tree_watched: a hung listing is 124 after HT_LIST_STALL_SEC, not the hour's limit" eval '((rc == 124 && SECONDS - t0 < 10))'
+chk "list_tree_watched: LIST_WHY names the stall and where its state is" eval '[[ $LIST_WHY == "no progress for "[0-9]*" s (run cpu=0:01,0:00, nread=12), the rescuer'"'"'s state in lw-stall.txt" ]]'
+chk "list_tree_watched: the rescuer's state (stacks) in DIAG, once" eval '((DIAGS == 1)) && has "$T/lw-stall.txt" "^ht1-bsd: the listing of /mnt/dst: no progress for " && hasx "$T/lw-stall.txt" "zio_wait+0x5d"'
+LOSTKICK="HT1-LOSTKICK vioblk#1 bkodisk-0: avail idx 2fea, used idx 2fe9 until a read of the disk notified it again (used idx 2ff9 after)"
+POLLS=("run cpu=0:00, nread=10") HT_LIST_STALL_SEC=2; lw; rc=$?
+chk "list_tree_watched: a lost virtio notify the diag found is in LIST_WHY" eval '((rc == 124)) && [[ $LIST_WHY == *", the rescuer'"'"'s state in lw-stall.txt; the rescuer'"'"'s virtio queue lost a notify (illumos): vioblk#1 bkodisk-0: avail idx 2fea, used idx 2fe9 until a read of the disk notified it again (used idx 2ff9 after)" ]]'
+LOSTKICK=""
+POLLS=("") NPOLLS=0 HT_LIST_STALL_SEC=2; lw; rc=$?
+chk "list_tree_watched: a rescuer that never answers is 124 too, and says so" eval '((rc == 124)) && [[ $LIST_WHY == *"(no answer from the rescuer)"* ]]'
+n=0; POLLS=(); for n in $(seq 1 400); do POLLS+=("run cpu=0:0$n, nread=$n"); done
+# shellcheck disable=SC2034  # (read by the eval'd checks and list_tree_watched)
+NPOLLS=0 HT_LIST_STALL_SEC=30 HT_LIST_MAX_SEC=2; lw; rc=$?
+chk "list_tree_watched: one that keeps going past HT_LIST_MAX_SEC is 125" eval '((rc == 125)) && [[ $LIST_WHY == "still running after "* ]]'
+# shellcheck disable=SC2329,SC2317
+sshk() { return 255; }
+lw; rc=$?
+chk "list_tree_watched: one that can't be started is 255, and says so" eval '((rc == 255)) && [[ $LIST_WHY == "it could not be started in the rescuer" ]]'
+chk "list_poll_sh: done with the status of its own token only" eval 'list_poll_sh > "$T/poll.sh"; d=$(mktemp -d); sed "s|/tmp/ht1-list|$d/l|g" "$T/poll.sh" > "$d/p.sh"; echo "tok1 3" > "$d/l.rc"; [[ $(sh "$d/p.sh" tok1) == "done 3" && $(sh "$d/p.sh" tok2) == "run "* ]]'
+chk "list_poll_sh: else the listing's CPU and the pools' reads but rpool's" eval 'list_poll_sh | grep -qF "kstat -p -m zfs -c disk -s nread" && list_poll_sh | grep -qF ":rpool:nread"'
+chk "list_diag_sh: kernel stacks (mdb, no pstack or pfiles: they hang on a process in zio_wait) before the pool commands" eval 'list_diag_sh > "$T/diag.sh" && before "$T/diag.sh" "::findstack -v" "zpool status" && before "$T/diag.sh" "::stacks -m zfs" "zpool status" && no "$T/diag.sh" "^ *(pstack|pfiles) "'
+chk "list_diag_sh: the queues read before the disks are, and after" eval 'before "$T/diag.sh" "vq > /tmp/ht1-list.vq0" "dd if=" && before "$T/diag.sh" "dd if=" "vq > /tmp/ht1-list.vq1"'
+# Its verdict, on the queues t2h-20261127T1312-9ca9's repro found.
+grep "^awk 'NR == FNR" "$T/diag.sh" | sed 's|/tmp/ht1-list.vq0 /tmp/ht1-list.vq1|"$1" "$2"|' > "$T/verdict.sh"
+printf '%s\n' "vioblk#0 bkoresc: in flight 0, avail idx 1edf, used flags/idx 0 1edf" "vioblk#1 bkodisk-0: in flight 1, avail idx 2fea, used flags/idx 0 2fe9" "vioblk#2 bkodisk-1: in flight 0, avail idx 6c8a, used flags/idx 0 6c8a" > "$T/vq0"
+printf '%s\n' "vioblk#0 bkoresc: in flight 0, avail idx 1ee0, used flags/idx 0 1ee0" "vioblk#1 bkodisk-0: in flight 3, avail idx 2ffc, used flags/idx 0 2ff9" "vioblk#2 bkodisk-1: in flight 0, avail idx 6c8b, used flags/idx 0 6c8b" > "$T/vq1"
+chk "list_diag_sh: a queue a read released is HT1-LOSTKICK, the others aren't" eval '[[ $(sh "$T/verdict.sh" "$T/vq0" "$T/vq1") == "HT1-LOSTKICK vioblk#1 bkodisk-0: avail idx 2fea, used idx 2fe9 until a read of the disk notified it again (used idx 2ff9 after)" ]]'
+printf '%s\n' "vioblk#1 bkodisk-0: in flight 1, avail idx 2fea, used flags/idx 0 2fe9" > "$T/vq1b"
+chk "list_diag_sh: one the read didn't release isn't" eval '[[ -z $(sh "$T/verdict.sh" "$T/vq0" "$T/vq1b") ]]'
+printf '%s\n' "vioblk#1 bkodisk-0: in flight 1, avail idx 2fea, used flags/idx 1 2fe9" > "$T/vq0c"
+chk "list_diag_sh: nor one whose device asked for no notify (used flags 1)" eval '[[ -z $(sh "$T/verdict.sh" "$T/vq0c" "$T/vq1") ]]'
+chk "list_diag_sh, list_poll_sh: sh that parses" eval 'list_diag_sh | sh -n && list_poll_sh | sh -n'
+# The illumos listings of the backup and the verify go through it.
+chk "ht1-bsd.sh: the backup's illumos listing under the watchdog" grep -qF 'list_tree_watched "$rkey" /mnt/src "$R/src.listing" "$R/logs/fsmeta-src.log" "$R/logs/backup-list-stall.txt"' "$BSD"
+chk "ht1-bsd.sh: the verify's illumos listing under the watchdog" grep -qF 'list_tree_watched "$rkey" /mnt/dst "$R/dst.listing" "$R/logs/fsmeta-dst.log" "$R/logs/verify-list-stall.txt"' "$BSD"
+chk "ht1-bsd.sh: a stalled verify listing is a FAIL that names it" grep -qF 'bad "mtree: not compared: the listing of the restored files in the rescuer: $LIST_WHY"' "$BSD"
+unset HT_LIST_POLL_SEC HT_LIST_STALL_SEC HT_LIST_MAX_SEC
 
 if ((nfail == 0)); then echo "ht1-bsd-test: all $ncase cases ok"; exit 0; fi
 echo "ht1-bsd-test: $nfail of $ncase cases FAIL"

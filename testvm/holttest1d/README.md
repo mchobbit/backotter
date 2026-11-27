@@ -401,7 +401,29 @@ too: the source's disks attached, mounted read-only from the layout, backed up
 into the rescuer's own disk (`R/rescuer.qcow2`, kept from backup to verify).
 The file check is mtree(8)'s (a spec of the source, sockets left out, checked
 against the restored tree), or on Haiku and illumos GNU find's listing and
-every file's SHA-256.  The boot state is the enabled services that say they
+every file's SHA-256.  On illumos that listing runs in the rescuer by itself
+under a watchdog (`list_tree_watched`): when its find, sha256sum and sort use
+no CPU and the pools but the rescuer's `rpool` read nothing for
+`HT_LIST_STALL_SEC` (300) s, or it runs past `HT_LIST_MAX_SEC` (3600), the
+run FAILs at once ("mtree: not compared: the listing of the restored files
+in the rescuer: no progress for ...", or the backup's "the listing of the
+source's files: exit 124, ...") with the rescuer's state in
+`logs/verify-list-stall.txt` (`backup-list-stall.txt`): the listing's kernel
+stacks and open files (mdb, which a process stuck in `zio_wait` can't stop
+as pstack and pfiles would), `::stacks`, `::zio_state`, every vioblk queue's
+ring indexes before and after a 4 KiB read of each disk, iostat, the system
+log and `zpool status`.  A lost virtio notify is named in the FAIL ("the
+rescuer's virtio queue lost a notify (illumos): vioblk#1 bkodisk-0: avail
+idx ..., used idx ... until a read of the disk notified it again").  That
+was the cause of t2h-20261127T1312-9ca9 (`omnios58-mirror` on copland, the
+verify's listing hung, the rescuer idle, until the job's 30-minute stall),
+caught in a loop of 2026-11-27 (1 listing in about 800): a 4 KiB read the
+OmniOS r151058 vioblk driver put in its avail ring that QEMU never took
+(`virtio_queue_flush_locked` has no full fence between its store of the
+avail index and its test of the used ring's NO_NOTIFY flag), released by
+the next request to that disk.  It is the guest kernel's, not bko-holt's,
+and can strike any of the rescuer's I/O; only the listings have this
+watchdog (the job's stall limit is the rest's).  The boot state is the enabled services that say they
 aren't running (FreeBSD's `service -e`, OpenBSD's `rcctl ls failed`,
 illumos' `svcs`).
 

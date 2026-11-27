@@ -912,9 +912,25 @@ pub fn unknown_disk(sys: &Sys, only: &[String]) -> Option<String> {
     if only.is_empty() {
         return None;
     }
+    // FreeBSD's whole disks are kern.disks' (other::freebsd::disks); the
+    // other non-Linux systems refuse --only-disk (crate::dump_with).
+    match crate::other::Family::current() {
+        Some(crate::other::Family::FreeBsd) => return unknown_freebsd_disk(sys, only),
+        Some(_) => return None,
+        None => {}
+    }
     let found = blockdev::scan(sys);
     only.iter()
         .find(|n| !found.iter().any(|b| is_whole_disk(b) && b.name == **n))
+        .cloned()
+}
+
+/// `unknown_disk` on FreeBSD: the first of `only` kern.disks doesn't list
+/// (a CD drive or memory disk neither).
+pub fn unknown_freebsd_disk(sys: &Sys, only: &[String]) -> Option<String> {
+    let found = crate::other::freebsd::disks(sys);
+    only.iter()
+        .find(|n| !found.iter().any(|d| d.name == **n))
         .cloned()
 }
 

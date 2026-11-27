@@ -226,6 +226,75 @@ pub fn report(
     os: Option<&crate::osrel::OsRelease>,
     generated: &str,
 ) -> Value {
+    report_only(sys, fam, os, generated, &[])
+}
+
+/// The ZFS pools of these disks' partitions and whole-disk contents, by
+/// the name their vdev labels give.
+fn label_pools<'a>(contents: impl Iterator<Item = &'a Content>) -> Vec<String> {
+    let mut v: Vec<String> = contents
+        .filter(|c| c.kind == "zfs_member")
+        .filter_map(|c| c.extra.as_ref()?.get("name")?.as_str().map(str::to_string))
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// Whether ZFS dataset (or pool) `name` is in one of `pools`.
+fn in_pools(name: &str, pools: &[String]) -> bool {
+    pools.iter().any(|p| {
+        name == p
+            || name
+                .strip_prefix(p.as_str())
+                .is_some_and(|r| r.starts_with('/'))
+    })
+}
+
+/// The zfs section without the pools in `pools` (--only-disk's, of the
+/// disks left out): their label pools, zpool.cache entries, imported pools
+/// and datasets.
+pub fn drop_pools(mut zfs: Value, pools: &[String]) -> Value {
+    if pools.is_empty() {
+        return zfs;
+    }
+    let named = |v: &Value| {
+        v.get("name")
+            .and_then(Value::as_str)
+            .is_some_and(|n| in_pools(n, pools))
+    };
+    let Value::Obj(o) = &mut zfs else {
+        return zfs;
+    };
+    for (k, v) in o.iter_mut() {
+        match (k.as_str(), v) {
+            ("pools_from_labels", Value::Arr(a)) => a.retain(|p| !named(p)),
+            ("zpool_cache", Value::Obj(c)) => c.retain(|(n, _)| !in_pools(n, pools)),
+            ("tools", Value::Obj(t)) => {
+                for (k, v) in t.iter_mut() {
+                    if let ("imported_pools" | "datasets", Value::Arr(a)) = (k.as_str(), v) {
+                        a.retain(|p| !named(p));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    zfs
+}
+
+/// `report`, leaving out every whole disk not in `only` (--only-disk; none
+/// when it's empty): its entry, its GEOM labels, the mounts, fstab entries
+/// and swaps on it (and the mounts below those, nullfs ones from there
+/// too), and the ZFS pools only it holds.  The disks left out are still
+/// read, to tell which mounts are theirs.
+pub fn report_only(
+    sys: &Sys,
+    fam: Family,
+    os: Option<&crate::osrel::OsRelease>,
+    generated: &str,
+    only: &[String],
+) -> Value {
     let hostname = sys
         .run("sysctl", &["-n", "kern.hostname"])
         .map(|s| s.trim().to_string());
@@ -246,9 +315,17 @@ pub fn report(
     let mut seen: Vec<(RawDisk, Vec<Found>, Vec<(String, String)>)> = Vec::new();
     let mut tables: Vec<Option<Table>> = Vec::new();
     let mut whole: Vec<Vec<Content>> = Vec::new();
-    for d in disks(sys) {
+    let all = disks(sys);
+    let left_out: Vec<String> = all
+        .iter()
+        .filter(|d| !only.is_empty() && !only.contains(&d.name))
+        .map(|d| d.name.clone())
+        .collect();
+    for d in all {
         let Some(src) = open(sys, &d) else {
-            sys.warn(format!("{}: can't read the disk", d.path));
+            if !left_out.contains(&d.name) {
+                sys.warn(format!("{}: can't read the disk", d.path));
+            }
             tables.push(None);
             whole.push(Vec::new());
             seen.push((d, Vec::new(), Vec::new()));
@@ -278,6 +355,73 @@ pub fn report(
         .run("mount", &["-p"])
         .map(|t| mounts::parse_fstab(&t))
         .unwrap_or_default();
+    // What --only-disk leaves out: the devices (disks and partitions) of
+    // the disks not chosen, the pools only they hold, and the mounts of
+    // those, with what's mounted below them or nullfs-mounted from there.
+    let out_devs: Vec<String> = seen
+        .iter()
+        .filter(|(d, _, _)| left_out.contains(&d.name))
+        .flat_map(|(d, f, _)| {
+            std::iter::once(d.name.clone()).chain(f.iter().map(|p| p.name.clone()))
+        })
+        .collect();
+    let on_out = |spec: &str| resolve(spec, &seen).is_some_and(|n| out_devs.contains(&n));
+    let kept_pools = label_pools(
+        seen.iter()
+            .enumerate()
+            .filter(|(_, (d, _, _))| !left_out.contains(&d.name))
+            .flat_map(|(i, (_, f, _))| {
+                f.iter()
+                    .flat_map(|p| p.contents.iter())
+                    .chain(whole[i].iter())
+            }),
+    );
+    let out_pools: Vec<String> = label_pools(
+        seen.iter()
+            .enumerate()
+            .filter(|(_, (d, _, _))| left_out.contains(&d.name))
+            .flat_map(|(i, (_, f, _))| {
+                f.iter()
+                    .flat_map(|p| p.contents.iter())
+                    .chain(whole[i].iter())
+            }),
+    )
+    .into_iter()
+    .filter(|p| !kept_pools.contains(p))
+    .collect();
+    let under = |path: &str, top: &str| {
+        path == top
+            || path
+                .strip_prefix(top)
+                .is_some_and(|r| top == "/" || r.starts_with('/'))
+    };
+    let mut gone: Vec<String> = mount_list
+        .iter()
+        .filter(|m| on_out(&m.spec) || (m.vfstype == "zfs" && in_pools(&m.spec, &out_pools)))
+        .map(|m| m.file.clone())
+        .filter(|f| f != "/")
+        .collect();
+    // (nullfs from below a mount left out, and mounts below those, until
+    // there are no more.)
+    loop {
+        let more: Vec<String> = mount_list
+            .iter()
+            .filter(|m| !gone.contains(&m.file))
+            .filter(|m| {
+                gone.iter()
+                    .any(|g| under(&m.file, g) || (m.vfstype == "nullfs" && under(&m.spec, g)))
+            })
+            .map(|m| m.file.clone())
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        gone.extend(more);
+    }
+    let mount_list: Vec<mounts::FstabEntry> = mount_list
+        .into_iter()
+        .filter(|m| !gone.contains(&m.file))
+        .collect();
     let mounted_at = |name: &str| -> Vec<String> {
         let mut t: Vec<String> = mount_list
             .iter()
@@ -291,6 +435,9 @@ pub fn report(
     let mut members: Vec<(String, Content)> = Vec::new();
     let mut boot_blocks = Vec::new();
     for (i, (d, found, labels)) in seen.iter().enumerate() {
+        if left_out.contains(&d.name) {
+            continue;
+        }
         let src = open(sys, d);
         let mut parts = Vec::new();
         for f in found {
@@ -405,6 +552,7 @@ pub fn report(
         Some(t) => Value::Arr(
             mounts::parse_fstab(&t)
                 .iter()
+                .filter(|e| !on_out(&e.spec))
                 .map(|e| super::geli::mark(e.to_json(resolve(&e.spec, &seen).as_deref()), &e.spec))
                 .collect(),
         ),
@@ -418,6 +566,9 @@ pub fn report(
         .filter_map(|l| {
             let f: Vec<&str> = l.split_whitespace().collect();
             let kib: u64 = f.get(1)?.parse().ok()?;
+            if on_out(f[0]) {
+                return None;
+            }
             Some(super::geli::mark_swap(
                 Obj::new()
                     .set("file", f[0])
@@ -431,11 +582,14 @@ pub fn report(
         .collect();
     let member_refs: Vec<(String, &Content)> =
         members.iter().map(|(n, c)| (n.clone(), c)).collect();
-    let zfs = crate::report::zfs_section(
-        sys,
-        &member_refs,
-        &["/etc/zfs/zpool.cache", "/boot/zfs/zpool.cache"],
-        mount_list.iter().any(|m| m.vfstype == "zfs"),
+    let zfs = drop_pools(
+        crate::report::zfs_section(
+            sys,
+            &member_refs,
+            &["/etc/zfs/zpool.cache", "/boot/zfs/zpool.cache"],
+            mount_list.iter().any(|m| m.vfstype == "zfs"),
+        ),
+        &out_pools,
     );
     let storage = Obj::new()
         .set("disks", disks_json)
@@ -446,6 +600,7 @@ pub fn report(
         .set(
             "glabels",
             seen.iter()
+                .filter(|(d, _, _)| !left_out.contains(&d.name))
                 .flat_map(|(_, _, g)| {
                     g.iter().map(|(n, l)| {
                         Obj::new()

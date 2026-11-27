@@ -1183,6 +1183,139 @@ mod tests {
         (t, r)
     }
 
+    /// A 4 MiB GPT disk with one partition (UFS labelled `ufs`, or none)
+    /// named `label`.
+    fn one_part_disk(label: &str, ufs: Option<&str>) -> Vec<u8> {
+        use crate::parttable::build::{GptSpec, write_gpt};
+        let mut img = vec![0u8; 8192 * 512];
+        write_gpt(
+            &mut img,
+            512,
+            &GptSpec {
+                disk_guid: "bc000000-0000-4000-8000-0000000000f1",
+                parts: vec![(
+                    UFS_T,
+                    "bc000000-0000-4000-8000-0000000000f2",
+                    40,
+                    8150,
+                    0,
+                    label,
+                )],
+            },
+        );
+        if let Some(l) = ufs {
+            let u = probe::ufs::sample::image(l);
+            img[40 * 512..40 * 512 + u.len()].copy_from_slice(&u);
+        }
+        img
+    }
+
+    #[test]
+    fn only_disk_names_only_the_chosen_disk() {
+        // BackShot1's FreeBSD backup: the lane drive (vtbd1, UFS at
+        // /mnt/bs1-backup with a nullfs tree from it and a tmpfs below it)
+        // and the stick (da0) attached; --only-disk vtbd0 leaves no trace
+        // of either.
+        let (t, r) = freebsd_ufs_on_geli();
+        t.file("/dev/vtbd1", one_part_disk("bs1lane", Some("BS1LANE")))
+            .file("/dev/da0", one_part_disk("bkostick", None));
+        t.file("/etc/fstab", "/dev/vtbd0p3.eli\t/\tufs\trw\t1\t1\n/dev/vtbd0p2.eli\tnone\tswap\tsw\t0\t0\n/dev/ufs/BS1LANE\t/mnt/bs1-backup\tufs\trw,noauto\t0\t0\n");
+        let disk = |n: &str| {
+            format!(
+                "{n}\n\t512         \t# sectorsize\n\t4194304     \t# mediasize in bytes (4.0M)\n"
+            )
+        };
+        let r = r
+            .with("sysctl -n kern.disks", "da0 vtbd1 vtbd0 cd0")
+            .with("diskinfo -v vtbd1", &disk("vtbd1"))
+            .with("diskinfo -v da0", &disk("da0"))
+            .with(
+                "mount -p",
+                concat!(
+                    "/dev/vtbd0p3.eli\t/\tufs\trw\t1 1\n",
+                    "/dev/gpt/efiboot0\t/boot/efi\tmsdosfs\trw\t2 2\n",
+                    "/dev/gpt/bs1lane\t/mnt/bs1-backup\tufs\trw\t0 0\n",
+                    "tmpfs\t/mnt/bs1-backup/tmp\ttmpfs\trw\t0 0\n",
+                    "/mnt/bs1-backup/src\t/mnt/bs1-src\tnullfs\tro\t0 0\n",
+                    "/\t/mnt/bs1-tree\tnullfs\tro\t0 0\n",
+                ),
+            )
+            .with("swapctl -l", "Device:       1024-blocks      Used:\n/dev/vtbd0p2.eli     971 0\n/dev/da0p1     971 0\n");
+        let sys = Sys::new(t.root(), Box::new(r), true);
+        let fam = super::super::Family::FreeBsd;
+        let marks = [
+            "vtbd1",
+            "da0",
+            "bs1lane",
+            "BS1LANE",
+            "bkostick",
+            "bs1-backup",
+            "bs1-src",
+        ];
+        let all = freebsd::report(&sys, fam, None, "x").pretty();
+        for m in marks {
+            assert!(all.contains(m), "{m} without --only-disk");
+        }
+        let v = freebsd::report_only(&sys, fam, None, "x", &["vtbd0".to_string()]);
+        let text = v.pretty();
+        for m in marks {
+            assert!(!text.contains(m), "{m}: {text}");
+        }
+        // The chosen disk's all there: the same as a dump of it alone.
+        assert_eq!(
+            v.at(&["storage", "disks"])
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1)
+        );
+        assert!(text.contains("/mnt/bs1-tree") && text.contains("vtbd0p3"));
+        assert_eq!(
+            v.at(&["storage", "swaps"])
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            v.at(&["storage", "fstab"])
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+        assert_eq!(
+            v.at(&["storage", "mounts"])
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(3)
+        );
+        // --only-disk of a disk kern.disks doesn't list (or a CD).
+        let only = |n: &[&str]| n.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            crate::report::unknown_freebsd_disk(&sys, &only(&["vtbd0", "da0"])),
+            None
+        );
+        assert_eq!(
+            crate::report::unknown_freebsd_disk(&sys, &only(&["vtbd0", "cd0"])).as_deref(),
+            Some("cd0")
+        );
+    }
+
+    #[test]
+    fn only_disk_drops_the_left_out_pools() {
+        let zfs = crate::json::parse(
+            r#"{"pools_from_labels":[{"name":"zroot"},{"name":"lane"}],
+                "zpool_cache":{"zroot":{},"lane":{},"laneX":{}},
+                "tools":{"imported_pools":[{"name":"zroot"},{"name":"lane"}],
+                         "datasets":[{"name":"zroot/ROOT"},{"name":"lane"},{"name":"lane/bk"},{"name":"laneX/a"}]}}"#,
+        )
+        .unwrap();
+        let v = freebsd::drop_pools(zfs.clone(), &["lane".to_string()]);
+        assert_eq!(
+            v.compact(),
+            r#"{"pools_from_labels":[{"name":"zroot"}],"zpool_cache":{"zroot":{},"laneX":{}},"tools":{"imported_pools":[{"name":"zroot"}],"datasets":[{"name":"zroot/ROOT"},{"name":"laneX/a"}]}}"#
+        );
+        assert_eq!(freebsd::drop_pools(zfs.clone(), &[]), zfs);
+    }
+
     #[test]
     fn dump_records_a_ufs_root_on_geli() {
         let (t, r) = freebsd_ufs_on_geli();

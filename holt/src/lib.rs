@@ -91,10 +91,10 @@ pub fn dump_with(
     luks: &luksheader::Options,
 ) -> Result<json::Value, String> {
     if let Some(fam) = other::Family::current() {
-        if !only.is_empty() {
-            return Err("--only-disk works on Linux only".to_string());
+        if !only.is_empty() && fam != other::Family::FreeBsd {
+            return Err("--only-disk works on Linux and FreeBSD only".to_string());
         }
-        return other::dump(sys, fam, &timestamp());
+        return other::dump(sys, fam, &timestamp(), only);
     }
     let os = osrel::read(sys);
     osrel::check_supported(os.as_ref())?;

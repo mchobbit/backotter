@@ -501,11 +501,13 @@ pub fn found_json(f: &Found, mounted_at: Vec<String>, extra: Obj) -> Value {
 }
 
 /// `bko-holt dump` on this system.
-pub fn dump(sys: &Sys, fam: Family, generated: &str) -> Result<Value, String> {
+/// `only` (--only-disk) leaves out every whole disk not in it; FreeBSD's
+/// only (`crate::dump_with` refuses it elsewhere).
+pub fn dump(sys: &Sys, fam: Family, generated: &str, only: &[String]) -> Result<Value, String> {
     let os = os_release(sys);
     crate::osrel::check_supported(os.as_ref())?;
     match fam {
-        Family::FreeBsd => Ok(freebsd::report(sys, fam, os.as_ref(), generated)),
+        Family::FreeBsd => Ok(freebsd::report_only(sys, fam, os.as_ref(), generated, only)),
         Family::NetBsd | Family::OpenBsd => Ok(labelled::report(sys, fam, os.as_ref(), generated)),
         Family::DragonFly => Ok(dfly::report(sys, fam, os.as_ref(), generated)),
         Family::Haiku => Ok(haiku::report(sys, fam, os.as_ref(), generated)),

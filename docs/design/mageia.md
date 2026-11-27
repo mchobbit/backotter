@@ -3,7 +3,7 @@
 2026-11-27. Prepared ahead of a request to support Mageia, the independent
 RPM distribution that descends from Mandriva, with its own installer (DrakX),
 package tool (urpmi) and security tool (msec). It is added the same way as
-Solus, Leap 16 and PikaOS. **Status: draft for the user's approval.** Nothing
+Solus, Leap 16 and PikaOS. **Status: approved 2026-11-27 by the user with every recommended decision (the last section). ON HOLD: nothing is built until the user says proceed.** Nothing
 is built. No repo file but this one has changed, and nothing has run on a farm
 host, the Thinkpad (the A100), mybig512 or the rescue stick.
 

@@ -3,9 +3,24 @@
 # image in images/P/, a --test copy in images/P/test/, and boot-test the
 # --test copy.  The previous contents of images/P/ go to images/P/prev-STAMP/.
 #
-#   img-one.sh PLATFORM
+#   img-one.sh [--refresh-from PARENT] PLATFORM
 #
 # PLATFORM: linux, freebsd, netbsd, openbsd, dragonfly, illumos or haiku.
+#
+# --refresh-from PARENT (docs/design/img-speed.md §4.1, Linux only until I4):
+# the two images are made from PARENT's layer with only the binaries swapped
+# (build-backotter-layer.sh --refresh-from), not built in full.  PARENT is a
+# set's directory (images/P itself means the set this build moves to
+# prev-STAMP), or the SHA-256 of its test image (the plan's parent): the first
+# of images/P and its prev-*, newest first, whose provenance names it.  The
+# parent must have a provenance whose two images are there as it records them,
+# whose base (less the media) is the one this build would use, and whose OS
+# epoch is within the cadence (C4, C5, D3: img_inputs.py parent; that its test
+# image passed ImgTest2 and the panel is the plan's to check).  Once both
+# images are listed, img_inputs.py refresh-check holds them to the parent's
+# (C2, C3: refresh-check.txt) and refuses (done.exit 1) on any difference
+# outside the swap list; the boot tests then run as for a full build, and the
+# provenance says mode refresh, names the parent and keeps its OS epoch.
 # From outside: BKO_WORK (the work tree, default /home/m/backotter-work: its
 # bko-bin/, holt-bin/, server/ and vms/), BKO_IMG_DIR (the images directory,
 # default BKO_WORK/images), S (the stick/ to build with, default
@@ -22,8 +37,10 @@
 # without the file is refused.  A stopped build (TERM, INT, HUP) shuts down the
 # FreeBSD builder it started and leaves no done.exit.  Exit 0 with done.exit
 # written (0, or how many boot modes failed), 1 on a failed build (done.exit
-# 1), 2 when T2_HOST_ROOT is a test's and the images directory is the real
-# one, 3 when a build of this platform is already under way.
+# 1), 2 on bad usage or when T2_HOST_ROOT is a test's and the images
+# directory is the real one, 3 when a build of this platform is already under
+# way, 4 when a refresh's parent is refused (nothing moved, no done.exit
+# written).
 #
 # The boot tests (stick/boot-modes.sh, img-speed.md §9): BKO_BOOT_WIDTH modes at
 # once (default 1, one after another; img-lanes.sh gives as many as its
@@ -57,7 +74,11 @@ set -u
 # The boot modes each image is tested in (img_inputs.py's tests digest reads these two lines).
 MODES_linux="bios uefi uefi-secureboot cdrom"
 MODES_other="bios uefi"
-P=$1
+REFRESH=""
+if [[ ${1:-} == --refresh-from ]]; then REFRESH=${2:-}; shift 2 || exit 2; fi
+P=${1:-}
+case $P in linux|freebsd|netbsd|openbsd|dragonfly|illumos|haiku) ;; *) echo "img-one: usage: img-one.sh [--refresh-from PARENT] PLATFORM" >&2; exit 2 ;; esac
+if [[ -n $REFRESH && $P != linux ]]; then echo "img-one: no refresh of $P yet (img-speed.md I4)" >&2; exit 2; fi
 W=${BKO_WORK:-/home/m/backotter-work}
 S=${S:-$W/stick}
 I=${BKO_IMG_DIR:-$W/images}
@@ -78,6 +99,27 @@ mkdir -p "$D" || exit 1
 exec 9>"$I/.lock-$P" || exit 1
 flock -n 9 || { echo "img-one: a build of $P is under way ($I/.lock-$P is held)" >&2; exit 3; }
 cd "$D" || exit 1
+dig() { python3 "$S/img_inputs.py" "$@"; }
+export S SL ISO BKO_WORK=$W
+# A refresh's parent (C4, C5), checked before anything moves, so that a refused
+# refresh leaves images/P as it was (exit 4): its set's directory, $pdir, and
+# its release image, $prel.  images/P itself is the set moved to prev-STAMP below.
+pdir="" prel="" pjson=""
+if [[ -n $REFRESH ]]; then
+    pargs=()
+    if [[ $REFRESH =~ ^[0-9a-f]{64}$ ]]; then
+        while IFS= read -r c; do pargs+=(--dir "$c"); done < <(echo "$D"; ls -d "$D"/prev-* 2>/dev/null | sort -r)
+        pargs+=(--test-sha256 "$REFRESH")
+    else
+        [[ -d $REFRESH ]] || { echo "img-one: no parent set at $REFRESH" >&2; exit 2; }
+        pargs=(--dir "$(realpath "$REFRESH")")
+    fi
+    pjson=$(dig parent --platform "$P" "${pargs[@]}" 2>"$I/.parent-$P.err") ||
+        { echo "img-one: no refresh from $REFRESH: $(sed 's/^img_inputs: //' "$I/.parent-$P.err")" >&2; rm -f "$I/.parent-$P.err"; exit 4; }
+    rm -f "$I/.parent-$P.err"
+    pj() { python3 -c 'import json, sys; d = json.loads(sys.argv[1]); print(eval(sys.argv[2]))' "$pjson" "$1"; }
+    pdir=$(pj 'd["dir"]') && prel=$(pj 'd["release"]["file"]') || { echo "img-one: can't read the parent check: $pjson" >&2; exit 4; }
+fi
 stamp=$(date -u +%Y%m%d-%H%M%S)
 if [[ -n $(find . -maxdepth 1 -mindepth 1 ! -name 'prev-*') ]]; then
     mkdir "prev-$stamp" || exit 1
@@ -86,6 +128,11 @@ fi
 mkdir test
 r=$D/result.txt; : >"$r"
 fail() { echo "$P FAIL: $*" | tee -a "$r"; echo 1 >"$D/done.exit"; exit 1; }
+if [[ -n $pdir ]]; then
+    [[ $pdir == "$(realpath "$D")" ]] && pdir=$D/prev-$stamp
+    [[ -f $pdir/provenance.json && -f $pdir/$prel ]] || fail "the parent set is gone from $pdir"
+    echo "refresh of $pdir: $(pj '"test image " + d["test"]["sha256"][:12] + ", OS epoch " + str(d["os_epoch"])')" >>"$r"
+fi
 bins() { (cd "$B/$P" && sha256sum ./*-bko) && (cd "$H/$P" && sha256sum ./bko-holt); }
 bins >bko-bin.sha256 || fail "no bko-bin/$P or holt-bin/$P"
 { head -n 1 "$B/BUILD-INFO"; echo "bko-holt from holt-bin, commit $(cut -c1-7 "$H/$P/COMMIT")"; } >>"$r"
@@ -102,8 +149,7 @@ commit_file() {
     fi
 }
 commit_file
-dig() { python3 "$S/img_inputs.py" "$@"; }
-export S SL ISO BKO_WORK=$W
+
 # The builder's identity now, against the plan's when one was given.
 plan_check() {
     local id
@@ -159,7 +205,13 @@ plan_check
 if [[ $P == linux ]]; then
     dig digest "$P" >.inputs-start.json 2>>inputs.log || fail "no input digest (inputs.log)"
     sudo -n rm -rf layer
-    sudo -n env BKO_HOLT_BIN="$H" BKO_BIN="$B" "$S/build-backotter-layer.sh" "$ISO" "$SL" layer >layer.log 2>&1 || fail "layer (layer.log)"
+    if [[ -n $pdir ]]; then
+        sudo -n env BKO_HOLT_BIN="$H" BKO_BIN="$B" BKO_DIGEST_CACHE="${BKO_DIGEST_CACHE:-$W/.img-digest-cache.json}" \
+            BKO_PARENT_PROVENANCE="$pdir/provenance.json" BKO_PARENT_REPORT="$pdir/layer-report.txt" \
+            "$S/build-backotter-layer.sh" --refresh-from "$pdir/$prel" "$ISO" "$SL" layer >layer.log 2>&1 || fail "layer refresh (layer.log)"
+    else
+        sudo -n env BKO_HOLT_BIN="$H" BKO_BIN="$B" "$S/build-backotter-layer.sh" "$ISO" "$SL" layer >layer.log 2>&1 || fail "layer (layer.log)"
+    fi
     sudo -n chown -R m:m layer; cp layer/report.txt layer-report.txt
     "$S/make-img.sh" "$ISO" "$SL" layer . >build.log 2>&1 || fail "make-img (build.log)"
     "$S/make-img.sh" --test "$ISO" "$SL" layer test >test/build.log 2>&1 || fail "make-img --test (test/build.log)"
@@ -167,6 +219,12 @@ if [[ $P == linux ]]; then
     for i in ./*.img test/*.img; do
         tree_linux "$i" "${i%/*}/os-tree.txt" || echo "tree listing: FAILED for $i" >>"$r"
     done
+    # C2 and C3: the two images against the parent's, before anything boots them.
+    if [[ -n $pdir ]]; then
+        dig refresh-check --platform "$P" --parent "$pdir" --dir "$D" >refresh-check.txt 2>&1 ||
+            fail "the refresh is refused: $(tail -n 1 refresh-check.txt | sed 's/^img_inputs: //') (refresh-check.txt)"
+        echo "refresh check: $(tr '\n' ' ' <refresh-check.txt)" >>"$r"
+    fi
     modes=$MODES_linux
 else
     if [[ $P == freebsd ]]; then
@@ -248,7 +306,7 @@ fi
 # not built from.
 rel=$(cd "$D" && ls ./*.img 2>/dev/null | head -n 1)
 if pv=$(dig provenance --platform "$P" --dir "$D" --release "${rel#./}" --test "${img#"$D"/}" \
-        --run "${BKO_IMG_RUN:-}" --start .inputs-start.json "${boots[@]}" 2>&1); then
+        --run "${BKO_IMG_RUN:-}" --start .inputs-start.json ${pdir:+--parent "$pdir"} "${boots[@]}" 2>&1); then
     echo "$pv" >>"$r"
 else
     echo "provenance: FAILED: $pv" >>"$r"

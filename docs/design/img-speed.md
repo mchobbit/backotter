@@ -176,7 +176,10 @@ the last `boot-*.out`; compress = `compress.log`. Minutes:
 
 On Linux the files a refresh rewrites, besides the binaries and the marker,
 are the layer's squashfs and `.size`, `md5sum.txt`, and the appended config
-partition; `make-img.sh` writes them all.
+partition; `make-img.sh` writes them all. And `/boot.catalog`, the El Torito
+catalog, which holds only the boot images' positions: the UEFI image is the
+appended ESP, so it moves with the layer's size (I3; the layout compares the
+catalog with those masked).
 
 The table comes from `stick/*/build.sh` (grep for `bko-holt`, `image_id`,
 `fstab`, `duid`, `uuid`). I2 must confirm it platform by platform: the
@@ -247,7 +250,9 @@ in §14.
   anywhere else fails it. The layout, partition table, boot code and ESP are
   compared byte for byte, except for the partitions the swap rewrote.
   The random ids a build makes (§1.3: GPT GUIDs, OpenBSD's DUID) are masked
-  in that comparison, because the refresh makes them anew (D2). The release
+  in that comparison, because the refresh makes them anew (D2). So are the
+  positions (start and end sectors, the El Torito catalog's load addresses),
+  since every partition after a rewritten one moves with its size (I3). The release
   and test children must also differ from each other exactly as their
   parents did, ids aside.
 - **C3. Signed objects untouched.** On Linux: the El Torito boot images, the
@@ -492,6 +497,70 @@ three binaries may differ. The base squashfs, kernel and initrd are the
 same files from slim, and their SHA-256 inside the image is checked (C3).
 Est. 1-2 min (a 69 MB squashfs, 474 files) against today's 5.4 min, and
 nothing comes from the network.
+
+*As built (I3, 2026-11-27):* `img-one.sh --refresh-from PARENT linux`, PARENT
+a set's directory or its test image's SHA-256 (the plan's `parent`), looked up
+in `images/P` and its `prev-*`. Where the code differs from the text above:
+
+- **C4 and C5 are checked before anything moves** (`img_inputs.py parent`):
+  the parent's provenance, its two images as it records them, its base less
+  the media (as the planner's `base_view`) equal to the base this build would
+  use, and its OS epoch within 14 days. A refusal exits 4 and leaves `images/P`
+  as it was. That the parent's test image passed ImgTest2 and its panel is the
+  planner's to check (the Mac's ledger); a host cannot. Step 1 is also run by
+  the layer script itself (`img_inputs.py same-base`: the ISO, slim's
+  manifest, and that PARENT_IMG is one of the provenance's two images).
+- **The binaries' checks run in the image's root**, not in the unpacked tree
+  alone, which has no libc and no `/proc`: the unpacked layer is mounted
+  read-only on slim's root (`lowerdir=layer:base`, as casper stacks them), and
+  the same functions as a full build's (`check_bin_files`, `install_bins`,
+  `check_bins_run`, `holt_api`, `check_whiteouts`, `pack_layer`) run there.
+  The layer's report keeps the parent's package and module sections.
+- **C2 and C3** are `img_inputs.py refresh-check`, after both images are listed
+  and before they boot (`refresh-check.txt`; a refusal is done.exit 1). Per
+  image, against the parent's of the same kind: the tree listing outside
+  `img-swap.tsv`; the *layout* (`img_inputs.py layout`: the MBR's entries and
+  boot code, the GPT's header and entries, each partition's bytes but for the
+  rewritten ones, and the El Torito images that `xorriso -extract_boot_images`
+  gives), with positions and ids masked; C1 (the swapped files are
+  `bko-bin.sha256`'s); and C3 first, naming the signed object (the El Torito
+  images, the ESP, `casper/vmlinuz` and `initrd`). The swap list gains a
+  `layout` tree, `/gpt/part/1` (the ISO 9660 tree, which the listing covers)
+  and `/gpt/part/3` (config.img), and `iso /boot.catalog` (§1.3). The release
+  and test siblings' rule follows from these two comparisons, ids aside; it is
+  checked as well.
+- The provenance says `mode: refresh`, names the parent (both images' SHA-256
+  and ids, its provenance's SHA-256, mode and build), and keeps its OS epoch;
+  its `os_manifest` is the parent's listing's under today's swap list (the
+  parent's own unless the list changed).
+- `/etc/hostid` (zfsutils' postinst, random) and the layer's overlay xattrs
+  come from the parent: no label is derived from them, so they are not id
+  sites (D2's collision is of labels and GPT GUIDs, which `make-img.sh` draws
+  anew). The ISO tree's file modes follow the builder's umask (`xorriso -map`):
+  a refresh by hand at umask 002 differs from a parent built under
+  `cmp-run.sh` (022) in `grub.cfg`'s mode, and C2 says so.
+- Measured on Chopin: the layer refresh 11 s and 0.5 GB of memory at its peak
+  (mksquashfs), against 4 min for a full layer; the whole refresh, boot tests
+  included, 117 s against 268 s for the full build before it (`jobs.log`), and
+  2.6 GB written against 3.8 GB. Its reservation is a full build's boot tests'
+  (width 2 at 4.5 GiB); the build alone would fit in 1 GiB.
+
+**E1 (2026-11-27, 03:53-04:00Z).** Bins X (restic-bko of rel11, rustic-bko of
+rel14, bko-holt d66770a) and Y (rel16's two, the same bko-holt: none older has
+`snapshot_layout`, which the layer requires). A (chopin) and A' (cinqcent),
+full with X; B (cinqcent), full with Y; R (chopin), a refresh of A with Y. A,
+A' and B ran within 6 minutes with the same package list. diff(A, A') was 118
+entries in each of the release and test images: the swap list, the layout's
+rewritten partitions, and in the layer the directories' overlay xattrs,
+`/etc/hostid`, `/boot/initrd.img-*`, apt's and dpkg's logs, debconf, ucf,
+ldconfig and AppStream caches. diff(B, R) was the same 118, none outside it;
+diff(A, R) only the swap list's 9 (marker, md5sum.txt, boot.catalog, the
+squashfs and its size, the two changed binaries, partitions 1 and 3). R
+passed all 4 boot modes, then ImgTest2 (`t2 ImgTest2 linux release` on
+Chopin, under a private T2_MAC_ROOT, T2_HOST_ROOT and ledger seeded from the
+real one, T2_IMAGES at R's set: the shared pin and ledger untouched) and the
++img panel, 9 of 9 PASS. A copy of R's layer with one file added
+(`/etc_1/i3-extra`) made `refresh-check` refuse it (C2, naming it).
 
 ### 4.2 FreeBSD, NetBSD, OpenBSD, DragonFly, illumos, Haiku
 

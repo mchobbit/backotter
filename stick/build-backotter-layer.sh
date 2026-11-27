@@ -3,6 +3,7 @@
 # slim-base-layer.sh: casper/ubuntu-server-minimal.backotter.squashfs.
 #
 # Usage: sudo [BKO_BIN=DIR] [BKO_HOLT_BIN=DIR] [BKO_ARCH=amd64|arm64] ./build-backotter-layer.sh SOURCE_ISO SLIM_DIR OUT_DIR
+#        sudo [BKO_BIN=DIR] [BKO_HOLT_BIN=DIR] ./build-backotter-layer.sh --refresh-from PARENT_IMG SOURCE_ISO SLIM_DIR OUT_DIR
 #        [BKO_ARCH=amd64|arm64] ./build-backotter-layer.sh --settings
 #
 # --settings prints what BKO_ARCH changes (the bin directory, the machine, and
@@ -32,6 +33,18 @@
 #       (make-img.sh then runs no binary of the layer, so an arm64 image can
 #       be made on an amd64 host)
 #   report.txt
+#
+# --refresh-from PARENT_IMG (docs/design/img-speed.md §4.1, D1): the layer is
+# PARENT_IMG's own (a BackOtter image built from the same ISO and slim, C5:
+# its provenance.json must say so, BKO_PARENT_PROVENANCE, by default the one
+# beside PARENT_IMG, or above it for a test/ copy), unpacked as root (owners,
+# xattrs and the overlay whiteouts kept), with only the three binaries
+# replaced, and nothing from the network.  The binaries get the same checks
+# as in a full build, by the same code, run in the image's root (the layer
+# read-only on the base, as casper stacks them); the manifest is the parent's,
+# and report.txt keeps the parent's package and module sections
+# (BKO_PARENT_REPORT, by default layer-report.txt beside its provenance).
+# img_inputs.py refresh-check then holds the images made from it to C2 and C3.
 #
 # The layer is the upper directory of an overlay mounted on SLIM_DIR/rootfs,
 # so it holds only what differs from the base (deletions are overlay
@@ -137,6 +150,14 @@ if [[ ${1:-} == --settings ]]; then
     declare -p BKO_ARCH BIN_OS ELF_MACHINE KERNEL_MACHINE MKSQUASHFS_OPTS
     exit 0
 fi
+REFRESH_FROM=""
+if [[ ${1:-} == --refresh-from ]]; then
+    [[ $# -eq 5 ]] || die "usage: $0 --refresh-from PARENT_IMG SOURCE_ISO SLIM_DIR OUT_DIR"
+    [[ -f $2 ]] || die "no such parent image: $2"
+    [[ $BKO_ARCH == amd64 ]] || die "--refresh-from: amd64 only (BKO_ARCH=$BKO_ARCH)"
+    REFRESH_FROM=$(realpath "$2")
+    shift 2
+fi
 [[ $# -eq 3 ]] || die "usage: $0 SOURCE_ISO SLIM_DIR OUT_DIR"
 SOURCE_ISO=$(realpath "$1")
 SLIM=$(realpath "$2")
@@ -147,10 +168,17 @@ OUT=$3
 [[ -d $here/layer ]] || die "missing $here/layer"
 [[ -f $here/$BCACHEFS_KEY ]] || die "missing $here/$BCACHEFS_KEY"
 command -v mksquashfs >/dev/null || die "missing mksquashfs"
-for f in "${ARCHIVERS[@]/#/$BKO_BIN/$BIN_OS/}" "$BKO_HOLT_BIN/$BIN_OS/bko-holt"; do
-    [[ -x $f ]] || die "no $f"
-    [[ $(elf_machine "$f") == "$ELF_MACHINE" ]] || die "$f is no $BKO_ARCH binary (BKO_ARCH=$BKO_ARCH)"
-done
+# The three binaries, for a full build and a refresh alike: each there, and an
+# ELF of BKO_ARCH's machine (that each is static shows when it runs in the
+# image's root, check_bins_run).
+check_bin_files() {
+    local f
+    for f in "${ARCHIVERS[@]/#/$BKO_BIN/$BIN_OS/}" "$BKO_HOLT_BIN/$BIN_OS/bko-holt"; do
+        [[ -x $f ]] || die "no $f"
+        [[ $(elf_machine "$f") == "$ELF_MACHINE" ]] || die "$f is no $BKO_ARCH binary (BKO_ARCH=$BKO_ARCH)"
+    done
+}
+check_bin_files
 [[ ! -f $SLIM/rootfs/usr/bin/dash || $(elf_machine "$SLIM/rootfs/usr/bin/dash") == "$ELF_MACHINE" ]] ||
     die "$SLIM's base is not $BKO_ARCH's (its /usr/bin/dash: BKO_ARCH=$BKO_ARCH)"
 # The image's one kernel, which the bcachefs module is built for (in a chroot
@@ -172,7 +200,6 @@ log() { echo "$*" | tee -a "$REPORT"; }
 work=$OUT/work
 upper=$work/upper
 root=$work/merged
-mkdir -p "$upper" "$work/overlay-work" "$root" "$work/iso"
 
 mounts=()
 cleanup() {
@@ -221,6 +248,111 @@ write_source() {
 }
 # The host part of a URI: what an apt preference's "Pin: origin" matches.
 uri_host() { local h=${1#*://}; echo "${h%%/*}"; }
+in_root() { chroot "$root" "$@"; }
+
+# --- What a full build and a refresh share -------------------------------------------
+# install_bins DIR: the three binaries into DIR/usr/local/bin, as root, mode 755.
+install_bins() {
+    local a
+    for a in "${ARCHIVERS[@]}"; do
+        install -D -o root -g root -m 755 "$BKO_BIN/$BIN_OS/$a" "$1/usr/local/bin/$a"
+    done
+    install -D -o root -g root -m 755 "$BKO_HOLT_BIN/$BIN_OS/bko-holt" "$1/usr/local/bin/bko-holt"
+}
+# Run in the image's root: a binary that needs the build host's libraries
+# (not static after all) fails here, not on a stick.
+check_bins_run() {
+    restic_v=$(in_root restic-bko version | head -n 1) && [[ $restic_v == *backotter* ]] ||
+        die "restic-bko isn't BackOtter's restic: $restic_v"
+    rustic_v=$(in_root rustic-bko --version) && [[ $rustic_v == *backotter* ]] ||
+        die "rustic-bko isn't BackOtter's rustic: $rustic_v"
+    holt_v=$(in_root bko-holt --version) && [[ $holt_v == "bko-holt "[0-9]* ]] ||
+        die "bko-holt --version says: $holt_v"
+    log ""
+    log "== Archivers, and bko-holt"
+    log "  $restic_v"
+    log "  $rustic_v"
+    log "  $holt_v"
+}
+# The dump schemas the layer's bko-holt load reads, in its own words, for the
+# marker's dump_schemas (holt-json.md's open question 11).  Run here, on a
+# host of the layer's architecture, so make-img.sh needn't run it.
+holt_api() {
+    in_root bko-holt --version --json >"$OUT/$LAYER.holt-api.json" &&
+        grep -q '"dump_schemas":\[' "$OUT/$LAYER.holt-api.json" ||
+        die "the layer's bko-holt names no dump_schemas in --version --json: refresh holt-bin (img-refresh-holt.sh) to a bko-holt at or after ae051fb"
+    # And it fetches kept LUKS2 headers (open question 12): marker.py refuses a
+    # bko-holt without that feature too, this only sooner.
+    grep -q '"features":\[[^]]*"luks_headers"' "$OUT/$LAYER.holt-api.json" ||
+        die "the layer's bko-holt lists no luks_headers in its features: refresh holt-bin (img-refresh-holt.sh) to a bko-holt at or after 3100b25"
+    # And it reads a snapshot's own layout, and leaves system.json out of the
+    # restore (open question 15).
+    grep -q '"features":\[[^]]*"snapshot_layout"' "$OUT/$LAYER.holt-api.json" ||
+        die "the layer's bko-holt lists no snapshot_layout in its features: refresh holt-bin (img-refresh-holt.sh) to a bko-holt at or after 134286f"
+}
+# Everything in the layer must be additions; overlay whiteouts are character devices.
+check_whiteouts() {
+    mapfile -t whiteouts < <(cd "$upper" && find . -type c | sed 's#^\.##' | sort)
+    unexpected=$(comm -23 <(printf '%s\n' "${whiteouts[@]}") <(printf '%s\n' "${ALLOWED_WHITEOUTS[@]}" | sort))
+    [[ -z $unexpected ]] || die "the layer would hide base files:"$'\n'"$unexpected"
+}
+pack_layer() {
+    du -sx --block-size=1 "$upper" | cut -f1 >"$OUT/$LAYER.size"
+    mksquashfs "$upper" "$OUT/$LAYER.squashfs" "${MKSQUASHFS_OPTS[@]}" >/dev/null
+    log ""
+    log "== Layer"
+    log "Files:      $(find "$upper" -type f | wc -l)"
+    log "Hides:      ${whiteouts[*]}"
+    log "Unpacked:   $(awk -v b="$(cat "$OUT/$LAYER.size")" 'BEGIN { printf "%.1f MB", b / 1048576 }')"
+    log "Squashfs:   $(awk -v b="$(stat -c %s "$OUT/$LAYER.squashfs")" 'BEGIN { printf "%.1f MB", b / 1048576 }')"
+    rm -rf --one-file-system "$work"
+}
+
+# --- A refresh (--refresh-from) --------------------------------------------------------
+if [[ -n $REFRESH_FROM ]]; then
+    pdir=$(dirname "$REFRESH_FROM")
+    [[ $(basename "$pdir") == test ]] && pdir=$(dirname "$pdir")
+    prov=${BKO_PARENT_PROVENANCE:-$pdir/provenance.json}
+    prep=${BKO_PARENT_REPORT:-$(dirname "$prov")/layer-report.txt}
+    # C5: the parent was built from this very ISO and slim.
+    python3 "$here/img_inputs.py" same-base --provenance "$prov" --iso "$SOURCE_ISO" --slim "$SLIM" \
+        --image "$REFRESH_FROM" || die "no refresh from $REFRESH_FROM"
+    mkdir -p "$work/parent" "$root"
+    xorriso -osirrox on -indev "$REFRESH_FROM" \
+        -extract "/casper/$LAYER.squashfs" "$work/parent/$LAYER.squashfs" \
+        -extract "/casper/$LAYER.manifest" "$work/parent/$LAYER.manifest" >/dev/null 2>&1 &&
+        [[ -s $work/parent/$LAYER.squashfs && -s $work/parent/$LAYER.manifest ]] ||
+        die "can't extract the layer from $REFRESH_FROM"
+    # As root: owners, xattrs and the whiteouts (character devices) as they were.
+    unsquashfs -n -d "$upper" "$work/parent/$LAYER.squashfs" >/dev/null || die "can't unpack $REFRESH_FROM's layer"
+    rm -f "$work/parent/$LAYER.squashfs"
+    for f in "${ARCHIVERS[@]}" bko-holt; do
+        [[ -f $upper/usr/local/bin/$f ]] || die "$REFRESH_FROM's layer has no /usr/local/bin/$f"
+    done
+    log "== Refreshed from $REFRESH_FROM: its layer, the binaries swapped (img-speed.md §4.1)"
+    log ""
+    if [[ -f $prep ]]; then
+        # The parent's sections up to its binaries': the packages and the module.
+        awk '/^== Archivers/ { exit } { l[n++] = $0 } END { while (n > 0 && l[n - 1] == "") n--
+             for (i = 0; i < n; i++) print l[i] }' "$prep" | tee -a "$REPORT"
+    else
+        log "(no report of the parent's layer at $prep)"
+    fi
+    install_bins "$upper"
+    # The image's root, as casper stacks it: the layer on the base, read-only.
+    mount_on -t overlay overlay -o "ro,lowerdir=$upper:$SLIM/rootfs" "$root"
+    chroot_api "$root"
+    check_bins_run
+    holt_api
+    unmount_from 0
+    trap - EXIT
+    check_whiteouts
+    cp "$work/parent/$LAYER.manifest" "$OUT/$LAYER.manifest"
+    pack_layer
+    exit 0
+fi
+
+mkdir -p "$upper" "$work/overlay-work" "$root" "$work/iso"
 
 mount_on -t overlay overlay \
     -o "lowerdir=$SLIM/rootfs,upperdir=$upper,workdir=$work/overlay-work" "$root"
@@ -232,7 +364,6 @@ had_cdrom_dir=no
 [[ -d $root/cdrom ]] && had_cdrom_dir=yes
 mkdir -p "$root/cdrom"
 mount_on --bind "$work/iso" "$root/cdrom"
-in_root() { chroot "$root" "$@"; }
 printf '#!/bin/sh\nexit 101\n' >"$root/usr/sbin/policy-rc.d"
 chmod 755 "$root/usr/sbin/policy-rc.d"
 export DEBIAN_FRONTEND=noninteractive
@@ -366,10 +497,7 @@ while IFS= read -r -d '' f; do
     [[ -x $f ]] && mode=755
     install -D -o root -g root -m "$mode" "$f" "$root/$rel"
 done < <(find "$here/layer" -type f -print0)
-for a in "${ARCHIVERS[@]}"; do
-    install -D -o root -g root -m 755 "$BKO_BIN/$BIN_OS/$a" "$root/usr/local/bin/$a"
-done
-install -D -o root -g root -m 755 "$BKO_HOLT_BIN/$BIN_OS/bko-holt" "$root/usr/local/bin/bko-holt"
+install_bins "$root"
 chmod 600 "$root/etc/netplan/50-backotter-wired.yaml"   # netplan warns otherwise
 chmod 440 "$root/etc/sudoers.d/backotter"
 in_root visudo -cq -f /etc/sudoers.d/backotter || die "sudoers file rejected"
@@ -402,35 +530,10 @@ done
 in_root bash -n /usr/lib/backotter/console
 in_root bash -n /usr/lib/backotter/remote-access
 in_root bash -n /usr/lib/backotter/key-access
-# Run in the image's root: a binary that needs the build host's libraries
-# (not static after all) fails here, not on a stick.
-restic_v=$(in_root restic-bko version | head -n 1) && [[ $restic_v == *backotter* ]] ||
-    die "restic-bko isn't BackOtter's restic: $restic_v"
-rustic_v=$(in_root rustic-bko --version) && [[ $rustic_v == *backotter* ]] ||
-    die "rustic-bko isn't BackOtter's rustic: $rustic_v"
-holt_v=$(in_root bko-holt --version) && [[ $holt_v == "bko-holt "[0-9]* ]] ||
-    die "bko-holt --version says: $holt_v"
-log ""
-log "== Archivers, and bko-holt"
-log "  $restic_v"
-log "  $rustic_v"
-log "  $holt_v"
+check_bins_run
 
 in_root dpkg-query -W -f '${binary:Package}\t${Version}\n' >"$OUT/$LAYER.manifest"
-# The dump schemas the layer's bko-holt load reads, in its own words, for the
-# marker's dump_schemas (holt-json.md's open question 11).  Run here, on a
-# host of the layer's architecture, so make-img.sh needn't run it.
-in_root bko-holt --version --json >"$OUT/$LAYER.holt-api.json" &&
-    grep -q '"dump_schemas":\[' "$OUT/$LAYER.holt-api.json" ||
-    die "the layer's bko-holt names no dump_schemas in --version --json: refresh holt-bin (img-refresh-holt.sh) to a bko-holt at or after ae051fb"
-# And it fetches kept LUKS2 headers (open question 12): marker.py refuses a
-# bko-holt without that feature too, this only sooner.
-grep -q '"features":\[[^]]*"luks_headers"' "$OUT/$LAYER.holt-api.json" ||
-    die "the layer's bko-holt lists no luks_headers in its features: refresh holt-bin (img-refresh-holt.sh) to a bko-holt at or after 3100b25"
-# And it reads a snapshot's own layout, and leaves system.json out of the
-# restore (open question 15).
-grep -q '"features":\[[^]]*"snapshot_layout"' "$OUT/$LAYER.holt-api.json" ||
-    die "the layer's bko-holt lists no snapshot_layout in its features: refresh holt-bin (img-refresh-holt.sh) to a bko-holt at or after 134286f"
+holt_api
 rm -f "$root/usr/sbin/policy-rc.d"
 # With tries, as after the module build: the merged root, like the build
 # root's /dev, can be busy for a moment once the chroots are done, and a
@@ -441,18 +544,7 @@ trap - EXIT
 # apt's caches, package lists and AppStream's catalog are just caches: drop
 # the layer's copies so the base's show through unchanged.
 rm -rf "$upper/var/cache/apt" "$upper/var/lib/apt/lists" "$upper/var/lib/swcatalog"
-# Everything else must be additions; overlay whiteouts are character devices.
-mapfile -t whiteouts < <(cd "$upper" && find . -type c | sed 's#^\.##' | sort)
-unexpected=$(comm -23 <(printf '%s\n' "${whiteouts[@]}") <(printf '%s\n' "${ALLOWED_WHITEOUTS[@]}" | sort))
-[[ -z $unexpected ]] || die "the layer would hide base files:"$'\n'"$unexpected"
+check_whiteouts
 
 # --- Pack the layer -------------------------------------------------------------------
-du -sx --block-size=1 "$upper" | cut -f1 >"$OUT/$LAYER.size"
-mksquashfs "$upper" "$OUT/$LAYER.squashfs" "${MKSQUASHFS_OPTS[@]}" >/dev/null
-log ""
-log "== Layer"
-log "Files:      $(find "$upper" -type f | wc -l)"
-log "Hides:      ${whiteouts[*]}"
-log "Unpacked:   $(awk -v b="$(cat "$OUT/$LAYER.size")" 'BEGIN { printf "%.1f MB", b / 1048576 }')"
-log "Squashfs:   $(awk -v b="$(stat -c %s "$OUT/$LAYER.squashfs")" 'BEGIN { printf "%.1f MB", b / 1048576 }')"
-rm -rf --one-file-system "$work"
+pack_layer

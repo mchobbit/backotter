@@ -4,14 +4,21 @@
 # four BSDs root; illumos stick (s2) and archive (boot_archive.gz); haiku bfs.  The OS manifest is the
 # listing without these paths; a full build's provenance checks that every path not marked optional is
 # in its listing (swap_missing).  The layout, partition table, boot code and ESP are not listed here:
-# C2 compares them byte for byte, the config partition aside.
+# C2 compares them byte for byte, the config partition aside.  Tree `layout` (img_inputs.py layout: the
+# MBR and GPT, each partition's bytes, the system area, the El Torito images, positions and ids masked)
+# names the GPT partitions a refresh rewrites, /gpt/part/N; layout rows never enter the OS manifest.
+# Linux's /boot.catalog holds only the boot images' positions, which move with the layer's size: the
+# layout compares it with those masked.
 linux	iso	/.disk/backotter.json	marker
 linux	iso	/md5sum.txt	rewritten
+linux	iso	/boot.catalog	rewritten
 linux	iso	/casper/ubuntu-server-minimal.backotter.squashfs	rewritten
 linux	iso	/casper/ubuntu-server-minimal.backotter.size	rewritten
 linux	layer	/usr/local/bin/restic-bko	bin
 linux	layer	/usr/local/bin/rustic-bko	bin
 linux	layer	/usr/local/bin/bko-holt	bin
+linux	layout	/gpt/part/1	rewritten
+linux	layout	/gpt/part/3	rewritten
 freebsd	root	/usr/local/bin/restic-bko	bin
 freebsd	root	/usr/local/bin/rustic-bko	bin	optional
 freebsd	root	/usr/local/bin/bko-holt	bin

@@ -7,7 +7,11 @@ Usage: img_inputs.py digest PLATFORM        the three digests and the input list
        img_inputs.py identity PLATFORM      the builder guest's identity, as one JSON line
        img_inputs.py lint                   every stick/ file is an input or listed as none
        img_inputs.py tree-list [--no-owner] a tar on stdin -> the tree listing on stdout
-       img_inputs.py provenance ...         images/P/provenance.json (img-one.sh's)
+       img_inputs.py provenance ...         images/P/provenance.json (img-one.sh's; --parent DIR: a refresh's)
+       img_inputs.py parent --platform P --dir DIR       C4/C5 on a refresh's parent set (JSON line, or exit 3)
+       img_inputs.py same-base --provenance F --iso I --slim S [--image IMG]   C5, build-backotter-layer.sh's
+       img_inputs.py layout [--platform P] IMG          the image's layout, as listing lines (C2, C3)
+       img_inputs.py refresh-check --platform P --parent DIR --dir DIR   C2 and C3 (exit 3 refuses)
 
 stick/img-digest.sh runs `digest`.  `digest` and `identity` read only: they
 never touch images/, and write nothing but their hash cache (BKO_DIGEST_CACHE,
@@ -41,10 +45,14 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tarfile
+import tempfile
+import uuid
 
 PLATFORMS = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos", "haiku")
 VM = PLATFORMS[1:]
@@ -100,9 +108,10 @@ def sha256_file(path):
 # --- The hash cache: big files (media, the ISO, slim, a qcow2) by (size, mtime, inode) ---
 
 class Cache:
-    def __init__(self):
+    def __init__(self, readonly=False):
         self.path = env("BKO_DIGEST_CACHE", os.path.join(work(), ".img-digest-cache.json"))
         self.dirty = False
+        self.readonly = readonly
         try:
             with open(self.path, encoding="utf-8") as f:
                 self.d = json.load(f)
@@ -125,7 +134,7 @@ class Cache:
         return s
 
     def save(self):
-        if not self.dirty:
+        if not self.dirty or self.readonly:
             return
         try:
             tmp = f"{self.path}.{os.getpid()}.tmp"
@@ -390,6 +399,17 @@ def linux_iso():
     return iso or os.path.join(work(), "server", "ubuntu-26.04.1-live-server-amd64.iso"), sl
 
 
+def slim_entry(sl, cache):
+    """slim's part of the base: its directory's name and the digest of its files' SHA-256."""
+    files = {}
+    for n in SLIM_FILES:
+        try:
+            files[n] = cache.sha256(os.path.join(sl, n))
+        except OSError:
+            files[n] = None
+    return {"path": os.path.basename(os.path.realpath(sl)), "manifest": digest_of(files)}
+
+
 def modes_of(root):
     """img-one.sh's MODES_linux / MODES_other lines: the boot modes it tests."""
     out = {}
@@ -429,13 +449,7 @@ def digest(platform, cache=None):
             base["iso"] = cache.sha256(iso)
         except OSError:
             base["iso"] = None
-        files = {}
-        for n in SLIM_FILES:
-            try:
-                files[n] = cache.sha256(os.path.join(sl, n))
-            except OSError:
-                files[n] = None
-        base["slim"] = {"path": os.path.basename(os.path.realpath(sl)), "manifest": digest_of(files)}
+        base["slim"] = slim_entry(sl, cache)
     else:
         base["media"] = media_of(platform, cache)
         base["builder"] = identity(platform, cache)
@@ -527,6 +541,7 @@ def swap_rows(platform, root=None):
 def os_manifest(listing_lines, swaps):
     """sha256 of the listing without the swap list's paths, and the swap check: each required
     swap path present in the listing."""
+    swaps = [s for s in swaps if s["tree"] != "layout"]   # the image's layout, never in a tree listing
     keyed = [(ln.split("\t")[0], ln.split("\t")[1], ln) for ln in listing_lines]
     def is_swap(tree, path):
         return any(s["tree"] == tree and fnmatch.fnmatchcase(path, s["path"]) for s in swaps)
@@ -535,6 +550,308 @@ def os_manifest(listing_lines, swaps):
                and not any(t == s["tree"] and fnmatch.fnmatchcase(p, s["path"]) for t, p, _ in keyed)]
     trees = sorted({t for t, _, _ in keyed})
     return hashlib.sha256("".join(x + "\n" for x in kept).encode()).hexdigest(), missing, trees
+
+
+# --- The image's layout (C2, C3): partition tables, boot code, the ESP, El Torito ------
+
+EFI_TYPE = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+SECTOR = 512
+
+
+def _sha(b):
+    return hashlib.sha256(b).hexdigest()
+
+
+def _range_sha(f, start, size):
+    h = hashlib.sha256()
+    f.seek(start)
+    left = size
+    while left > 0:
+        b = f.read(min(left, 1 << 20))
+        if not b:
+            break
+        h.update(b)
+        left -= len(b)
+    return h.hexdigest()
+
+
+def catalog_view(data):
+    """The El Torito boot catalog with its load RBAs (positions) zeroed: the validation entry,
+    each entry's platform, media, segment, system type and sector count stay."""
+    b = bytearray(data)
+    for i in range(32, len(b) - 31, 32):
+        if b[i] in (0x90, 0x91) or b[i:i + 32] == bytes(32):   # a section header, or nothing
+            continue
+        b[i + 8:i + 12] = bytes(4)
+    return bytes(b)
+
+
+def layout(img, rewritten=(), xorriso=None):
+    """IMG's layout as listing lines (tree `layout`, PATH, VALUE), sorted: the MBR's entries and
+    signature; the GPT's header and entries, each partition's bytes but for REWRITTEN's
+    (partition numbers); the system area (boot code) with the partition tables masked; and
+    the El Torito boot images, the catalog with its positions masked.  Positions (start
+    and end LBAs) and the random ids (GUIDs) are never listed: a refresh that rewrites one
+    partition moves those after it, and draws new ids (C2, D2)."""
+    out = []
+    with open(img, "rb") as f:
+        sysarea = bytearray(f.read(32768))
+        mbr = bytes(sysarea[:SECTOR])
+        for i in range(4):
+            e = mbr[446 + 16 * i:462 + 16 * i]
+            if len(e) == 16 and e[4]:
+                out.append(f"/mbr/part/{i + 1}\tstatus={e[0]:02x} type={e[4]:02x}")
+        out.append(f"/mbr/signature\t{mbr[510:512].hex()}")
+        sysarea[440:446] = bytes(6)      # the disk signature: an id
+        sysarea[446:510] = bytes(64)     # the MBR's entries, listed above
+        h = bytes(sysarea[SECTOR:SECTOR + 92])
+        if h[:8] == b"EFI PART":
+            rev, hsize = struct.unpack_from("<II", h, 8)
+            entries_lba, n, esize = struct.unpack_from("<QII", h, 72)
+            out.append(f"/gpt/header\trevision={rev:08x} header_size={hsize} entries={n} entry_size={esize}")
+            sysarea[SECTOR:2 * SECTOR] = bytes(SECTOR)
+            lo, hi = entries_lba * SECTOR, entries_lba * SECTOR + n * esize
+            if lo < len(sysarea):
+                sysarea[lo:min(hi, len(sysarea))] = bytes(min(hi, len(sysarea)) - lo)
+            f.seek(lo)
+            ents = f.read(n * esize)
+            for i in range(n):
+                e = ents[i * esize:(i + 1) * esize]
+                if len(e) < 128 or e[:16] == bytes(16):
+                    continue
+                typ = str(uuid.UUID(bytes_le=e[:16]))
+                first, last, attrs = struct.unpack_from("<QQQ", e, 32)
+                name = e[56:128].decode("utf-16-le", "replace").split("\x00")[0]
+                line = f"type={typ} attrs={attrs:016x} name={esc(name)}"
+                if i + 1 in rewritten:
+                    line += " rewritten"
+                else:
+                    size = (last - first + 1) * SECTOR
+                    line += f" size={size} sha256={_range_sha(f, first * SECTOR, size)}"
+                out.append(f"/gpt/part/{i + 1}\t{line}")
+        out.append(f"/system-area\tsha256={_sha(bytes(sysarea))}")
+    xorriso = xorriso or env("BKO_XORRISO", "xorriso")
+    with tempfile.TemporaryDirectory(prefix="bko-layout.") as t:
+        try:
+            r = subprocess.run([xorriso, "-osirrox", "on", "-indev", img, "-extract_boot_images", t + "/"],
+                               capture_output=True, text=True)
+        except OSError as e:
+            raise Refused(f"no xorriso to read {img}'s boot images: {e}")
+        if r.returncode != 0:
+            raise Refused(f"xorriso couldn't extract {img}'s boot images: {(r.stderr or r.stdout).strip()[-300:]}")
+        for n in sorted(os.listdir(t)):
+            if n == "systemarea.img":      # the system area, above
+                continue
+            with open(os.path.join(t, n), "rb") as g:
+                data = g.read()
+            if n == "eltorito_catalog.img":
+                data = catalog_view(data)
+            out.append(f"/eltorito/{n}\tsize={len(data)} sha256={_sha(data)}")
+    return sorted("layout\t" + x for x in out)
+
+
+def layout_rewritten(platform, root=None):
+    """The partition numbers img-swap.tsv's layout rows say a refresh rewrites."""
+    out = set()
+    for r in swap_rows(platform, root):
+        m = re.fullmatch(r"/gpt/part/(\d+)", r["path"]) if r["tree"] == "layout" else None
+        if m:
+            out.add(int(m.group(1)))
+    return out
+
+
+def signed(line):
+    """Whether a listing line (a tree's or the layout's) is a signed object of C3: the El Torito
+    boot images, the EFI partition (Canonical's shim and GRUB), casper/vmlinuz and initrd."""
+    tree, path = line.split("\t")[0], line.split("\t")[1]
+    if tree == "layout":
+        return path.startswith("/eltorito/eltorito_img") or f"type={EFI_TYPE} " in line
+    return tree == "iso" and path in ("/casper/vmlinuz", "/casper/initrd")
+
+
+# --- A refresh (§4.1, C2-C5) -------------------------------------------------------------
+
+CADENCE_DAYS = 14      # D3, as img_round.py's
+
+
+def base_view(inputs):
+    """The base inputs a refresh compares: all but the media (img_round.py's base_view)."""
+    return {k: v for k, v in (inputs or {}).items() if k != "media"}
+
+
+def same_base(prov_path, iso, slim, image=None):
+    """C5 as build-backotter-layer.sh --refresh-from checks it: the parent's provenance names
+    ISO's SHA-256 and SLIM's manifest, and (given IMAGE) IMAGE is one of its two images.  The
+    hash cache is read, never written (the script runs as root)."""
+    pv = read_json(prov_path)
+    if pv is None:
+        raise Refused(f"no provenance at {prov_path}: an image from before I1 gets a full build")
+    if pv.get("schema") != SCHEMA or pv.get("platform") != "linux":
+        raise Refused(f"{prov_path} is not a schema-{SCHEMA} provenance of a Linux image")
+    cache = Cache(readonly=True)
+    inp = (pv.get("base") or {}).get("inputs") or {}
+    bad = []
+    try:
+        got = cache.sha256(iso)
+    except OSError as e:
+        raise Refused(f"can't read {iso}: {e}")
+    if inp.get("iso") != got:
+        bad.append(f"the ISO is {got[:12]}, the parent's was {str(inp.get('iso'))[:12]}")
+    sl = slim_entry(slim, cache)
+    if (inp.get("slim") or {}).get("manifest") != sl["manifest"]:
+        bad.append(f"slim is {sl['path']} ({sl['manifest'][:12]}), the parent's was "
+                   f"{(inp.get('slim') or {}).get('path')} ({str((inp.get('slim') or {}).get('manifest'))[:12]})")
+    if image is not None:
+        try:
+            h = cache.sha256(image)
+        except OSError as e:
+            raise Refused(f"can't read {image}: {e}")
+        if h not in ((pv.get("release") or {}).get("sha256"), (pv.get("test") or {}).get("sha256")):
+            bad.append(f"{image} ({h[:12]}) is neither image of {prov_path}")
+    if bad:
+        raise Refused("not the parent's base (C5): " + "; ".join(bad) + ": build it in full")
+    return pv
+
+
+def parent_check(platform, pdir, today=None, cadence=None):
+    """C4's and C5's part a host can check, before a refresh from the set in PDIR: its
+    provenance, its two images as that records them, its base (less the media) the one that
+    would be built now, and its OS epoch within the cadence (D3).  That the test image passed
+    ImgTest2 and the +img panel is the planner's to check (img_round.py, the Mac's ledger)."""
+    prov_path = os.path.join(pdir, "provenance.json")
+    pv = read_json(prov_path)
+    if pv is None:
+        raise Refused(f"no provenance in {pdir}: an image from before I1 gets a full build")
+    if pv.get("schema") != SCHEMA or pv.get("platform") != platform:
+        raise Refused(f"{prov_path} is not a schema-{SCHEMA} provenance of {platform}")
+    cache = Cache()
+    out = {"dir": os.path.realpath(pdir), "provenance_sha256": sha256_file(prov_path), "mode": pv.get("mode")}
+    for which in ("release", "test"):
+        e = pv.get(which) or {}
+        f = os.path.join(pdir, e.get("file") or "")
+        if not e.get("file") or not os.path.isfile(f):
+            raise Refused(f"the parent's {which} image {e.get('file')} is not in {pdir}")
+        if cache.sha256(f) != e.get("sha256"):
+            raise Refused(f"the parent's {which} image {e.get('file')} is not the one its provenance records")
+        out[which] = {"file": e["file"], "sha256": e["sha256"], "image_id": e.get("image_id")}
+    now = digest(platform, cache)
+    a, b = base_view((pv.get("base") or {}).get("inputs")), base_view(now["base"]["inputs"])
+    if a != b:
+        ch = sorted(k for k in set(a) | set(b) if a.get(k) != b.get(k))
+        if "stick" in ch:
+            sa, sb = a.get("stick") or {}, b.get("stick") or {}
+            ch[ch.index("stick")] = "stick/ (" + ", ".join(sorted(k for k in set(sa) | set(sb)
+                                                                  if sa.get(k) != sb.get(k))[:6]) + ")"
+        raise Refused("the base changed since the parent (C5): " + ", ".join(ch) + ": build it in full")
+    base = pv.get("base") or {}
+    epoch = base.get("os_epoch")
+    today = today or datetime.datetime.now(datetime.timezone.utc).date()
+    try:
+        age = (today - datetime.date.fromisoformat(str(epoch))).days
+    except ValueError:
+        raise Refused("the parent's provenance has no OS epoch: build it in full")
+    cadence = CADENCE_DAYS if cadence is None else cadence
+    if age > cadence:
+        raise Refused(f"the parent's OS epoch {epoch} is {age} days old, past the cadence (D3: {cadence}): build it in full")
+    out.update(os_epoch=epoch, os_manifest=base.get("os_manifest"), age_days=age,
+               bins_digest=(pv.get("bins") or {}).get("digest"))
+    return out
+
+
+def find_parent(dirs, test_sha256=None):
+    """The parent set: the one DIR, or the first of DIRS whose provenance names TEST_SHA256 as
+    its test image."""
+    if not test_sha256:
+        if len(dirs) != 1:
+            raise Refused("one parent set, or --test-sha256 to choose among several")
+        return dirs[0]
+    for d in dirs:
+        if ((read_json(os.path.join(d, "provenance.json")) or {}).get("test") or {}).get("sha256") == test_sha256:
+            return d
+    raise Refused(f"no set here has a provenance whose test image is {test_sha256[:12]}")
+
+
+def _bad_paths(a, b, n=8):
+    """The paths of the lines in one listing and not the other, at most N, and how many."""
+    d = sorted({"\t".join(x.split("\t")[:2]) for x in set(a) ^ set(b)})
+    return d[:n], len(d)
+
+
+def _kept(lines, swaps):
+    swaps = [s for s in swaps if s["tree"] != "layout"]
+    return [ln for ln in lines
+            if not any(s["tree"] == ln.split("\t")[0] and fnmatch.fnmatchcase(ln.split("\t")[1], s["path"])
+                       for s in swaps)]
+
+
+def refresh_check(platform, pdir, cdir, layouts=None):
+    """C2 and C3 for a refresh in CDIR of the set in PDIR, release against release and test
+    against test: the OS file systems (the tree listings) equal but on the swap list, the
+    layout (partition tables, boot code, ESP, El Torito) equal but for the rewritten
+    partitions, positions and ids; no signed object changed; the swapped binaries the
+    child's bko-bin.sha256 records; and the release and test children differing from each
+    other exactly as their parents did.  LAYOUTS (tests) replaces layout().  Returns the
+    report's lines; raises Refused with the first finding."""
+    swaps = swap_rows(platform)
+    rewritten = layout_rewritten(platform)
+    pv = read_json(os.path.join(pdir, "provenance.json")) or {}
+    lay = layouts or (lambda img: layout(img, rewritten))
+    rep, sets = [], {}
+    for which, sub in (("release", ""), ("test", "test")):
+        pl = read_listing(os.path.join(pdir, sub, "os-tree.txt"))
+        cl = read_listing(os.path.join(cdir, sub, "os-tree.txt"))
+        if pl is None:
+            raise Refused(f"the parent has no {os.path.join(sub, 'os-tree.txt')}")
+        if cl is None:
+            raise Refused(f"the refresh has no {os.path.join(sub, 'os-tree.txt')} (its tree listing failed)")
+        pimg = os.path.join(pdir, (pv.get(which) or {}).get("file") or "")
+        imgs = sorted(x for x in os.listdir(os.path.join(cdir, sub)) if x.endswith(".img"))
+        if not os.path.isfile(pimg) or len(imgs) != 1:
+            raise Refused(f"no {which} image to compare (parent {pimg}, refresh {imgs})")
+        play, clay = lay(pimg), lay(os.path.join(cdir, sub, imgs[0]))
+        sets[which] = (pl + play, cl + clay)
+        # C3 first: a signed object that moved is never the swap's.
+        moved_signed = sorted({"\t".join(x.split("\t")[:2]) for x in set(pl + play) ^ set(cl + clay) if signed(x)})
+        if moved_signed:
+            raise Refused(f"C3: the {which} image's signed objects changed ({', '.join(moved_signed)}): "
+                          "a refresh can't carry that: build it in full")
+        for what, a, b in (("OS file systems", _kept(pl, swaps), _kept(cl, swaps)), ("layout", play, clay)):
+            paths, n = _bad_paths(a, b)
+            if n:
+                raise Refused(f"C2: the {which} image's {what} differ from the parent's outside the swap list, "
+                              f"{n} entr{'y' if n == 1 else 'ies'}: {', '.join(paths)}")
+        rep.append(f"{which}: {len(cl)} entries and {len(clay)} layout lines as the parent's but the swap list; "
+                   f"signed objects unchanged")
+        # C1: the swapped binaries are the ones this build recorded.
+        want = {}
+        try:
+            for line in open(os.path.join(cdir, "bko-bin.sha256"), encoding="utf-8"):
+                h, _, n = line.strip().partition("  ")
+                want[os.path.basename(n)] = h
+        except OSError:
+            raise Refused("the refresh has no bko-bin.sha256")
+        for s in swaps:
+            if s["kind"] != "bin":
+                continue
+            got = [x.split("\t") for x in cl if x.split("\t")[0] == s["tree"]
+                   and fnmatch.fnmatchcase(x.split("\t")[1], s["path"])]
+            name = os.path.basename(s["path"])
+            if not got:
+                if s["optional"]:
+                    continue
+                raise Refused(f"C1: the {which} image has no {s['tree']}:{s['path']}")
+            if any(g[6] != want.get(name) for g in got):
+                raise Refused(f"C1: the {which} image's {s['tree']}:{s['path']} is not the {name} of bko-bin.sha256")
+    # The siblings: release and test differ as their parents did (the swap list and ids aside).
+    pr, pt = sets["release"][0], sets["test"][0]
+    cr, ct = sets["release"][1], sets["test"][1]
+    def sib(r, t):
+        return set(_kept(r, swaps)) ^ set(_kept(t, swaps))
+    if sib(pr, pt) != sib(cr, ct):
+        paths, n = _bad_paths(sib(pr, pt), sib(cr, ct))
+        raise Refused(f"C2: the release and test refreshes don't differ as their parents did: {', '.join(paths)}")
+    rep.append(f"release and test differ as their parents did ({len(sib(cr, ct))} lines)")
+    return rep
 
 
 # --- Provenance (§3.1) ----------------------------------------------------------------
@@ -645,17 +962,37 @@ def provenance(a):
         k, _, v = kv.partition("=")
         boot[k] = int(v) if v.lstrip("-").isdigit() else v
     when = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    epoch, manifest, parent, mode = when[:10], trees["release"]["os_manifest"], None, "full"
+    if a.parent:
+        # A refresh (§3.1): its OS epoch and OS manifest are its parent's, which C2 has just
+        # held its listing to; and the parent is named.
+        ppath = os.path.join(a.parent, "provenance.json")
+        pv = read_json(ppath)
+        if pv is None:
+            raise Refused(f"no parent provenance at {ppath}")
+        pb = pv.get("base") or {}
+        # The parent's OS manifest under today's swap list (its own, unless the list changed).
+        plist = read_listing(os.path.join(a.parent, "os-tree.txt"))
+        pman = os_manifest(plist, swaps)[0] if plist is not None else pb.get("os_manifest")
+        if manifest != pman:
+            raise Refused(f"the refresh's OS manifest {str(manifest)[:12]} is not its parent's {str(pman)[:12]}")
+        epoch, mode = pb.get("os_epoch"), "refresh"
+        parent = {"sha256": (pv.get("release") or {}).get("sha256"), "image_id": (pv.get("release") or {}).get("image_id"),
+                  "test_sha256": (pv.get("test") or {}).get("sha256"),
+                  "test_image_id": (pv.get("test") or {}).get("image_id"),
+                  "provenance_sha256": sha256_file(ppath), "mode": pv.get("mode"),
+                  "built": pv.get("built")}
     doc = {
-        "schema": SCHEMA, "platform": a.platform, "mode": "full",
+        "schema": SCHEMA, "platform": a.platform, "mode": mode,
         "built": {"host": socket.gethostname().split(".")[0], "when": when, "run": a.run or None,
                   "stick_commit": commit, "stick_dirty": dirty},
         "release": release, "test": test,
         "base": {"digest": now["base"]["digest"], "inputs": now["base"]["inputs"],
-                 "os_epoch": when[:10], "os_manifest": trees["release"]["os_manifest"],
+                 "os_epoch": epoch, "os_manifest": manifest,
                  "trees": trees},
         "bins": dict(now["bins"], bko_bin_round=rnd, holt_commit=holt_commit, holt_code=holt_code, holt_build="vm"),
         "tests": dict(now["tests"], boot=boot, tools=dpkg_versions(TEST_TOOLS)),
-        "parent": None,
+        "parent": parent,
     }
     out = os.path.join(d, "provenance.json")
     tmp = out + ".part"
@@ -683,6 +1020,24 @@ def main(argv=None):
     p.add_argument("--run")
     p.add_argument("--start", help="the digest JSON taken at the build's start")
     p.add_argument("--boot", action="append", help="MODE=RC")
+    p.add_argument("--parent", help="a refresh's parent set (its directory)")
+    q = sub.add_parser("parent")
+    q.add_argument("--platform", required=True)
+    q.add_argument("--dir", required=True, action="append",
+                   help="the parent set; with --test-sha256, each candidate in order")
+    q.add_argument("--test-sha256", help="the first --dir whose provenance names this test image")
+    q = sub.add_parser("same-base")
+    q.add_argument("--provenance", required=True)
+    q.add_argument("--iso", required=True)
+    q.add_argument("--slim", required=True)
+    q.add_argument("--image")
+    q = sub.add_parser("layout")
+    q.add_argument("--platform", default="linux")
+    q.add_argument("image")
+    q = sub.add_parser("refresh-check")
+    q.add_argument("--platform", required=True)
+    q.add_argument("--parent", required=True)
+    q.add_argument("--dir", required=True)
     a = ap.parse_args(argv)
     try:
         if a.cmd == "digest":
@@ -703,10 +1058,21 @@ def main(argv=None):
         elif a.cmd == "tree-list":
             for line in tree_list(sys.stdin.buffer, a.no_owner):
                 sys.stdout.write(line + "\n")
+        elif a.cmd == "parent":
+            print(canon(parent_check(a.platform, find_parent(a.dir, a.test_sha256))))
+        elif a.cmd == "same-base":
+            same_base(a.provenance, a.iso, a.slim, a.image)
+        elif a.cmd == "layout":
+            for line in layout(a.image, layout_rewritten(a.platform)):
+                sys.stdout.write(line + "\n")
+        elif a.cmd == "refresh-check":
+            for line in refresh_check(a.platform, a.parent, a.dir):
+                print(line)
         elif a.cmd == "provenance":
             doc = provenance(a)
             missing = doc["base"]["trees"]["release"].get("swap_missing")
-            print(f"provenance: base {doc['base']['digest'][:12]}, bins {doc['bins']['digest'][:12]}, "
+            par = (f"a refresh of {str(doc['parent']['test_sha256'])[:12]}, " if doc["parent"] else "")
+            print(f"provenance: {par}base {doc['base']['digest'][:12]}, bins {doc['bins']['digest'][:12]}, "
                   f"tests {doc['tests']['digest'][:12]}, os_manifest {str(doc['base']['os_manifest'])[:12]}"
                   + (f", swap list missing {', '.join(missing)}" if missing else ""))
     except Refused as e:

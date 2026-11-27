@@ -508,7 +508,7 @@ class FactsScript(TI.EnvCase):
         self.assertEqual(f["images"]["haiku"]["why"], "no test image (a build moved it away)")
         self.assertEqual(f["sets"]["bko-bin"], sha("sums\n"))
         self.assertIsNone(f["sets"]["holt-bin"])
-        self.assertEqual(f["refresh"], {p: False for p in PLATS})
+        self.assertEqual(f["refresh"], {p: p == "linux" for p in PLATS})   # I3: Linux refreshes
         self.assertEqual(before, sorted(os.path.join(a, x) for a, _, fs in os.walk(imgs) for x in fs))
 
     def test_no_img_inputs_is_said(self):

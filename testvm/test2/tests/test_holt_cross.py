@@ -177,6 +177,18 @@ class E2Judges(unittest.TestCase):
         with open(d, "rb") as f:
             self.assertEqual(f.read(), before)
 
+    def test_linkface_reads_the_interface_not_the_layout(self):
+        # (OpenBSD's reorder_libs: the same library relinked in another order, other bytes)
+        a = elf(self.p("a"), needed=("libc.so.104.0",), code=b"\x90" * 64, **{k: v for k, v in self.OB.items() if k != "needed"})
+        b = elf(self.p("b"), needed=("libc.so.104.0",), code=b"\xcc" * 64, **{k: v for k, v in self.OB.items() if k != "needed"})
+        ra, oa = self.run_cmd(["linkface", a])
+        rb, ob = self.run_cmd(["linkface", b])
+        self.assertEqual((ra, rb), (0, 0))
+        self.assertEqual(oa, ob)
+        self.assertIn("needed libc.so.104.0", oa)
+        c = elf(self.p("c"), needed=("libc.so.105.0",), **{k: v for k, v in self.OB.items() if k != "needed"})
+        self.assertNotEqual(self.run_cmd(["linkface", c])[1], oa)
+
     def test_version_needs_met_by_the_sysroot(self):
         vm = elf(self.p("vm"))
         x = elf(self.p("x"))
@@ -380,8 +392,8 @@ class HoltCrossSysrootLock(unittest.TestCase):
 
 @unittest.skipUnless(FLOCK, "needs flock, sha256sum and GNU stat (the test hosts')")
 class HoltCrossTier3(unittest.TestCase):
-    """I11: openbsd and dragonfly build with the pinned nightly and -Zbuild-std (rustup has no std
-    for them), OpenBSD's with -Zcf-protection=branch, and OpenBSD's lld takes -lNAME as OpenBSD's
+    """I11: openbsd and dragonfly build with the pinned 1.94.1 and -Zbuild-std (rustup has no std
+    for them; RUSTC_BOOTSTRAP=1 for -Z on a stable toolchain), OpenBSD's with -Zcf-protection=branch, and OpenBSD's lld takes -lNAME as OpenBSD's
     ld does (a fake world: rustup, cargo, clang and ld.lld stubs, a current sysroot)."""
 
     def build(self, plat, vm, target, libs=()):
@@ -395,10 +407,10 @@ class HoltCrossTier3(unittest.TestCase):
                 f.write(text)
             os.chmod(path, mode)
         put(os.path.join(home, ".cargo", "bin", "rustup"),
-            '#!/bin/sh\ncase "$1 $4" in\n "run --print") echo /fake/sysroot ;;\n run*) echo "rustc 1.101.0-nightly (fake)" ;;\n'
+            '#!/bin/sh\ncase "$1 $4" in\n "run --print") echo /fake/sysroot ;;\n run*) echo "rustc 1.94.1 (fake)" ;;\n'
             ' component*) echo rust-src ;;\n target*) ;;\nesac\n', 0o755)
         put(os.path.join(home, ".cargo", "bin", "cargo"),
-            '#!/usr/bin/env bash\nprintf "%s\\n" "$RUSTUP_TOOLCHAIN" "$RUSTFLAGS" "$*" >"$PROBE"\n'
+            '#!/usr/bin/env bash\nprintf "%s\\n" "$RUSTUP_TOOLCHAIN" "$RUSTFLAGS" "$*" "${RUSTC_BOOTSTRAP:-}" >"$PROBE"\n'
             f'mkdir -p "$CARGO_TARGET_DIR/{target}/release"\ncp "$FAKE_ELF" "$CARGO_TARGET_DIR/{target}/release/bko-holt"\n', 0o755)
         put(os.path.join(bind, "clang"), '#!/bin/sh\necho "fake clang 1"\n', 0o755)
         put(os.path.join(bind, "ld.lld"), '#!/bin/sh\nprintf "%s\\n" "$@"\n', 0o755)
@@ -407,7 +419,8 @@ class HoltCrossTier3(unittest.TestCase):
         put(os.path.join(work, "vms", vm, "id_ed25519"), "key")
         st = os.stat(img)
         sr = os.path.join(cache, "sysroot", vm)
-        put(os.path.join(sr, ".image"), f"vms/{vm}/{vm}.qcow2\n{vm}.qcow2 {st.st_size} {int(st.st_mtime)}\n")
+        put(os.path.join(sr, ".image"), f"vms/{vm}/{vm}.qcow2\n{vm}.qcow2 {st.st_size} {int(st.st_mtime)}\n"
+            + ("digest linkface\n" if plat == "openbsd" else ""))   # (I11's digest of reorder_libs' libraries)
         put(os.path.join(sr, ".digest"), "cd" * 32 + "\n")
         for lib in libs:
             put(os.path.join(sr, "usr", "lib", lib), "")
@@ -425,14 +438,15 @@ class HoltCrossTier3(unittest.TestCase):
                            env=env, timeout=120)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         with open(probe) as f:
-            tc, flags, args = f.read().split("\n")[:3]
+            tc, flags, args, boot = f.read().split("\n")[:4]
+        self.assertEqual(boot, "1", "-Z on the stable toolchain")
         return tc, flags, args, jload_file(info), tmp
 
     def test_openbsd(self):
         tc, flags, args, info, tmp = self.build("openbsd", "openbsd8", "x86_64-unknown-openbsd",
                                                 libs=("libc.so.103.0", "libc.so.104.0", "libc.so.97.2", "libc.a",
                                                       "libc++abi.so.10.0", "libcompiler_rt.a", "libm.so"))
-        self.assertEqual(tc, "nightly-2026-10-31")
+        self.assertEqual(tc, "1.94.1")
         self.assertIn("-Zbuild-std=std,panic_unwind", args.split())
         self.assertNotIn("--offline", args.split(), "std's crates may come from crates.io")
         self.assertIn("--locked", args.split())
@@ -440,7 +454,7 @@ class HoltCrossTier3(unittest.TestCase):
         self.assertIn("--remap-path-prefix=/fake/sysroot/lib/rustlib/src/rust=/rustc/src", flags.split())
         self.assertEqual(holt_e2.shape(info["out"])["load_flags"], ["E"], "execute-only, as OpenBSD's lld links")
         self.assertEqual((info["build"], info["toolchain"], info["tier"]),
-                         ("cross:nightly-2026-10-31:openbsd8@" + "cd" * 6, "nightly-2026-10-31", 3))
+                         ("cross:1.94.1:openbsd8@" + "cd" * 6, "1.94.1", 3))
         # The linker: -lNAME is the newest libNAME.so.MAJOR.MINOR (not libc.a), by name in DT_NEEDED.
         r = subprocess.run([os.path.join(tmp, "holt-cross-ld"), "-o", "x", "-L/usr/lib", "-lc", "-lc++abi", "-lcompiler_rt", "-lm",
                             "-lnone", "-l:libc.so.97.2"], capture_output=True, text=True, timeout=30)
@@ -450,10 +464,10 @@ class HoltCrossTier3(unittest.TestCase):
 
     def test_dragonfly(self):
         tc, flags, args, info, tmp = self.build("dragonfly", "dragonfly6", "x86_64-unknown-dragonfly")
-        self.assertEqual(tc, "nightly-2026-10-31")
+        self.assertEqual(tc, "1.94.1")
         self.assertIn("-Zbuild-std=std,panic_unwind", args.split())
         self.assertNotIn("-Zcf-protection=branch", flags.split(), "DragonFly's VM build has no landing pads")
-        self.assertEqual(info["build"], "cross:nightly-2026-10-31:dragonfly6@" + "cd" * 6)
+        self.assertEqual(info["build"], "cross:1.94.1:dragonfly6@" + "cd" * 6)
         self.assertFalse(os.path.exists(os.path.join(tmp, "holt-cross-ld")))
         self.assertEqual(holt_e2.shape(info["out"])["load_flags"], ["RE"], "xonly is OpenBSD's alone")
         with open(os.path.join(tmp, "holt-cross-cc")) as f:

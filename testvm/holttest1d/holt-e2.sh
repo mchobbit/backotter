@@ -141,7 +141,8 @@ else
     tree=$(cat "$OUT/testbins/tree")
     top=$(dirname "$tree")   # TMPDIR/e2: holt/ and docs/design/holt-json.md
     vm_ssh "mkdir -p $top"
-    tar -C "$top" -cf - . | T=1200 vm_ssh "cd $top && tar -xf -"
+    # (its entries, not "./": DragonFly's tar won't extract over the existing directory)
+    (cd "$top" && tar -cf - -- *) | T=1200 vm_ssh "cd $top && tar -xf -"
     # The cross-built executables where they were built (the tests run bko-holt by that path).
     while IFS=$'\t' read -r -u 3 _ _ path; do
         vm_ssh "mkdir -p $(dirname "$path")" </dev/null

@@ -17,11 +17,15 @@
 # tier-2 three, rustup's pinned HOLT_RUST_TOOLCHAIN (default 1.94.1, the Linux
 # bko-holt's), whose std for the target is rustup's, added to that toolchain
 # when missing; for openbsd and dragonfly (tier 3: rustup has no std for
-# them), the pinned nightly HOLT_RUST_NIGHTLY (default the one
-# stick/dragonfly/build-rustic.sh builds DragonFly's rustic-bko with), its
-# rust-src added when missing, and std built with the program
+# them), HOLT_RUST_TIER3 (default the same 1.94.1), its rust-src added when
+# missing, and std built from that source with the program
 # (-Zbuild-std=std,panic_unwind; std's own crates, which rust-src's Cargo.lock
-# pins, from cargo's cache or crates.io, so no --offline there).  OpenBSD's
+# pins, from cargo's cache or crates.io, so no --offline there).  On a stable
+# toolchain -Z needs RUSTC_BOOTSTRAP=1, which this sets.  Not the nightly
+# stick/dragonfly/build-rustic.sh builds DragonFly's rustic-bko with
+# (nightly-2026-10-31): its std's OpenBSD current_exe panics (it unwraps
+# argv_size.div_exact(8) of a KERN_PROC_ARGV whose size counts the strings
+# too), which E2's step 2 found and 1.94.1's std doesn't do.  OpenBSD's
 # VM build has IBT landing pads (endbr64, and lld's GNU property note, which
 # it writes only when every object carries one), so OpenBSD's code, std's
 # included, is built with -Zcf-protection=branch (§8.2 step 0, D11).  OpenBSD's
@@ -97,8 +101,7 @@ plat_vars() {  # PLATFORM: TARGET CTARGET VM TIER TC, or exit 2
         haiku) die "haiku stays a VM build (docs/design/img-speed.md D9)" 2 ;;
         *) die "PLATFORM: freebsd, netbsd, illumos, openbsd or dragonfly" 2 ;;
     esac
-    # (stick/dragonfly/build-rustic.sh's TOOLCHAIN: rustc 1.101.0-nightly (92b5b8c87 2026-10-29))
-    if [[ $TIER == 3 ]]; then TC=${HOLT_RUST_NIGHTLY:-nightly-2026-10-31}; else TC=${HOLT_RUST_TOOLCHAIN:-1.94.1}; fi
+    if [[ $TIER == 3 ]]; then TC=${HOLT_RUST_TIER3:-1.94.1}; else TC=${HOLT_RUST_TOOLCHAIN:-1.94.1}; fi
 }
 
 # --- Where a build may land (§8.2a) ----------------------------------------------------
@@ -175,14 +178,23 @@ rustup=$HOME/.cargo/bin/rustup cargo=$HOME/.cargo/bin/cargo
 export RUSTUP_TOOLCHAIN=$TC RUSTUP_AUTO_INSTALL=0
 "$rustup" run "$TC" rustc -V >/dev/null 2>&1 ||
     die "no Rust $TC (HOLT_RUST_TOOLCHAIN): rustup toolchain install $TC --profile minimal"
-if [[ $TIER == 3 ]]; then
-    if ! "$rustup" component list --installed --toolchain "$TC" 2>/dev/null | grep -q '^rust-src'; then
-        [[ $mode == kind ]] || { echo "Adding rust-src to Rust $TC (rustup, in ~/.rustup)"
-            "$rustup" component add --toolchain "$TC" rust-src >&2; }
+have_std() {
+    if [[ $TIER == 3 ]]; then "$rustup" component list --installed --toolchain "$TC" 2>/dev/null | grep -q '^rust-src'
+    else "$rustup" target list --installed --toolchain "$TC" 2>/dev/null | grep -qxF "$TARGET"; fi
+}
+if [[ $mode != kind ]] && ! have_std; then
+    # One adder at a time on this host (two builds' rustups racing on ~/.rustup/downloads fail).
+    exec {rlk}>>/tmp/bko-holt-cross-rustup.lock; flock "$rlk"
+    if ! have_std; then
+        if [[ $TIER == 3 ]]; then
+            echo "Adding rust-src to Rust $TC (rustup, in ~/.rustup)"
+            "$rustup" component add --toolchain "$TC" rust-src >&2
+        else
+            echo "Adding $TARGET's std to Rust $TC (rustup, in ~/.rustup)"
+            "$rustup" target add --toolchain "$TC" "$TARGET" >&2
+        fi
     fi
-elif ! "$rustup" target list --installed --toolchain "$TC" 2>/dev/null | grep -qxF "$TARGET"; then
-    [[ $mode == kind ]] || { echo "Adding $TARGET's std to Rust $TC (rustup, in ~/.rustup)"
-        "$rustup" target add --toolchain "$TC" "$TARGET" >&2; }
+    exec {rlk}>&-
 fi
 rustc_version=$("$rustup" run "$TC" rustc --version)
 
@@ -197,11 +209,16 @@ image_id() {  # what the cached sysroot was made from
     printf '%s\n' "${image#"$WORK"/}"
     for f in "$image" ${base:+"$base"}; do stat -L -c "${f##*/} %s %Y" "$f"; done
     sed -n 's/.*"generation": *"\([0-9a-f]*\)".*/generation \1/p' "$WORK/vms/$VM/image-state" 2>/dev/null
+    [[ $PLATFORM != openbsd ]] || echo "digest linkface"   # (a sysroot digested before I11's linkface is made again)
 }
 sysroot_digest() {  # sha256 over the sysroot's sorted "path<TAB>sha256" lines (links as path<TAB>->target)
+    # OpenBSD's libc and libcrypto are relinked in a random order at each boot (rc's reorder_libs):
+    # by what a link reads of them (holt_e2.py linkface), so that two copies give one SYSROOT.
     (cd "$sysroot" && find . ! -type d ! -name .image ! -name .digest -print0 | LC_ALL=C sort -z |
         while IFS= read -r -d '' f; do
             if [[ -L $f ]]; then printf '%s\t->%s\n' "${f#./}" "$(readlink "$f")"
+            elif [[ $PLATFORM == openbsd && $f =~ ^\./usr/lib/lib(c|crypto)\.so\.[0-9.]+$ ]]; then
+                printf '%s\tlinkface:%s\n' "${f#./}" "$(python3 -I "$HERE/holt_e2.py" linkface "$f" | sha256sum | cut -d' ' -f1)"
             else printf '%s\t%s\n' "${f#./}" "$(sha256sum <"$f" | cut -d' ' -f1)"; fi
         done) | sha256sum | cut -d' ' -f1
 }
@@ -412,6 +429,7 @@ export "CARGO_TARGET_${t^^}_LINKER=$ccw" "CC_$t=$ccw"
 zstd=() offline=--offline flags=()
 if [[ $TIER == 3 ]]; then
     zstd=(-Zbuild-std=std,panic_unwind) offline=""
+    [[ $TC == nightly* ]] || export RUSTC_BOOTSTRAP=1   # (-Z on a stable toolchain)
     rsrc=$("$rustup" run "$TC" rustc --print sysroot)/lib/rustlib/src/rust
     flags+=("--remap-path-prefix=$rsrc=/rustc/src" "--remap-path-prefix=$HOME/.cargo/registry/src=/cargo/registry/src")
 fi

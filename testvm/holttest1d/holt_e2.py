@@ -10,6 +10,10 @@
   holt_e2.py dumps PLATFORM VM_RECORDS CROSS_RECORDS GUEST...
                                                 step 3: two HoltTest runs' dumps, by judge.py
   holt_e2.py artifacts CARGO.json               the executables a cargo --message-format=json run made
+  holt_e2.py linkface FILE                      (holt-cross.sh, openbsd) what a link against the shared
+                                                library FILE reads of it: its dynamic symbols (name,
+                                                type, binding, visibility, defined, size), versions,
+                                                SONAME and DT_NEEDED, sorted (not their addresses)
   holt_e2.py xonly FILE                         (holt-cross.sh, openbsd) mark FILE's code segment
                                                 execute-only, as OpenBSD's own lld links it
   holt_e2.py fetch DEST RUN GUEST...            (on the Mac) step 3's records: each GUEST's K of
@@ -517,6 +521,31 @@ def cmd_fetch(dest, run, guests):
     return 1 if bad else 0
 
 
+def cmd_linkface(path):
+    """OpenBSD relinks libc and libcrypto in a random object order at every boot (rc's
+    reorder_libs), so two copies of one guest's sysroot differ in those files' bytes but not in
+    what a link reads of them: this prints that part, for the sysroot's digest."""
+    e = Elf(path)
+    tags = {}
+    for t, v in e.dynamic():
+        tags.setdefault(t, []).append(v)
+    stro = e.vaddr_off(tags[DT_STRTAB][0]) if DT_STRTAB in tags else None
+    lines = []
+    if stro is not None:
+        lines += [f"needed {e.cstr(stro + v)}" for v in tags.get(DT_NEEDED, [])]
+        lines += [f"soname {e.cstr(stro + v)}" for v in tags.get(14, [])]   # DT_SONAME
+    lines += [f"verdef {v}" for v in sorted(version_defs(path))]
+    for sh in e.sh:
+        if sh[1] != 11:   # SHT_DYNSYM
+            continue
+        so = e.sh[sh[6]][4]
+        for i in range(1, sh[5] // 24):
+            name, info, other, shndx, _value, size = struct.unpack_from("<IBBHQQ", e.b, sh[4] + i * 24)
+            lines.append(f"sym {e.cstr(so + name)} {info} {other & 3} {'U' if shndx == 0 else 'D'} {size}")
+    print("\n".join(sorted(lines)))
+    return 0
+
+
 def cmd_xonly(path):
     """OpenBSD's lld links amd64 code execute-only (its LOAD is PF_X alone, where upstream lld 19,
     which refuses --execute-only on x86-64, writes PF_R|PF_X).  Each R+X LOAD whose sections are all
@@ -573,6 +602,8 @@ def main(argv):
         return cmd_api(argv[1], argv[2], *(argv[3:]))
     if len(argv) in (3, 4) and argv[0] == "tests":
         return cmd_tests(argv[1], argv[2], *(argv[3:]))
+    if len(argv) == 2 and argv[0] == "linkface":
+        return cmd_linkface(argv[1])
     if len(argv) == 2 and argv[0] == "xonly":
         return cmd_xonly(argv[1])
     if len(argv) == 2 and argv[0] == "artifacts":

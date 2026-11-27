@@ -8,7 +8,7 @@ sealed to the TPM2 whenever a TPM2 is present. It is written the way
 Vanilla OS (docs/design/vanillaos.md, A/B), Bazzite (docs/design/bazzite.md,
 immutable) and Ubuntu Core (docs/design/ubuntu-core.md, TPM-sealed FDE)
 were, and borrows Aeon's TPM notes (docs/design/aeon.md).
-**This spec awaits the user's approval.** Nothing is built. The
+**Approved by the user 2026-11-27, every recommendation (R1..R12, the last section); building waits until the user says to proceed.** Nothing is built. The
 recommendations (R1..R12) and the open questions (Q1..Q11) are at the end.
 Revised the same day after a code review and a fact review: the GNOME OS
 facts are now GNOME 51's own branch, not master's (below).
@@ -1015,7 +1015,7 @@ cell is attended, for one recovery-key boot.
 
 ## Decisions for the user
 
-**Not yet approved: this spec awaits the user's approval.**
+**Approved by the user 2026-11-27 ("Approve as recommended"): every recommendation R1..R12, and each open question takes its recommended answer. Nothing is built until the user says to proceed.**
 
 1. **R1. Which release:** **GNOME OS 51 stable** (`org.gnome.os` `51`,
    guests `gnomeos51` and `gnomeos51-tpm`) (recommended: the first

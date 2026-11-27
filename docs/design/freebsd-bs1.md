@@ -486,6 +486,20 @@ option 3 (the stick's slice) or family F in QEMU only.
 | F12 | Docs: README's FreeBSD section, bs1-all.md's FreeBSD block and rows, geli.md D7's pointer | the rows are in bs1-all.md with their estimates, and the README says how to run the lane | 0.25 d |
 | F13 | GhostBSD 26 (below) | a GhostBSD `zfs` cycle PASS on the A100 | 1.5 d |
 
+**F4 done 2026-11-27 (b7e5db3).** `other::freebsd::report_only` still
+reads the disks it leaves out (to tell which mounts are theirs), then
+drops their entries, GEOM labels, mounts, fstab entries and swaps, every
+mount below a dropped one and every nullfs mount from there, and the ZFS
+pools only they hold (label pools, zpool.cache, imported pools,
+datasets); `/` is never dropped. `--only-disk` names are checked against
+`kern.disks` (`report::unknown_freebsd_disk`); NetBSD, OpenBSD, DragonFly,
+illumos and Haiku still refuse it. `boot.efibootmgr` is kept as
+`efibootmgr -v` prints it (NVRAM is the firmware's, as on Linux), so a
+UEFI dump can still name the stick in a Boot entry's device path. Live
+check on chopin: `freebsd15` with the lane drive (vtbd1, UFS at
+`/mnt/bs1-backup`, tmpfs below, nullfs from it) and a USB stick (da0,
+mounted): the plain dump names both, `--only-disk vtbd0` neither.
+
 F1 and F4 are independent and can run side by side; F2 needs F1; F5 needs
 F4; F6 needs F1 and F5; F7 needs F6; F3 needs F6; F8 needs F2, F3 and F7.
 Nothing writes to the A100's disks, NVRAM or a real USB drive before F3,

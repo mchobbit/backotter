@@ -199,6 +199,16 @@ class Layout(unittest.TestCase):
         self.parts[0][4] = b"\xebB00T" + self.parts[0][4][5:]
         self.assertNotEqual(self.lay("b.img"), a)
 
+    def test_the_boot_codes_second_part_is_kept_and_the_superblock_is_not(self):
+        # makebootable's 1 KiB: bytes 0-511 and 676-1023, the BFS's 164-byte superblock between.
+        boot = self.parts[0][4][:512]
+        self.parts[0][4] = boot + b"S" * 164 + b"stage1, part 2"
+        a = self.lay("a.img")
+        self.parts[0][4] = boot + b"T" * 164 + b"stage1, part 2"
+        self.assertEqual(self.lay("b.img"), a)
+        self.parts[0][4] = boot + b"S" * 164 + b"stage1, part 3"
+        self.assertNotEqual(self.lay("c.img"), a)
+
     def test_config_part_is_found_in_the_mbr(self):
         p = os.path.join(self.t, "a.img")
         mbr_disk(p, self.parts)

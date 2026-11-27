@@ -1289,6 +1289,16 @@ def do_run(c):
             c["remote_env"] = [tuple(x) for x in plan.get("remote_env") or ()]
             want = list(dict.fromkeys([d["host"] for d in plan.get("deal") or () if d["units"]] + c["dests"]))
         else:
+            # A RUN names one round: its units count by provenance built.run, so a second run
+            # of the name would take a unit that failed before it moved anything (exit 3, 4 or 5)
+            # for the first run's image of that platform, built from that run's sets.
+            try:
+                ran = sorted(n for n in os.listdir(c["rdir"]) if n == "round.json" or n.endswith(".log"))
+            except OSError:
+                ran = []
+            if ran:
+                raise Refused(f"{c['run']} has run already ({', '.join(ran[:3])} in {c['rdir']}): a RUN is one "
+                              f"round; give this one a new name, or `fanout {c['run']}` to finish that one's fan-out")
             want = list(dict.fromkeys(c["builders"] + [c["ref"]] + c["dests"]))
         held, gone, busy = take_locks(c["table"], want, c["run"], c["remote_env"], c.get("lock_wait", LOCK_WAIT))
         if busy:

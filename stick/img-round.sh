@@ -29,7 +29,8 @@
 # again.  RUN/round.json and RUN/summary.txt: per platform the action, the host, the
 # minutes, done.exit and the holders whose bytes are identical.  fanout does the fan-out
 # alone for a run's plan.  Exit 0 when every unit passed and every copy is identical; 1
-# otherwise; 2 bad usage; 3 refused (a lock held, the sets differ, no reference facts).
+# otherwise; 2 bad usage; 3 refused (a lock held, the sets differ, no reference facts, or a
+# RUN that has run already: a RUN is one round).
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 case ${1:-} in

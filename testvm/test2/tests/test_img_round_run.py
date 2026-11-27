@@ -426,6 +426,21 @@ class Farm(unittest.TestCase):
         with open(self.p("cage", "work/images/.round.lock")) as f:
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
+    def test_a_name_that_ran_does_not_run_again(self):
+        # A RUN is one round: its units count by provenance built.run, so a second run of r8
+        # whose unit failed at its start (exit 3, 4, 5) would take the first run's image, built
+        # from the first run's sets, for its own.  Its fan-out may still be finished.
+        self.assertEqual(R.do_run(self.ctx(dests=[])), 0, "\n".join(self.said))
+        n = {h: len(self.calls(h)) for h in TR.BUILDERS}
+        with self.assertRaises(R.Refused) as cm:
+            R.do_run(self.ctx())
+        self.assertIn("r8 has run already", str(cm.exception))
+        self.assertEqual({h: len(self.calls(h)) for h in TR.BUILDERS}, n)
+        R.MacLock(os.path.join(self.t, "mac"), "next").release()   # the Mac's lock was let go
+        self.assertEqual(R.do_run(self.ctx(fanout_only=True)), 0, "\n".join(self.said))
+        self.assertEqual(jl(os.path.join(self.t, "mac", "r8", "fanout.json"))["fanout"]["haiku"],
+                         {h: "ok" for h in DESTS})
+
     def test_fanout_alone_after_a_run(self):
         R.do_run(self.ctx(dests=TR.BUILDERS[:1]))
         self.assertFalse(os.path.isdir(self.p("cage", "work/images/linux")) and

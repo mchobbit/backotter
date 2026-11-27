@@ -4,7 +4,8 @@ held to the same bytes and only on an MX baseline) and dbus-launch's
 ~/.dbus/session-bus file (BackShot1 debian-13-20261121-065025); and the
 inode flags of every regular file, with the btrfs.compression property the
 kernel writes for a restored compress flag (openSUSE Aeon,
-aeon-20261121-20261123-131915).  No root, no VM."""
+aeon-20261121-20261123-131915); and gcov's counter files, rewritten by a
+coverage-built program (PikaOS 4, pika-4-20261127-070909).  No root, no VM."""
 
 import base64
 import contextlib
@@ -233,6 +234,93 @@ class SlackwareChurn(unittest.TestCase):
         self.assertNotIn("Slackware", out)
         self.assertIn("changed: usr/share/mime/aliases", out)
         self.assertIn("added: etc/adjtime", out)
+
+
+class GcovChurn(unittest.TestCase):
+    """gcov's counter files, written at every run of a coverage-built
+    program to its build tree's absolute path (PikaOS 4's
+    fwupd-detect-cet at each boot, pika-4-20261127-070909): changed or
+    added as regular files, expected on any system; gone, or with another
+    mode or type, still unexpected."""
+
+    DIR = "workspace/repo-tools/run-upstream-build/fwupd-2.1.6/obj-x86_64-linux-gnu/plugins/cpu/fwupd-detect-cet.p"
+    GCDA = f"{DIR}/fu-cpu-helper-cet.c.gcda"
+
+    def setUp(self):
+        self.t = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.t)
+        self.root = self.t / "root"
+        put(self.root, self.GCDA, "adcg\x01")
+        put(self.root, f"{self.DIR}/fu-cpu-helper-cet.c.gcno", "oncg")
+        put(self.root, "usr/libexec/fwupd/fwupd-detect-cet", "\x7fELF")
+
+    def compare(self, change):
+        a = self.t / "a.tsv"
+        b = self.t / "b.tsv"
+        with mock.patch.object(M, "xattrs", lambda p: "-"):
+            M.write(str(self.root), str(a))
+            change()
+            M.write(str(self.root), str(b))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = M.compare(str(a), str(b))
+        return rc, buf.getvalue()
+
+    def rewrite(self, rel, content):
+        p = self.root / rel
+        p.write_text(content)
+        t = time.time() + 100
+        os.utime(p, (t, t))
+
+    def test_counters_rewritten_at_a_boot(self):
+        rc, out = self.compare(lambda: self.rewrite(self.GCDA, "adcg\x02 more counters"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("gcov: 1 counter files", out)
+        self.assertIn("changed: 1, of which unexpected: 0", out)
+
+    def test_new_counters_in_a_tree_already_there(self):
+        rc, out = self.compare(lambda: put(self.root, f"{self.DIR}/fu-cpu.c.gcda", "adcg"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("added: 1, of which unexpected: 0", out)
+
+    def test_new_counter_tree_is_still_added(self):
+        # The counter file is expected; the directories made for it aren't.
+        rc, out = self.compare(lambda: put(self.root, "build/obj/x.c.gcda", "adcg"))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("added: build/obj", out)
+        self.assertNotIn("added: build/obj/x.c.gcda", out)
+
+    def test_gone_counters_are_a_loss(self):
+        rc, out = self.compare(lambda: (self.root / self.GCDA).unlink())
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"missing: {self.GCDA}", out)
+
+    def test_another_mode_is_a_change(self):
+        def change():
+            self.rewrite(self.GCDA, "adcg\x02")
+            os.chmod(self.root / self.GCDA, 0o600)
+        rc, out = self.compare(change)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"changed: {self.GCDA}", out)
+
+    def test_a_link_in_its_place_is_a_change(self):
+        def change():
+            (self.root / self.GCDA).unlink()
+            os.symlink("elsewhere", self.root / self.GCDA)
+        rc, out = self.compare(change)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"changed: {self.GCDA}", out)
+
+    def test_only_gcda(self):
+        # The compile-time notes beside them and the program itself are held.
+        def change():
+            self.rewrite(f"{self.DIR}/fu-cpu-helper-cet.c.gcno", "other")
+            self.rewrite("usr/libexec/fwupd/fwupd-detect-cet", "other")
+        rc, out = self.compare(change)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"changed: {self.DIR}/fu-cpu-helper-cet.c.gcno", out)
+        self.assertIn("changed: usr/libexec/fwupd/fwupd-detect-cet", out)
+        self.assertNotIn("gcov:", out)
 
 
 SELINUX = {"security.selinux": b"system_u:object_r:usr_t:s0\x00"}

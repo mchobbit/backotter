@@ -356,6 +356,33 @@ def tn_changed_ok(rel, a, b, pats):
             and a[:3] == b[:3])
 
 
+# gcov's counter files.  A program built with coverage (gcc --coverage)
+# writes its counters at every exit to NAME.gcda at the absolute path of its
+# build tree, made on the first run: PikaOS 4's fwupd-detect-cet runs at each
+# boot and rewrites
+# workspace/repo-tools/run-upstream-build/fwupd-2.1.6/obj-x86_64-linux-gnu/
+# plugins/cpu/fwupd-detect-cet.p/fu-cpu-helper-cet.c.gcda, which no package
+# owns (pika-4-20261127-070909: the one path of the run that failed).  So
+# other bytes, size and mtime are expected anywhere, as are new counter
+# files, on any system: a .gcda is a coverage program's runtime state,
+# never anything a restore writes or its system reads.  Only as regular
+# files, a changed one of the same mode and owner; one missing after the
+# restore stays unexpected (a program rewrites its counters, it doesn't
+# remove them, so a gone file is the restore's loss), as does a new
+# directory for them.
+GCOV_EXPECTED = ["*.gcda"]
+
+
+def gcov_ok(label, rel, old, new):
+    """Whether REL's difference is a GCOV_EXPECTED counter file's: changed,
+    still a regular file of the same mode and owner, or added as one."""
+    if not any(fnmatch.fnmatch(rel, pat) for pat in GCOV_EXPECTED):
+        return False
+    if label == "changed":
+        return tn_changed_ok(rel, old[rel], new[rel], GCOV_EXPECTED)
+    return label == "added" and stat.S_ISREG(int(new[rel][0], 8))
+
+
 def kept(rel, extra=()):
     return any(fnmatch.fnmatch(rel, pat) for pat in (*KEPT, *extra))
 
@@ -857,6 +884,10 @@ def compare(old_path, new_path, reformatted=False):
     if compressed:
         print(f"btrfs: {len(compressed)} regular files with the compress flag and no {BTRFS_COMPRESSION} property came back with the flag "
               "and the property, which the kernel writes whenever the flag is set: expected")
+    gcov = sum(1 for label, paths in (("added", added), ("changed", changed)) for p in paths
+               if not kept(p, held) and gcov_ok(label, p, old, new))
+    if gcov:
+        print(f"gcov: {gcov} counter files (*.gcda) written by a coverage-built program since the backup: expected")
     bad = [f"Solus: the baseline lacks {p} (was its ESP mounted at /boot?)" for p in lacks]
     for label, paths in (("missing", missing), ("added", added), ("changed", changed), ("xattrs", relabeled)):
         unexpected = [p for p in paths if kept(p, held) and not held_ok(label, p, old, new, present)]
@@ -864,6 +895,7 @@ def compare(old_path, new_path, reformatted=False):
                        and p not in qol
                        and not any(fnmatch.fnmatch(p, pat) for pat in slk_expected + tn_expected)
                        and not (label == "changed" and tn_changed_ok(p, old[p], new[p], tn_changed))
+                       and not gcov_ok(label, p, old, new)
                        and not (reformatted and any(fnmatch.fnmatch(p, pat) for pat in REFORMAT_EXPECTED))
                        and not (label == "xattrs" and (relabeled_boot(p, old[p], new[p]) or p in compressed))]
         print(f"{label}: {len(paths)}, of which unexpected: {len(unexpected)}")

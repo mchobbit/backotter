@@ -1185,6 +1185,21 @@ class ImgRefusal(ImgCase):
         self.assertEqual(st(p, "img:linux")[0], "not-runnable")
         self.assertEqual(run.plan_exit(p, 0), 2)
 
+    def test_a_holt_row_speaks_for_the_bko_holt_it_tested(self):
+        """img-speed.md I12: a code: row that records the sha256 it tested vouches for that binary
+        alone, so a VM build's PASS never lets in a cross build of the same CODE (C1)."""
+        im = self.w.images()["netbsd"]
+        for used, state in ((im["bins"]["bko-holt"], "real"), ("0" * 64, None), (None, "real")):
+            rows = self.good()
+            hr = next(r for r in rows if r["cell"].startswith("holt:"))
+            hr.setdefault("meta", {}).setdefault("holt", {})["sha256"] = {"netbsd": used} if used else {}
+            p = self.plan_img(rows)
+            b = p.cell("img:netbsd").binaries["bko-holt"]
+            if state:
+                self.assertEqual((st(p, "img:netbsd")[0], b["state"]), ("due", state), used)
+            else:
+                self.assertEqual((st(p, "img:netbsd")[0], b["state"]), ("not-runnable", "none"))
+
     def test_gate_rows_do_not_count(self):
         im = self.w.images()["netbsd"]
         rows = [r for r in self.good() if r["cell"].startswith("holt:")]

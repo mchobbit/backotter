@@ -2043,14 +2043,17 @@ class Planner:
                 self._holt_codes[commit] = None
         return self._holt_codes[commit]
 
-    def binary_state(self, pairs):
+    def binary_state(self, pairs, row_ok=None):
         """(state, why, failing cells) of a binary from PAIRS [(family, name, value)]: none when
         no row, or when any cell's newest decisive row at that digest failed (every such cell is
-        named, sorted, so that one run can answer them all); else real, carried or carried-other."""
+        named, sorted, so that one run can answer them all); else real, carried or carried-other.
+        ROW_OK(row): the rows that may speak for it (None: all)."""
         per = {}
         for fam, n, val in pairs:
             for cell, rs in (self.bin_rows().get((fam, n, val)) or {}).items():
-                per.setdefault(cell, []).extend(rs)
+                rs = [r for r in rs if row_ok is None or row_ok(r)]
+                if rs:
+                    per.setdefault(cell, []).extend(rs)
         best, failing = None, []
         for cell, rs in sorted(per.items()):
             rs.sort(key=lambda x: (row_t(x), x.get("id", "")), reverse=True)
@@ -2191,8 +2194,18 @@ class Planner:
         else:
             osn = "omnios" if plat == "illumos" else plat
             pairs = [("stic", f"{osn}/{name}", val), ("holt", f"{plat}/{name}", val)]
+        row_ok = None
+        if name == "bko-holt":
+            # (img-speed.md I12: a code: row speaks for the binary it tested, by the sha256 it
+            # records, so that a VM build's PASS never vouches for a cross build of the same
+            # CODE, or the other way round; a row that records none speaks for the CODE, as before)
+            def row_ok(r, plat=plat, hexd=hexd):
+                if r.get("kind") != "run":   # (a carried row speaks for a code it never ran)
+                    return True
+                used = (((r.get("meta") or {}).get("holt") or {}).get("sha256") or {}).get(plat)
+                return not used or used == hexd
         if pairs is not None:
-            out["state"], w, failing = self.binary_state(pairs)
+            out["state"], w, failing = self.binary_state(pairs, row_ok)
             if out["state"] != "real":
                 out["why"] = w
         if pairs is None or out["state"] not in ("none", "carried-other"):

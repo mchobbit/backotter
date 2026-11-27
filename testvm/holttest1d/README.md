@@ -417,7 +417,9 @@ rescuer's virtio queue lost a notify (illumos): vioblk#1 bkodisk-0: avail
 idx ..., used idx ... until a read of the disk notified it again").  That
 was the cause of t2h-20261127T1312-9ca9 (`omnios58-mirror` on copland, the
 verify's listing hung, the rescuer idle, until the job's 30-minute stall),
-caught in a loop of 2026-11-27 (1 listing in about 800): a 4 KiB read the
+caught 4 times in 1786 listings of its kept disks on 2026-11-27, all on
+the M900s (copland twice, czerny, cage: 4 in 686; none in 1096 on cinqcent
+and chopin), each time a 4 KiB read the
 OmniOS r151058 vioblk driver put in its avail ring that QEMU never took
 (`virtio_queue_flush_locked` has no full fence between its store of the
 avail index and its test of the used ring's NO_NOTIFY flag), released by

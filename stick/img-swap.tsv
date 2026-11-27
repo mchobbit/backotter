@@ -36,6 +36,8 @@ openbsd	root	/usr/local/bin/restic-bko	bin
 openbsd	root	/usr/local/bin/rustic-bko	bin	optional
 openbsd	root	/usr/local/bin/bko-holt	bin
 openbsd	root	/.disk/backotter.json	marker
+openbsd	layout	/mbr/part/2	rewritten
+openbsd	layout	/mbr/part/4	rewritten
 dragonfly	root	/usr/local/bin/restic-bko	bin
 dragonfly	root	/usr/local/bin/rustic-bko	bin	optional
 dragonfly	root	/usr/local/bin/bko-holt	bin

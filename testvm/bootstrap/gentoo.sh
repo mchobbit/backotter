@@ -73,6 +73,7 @@ SOURCE_OK="sys-fs/lvm2 sys-boot/grub sys-kernel/dracut sys-kernel/installkernel 
 GENTOO_INIT='@GENTOO_INIT@'            # openrc (gentoo) or systemd (gentoo-systemd)
 GENTOO_METAL=${GENTOO_METAL:-no}       # yes: gentoo-bootstrap.sh's real machine (above)
 ROOT_MNT=${ROOT_MNT:-/mnt}             # where the new system is mounted
+GENTOO_TMP=${GENTOO_TMP:-/tmp}         # emerge -p's plans, lsinitrd's lists (gentoo-bootstrap.sh: its own)
 # GENTOO_METAL's source builds besides: linux-firmware, whose ebuild only
 # copies files (the first Thinkpad's install built it from source).
 METAL_SOURCE_OK="sys-kernel/linux-firmware"
@@ -169,10 +170,10 @@ source_builds() {
 # plan_ok EMERGE-ARGS...: emerge -p's plan of them has binary packages and
 # no source build outside SOURCE_OK.
 plan_ok() {
-    in_gentoo emerge -p "$@" >/tmp/plan
-    cat /tmp/plan
-    grep -q '^\[binary' /tmp/plan || { echo "emerge -p $* plans no binary package: no binhost?"; false; }
-    bad=$(source_builds </tmp/plan | grep -vxF -f <(printf '%s\n' $allowed) || true)
+    in_gentoo emerge -p "$@" >"$GENTOO_TMP/plan"
+    cat "$GENTOO_TMP/plan"
+    grep -q '^\[binary' "$GENTOO_TMP/plan" || { echo "emerge -p $* plans no binary package: no binhost?"; false; }
+    bad=$(source_builds <"$GENTOO_TMP/plan" | grep -vxF -f <(printf '%s\n' $allowed) || true)
     [[ -z $bad ]] || { echo "source builds outside SOURCE_OK:" $bad; false; }
 }
 if [[ $GENTOO_INIT == systemd ]]; then
@@ -291,24 +292,24 @@ image=vmlinuz; [[ $GENTOO_INIT == openrc ]] || image=kernel
 for f in $image-$kv initramfs-$kv.img; do [[ -s $ROOT_MNT/boot/$f ]] || { echo "no /boot/$f"; false; }; done
 grep -Eq "^[[:space:]]*linux[[:space:]]+(/boot)?/$image-$kv " "$ROOT_MNT/boot/grub/grub.cfg" || { echo "grub.cfg has no $kv"; false; }
 # Not grep -q: lsinitrd, cut off by its exit, would fail the pipe.
-in_gentoo lsinitrd -m "/boot/initramfs-$kv.img" >/tmp/modules
-grep -x lvm /tmp/modules >/dev/null || { echo "initramfs-$kv.img has no lvm module"; false; }
+in_gentoo lsinitrd -m "/boot/initramfs-$kv.img" >"$GENTOO_TMP/modules"
+grep -x lvm "$GENTOO_TMP/modules" >/dev/null || { echo "initramfs-$kv.img has no lvm module"; false; }
 if [[ -n $LUKS_PART ]]; then
     for m in crypt systemd; do
-        grep -x $m /tmp/modules >/dev/null || { echo "initramfs-$kv.img has no $m module"; false; }
+        grep -x $m "$GENTOO_TMP/modules" >/dev/null || { echo "initramfs-$kv.img has no $m module"; false; }
     done
-    in_gentoo lsinitrd "/boot/initramfs-$kv.img" >/tmp/files
+    in_gentoo lsinitrd "/boot/initramfs-$kv.img" >"$GENTOO_TMP/files"
     want=(' etc/crypttab' '/systemd-cryptsetup')
     [[ $GENTOO_METAL == yes ]] || want=(' etc/cryptsetup-keys.d/cryptroot.key' "${want[@]}")
     for f in "${want[@]}"; do
-        grep -E -- "$f( |$)" /tmp/files >/dev/null || { echo "initramfs-$kv.img has no${f/\// .../}"; false; }
+        grep -E -- "$f( |$)" "$GENTOO_TMP/files" >/dev/null || { echo "initramfs-$kv.img has no${f/\// .../}"; false; }
     done
     if [[ $GENTOO_METAL == yes ]]; then
         # No key in it, and its crypttab asks for the passphrase (dracut's
         # host-only copy names the device /dev/disk/by-uuid/UUID).
-        ! grep -E -- 'cryptsetup-keys\.d/' /tmp/files >/dev/null || { echo "initramfs-$kv.img has a key file"; false; }
-        in_gentoo lsinitrd -f etc/crypttab "/boot/initramfs-$kv.img" >/tmp/crypttab
-        grep -E "^cryptroot[[:space:]]+(UUID=|/dev/disk/by-uuid/)$(uuid "$LUKS_PART")[[:space:]]+none[[:space:]]" /tmp/crypttab >/dev/null ||
+        ! grep -E -- 'cryptsetup-keys\.d/' "$GENTOO_TMP/files" >/dev/null || { echo "initramfs-$kv.img has a key file"; false; }
+        in_gentoo lsinitrd -f etc/crypttab "/boot/initramfs-$kv.img" >"$GENTOO_TMP/crypttab"
+        grep -E "^cryptroot[[:space:]]+(UUID=|/dev/disk/by-uuid/)$(uuid "$LUKS_PART")[[:space:]]+none[[:space:]]" "$GENTOO_TMP/crypttab" >/dev/null ||
             { echo "initramfs-$kv.img's crypttab doesn't ask for cryptroot's passphrase"; false; }
     fi
     grep -q "^[[:space:]]*linux[[:space:]].* rd\.luks\.uuid=$(uuid "$LUKS_PART")" "$ROOT_MNT/boot/grub/grub.cfg" ||

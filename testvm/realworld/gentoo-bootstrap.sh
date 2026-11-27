@@ -17,7 +17,12 @@
 #   HOSTNAME  the installed system's host name, default thinkpad
 #   --inputs  the directory with the stage3 (default <drive>/backshot1/gentoo)
 #   --detach  in the background, past a dropped SSH connection: the log, pid
-#             and exit status in /run/bko-gentoo/ (install.log, pid, exit)
+#             and exit status in /run/bko-gentoo/ (install.log, pid, exit;
+#             exit is written last, once the log's copy is on the drive)
+#
+# One run at a time (flock on /run/bko-gentoo/lock, held by the detached
+# run itself), from / (never the caller's directory, which may be on the
+# drive).
 #
 # Takes no secrets on its command line or in its environment.  The backup
 # drive is LABEL=mybig512, wherever it is mounted (/mnt/bs1-backup, as
@@ -60,7 +65,9 @@
 # en*), systemd-resolved, sshd (root by key only: root's password is
 # locked), avahi-daemon for HOSTNAME.local; the time zone UTC.  NVRAM
 # entries labelled gentoo, or naming the wiped disk's old partitions, are
-# deleted first.
+# deleted first: those partitions' GUIDs, read before each wipe, are kept
+# in DIR/old-partuuids until a run gets that far, so a run that wiped the
+# disk and then failed leaves the earlier system's entries to the next.
 #
 # BKO_GENTOO_CMDLINE (unset on a real machine): kernel arguments before
 # rd.luks.uuid on GRUB's line.  The QEMU rehearsal sets "console=ttyS0,115200n8
@@ -149,20 +156,30 @@ HOSTNAME_=${pos[1]:-thinkpad}
 CMDLINE=${BKO_GENTOO_CMDLINE:-}
 [[ $CMDLINE =~ ^[A-Za-z0-9=,._:/\ -]*$ ]] || die "BKO_GENTOO_CMDLINE has characters a kernel argument here can't"
 [[ -z $inputs || $inputs == /* ]] || die "--inputs takes an absolute path"
-HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+SELF=$(readlink -f "$0")
+HERE=$(dirname "$SELF")
 GENTOO_SH=$HERE/gentoo.sh
+# Not the caller's directory: on the drive, it would keep it busy all run.
+cd /
+
+# take_lock: $STATE/lock, flock'd on fd 9 for the whole run: one install at
+# a time, and no second one truncates a running one's log.  The detached
+# run inherits its parent's fd 9 (the same lock) and takes it again.
+take_lock() {
+    command -v flock >/dev/null || die "the stick has no flock"
+    [[ /proc/$$/fd/9 -ef $STATE/lock ]] || exec 9>"$STATE/lock"
+    flock -n 9 || die "already running as pid $(cat "$STATE/pid" 2>/dev/null || echo '?') ($STATE/lock is held)"
+}
 
 # --- Detaching ------------------------------------------------------------------------
 if [[ $detach == yes ]]; then
     [[ $EUID -eq 0 ]] || die "run it as root"
     [[ -f $GENTOO_SH ]] || die "no $GENTOO_SH (testvm/bootstrap/gentoo.sh) beside this script"
     mkdir -p "$STATE"
-    if [[ -s $STATE/pid ]] && kill -0 "$(cat "$STATE/pid")" 2>/dev/null; then
-        die "already running as pid $(cat "$STATE/pid")"
-    fi
+    take_lock
     rm -f "$STATE/exit" "$STATE/pid"
     # Copies in RAM, so the run doesn't read scripts replaced under it.
-    cp "$(readlink -f "$0")" "$STATE/gentoo-bootstrap.sh"
+    cp "$SELF" "$STATE/gentoo-bootstrap.sh"
     cp "$GENTOO_SH" "$STATE/gentoo.sh"
     BKO_GENTOO_LOGGED=1 setsid nohup bash "$STATE/gentoo-bootstrap.sh" "${args[@]}" >"$STATE/install.log" 2>&1 </dev/null &
     sleep 2      # the run writes its own pid
@@ -172,19 +189,20 @@ fi
 
 [[ $EUID -eq 0 ]] || die "run it as root"
 mkdir -p "$STATE"
-if [[ -s $STATE/pid && $(cat "$STATE/pid") != "$$" ]] && kill -0 "$(cat "$STATE/pid")" 2>/dev/null; then
-    die "already running as pid $(cat "$STATE/pid")"
-fi
+take_lock      # before the trap: a refused run cleans up nothing of the other's
 echo $$ >"$STATE/pid"
 rm -f "$STATE/exit"
 if [[ -z ${BKO_GENTOO_LOGGED:-} ]]; then
     : >"$STATE/install.log"
-    exec > >(tee -a "$STATE/install.log") 2>&1
+    # tee lives on past a dropped SSH connection (SIGHUP ignored, a dead
+    # terminal only warned of), so on_exit's cleanup isn't cut short by a
+    # SIGPIPE, and the log keeps all of it.
+    exec > >(trap '' HUP PIPE; exec tee --output-error=warn -a "$STATE/install.log") 2>&1
 fi
 unset BKO_GENTOO_LOGGED
 
 # --- Cleanup: what a failed run leaves, undone; also the first thing a rerun does ------
-DISK="" LUKS_PART="" drive=""
+DISK="" LUKS_PART="" drive="" GENTOO_TMP=""
 # chroot_procs: processes whose root is the new system (gpg's agents, a
 # killed emerge's children): ours, by where they are, never by name.
 chroot_procs() {
@@ -229,16 +247,21 @@ release_disk() {
 on_exit() {
     local rc=$?
     set +e
+    # The cleanup runs to its end: a second signal, or a write to a gone
+    # terminal, doesn't stop it halfway.
+    trap '' HUP PIPE INT TERM
     unmount_all
     release_disk
     rmdir "$MNT" 2>/dev/null
-    echo "$rc" >"$STATE/exit"
+    [[ -z $GENTOO_TMP ]] || rm -rf "$GENTOO_TMP"
+    if [[ $rc -ne 0 ]]; then echo "gentoo-bootstrap: FAILED (exit $rc)" >&2; fi
     # The log onto the drive too: /run is gone at the next boot.
     if [[ -n $inputs && -n $drive && -d $inputs && -s $STATE/install.log ]]; then
         cp "$STATE/install.log" "$inputs/install-$(date -u +%Y%m%d-%H%M%S)-exit$rc.log" 2>/dev/null
         sync
     fi
-    if [[ $rc -ne 0 ]]; then echo "gentoo-bootstrap: FAILED (exit $rc)" >&2; fi
+    # Last, and whole: whoever waits for it may unplug the drive at once.
+    echo "$rc" >"$STATE/exit.tmp" && mv -f "$STATE/exit.tmp" "$STATE/exit"
 }
 trap on_exit EXIT
 
@@ -298,8 +321,14 @@ mounted=$(lsblk -lnpo NAME,MOUNTPOINTS "$DISK" | awk 'NF > 1' || true)
 ! [[ -e /dev/mapper/$MAP ]] || die "/dev/mapper/$MAP is open, and not on $DISK"
 say "erasing $DISK"
 lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL "$DISK"
-# The old partitions' GUIDs: firmware entries that name them go below.
-old_partuuids=$(lsblk -rno PARTUUID "$DISK" | awk 'NF' | tr 'A-F' 'a-f' | paste -sd ' ' -)
+# The old partitions' GUIDs: firmware entries that name them go below.  On
+# the drive, added to and synced before the wipe (/run is gone if the
+# stick reboots): a run that wiped the disk and failed has recorded the
+# earlier system's, which the next run's wipe no longer shows.
+ledger=$inputs/old-partuuids
+lsblk -rno PARTUUID "$DISK" | awk 'NF' | tr 'A-F' 'a-f' >>"$ledger" || die "can't record $DISK's partition GUIDs in $ledger"
+sync "$ledger" || die "can't sync $ledger"
+old_partuuids=$(grep -E '^[0-9a-f-]+$' "$ledger" | sort -u | paste -sd ' ' - || true)
 lsblk -lnpo NAME "$DISK" | sort -r | xargs -r wipefs -aq
 # The first 4 MiB and the last 1 MiB (the old GPT's backup, signatures).
 sectors=$(blockdev --getsz "$DISK")
@@ -349,6 +378,7 @@ SERIAL_CMDLINE=$CMDLINE
 BOOT_PART="" HOME_PART=""
 STAGE3=$inputs/$STAGE3
 GENTOO_METAL=yes
+GENTOO_TMP=$STATE/tmp          # emerge -p's plans, lsinitrd's lists: not the stick's /tmp
 }
 mkfs_root() { mkfs.ext4 -q -F "$1"; }
 mount_boot() {
@@ -378,6 +408,8 @@ mount -t tmpfs -o size=1M,mode=0755 bko-gentoo "$MNT"
 # into every service's own mount namespace (pika-bootstrap.sh's first run).
 mount --make-private "$MNT"
 mkdir "$ROOT_MNT"
+rm -rf "$GENTOO_TMP"
+mkdir -m 700 "$GENTOO_TMP"
 sed "s/@GENTOO_INIT@/systemd/" "$GENTOO_SH" >"$STATE/gentoo-filled.sh"
 ! grep -n '@[A-Z_][A-Z_]*@' "$STATE/gentoo-filled.sh" || die "gentoo.sh has placeholders left unfilled"
 say "gentoo.sh (GENTOO_INIT=systemd, GENTOO_METAL=yes) into $ROOT_MNT"
@@ -441,6 +473,9 @@ esp_guid=$(lsblk -no PARTUUID "$ESP_PART" | tr 'A-F' 'a-f')
 mline=$(grep -E "^Boot$main" <<<"$ev" | tr 'A-F' 'a-f' || true)
 [[ -n $esp_guid && $mline == *"$esp_guid"* ]] || die "Boot$main doesn't name the ESP ($esp_guid)"
 [[ $(awk '/^BootOrder:/ { print $2 }' <<<"$ev") == "$main"* ]] || die "BootOrder doesn't start with $main"
+# Their entries are gone: the next run records this disk's own.
+rm -f "$ledger"
+sync
 
 say "Gentoo is on $DISK: $BOOT_LABEL is Boot$main, first in BootOrder; $MAP and $VG are closed"
 echo "At the first boot, systemd asks for $MAP's passphrase on the screen (the US layout);"

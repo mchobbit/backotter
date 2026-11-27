@@ -11,10 +11,13 @@ text against a fake lsblk and findmnt.  Nothing here needs more than bash
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -346,6 +349,117 @@ class GentooSh(unittest.TestCase):
                 self.assertEqual(conf.splitlines()[1:3], [
                     "# BackOtter's gentoo test guest (testvm/bootstrap/gentoo.sh), as the",
                     "# BackShot1 Thinkpad: binary packages first, UEFI."])
+
+
+class Lifecycle(unittest.TestCase):
+    """The run's own housekeeping, from the script's text: one run at a
+    time, the exit file last, the old partitions' GUIDs kept on the drive
+    across a failed run, out of the caller's directory, no fixed names in
+    the stick's /tmp."""
+
+    def before(self, a, b, text=TEXT):
+        i, j = text.find(a), text.find(b)
+        self.assertGreaterEqual(i, 0, a)
+        self.assertGreaterEqual(j, 0, b)
+        self.assertLess(i, j, f"{a!r} isn't before {b!r}")
+
+    def test_exit_file_last(self):
+        body = function("on_exit")
+        self.before('cp "$STATE/install.log"', 'mv -f "$STATE/exit.tmp" "$STATE/exit"', body)
+        self.before("sync", 'mv -f "$STATE/exit.tmp"', body)
+        self.assertNotIn('>"$STATE/exit"', body)
+        self.before("trap '' HUP PIPE INT TERM", "unmount_all", body)
+
+    def test_tee_outlives_a_dropped_connection(self):
+        self.assertIn("exec > >(trap '' HUP PIPE; exec tee --output-error=warn -a \"$STATE/install.log\") 2>&1", TEXT)
+
+    def test_lock_before_anything_is_touched(self):
+        detach = TEXT[TEXT.index('if [[ $detach == yes ]]; then'):]
+        self.before("take_lock", 'rm -f "$STATE/exit" "$STATE/pid"', detach)
+        self.before("take_lock", '>"$STATE/install.log" 2>&1 </dev/null &', detach)
+        rest = TEXT[TEXT.index('[[ $EUID -eq 0 ]] || die "run it as root"\nmkdir -p "$STATE"'):]
+        self.before("take_lock", 'echo $$ >"$STATE/pid"', rest)
+        self.before("take_lock", ': >"$STATE/install.log"', rest)
+        self.before("take_lock", "trap on_exit EXIT", rest)
+        self.assertNotIn("kill -0", TEXT)
+
+    def test_out_of_the_callers_directory(self):
+        self.before("\ncd /\n", "if [[ $detach == yes ]]; then")
+        self.before("SELF=$(readlink -f \"$0\")", "\ncd /\n")
+
+    def test_old_partuuids_kept_across_a_failed_run(self):
+        self.before('>>"$ledger"', "xargs -r wipefs -aq")
+        self.before('sync "$ledger"', "xargs -r wipefs -aq")
+        self.before("old_partuuids=$(grep", "xargs -r wipefs -aq")
+        self.assertRegex(TEXT, r'(?m)^ledger=\$inputs/old-partuuids$')
+        # Dropped only once the entries are gone and gentoo is first.
+        self.before("BootOrder doesn't start with", 'rm -f "$ledger"')
+
+    def test_no_fixed_names_in_tmp(self):
+        g = GENTOO_SH.read_text()
+        self.assertNotIn("/tmp/", g)
+        self.assertIn("GENTOO_TMP=${GENTOO_TMP:-/tmp}", g)
+        self.assertRegex(TEXT, r"(?m)^GENTOO_TMP=\$STATE/tmp\b")
+        self.assertIn('[[ -z $GENTOO_TMP ]] || rm -rf "$GENTOO_TMP"', function("on_exit"))
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "GNU tee")
+    def test_cleanup_survives_a_dropped_connection(self):
+        """Without --detach, SSH gone: SIGHUP to the whole group and the
+        terminal's end of the pipe closed; the script's own tee line keeps
+        logging, and a cleanup like on_exit's runs to its end, all of it in
+        the log."""
+        line = re.search(r"^    (exec > >\(.*\) 2>&1)$", TEXT, re.M).group(1)
+        with tempfile.TemporaryDirectory() as d:
+            script = (f"STATE={d}\n{line}\n"
+                      "on_exit() { trap '' HUP PIPE INT TERM; sleep 1; for i in $(seq 300); do echo cleanup-$i; done; "
+                      "echo done >\"$STATE/finished\"; }\n"
+                      "trap on_exit EXIT\necho started\nsleep 60\n")
+            p = subprocess.Popen([BASH, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 start_new_session=True)
+            try:
+                self.assertEqual(p.stdout.readline().strip(), b"started")
+                p.stdout.close()
+                os.killpg(p.pid, signal.SIGHUP)
+                p.wait(timeout=30)
+            finally:
+                if p.poll() is None:
+                    p.kill()
+            log = Path(d, "install.log")
+            for _ in range(100):
+                if "cleanup-300\n" in log.read_text():
+                    break
+                time.sleep(0.1)
+            self.assertTrue(Path(d, "finished").exists())
+            self.assertIn("cleanup-300\n", log.read_text())
+
+    @unittest.skipUnless(os.path.isdir("/proc/self/fd") and shutil.which("flock"), "Linux, with flock")
+    def test_take_lock(self):
+        """A second run is refused while the first holds the lock; the
+        detached run, with its parent's fd 9, takes it again."""
+        with tempfile.TemporaryDirectory() as d:
+            body = function("die") + function("take_lock")
+            env = {"PATH": os.environ["PATH"], "LC_ALL": "C"}
+            first = subprocess.Popen([BASH, "-c", f'STATE={d}\n{body}take_lock\necho 1 >{d}/pid\necho held\nsleep 30'],
+                                     stdout=subprocess.PIPE, text=True, env=env)
+            try:
+                self.assertEqual(first.stdout.readline().strip(), "held")
+                r = subprocess.run([BASH, "-c", f"STATE={d}\n{body}take_lock\necho took"],
+                                   capture_output=True, text=True, env=env, timeout=30)
+                self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                self.assertIn("already running as pid 1", r.stderr)
+            finally:
+                first.kill()
+                first.wait()
+            # The parent's lock, inherited by its child: the child takes it.
+            script = (f"export STATE={d}\n{body}take_lock\nexport -f die take_lock\n"
+                      f"{BASH} -c 'take_lock && echo child-took'")
+            r = subprocess.run([BASH, "-c", script], capture_output=True, text=True, env=env, timeout=30)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("child-took", r.stdout)
+            # Free again once both are gone.
+            r = subprocess.run([BASH, "-c", f"STATE={d}\n{body}take_lock\necho took"],
+                               capture_output=True, text=True, env=env, timeout=30)
+            self.assertEqual(r.returncode, 0, r.stderr)
 
 
 if __name__ == "__main__":

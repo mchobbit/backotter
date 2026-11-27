@@ -747,10 +747,15 @@ passphrase is read only by `cryptsetup --key-file` from the drive.  Wait
 for `/run/bko-gentoo/exit` (a dropped SSH connection doesn't stop the
 run): success is `0` and the last line of `/run/bko-gentoo/install.log`
 `BKO-GENTOO-INSTALL-OK`; the log is also copied to
-`backshot1/gentoo/install-DATE-exitRC.log`.  A failed run can just be run
-again: every run starts from the wipe.  It deletes NVRAM entries labelled
-`gentoo` or naming the wiped disk's old partitions, and leaves `gentoo`
-first in BootOrder.
+`backshot1/gentoo/install-DATE-exitRC.log` (before the exit file is
+written: once it is there, the drive can come out).  One run at a time:
+a second one is refused while the first holds `/run/bko-gentoo/lock`.  A
+failed run can just be run again: every run starts from the wipe.  It
+deletes NVRAM entries labelled `gentoo` or naming the wiped disk's old
+partitions, and leaves `gentoo` first in BootOrder.  Those partitions'
+GUIDs are kept in `backshot1/gentoo/old-partuuids` from before the wipe
+until a run gets that far, so a run that wiped the disk and then failed
+still leaves the earlier system's entries to the next run to delete.
 
 **The person types the passphrase once**, at the first boot: systemd asks
 `Please enter passphrase for disk cryptroot` on the screen, the passphrase
@@ -773,7 +778,11 @@ build): the install took 1105 s with 4 CPUs (gentoo.sh 1073 s, the
 systemd build most of it; the tree of 2026-11-27, gentoo-kernel-bin
 6.18.65), the typed boot answered SSH 41 s after power-on, the drive boot
 20 s with nothing typed (`UNLOCK=drive`), the boot without the drive 71 s
-(asked after the wait).  Not yet run on the A100.
+(asked after the wait).  Again PASS after the review's fixes, the same
+day on Chopin, with the new checks: a second `--detach` refused while
+the first ran and the log left whole, a seeded `oldos` entry (its GUID
+only in `old-partuuids`) deleted and the file dropped, no scratch left in
+`/run/bko-gentoo` or `/tmp` (install 1162 s).  Not yet run on the A100.
 
 ## BigLinux: Timeshift's snapshots and systemd-swap
 

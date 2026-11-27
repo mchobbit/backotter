@@ -448,7 +448,11 @@ initramfs check looks for crypttab's `none` instead of the key).  GRUB is
 installed `--no-nvram` as for the guest; the script then makes the NVRAM
 entry `gentoo` (`\EFI\gentoo\grubx64.efi`) with the stick's efibootmgr,
 after deleting entries labelled `gentoo` or naming the wiped disk's old
-partitions.  `SOURCE_OK` and its sed are unchanged (test_vm_update.py
+partitions (their GUIDs kept on the drive in `backshot1/gentoo/old-partuuids`
+from before each wipe until a run gets that far, so a run that wiped and
+failed leaves the earlier system's entries to the next).  gentoo.sh's
+scratch files (emerge's plans, lsinitrd's lists) go in `$GENTOO_TMP`,
+`/tmp` for the guests and `/run/bko-gentoo/tmp` here.  `SOURCE_OK` and its sed are unchanged (test_vm_update.py
 still checks them against in-guest.sh).
 
 **Inputs.**  Pinned and staged on `mybig512`'s `backshot1/gentoo/`: the
@@ -503,6 +507,13 @@ image `20261126.d66770a`; the tree of `Fri, 27 Nov 2026 00:45:00 +0000`):
   path the rehearsal doesn't take, rebuilt with the new gentoo.sh the same
   day (`BACKOTTER-INSTALL-OK`, ping setuid root as before); the image was
   deleted, not published.
+- **The review's fixes** (the same day): a flock'd `/run/bko-gentoo/lock`
+  (one run at a time; the detached run holds its parent's), the exit file
+  written last (after the log's copy on the drive), the old partitions'
+  GUIDs kept on the drive across a failed run (`old-partuuids`), the run
+  in `/`, tee and the cleanup past a dropped SSH connection, gentoo.sh's
+  scratch in `$GENTOO_TMP`.  The rehearsal, with checks for each, PASSED
+  again on Chopin (install 1162 s; the same tree and kernel).
 
 ## Pieces to build (ordered, est.)
 

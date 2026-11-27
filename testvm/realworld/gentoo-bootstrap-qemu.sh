@@ -28,13 +28,18 @@
 #                   gentoo-bootstrap.sh --detach BKOGENTOOTEST gentootest
 #                 (BKO_GENTOO_CMDLINE puts the kernel's log on the serial
 #                 port, the prompt still on the screen), waited for by its
-#                 exit file.  Meanwhile a watcher on the stick looks for the
+#                 exit file.  Before it, a failed earlier run's leftover:
+#                 an NVRAM entry oldos for a partition since wiped, its
+#                 GUID only in the drive's old-partuuids (the run must
+#                 delete it, and drop the file); a second --detach while
+#                 it runs must be refused, truncating nothing.  Meanwhile a watcher on the stick looks for the
 #                 passphrase in every process's command line and
 #                 environment.  Then the teardown: nothing of the disk
 #                 mounted or open (cryptroot, vg0), nothing of the chroot in
 #                 any process's mount namespace, the volume LUKS2, crypttab
 #                 "cryptroot UUID=... none luks,discard", the passphrase in
-#                 neither log, efibootmgr's gentoo entry, the drive unmounts
+#                 neither log, no scratch left in /run or /tmp,
+#                 efibootmgr's gentoo entry, no oldos, the drive unmounts
 #   gentoo-typed  the disk and the drive, from NVRAM, the passphrase typed
 #                 blind on the keyboard through QEMU's monitor
 #                 (omarchy/type-luks-passphrase.py, more than once): the
@@ -70,12 +75,12 @@ SERIAL=BKOGENTOOTEST HOST=gentootest
 BIG=mybig512                    # bs1.conf's BACKUP_LABEL, as the Thinkpad's
 B=/mnt/bs1-backup               # where the stick has it, as backshot1's $DRIVE
 G=$B/backshot1/gentoo
+die() { echo "gentoo-bootstrap-qemu: $*" >&2; exit 1; }
 STAGE3=$(sed -n 's/^STAGE3=\(stage3-.*\.tar\.xz\)$/\1/p' "$HERE/gentoo-bootstrap.sh")
 [[ $STAGE3 == stage3-amd64-systemd-*.tar.xz ]] || die "no STAGE3 in gentoo-bootstrap.sh"
 INSTALL_TIMEOUT=${INSTALL_TIMEOUT:-5400}
 export PATH=$PATH:/usr/sbin:/sbin
 fails=()
-die() { echo "gentoo-bootstrap-qemu: $*" >&2; exit 1; }
 check() { if "${@:2}"; then echo "  ok    $1"; else echo "  FAIL  $1"; fails+=("$1"); fi; }
 
 mkdir -p "$W"
@@ -211,11 +216,35 @@ while [ ! -e "$3" ]; do
     sleep 0.2
 done
 SH
+# A failed earlier run's leftover, as on the Thinkpad after one: an NVRAM
+# entry (oldos) for a partition that run's wipe took away, whose GUID only
+# the drive's old-partuuids still has.
+put /dev/stdin /run/bko-seed-oldos.sh 755 <<'SH'
+#!/bin/bash
+# seed-oldos.sh LEDGER: a partition, its NVRAM entry, the disk wiped, the GUID in LEDGER.
+set -euo pipefail
+d=/dev/nvme0n1
+sfdisk -q "$d" <<<'label: gpt
+size=64MiB, type=uefi'
+udevadm settle
+for _ in $(seq 10); do [ -b "${d}p1" ] && break; sleep 1; done
+u=$(lsblk -no PARTUUID "${d}p1" | tr A-F a-f)
+[ -n "$u" ]
+efibootmgr -q -c -d "$d" -p 1 -L oldos -l '\EFI\old\x.efi'
+wipefs -aq "$d"
+blockdev --rereadpt "$d" || true
+udevadm settle
+echo "$u" >>"$1"
+SH
+on backotter "sudo -n bash /run/bko-seed-oldos.sh $G/old-partuuids && sudo -n efibootmgr | grep -q oldos && sudo -n cat $G/old-partuuids" >"$W/seed-oldos.txt" 2>&1 ||
+    die "couldn't seed the oldos NVRAM entry: $(cat "$W/seed-oldos.txt")"
 t0=$SECONDS
 on backotter "sudo -n bash -c 'rm -f /run/bko-pw-hits /run/bko-pw-stop && setsid -f sh /run/bko-pw-watch.sh $B/backshot1/keys/disk-passphrase /run/bko-pw-hits /run/bko-pw-stop </dev/null >/dev/null 2>&1 &&
     cd / && BKO_GENTOO_CMDLINE=\"console=ttyS0,115200n8 console=tty0\" bash $G/gentoo-bootstrap.sh --detach $SERIAL $HOST'" >"$W/detach.txt" 2>&1 || true
 cat "$W/detach.txt"
 check "--detach returns at once, naming the run's pid" grep -qE '^detached: pid [0-9]+,' "$W/detach.txt"
+on backotter "sudo -n bash $G/gentoo-bootstrap.sh --detach $SERIAL $HOST" >"$W/detach-2.txt" 2>&1 || true
+check "a second --detach is refused while the first runs: $(tr '\n' ' ' <"$W/detach-2.txt")" grep -q 'already running as pid' "$W/detach-2.txt"
 rc=
 while ((SECONDS - t0 < INSTALL_TIMEOUT)); do
     sleep 30
@@ -245,11 +274,18 @@ check "the watcher ran, and stopped" on backotter 'test -e /run/bko-pw-stop && !
 unlogged() { ! grep -qaF -f "$PASS" "$W/bootstrap.log" &&
              on backotter "sudo -n sh -c 'ls $G/install-*-exit0.log >/dev/null && ! grep -qaF -f $B/backshot1/keys/disk-passphrase $G/install-*.log'"; }
 check "the passphrase is in neither log (the stick's, the drive's copy)" unlogged
+check "the log is whole (the refused second run truncated nothing)" sh -c "head -n 1 '$W/bootstrap.log' | grep -qE '^== [0-9:]+ stick: kernel '"
+check "no scratch of gentoo.sh's is left (the run's tmp, the stick's /tmp)" \
+    on backotter 'test ! -e /run/bko-gentoo/tmp && ! ls /tmp/plan /tmp/modules /tmp/files /tmp/crypttab 2>/dev/null | grep -q .'
+check "the earlier run's leftover entry, oldos, was deleted (by its GUID in old-partuuids)" \
+    grep -qE '^deleting Boot[0-9A-F]{4} \(oldos\)$' "$W/bootstrap.log"
+check "old-partuuids is gone from the drive, its entries with it" on backotter "test ! -e $G/old-partuuids"
 on backotter 'sudo -n efibootmgr -v' >"$W/efibootmgr-rescue.txt" 2>&1 || true
 check "an NVRAM entry gentoo for \\EFI\\gentoo\\grubx64.efi, first in BootOrder" sh -c "
     n=\$(sed -n 's/^Boot\\([0-9A-F]\\{4\\}\\)\\* gentoo\\b.*/\\1/p' '$W/efibootmgr-rescue.txt' | head -n 1)
     test -n \"\$n\" && grep -E \"^Boot\$n\" '$W/efibootmgr-rescue.txt' | grep -qi 'EFI.gentoo.grubx64.efi' &&
     grep -qE \"^BootOrder: \$n\" '$W/efibootmgr-rescue.txt'"
+check "no oldos entry in NVRAM" sh -c "! grep -q oldos '$W/efibootmgr-rescue.txt'"
 check "the drive unmounts" on backotter "sudo -n umount $B"
 on backotter "sudo -n systemctl poweroff" >/dev/null 2>&1 || true
 for _ in $(seq 120); do kill -0 "$qemu_pid" 2>/dev/null || break; sleep 1; done

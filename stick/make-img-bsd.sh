@@ -270,7 +270,10 @@ else
             die "the parent's file systems are not its listing $BKO_TREE_PARENT: $(diff "$BKO_TREE_PARENT" "$work/parent-tree.txt" | grep -c '^[<>]') lines differ"
         echo "The parent's $(wc -l <"$work/parent-tree.txt") entries are its listing's"
     fi
-    pm=$(tar -tf "$work/parent.tar" | grep -m 1 -E '^(\./)?[^/]+/\.disk/backotter\.json$') || die "the parent has no /.disk/backotter.json"
+    # (Not grep -m 1: under pipefail, a tar cut short by SIGPIPE when the marker is
+    # listed early would fail this as "no marker".)
+    pm=$(tar -tf "$work/parent.tar" | grep -E '^(\./)?[^/]+/\.disk/backotter\.json$' | sed -n 1p) && [[ -n $pm ]] ||
+        die "the parent has no /.disk/backotter.json"
     tar -xOf "$work/parent.tar" "$pm" >"$work/parent-marker.json" || die "couldn't read the parent's marker"
     rm -f "$work/parent.tar"
     pmv=$(python3 - "$work/parent-marker.json" "$PLATFORM" "$CONFIG_PART" "$work/zfs-features" <<'PY'

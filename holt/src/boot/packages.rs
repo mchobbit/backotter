@@ -63,12 +63,17 @@ pub(crate) fn parse_dpkg_status(text: &str) -> Vec<Package> {
     out
 }
 
-/// Installed packages from pacman's local database (Arch): each
-/// /var/lib/pacman/local/NAME-VERSION/desc holds %NAME%, %VERSION%, %ARCH%.
-pub(crate) fn pacman_packages(sys: &Sys) -> Vec<Package> {
+/// `SteamOS`'s pacman database, inside its read-only image
+/// (`holo-finalize-install` sets `DBPath`; docs/design/steamos.md).
+pub(crate) const HOLO_PACMAN_LOCAL: &str = "/usr/lib/holo/pacmandb/local";
+
+/// Installed packages from pacman's local database at LOCAL (Arch's
+/// /var/lib/pacman/local, `SteamOS`'s `HOLO_PACMAN_LOCAL`): each
+/// `LOCAL/NAME-VERSION/desc` holds %NAME%, %VERSION%, %ARCH%.
+pub(crate) fn pacman_packages_in(sys: &Sys, local: &str) -> Vec<Package> {
     let mut out = Vec::new();
-    for d in sys.list("/var/lib/pacman/local") {
-        let Some(t) = sys.read(&format!("/var/lib/pacman/local/{d}/desc")) else {
+    for d in sys.list(local) {
+        let Some(t) = sys.read(&format!("{local}/{d}/desc")) else {
             continue;
         };
         let field = |k: &str| {
@@ -82,6 +87,11 @@ pub(crate) fn pacman_packages(sys: &Sys) -> Vec<Package> {
     }
     out.sort();
     out
+}
+
+/// Installed packages from Arch's pacman database.
+pub(crate) fn pacman_packages(sys: &Sys) -> Vec<Package> {
+    pacman_packages_in(sys, "/var/lib/pacman/local")
 }
 
 /// Installed packages from apk's database (Alpine): blocks of `K:value`
@@ -367,6 +377,10 @@ pub(crate) fn installed_packages(sys: &Sys) -> Vec<Package> {
     }
     if let Some(t) = sys.read("/var/lib/dpkg/status") {
         return parse_dpkg_status(&t);
+    }
+    // SteamOS's first: its /var may hold an empty /var/lib/pacman too.
+    if sys.is_dir(HOLO_PACMAN_LOCAL) {
+        return pacman_packages_in(sys, HOLO_PACMAN_LOCAL);
     }
     if sys.is_dir("/var/lib/pacman/local") {
         return pacman_packages(sys);

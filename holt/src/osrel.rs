@@ -278,6 +278,11 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     // a layout bko-holt hasn't seen from being taken (RootFSv3 with
     // etc-mstack, the testing edition only; docs/design/kde-linux.md).
     ("kde-linux", "*", "KDE Linux"),
+    // Arch underneath (ID_LIKE=arch), an image system of two A/B slots on
+    // GPT partlabels (crate::steamos): VERSION_ID is the release (3.9.5),
+    // taken by its major, so 3.8, 3.9 and 3.10 alike (docs/design/steamos.md,
+    // decision 1).  Not by ID_LIKE=arch: Arch's row doesn't take it.
+    ("steamos", "3", "SteamOS 3"),
     // Not Linux (other/): os-release, or uname for those without one.
     ("freebsd", "14", "FreeBSD 14"),
     ("freebsd", "15", "FreeBSD 15"),
@@ -500,7 +505,7 @@ pub(crate) mod tests {
         assert!(check_supported(Some(&parse(neon))).is_ok());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "22.04")))).is_err());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "26.04")))).is_err());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Fedora 45, Alpine Linux 3, Artix Linux, AerynOS, Solus 4, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE MicroOS, Aeon, openSUSE Leap 16, Rocky Linux 10, Qubes OS 4.3, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Slackware 15, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, KDE Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox, Sculpt OS or Ubuntu Core 24"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Fedora 45, Alpine Linux 3, Artix Linux, AerynOS, Solus 4, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE MicroOS, Aeon, openSUSE Leap 16, Rocky Linux 10, Qubes OS 4.3, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Slackware 15, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, KDE Linux, SteamOS 3, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox, Sculpt OS or Ubuntu Core 24"), "{e}");
         for t in [
             "ID=devuan\nVERSION_ID=6\n",
             "ID=pop\nVERSION_ID=\"24.04\"\n",
@@ -787,7 +792,9 @@ pub(crate) mod tests {
         assert_eq!(o.get("PRETTY_NAME"), Some("Kali GNU/Linux Rolling"));
         assert_eq!(o.get("ANSI_COLOR"), Some("1;31"));
         assert!(check_supported(Some(&o)).is_ok());
-        assert!(supported_names().contains("AnduinOS 2, Kali Linux, KDE Linux, FreeBSD 14"));
+        assert!(
+            supported_names().contains("AnduinOS 2, Kali Linux, KDE Linux, SteamOS 3, FreeBSD 14")
+        );
         // Rolling (decision 2): every snapshot, the next year's too, and
         // one with no VERSION_ID at all.
         for v in ["2026.4", "2027.1", "2025.4"] {
@@ -965,6 +972,33 @@ pub(crate) mod tests {
                 "ID=salix\nID_LIKE=slackware\nVERSION_ID=15.0\n"
             )))
             .is_err()
+        );
+    }
+
+    /// SteamOS 3.9.5's os-release as Valve's image writes it (S1 checks the
+    /// installed one: docs/design/steamos.md).
+    pub(crate) const STEAMOS: &str = "NAME=\"SteamOS\"\nPRETTY_NAME=\"SteamOS\"\nVERSION_CODENAME=holo\nID=steamos\nID_LIKE=arch\nANSI_COLOR=\"1;35\"\nHOME_URL=\"https://www.steampowered.com/\"\nDOCUMENTATION_URL=\"https://support.steampowered.com/\"\nSUPPORT_URL=\"https://support.steampowered.com/\"\nBUG_REPORT_URL=\"https://support.steampowered.com/\"\nLOGO=steamos\nVERSION_ID=3.9.5\nVARIANT_ID=steamdeck\nBUILD_ID=20261023.100\n";
+
+    #[test]
+    fn steamos() {
+        let o = parse(STEAMOS);
+        assert_eq!(o.get("ID"), Some("steamos"));
+        assert!(check_supported(Some(&o)).is_ok());
+        // 3.8 (the install images) and 3.10 (preview) by the major.
+        assert!(supported("steamos", "3.8.14"));
+        assert!(supported("steamos", "3.10.1"));
+        assert!(supported_names().contains("KDE Linux, SteamOS 3, FreeBSD 14"));
+        // Not SteamOS 2 (Debian) or a 4 until a guest shows it.
+        for v in ["2.195", "4.0"] {
+            let e = check_supported(Some(&parse(&STEAMOS.replace("3.9.5", v)))).unwrap_err();
+            assert!(
+                e.contains(&format!("(ID=steamos, VERSION_ID={v})")) && e.contains("SteamOS 3,"),
+                "{e}"
+            );
+        }
+        // Not by its likeness: ID_LIKE=arch alone isn't Arch.
+        assert!(
+            check_supported(Some(&parse("ID=holoish\nID_LIKE=arch\nVERSION_ID=3.9\n"))).is_err()
         );
     }
 

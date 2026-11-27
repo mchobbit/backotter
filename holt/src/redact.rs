@@ -182,7 +182,7 @@ const WELL_KNOWN: [&str; 7] = [
     "ffffffff-ffff-ffff-ffff-ffffffffffff",
 ];
 /// Hostnames installers give and live systems use: they identify no one.
-const GENERIC_HOSTS: [&str; 42] = [
+const GENERIC_HOSTS: [&str; 43] = [
     "",
     "(none)",
     "localhost",
@@ -236,10 +236,12 @@ const GENERIC_HOSTS: [&str; 42] = [
     "solus49",
     // Qubes OS: dom0's hostname on every install.
     "dom0",
+    // SteamOS: the hostname of every Deck image (docs/design/steamos.md).
+    "steamdeck",
 ];
 /// Labels (lower case, trailing digits and '*' dropped) that installers
 /// and partitioners write: kept, because they help and identify no one.
-const GENERIC_LABELS: [&str; 91] = [
+const GENERIC_LABELS: [&str; 97] = [
     "",
     "efi",
     "esp",
@@ -343,6 +345,14 @@ const GENERIC_LABELS: [&str; 91] = [
     "qubes_dom0",
     "root-pool",
     "vm-pool",
+    // SteamOS: the GPT names of its two slots (crate::steamos; esp, home
+    // and the filesystem labels efi, rootfs and var are above).
+    "efi-a",
+    "efi-b",
+    "rootfs-a",
+    "rootfs-b",
+    "var-a",
+    "var-b",
     // KDE Linux's installer and live image: the root partition's GPT name
     // (its ESP's is "ESP"), the live ISO's root and sysext partitions
     // (docs/design/kde-linux.md).

@@ -27,11 +27,40 @@ pub(crate) fn btrfs_allocation(sys: &Sys, uuid: &str) -> Option<Value> {
     Some(alloc.build())
 }
 
+/// A btrfs top level's record (storage.btrfs[].`top_level`), read at PATH,
+/// a mount of subvolume 5: its ro and compression, which `btrfs subvolume
+/// list` (256 and up) never shows (`SteamOS`'s `holo-readonly enable` sets ro
+/// on it), and, where FEATURES (sysfs's) say the filesystem has compressed
+/// with zstd, what its own files take uncompressed (du's apparent size, the
+/// subvolumes under it not counted): load's doesn't-fit check.
+pub(crate) fn top_level_json(sys: &Sys, path: &str, features: Option<&[String]>) -> Value {
+    let props = btrfs_properties(sys, path).build();
+    let ro = props.get("ro").and_then(Value::as_str) == Some("true");
+    let zstd = features.is_some_and(|f| f.iter().any(|x| x == "compress_zstd"));
+    let uncompressed = zstd
+        .then(|| sys.run("du", &["-sxb", path]))
+        .flatten()
+        .and_then(|o| o.split_whitespace().next()?.parse::<u64>().ok());
+    Obj::new()
+        .set("readonly", ro)
+        .set("properties", props)
+        .set("uncompressed_bytes", uncompressed)
+        .build()
+}
+
 /// storage.btrfs.  KNOWN: (UUID, allocation profiles) read earlier while
 /// a mount of dump's own was there (`ABRoot`'s future root,
-/// `crate::abroot::Dump::btrfs_profiles`), for a filesystem sysfs no longer
-/// shows.
-pub(super) fn btrfs_json(sys: &Sys, ctx: &Ctx<'_>, known: &[(String, Value)]) -> Value {
+/// `crate::abroot::Dump::btrfs_profiles`; `SteamOS`'s other slot,
+/// `crate::steamos::Dump::btrfs_profiles`), for a filesystem sysfs no longer
+/// shows; `KNOWN_TOP`: (UUID, `top_level`) read the same way (`SteamOS`'s other
+/// rootfs, `crate::steamos::Dump::btrfs_top_levels`), for a filesystem no
+/// mount reaches now.
+pub(super) fn btrfs_json(
+    sys: &Sys,
+    ctx: &Ctx<'_>,
+    known: &[(String, Value)],
+    known_top: &[(String, Value)],
+) -> Value {
     let mut fss: BTreeMap<String, Vec<&Dev>> = BTreeMap::new();
     for d in ctx.devs {
         if d.fs_type().as_deref() == Some("btrfs") {
@@ -76,29 +105,17 @@ pub(super) fn btrfs_json(sys: &Sys, ctx: &Ctx<'_>, known: &[(String, Value)]) ->
         let features: Option<Vec<String>> = sys
             .is_dir(&sysfs)
             .then(|| sys.list(&format!("{sysfs}/features")));
-        // The top level (subvolume 5, FS_TREE), where a mount reaches it:
-        // its ro and compression, which `btrfs subvolume list` (256 and up)
-        // never shows (SteamOS's `holo-readonly enable` sets ro on it).
-        let top_level = btrfs_reachable_path(&mounts, "").map_or(Value::Null, |p| {
-            let props = btrfs_properties(sys, &p);
-            let props = props.build();
-            let ro = props.get("ro").and_then(Value::as_str) == Some("true");
-            // What its own files take uncompressed (du's apparent size, the
-            // subvolumes under it not counted), where the filesystem has
-            // compressed with zstd: load's doesn't-fit check.
-            let zstd = features
-                .as_ref()
-                .is_some_and(|f| f.iter().any(|x| x == "compress_zstd"));
-            let uncompressed = zstd
-                .then(|| sys.run("du", &["-sxb", &p]))
-                .flatten()
-                .and_then(|o| o.split_whitespace().next()?.parse::<u64>().ok());
-            Obj::new()
-                .set("readonly", ro)
-                .set("properties", props)
-                .set("uncompressed_bytes", uncompressed)
-                .build()
-        });
+        // The top level (subvolume 5, FS_TREE), where a mount reaches it, or
+        // as read earlier through a mount of dump's own.
+        let top_level = btrfs_reachable_path(&mounts, "").map_or_else(
+            || {
+                known_top
+                    .iter()
+                    .find(|(u, _)| *u == uuid)
+                    .map_or(Value::Null, |(_, v)| v.clone())
+            },
+            |p| top_level_json(sys, &p, features.as_deref()),
+        );
         if let Some(m) = mounts.first() {
             if let Some(out) = sys.run(
                 "btrfs",

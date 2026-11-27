@@ -17,8 +17,8 @@ mod btrfs;
 mod sources;
 mod zfs;
 
-pub(crate) use btrfs::btrfs_allocation;
 use btrfs::btrfs_json;
+pub(crate) use btrfs::{btrfs_allocation, top_level_json};
 pub use btrfs::{btrfs_reachable_path, parse_btrfs_qgroups, parse_btrfs_subvol_line};
 pub use sources::{
     BackupSource, MountHint, backup_sources, not_backed_up, unmatched_fstab, zfs_mounted_twice,
@@ -1128,8 +1128,10 @@ fn trigger_automounts(sys: &Sys) -> Vec<Mount> {
             && !mi.iter().any(|m| m.target == at && m.fstype != "autofs")
     };
     let first = read();
+    // (SteamOS's /esp too, crate::steamos.)
     let waiting: Vec<&str> = crate::sysupdate::checks::AUTOMOUNT_POINTS
         .into_iter()
+        .chain(crate::steamos::AUTOMOUNTS)
         .filter(|at| only_autofs(&first, at))
         .collect();
     if waiting.is_empty() {
@@ -1434,6 +1436,23 @@ pub fn build_with(
         sources.extend(more);
         sources.sort_by(|a, b| a.path.cmp(&b.path));
     }
+    // SteamOS (crate::steamos): the backup's tree is its eight partitions at
+    // post-install's paths, the other slot's three with the read-only mount
+    // a backup makes for them; nothing else (an SD card's mount is said).
+    let steamos = crate::steamos::read(sys, os.and_then(|o| o.get("ID")), &disks);
+    if let Some(st) = &steamos {
+        for s in sources
+            .iter()
+            .filter(|s| s.device.as_ref().is_none_or(|d| !st.devices.contains(d)))
+        {
+            sys.warn(format!(
+                "SteamOS: {} ({}) is not in the backup tree, which is the eight SteamOS partitions only (docs/design/steamos.md); its files are not backed up",
+                s.path,
+                s.device.as_deref().unwrap_or(&s.source)
+            ));
+        }
+        sources = st.sources.clone();
+    }
     // Ubuntu Core (crate::snapcore): the backup's tree is the gadget's four
     // partitions at snap-bootstrap's mount points, nothing else (not the
     // base snap at `/`, nor its bind mounts); its LUKS2 headers are kept.
@@ -1568,10 +1587,19 @@ pub fn build_with(
         })
         .collect();
 
+    let known: Vec<(String, Value)> = abroot
+        .iter()
+        .flat_map(|a| a.btrfs_profiles.iter())
+        .chain(steamos.iter().flat_map(|s| s.btrfs_profiles.iter()))
+        .cloned()
+        .collect();
     let btrfs = btrfs_json(
         sys,
         &ctx,
-        abroot.as_ref().map_or(&[], |a| a.btrfs_profiles.as_slice()),
+        &known,
+        steamos
+            .as_ref()
+            .map_or(&[], |s| s.btrfs_top_levels.as_slice()),
     );
     // transactional-update (crate::transactional): from fstab's / and the
     // btrfs it's on.
@@ -1662,6 +1690,7 @@ pub fn build_with(
     );
     let os_json = os_json(sys, os, &packages, truenas.as_ref());
     let boot = crate::abroot::add_to_boot(boot, abroot.as_ref());
+    let boot = crate::steamos::add_to_boot(boot, steamos.as_ref());
     let boot = crate::truenas::add_to_boot(boot, truenas.as_ref());
     let boot = crate::transactional::add_to_boot(boot, transactional);
     let boot = crate::snapcore::add_to_boot(boot, snapcore.as_ref());

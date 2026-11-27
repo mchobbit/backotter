@@ -38,6 +38,7 @@ pub mod report;
 mod scenarios;
 pub mod snapcore;
 pub mod snaplayout;
+pub(crate) mod steamos;
 pub mod stick;
 pub(crate) mod store;
 pub mod sys;

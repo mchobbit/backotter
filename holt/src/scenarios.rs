@@ -14,6 +14,8 @@ use crate::probe::{btrfs, ext, fat, luks, lvm, md, misc, zfs};
 use crate::sys::{FakeRunner, Sys};
 use crate::testutil::Tree;
 
+mod steamos;
+
 const MIB: usize = 1 << 20;
 const LINUX: &str = "0fc63daf-8483-4772-8e79-3d69d8477de4";
 const RAID: &str = "a19d880f-05fc-4d3b-a006-743f0f84911e";
@@ -10306,6 +10308,42 @@ const DUMPS: &[Dump] = &[
     ("qubes", || {
         let (t, r) = qubes_tree();
         run(&t, true, r)
+    }),
+    // SteamOS 3 (docs/design/steamos.md): a fresh install, after the update
+    // into B, after an other-slot boot, with an update pending, and the
+    // system image's labels with an untriggered /esp.
+    ("steamos_fresh", || {
+        steamos::steamos_dump(steamos::Steam::default()).0
+    }),
+    ("steamos_updated", || {
+        steamos::steamos_dump(steamos::Steam {
+            updated: true,
+            ..steamos::Steam::default()
+        })
+        .0
+    }),
+    ("steamos_other_boot", || {
+        steamos::steamos_dump(steamos::Steam {
+            updated: true,
+            other_boot: true,
+            ..steamos::Steam::default()
+        })
+        .0
+    }),
+    ("steamos_pending", || {
+        steamos::steamos_dump(steamos::Steam {
+            pending: true,
+            ..steamos::Steam::default()
+        })
+        .0
+    }),
+    ("steamos_image_labels", || {
+        steamos::steamos_dump(steamos::Steam {
+            image_labels: true,
+            esp_untriggered: true,
+            ..steamos::Steam::default()
+        })
+        .0
     }),
 ];
 

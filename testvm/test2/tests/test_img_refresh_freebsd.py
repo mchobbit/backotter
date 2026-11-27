@@ -128,6 +128,97 @@ class Mbr(unittest.TestCase):
             os.environ.pop("S") if old is None else os.environ.update(S=old)
 
 
+class BuildSh(unittest.TestCase):
+    def test_the_subcommands(self):
+        self.assertEqual(subprocess.run(["sh", "-n", BUILD]).returncode, 0)
+        text = rd(BUILD)
+        for c in ("list", "room", "refresh"):
+            self.assertRegex(text, rf"(?m)^{c}\)$")
+        # The id sites (§1.3): the label by tunefs -L, both fstabs in place, the full build's modes.
+        self.assertIn('tunefs -L "$new"', text)
+        self.assertIn("conf/base/etc/fstab", text)
+        self.assertIn("BKO_BIN_MODE=755", text)
+        # A refresh needs no memstick: the memstick check comes after the refresh's case.
+        self.assertLess(text.index("refresh)"), text.index("need exactly one memstick"))
+        # MBR: no GPT GUIDs to draw.
+        self.assertNotIn("GPT_IDS=random", rd(os.path.join(STICK, "freebsd", "platform.conf")))
+
+    def test_usage(self):
+        r = subprocess.run(["sh", BUILD, "nonsense"], capture_output=True, text=True, cwd=tempfile.gettempdir())
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("usage: build.sh info|assemble|list|room|refresh", r.stderr)
+
+    def test_the_facts_call_freebsd_refresh_ready(self):
+        spec_path = os.path.join(STICK, "img_round_facts.py")
+        f = B._load("img_round_facts_t", spec_path)
+        self.assertTrue(f.refresh_ready(STICK)["freebsd"])
+
+
+STUB = B.STUB.replace("\nd=$2\n", "\nd=$2 P=$1\n", 1).replace("/netbsd/", "/$P/")
+
+
+class FreebsdImgOne(T.ImgOne):
+    """img-one.sh --refresh-from P freebsd, with the stub make-img-bsd.sh and the builder's stub ssh."""
+
+    def setUp(self):
+        super().setUp()
+        wr(os.path.join(self.w, "stick", "make-img-bsd.sh"), STUB, 0o755)
+        wr(os.path.join(self.path, "mv"), '#!/bin/sh\nif [ "$1" = -t ]; then d=$2; shift 2; set -- "$@" "$d"; fi\n'
+                                          'exec /bin/mv "$@"\n', 0o755)
+        if not shutil.which("sha256sum"):
+            wr(os.path.join(self.path, "sha256sum"), '#!/bin/sh\nexec shasum -a 256 "$@"\n', 0o755)
+
+    def one(self, *args, **env):
+        e = dict(os.environ, BKO_IMG_DIR=self.i, FP=self.fp, HOOK="", CALLS=self.calls, NOFIT="", EXTRA="",
+                 PATH=self.path + ":" + os.environ["PATH"])
+        e.update(env)
+        return subprocess.run([T.BASH, os.path.join(self.w, "stick", "img-one.sh"), *args], env=e,
+                              capture_output=True, text=True)
+
+    def d(self, *p):
+        return os.path.join(self.i, "freebsd", *p)
+
+    def full(self):
+        r = self.one("freebsd")
+        self.assertEqual(r.returncode, 0, r.stderr + rd(self.d("result.txt")))
+        return self.prov("freebsd")
+
+    def new_bins(self):
+        wr(os.path.join(self.w, "bko-bin", "freebsd", "restic-bko"), "new restic\n", 0o755)
+        wr(os.path.join(self.w, "holt-bin", "freebsd", "bko-holt"), "new holt\n", 0o755)
+
+    def test_a_refresh_from_the_test_image(self):
+        a = self.full()
+        self.new_bins()
+        r = self.one("--refresh-from", a["test"]["sha256"], "freebsd")
+        res = rd(self.d("result.txt"))
+        self.assertEqual(r.returncode, 0, r.stderr + res)
+        self.assertEqual(rd(self.d("done.exit")), "0\n")
+        p = self.prov("freebsd")
+        pd = os.path.join(self.d(), sorted(x for x in os.listdir(self.d()) if x.startswith("prev-"))[-1])
+        self.assertEqual((p["mode"], p["parent"]["test_sha256"]), ("refresh", a["test"]["sha256"]))
+        self.assertEqual(p["base"]["os_epoch"], a["base"]["os_epoch"])
+        self.assertEqual(p["base"]["inputs"]["builder"], a["base"]["inputs"]["builder"])
+        self.assertIn("refresh check: release:", res)
+        self.assertEqual(set(p["room"]), {"release", "test"})
+        # The builder as for a full build: its fingerprint, then each image from its own parent.
+        self.assertTrue(os.path.isfile(os.path.join(self.w, "vms", "freebsd15-builder", "fingerprint")))
+        calls = rd(self.calls).splitlines()[-2:]
+        self.assertEqual(calls, [f"make-img-bsd t=0 parent={pd}/{a['release']['file']} tp={pd}/os-tree.txt",
+                                 f"make-img-bsd t=1 parent={pd}/{a['test']['file']} tp={pd}/test/os-tree.txt"])
+
+    def test_binaries_that_dont_fit_in_the_vm_exit_6(self):
+        a = self.full()
+        self.new_bins()
+        r = self.one("--refresh-from", a["test"]["sha256"], "freebsd", NOFIT="1")
+        self.assertEqual(r.returncode, 6, r.stderr)
+        self.assertEqual(rd(self.d("done.exit")), "1\n")
+        self.assertIn("don't fit the parent's free space", rd(self.d("result.txt")))
+
+
+for _n in [n for n in dir(T.ImgOne) if n.startswith("test")]:
+    if _n not in FreebsdImgOne.__dict__:
+        setattr(FreebsdImgOne, _n, None)
 
 if __name__ == "__main__":
     unittest.main()

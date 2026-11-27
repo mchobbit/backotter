@@ -6,6 +6,12 @@
 #                       prints its KERNEL= and ZFS_VERSION=, with its
 #                       OpenZFS feature list in in/zfs-features
 #   build.sh assemble   out/image.img
+#   build.sh list       out/image.img's root, read-only, as a tar on stdout
+#   build.sh room       out/image.img's root: its free space (BKO-ROOM)
+#   build.sh refresh    out/image.img, the parent, with the binaries and the
+#                       marker swapped in place and its label rewritten
+#                       (docs/design/img-speed.md §4.2): exit 3 when they
+#                       don't fit
 #
 # The image is the official memstick remastered, with the release's security
 # updates (freebsd-update, to the latest -pN).  Its root file system, less
@@ -43,14 +49,14 @@ ETC_SECTORS=40960               # 512-byte sectors: 20 MiB (the memstick's /etc 
 ROOT_SECTORS=2097152            # 1 GiB
 HOME_SECTORS=131072             # 64 MiB
 
-set -- "${1:-}" in/FreeBSD-*-amd64-memstick.img
-[ $# -eq 2 ] && [ -f "$2" ] || die "need exactly one memstick in in/"
-cmd=$1 memstick=$2
+BINS="restic-bko rustic-bko bko-holt"   # in /usr/local/bin
+HEADROOM_MIN_KIB=65536          # the root's free space: at least this (img-speed.md §4.2)
+in=$PWD/in                      # (refresh-lib.sh's)
 
+cmd=${1:-}
 md= md2=
 cleanup() {
-    umount mnt 2>/dev/null || true
-    umount lst/root 2>/dev/null || true
+    for d in mnt lst/root rm/root hr; do umount "$d" 2>/dev/null || true; done
     [ -z "$md" ] || mdconfig -d -u "$md"
     [ -z "$md2" ] || mdconfig -d -u "$md2"
 }
@@ -58,18 +64,167 @@ cleanup() {
 # make-img-bsd.sh's ssh is gone), and the builder lives on.
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM PIPE
-case $cmd in info|assemble|list) ;; *) die "usage: build.sh info|assemble|list" ;; esac
 
+# headroom: the root's free space the headroom rule asks, in KiB: max(64 MiB,
+# half the binaries' size).
+headroom() {
+    b=0
+    for n in $BINS; do
+        [ ! -f "in/$n" ] || b=$((b + ($(wc -c <"in/$n") + 1023) / 1024))
+    done
+    [ $((b / 2)) -gt $HEADROOM_MIN_KIB ] && echo $((b / 2)) || echo $HEADROOM_MIN_KIB
+}
+
+# fs_free UFS_IMAGE: the free KiB (its size less what is used: root writes
+# past minfree) of the file system in a file.
+fs_free() {
+    mkdir -p hr
+    md2=$(mdconfig -a -t vnode -o readonly -f "$1")
+    mount -o ro "/dev/$md2" hr
+    df -k hr | awk 'NR == 2 { print $2 - $3 }'
+    umount hr
+    mdconfig -d -u "$md2"; md2=
+}
+
+# marker_field KEY: the marker's top-level string KEY (in/backotter.json,
+# marker.py's indent=2).
+marker_field() { sed -n "s/^  \"$1\": \"\([^\"]*\)\",*\$/\1/p" in/backotter.json; }
+
+# zfs_version ROOT: the first of ROOT/boot/kernel/zfs.ko's version strings (no
+# head: SIGPIPE and pipefail).
+zfs_version() {
+    set -- $(strings "$1/boot/kernel/zfs.ko" | sed -n 's/^\([0-9]*\.[0-9]*\.[0-9]*\)-[0-9]*-FreeBSD_g[0-9a-f]*$/\1/p')
+    echo "${1:-}"
+}
+
+# fsck_clean DEV WHEN: fsck_ffs -n -f of the root, which must find nothing.
+# (makefs doesn't set the flag for tracking directory depth, which fsck offers
+# to: not a fault.)
+fsck_clean() {
+    fsck_ffs -n -f "$1" >fsck.out 2>&1 || { cat fsck.out >&2; die "fsck_ffs $2 the swap: the root is not clean"; }
+    # (Not a pipe into grep -q: under pipefail its early exit would fail the pipe.)
+    grep -v '^UPDATE FILESYSTEM TO TRACK DIRECTORY DEPTH? no$' fsck.out >fsck.chk || true
+    ! grep -Eq '\? no$|DIRTY|UNEXPECTED|INCORRECT|MODIFIED' fsck.chk ||
+        { cat fsck.out >&2; die "fsck_ffs $2 the swap: the root is not clean"; }
+    echo "fsck $2: $(tail -n 1 fsck.out)"
+}
+
+# label_of DEV: the volume label of the UFS on DEV.
+label_of() { tunefs -p "$1" 2>&1 | sed -n 's/^tunefs: volume label: (-L)[[:space:]]*//p'; }
+
+# put_text FILE OLD NEW: FILE with OLD (a fixed string) replaced by NEW, its
+# bytes rewritten in place so that its inode (and every hard link) stays.
+put_text() {
+    sed "s|$2|$3|g" "$1" >put.tmp
+    cat put.tmp >"$1"
+    rm -f put.tmp
+}
+
+case $cmd in
 # --- list: out/image.img's root (MBR slice 2, BSD partition a), read-only, as a tar
-if [ "$cmd" = list ]; then
+list)
     mkdir -p lst/root
     md2=$(mdconfig -a -t vnode -o readonly -f out/image.img)
     mount -o ro "/dev/${md2}s2a" lst/root
     tar -C lst -cf - root
     umount lst/root
     mdconfig -d -u "$md2"; md2=
-    exit 0
-fi
+    exit 0 ;;
+# --- room: the root's free space and the binaries' blocks (refresh-lib.sh's BKO-ROOM)
+room)
+    . in/refresh-lib.sh
+    mkdir -p rm/root
+    md2=$(mdconfig -a -t vnode -o readonly -f out/image.img)
+    mount -o ro "/dev/${md2}s2a" rm/root
+    # shellcheck disable=SC2046
+    set -- $(df -k rm/root | awk 'NR == 2 { print $2 - $3, $2 }')
+    # shellcheck disable=SC2086
+    bko_room rm/root /usr/local/bin "$1" "$2" $BINS
+    umount rm/root
+    mdconfig -d -u "$md2"; md2=
+    exit 0 ;;
+# --- refresh: out/image.img, the parent (make-img-bsd.sh puts it there), with
+# the binaries and the marker swapped in place in its root and its id sites
+# rewritten (img-speed.md §4.2, D1, D2): the UFS label BACKOTTER-<8 hex> by
+# tunefs -L, and both fstabs (/conf/base/etc is /etc hard-linked by pax -l), in
+# place.  The ESP, the boot code, the BSD label and the MBR stay as they are;
+# the host writes config.img into slice 3.  The release and the test copy are
+# each refreshed from their own parent, so TEST plays no part.
+refresh)
+    for f in backotter.json bko-holt refresh-lib.sh; do
+        [ -e "in/$f" ] || die "no in/$f"
+    done
+    [ -f out/image.img ] || die "no out/image.img, the parent"
+    . in/refresh-lib.sh
+    image_id=$(marker_field image_id)
+    [ -n "$image_id" ] || die "in/backotter.json has no image_id"
+    new=BACKOTTER-$(echo "$image_id" | cut -c1-8)
+    md=$(mdconfig -a -t vnode -f out/image.img)
+    dev=/dev/${md}s2a
+    [ -c "$dev" ] || die "the parent has no slice 2 partition a"
+    fsck_clean "$dev" before
+    old=$(label_of "$dev")
+    case $old in BACKOTTER-????????) ;; *) die "the parent's root is labelled '$old', not BACKOTTER-<8 hex>" ;; esac
+    [ "$old" != "$new" ] || die "the new image_id's label $new is the parent's"
+    mkdir -p mnt
+    mount -o noatime "$dev" mnt
+    # The marker's kernel and ZFS are the parent's (marker.py was given them):
+    # they must still be the parent's tree's.
+    k=$(ROOT=mnt sh mnt/bin/freebsd-version -k)
+    m=$(marker_field kernel)
+    [ -n "$k" ] && [ "$k" = "$m" ] || die "the parent's kernel is '$k', its marker says '$m'"
+    z=$(zfs_version mnt)
+    mz=$(awk '/^  "zfs": \{/ { z = 1 } z && /^    "version": / { gsub(/[",]/, ""); print $2; exit }' in/backotter.json)
+    [ -n "$z" ] && [ "$z" = "$mz" ] || die "the parent's zfs.ko is ZFS '$z', its marker says '$mz'"
+    compat=mnt/usr/share/zfs/compatibility.d/openzfs-${z%.*}
+    [ -f "$compat" ] || die "the parent has no ZFS feature list for $z"
+    awk '/^  "zfs": \{/ { z = 1 } z && /^    "features": \[/ { f = 1; next } f && /^    \]/ { exit }
+         f { gsub(/[ ",]/, ""); print }' in/backotter.json >features.marker
+    grep -v '^#' "$compat" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep . | LC_ALL=C sort >features.tree
+    cmp -s features.marker features.tree ||
+        die "the marker's ZFS features are not the parent's $compat"
+    echo "kernel $k, ZFS $z and its $(wc -l <features.tree | tr -d ' ') features, as the parent's marker says"
+    # The fstabs name the label; /conf/base/etc/fstab is /etc/fstab's hard link.
+    for f in etc/fstab conf/base/etc/fstab; do
+        grep -q "^/dev/ufs/$old " "mnt/$f" || die "the parent's /$f doesn't mount /dev/ufs/$old"
+    done
+    # No other file of the root names the old label (the id sites are §1.3's).
+    others=$(grep -rlF "$old" mnt/etc mnt/boot mnt/conf 2>/dev/null | grep -vx -e mnt/etc/fstab -e mnt/conf/base/etc/fstab || true)
+    [ -z "$others" ] || die "the parent names its label outside the fstabs: $others"
+    # shellcheck disable=SC2046
+    set -- $(df -k mnt | awk 'NR == 2 { print $2 - $3 }')
+    rc=0
+    # shellcheck disable=SC2086
+    bko_fit mnt /usr/local/bin "$1" $BINS || rc=$?
+    if [ $rc -ne 0 ]; then
+        umount mnt; mdconfig -d -u "$md"; md=
+        exit $rc
+    fi
+    # (A binary the parent lacks is installed 0755, as assemble installs it.)
+    # shellcheck disable=SC2086
+    BKO_BIN_MODE=755 bko_swap mnt /usr/local/bin $BINS || die "the swap failed"
+    put_text mnt/etc/fstab "/dev/ufs/$old " "/dev/ufs/$new "
+    [ "$(stat -f %i mnt/etc/fstab)" = "$(stat -f %i mnt/conf/base/etc/fstab)" ] ||
+        put_text mnt/conf/base/etc/fstab "/dev/ufs/$old " "/dev/ufs/$new "
+    for f in etc/fstab conf/base/etc/fstab; do
+        grep -q "^/dev/ufs/$new " "mnt/$f" && ! grep -qF "$old" "mnt/$f" || die "/$f doesn't name $new alone"
+    done
+    echo "refresh: both fstabs mount /dev/ufs/$new"
+    sync
+    umount mnt
+    tunefs -L "$new" "$dev" >tunefs.out 2>&1 || { cat tunefs.out >&2; die "tunefs -L $new failed"; }
+    [ "$(label_of "$dev")" = "$new" ] || die "the root's label is '$(label_of "$dev")' after tunefs -L $new"
+    echo "refresh: the root's label $old is now $new"
+    fsck_clean "$dev" after
+    mdconfig -d -u "$md"; md=
+    exit 0 ;;
+info|assemble) ;;
+*) die "usage: build.sh info|assemble|list|room|refresh" ;;
+esac
+
+set -- in/FreeBSD-*-amd64-memstick.img
+[ $# -eq 1 ] && [ -f "$1" ] || die "need exactly one memstick in in/"
+memstick=$1
 
 # --- The root file system, with the release's security updates ------------------
 # The memstick's root, copied into root/ and brought to the release's latest
@@ -223,7 +378,20 @@ for d in etc root home; do echo md_size >"root/conf/base/$d.remove"; done
 
 # --- The image --------------------------------------------------------------------
 echo "Making the root file system, $label"
+# makefs sizes it to fit, which today leaves some 90 MiB free.  A refresh
+# needs room to swap the binaries in place (img-speed.md §4.2, D1): max(64
+# MiB, half the binaries' size) free, and where makefs left less it is made
+# again with the shortfall as -b (free blocks makefs adds to the size).
+want=$(headroom)
 makefs -t ffs -B little -o version=2 -o label="$label" root.ufs root
+free=$(fs_free root.ufs)
+if [ "$free" -lt "$want" ]; then
+    rm -f root.ufs
+    makefs -t ffs -B little -o version=2 -o label="$label" -b "$((want - free + 1024))k" root.ufs root
+    free=$(fs_free root.ufs)
+    [ "$free" -ge "$want" ] || die "the root has $free KiB free, under the headroom rule's $want"
+fi
+echo "Headroom: $free KiB free in the root (the rule: $want)"
 # The memstick's ESP, with the updated root's loader.efi as its bootx64.efi.
 md=$(mdconfig -a -t vnode -o readonly -f "$memstick")
 dd if="/dev/${md}s1" of=efi.img bs=1m status=none

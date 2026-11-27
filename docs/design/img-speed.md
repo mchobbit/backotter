@@ -1570,7 +1570,9 @@ this spec's speedups 2 and 7.
   `held()` before placing, since HOME may name a host without the source.
   The leftovers chain stays on one host, but any class: `leftovers_host()`
   takes the first in tie order (a big host first) of the run's hosts that
-  holds all three, `--hosts`' order when given, and `bs2 leftovers` no longer
+  holds all three (with `--hosts`, hosts.json's order: `use_hosts()` keeps
+  the table's order, not the flag's, so `--hosts czerny,copland` takes
+  copland; review of 2026-11-27), and `bs2 leftovers` no longer
   goes to chopin unasked or to a host that lacks them (it names what is
   missing). The SSD lane is not pinned any more: F3 (FD3) already gave it to
   every `disk_scratch` host, one case at a time per host; what waits for the

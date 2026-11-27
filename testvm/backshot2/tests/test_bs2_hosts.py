@@ -240,7 +240,7 @@ class Leads(unittest.TestCase):
 class LeftoversHost(unittest.TestCase):
     """img-speed F18: the leftovers chain stays on one host (its steps share one disk), but
     any host of the run that holds all three of its UEFI sources takes it: tie order (a big
-    one first), else --hosts' order."""
+    one first), or, with --hosts, hosts.json's order (use_hosts() keeps the table's, not the flag's)."""
     NEED = ("alpine324-luks", "alpine324-lvm", "alpine324-uefi")
 
     def test_a_big_host_first_then_a_small_one(self):
@@ -266,6 +266,15 @@ class LeftoversHost(unittest.TestCase):
                 mock.patch.object(sys, "argv", ["bs2", "leftovers"]):
             B.main()
         self.assertEqual(got, {"sync": ["czerny"], "h": "czerny", "name": "leftovers"})
+        # --hosts: the first of them in hosts.json's order that holds the sources, not the flag's order
+        got.clear()
+        with mock.patch.object(B, "RUN_HOSTS", dict(B.RUN_HOSTS)), mock.patch.object(B, "CHOSEN", B.CHOSEN), \
+                mock.patch.object(B, "held", lambda ss, hosts=None: {h: set(self.NEED) for h in B.RUN_HOSTS}), \
+                mock.patch.object(B, "sync", lambda hs: got.update(sync=hs)), \
+                mock.patch.object(B, "leftovers_start", lambda h, name, run: got.update(h=h, name=name)), \
+                mock.patch.object(sys, "argv", ["bs2", "leftovers", "--hosts", "czerny,copland"]):
+            B.main()
+        self.assertEqual(got, {"sync": ["copland"], "h": "copland", "name": "leftovers"})
         with mock.patch.object(B, "held", lambda ss, hosts=None: {"chopin": {"alpine324-lvm"}}), \
                 mock.patch.object(B, "LISTED", {"chopin": {"alpine324-lvm"}}), \
                 mock.patch.object(sys, "argv", ["bs2", "leftovers"]), self.assertRaises(SystemExit) as e:

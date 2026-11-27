@@ -202,7 +202,8 @@ trio first (alpine324-uefi, alpine324-lvm, alpine324-uefi), then LUKS,
 md 1.2, md 1.0, ZFS and btrfs, each followed by the plain layout.  It
 runs on one host that has all three UEFI sources (the first in `tie_key`
 order, a big host before a small one, of the run's hosts that hold them;
-with `--hosts`, the first of those that does; img-speed F18: any class), one
+with `--hosts`, the first of those in hosts.json's order that does, not
+the flag's order; img-speed F18: any class), one
 step at a time, each a tier 1 (`bs2-host tier1`) under its own
 `cmp-run.sh --reserve 6 3`.  Each step's restored disk is copied, as load
 left it, to `/mnt/bko-ram/backshot2/leftovers-RUN/STEP.qcow2` and is the

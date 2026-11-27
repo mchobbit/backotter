@@ -38,7 +38,7 @@ names another, so two sessions' runs never share a copy).
   bs2 leftovers [SET] [plan]        the leftovers set (bs2lib/leftovers.py): its restores in order
                                     onto one disk, on one host (the first in tie order that
                                     holds all three UEFI sources; with --hosts, the first of
-                                    those that does), detached; log in
+                                    those, in hosts.json's order, that does), detached; log in
                                     /bkoscratch/backshot2/logs/RUN.log, rows in RUN/leftovers.jsonl
   bs2 bin FROM                      copy FROM's /bkoscratch/backshot2/bin (the bko-holt, planner
                                     and caps.json under test) to the other hosts (--hosts: those)
@@ -1661,7 +1661,8 @@ def main():
             need = LO.sources(name)
         except KeyError as e:
             sys.exit(f"bs2: {e.args[0]}")
-        # (--hosts' order when given, the first that holds the set's sources; else tie_order's)
+        # (with --hosts, the first of them in hosts.json's order (use_hosts() keeps the table's
+        # order, not the flag's), as before F18; else tie_order's: the first that holds the sources)
         h = leftovers_host(need, held(need), order=list(RUN_HOSTS) if CHOSEN else None)
         if not h:
             sys.exit(f"bs2: leftovers {name}: no host of {', '.join(RUN_HOSTS)} holds all of {', '.join(need)}: "

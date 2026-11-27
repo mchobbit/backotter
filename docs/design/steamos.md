@@ -6,8 +6,9 @@ two whole root slots and switches between them on updates. This spec
 follows Vanilla OS's (docs/design/vanillaos.md, the A/B precedent) and
 Bazzite's (docs/design/bazzite.md, the BackShot1 plan for an image
 system). It borrows Ubuntu Core's fixed partition roles
-(`holt/src/snapcore.rs`). It is a spec only: nothing is built yet, and it
-waits for the user's approval (the last line).
+(`holt/src/snapcore.rs`). **The user approved this spec on 2026-11-27 with every recommended
+decision** (the last section), and put it on hold: nothing is built until
+the user says to proceed.
 
 **Conventions.** est. marks an estimate. *Check* marks a fact the sources
 don't settle. Each one is settled on the first guest (S1) or on the A100
@@ -666,4 +667,4 @@ Each is a *check* above, gathered here with the milestone that settles it:
 
 Settled by the 2026-11-27 review: `set-mode booted` doesn't clear `boot-other` (it's sticky; the tests reboot-other twice); GPT attribute bits are 0 in both images; `/mnt` exists in rootfs; the `client.conf` marker path; untriggered automounts are absent from `storage.mounts`; `rtl8168h-2.fw` is in 3.9.5.
 
-This spec awaits the user's approval.
+Approved by the user 2026-11-27, every recommended decision. On hold until the user says proceed.

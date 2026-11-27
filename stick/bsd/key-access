@@ -1,0 +1,128 @@
+#!/bin/sh
+#
+# PROVIDE: backotter_key_access
+# REQUIRE: LOGIN FILESYSTEMS NETWORKING
+# KEYWORD: nojail
+#
+# BackOtter rescue stick, FreeBSD: remote access by SSH key, turned on at boot
+# (an rc.d script; build.sh installs it as /etc/rc.d/backotter_key_access).
+#
+# The FreeBSD counterpart of the Linux image's key-access
+# (stick/layer/usr/lib/backotter/key-access, docs/design/freebsd-bs1.md D4).
+# If the stick's BACKOTTER slice (the config partition the marker names, on
+# the disk holding the root) has backotter/authorized_keys (public keys only;
+# stick/add-ssh-key.sh puts it there), those keys may log in as the
+# "backotter" user, who may then act as root through base's mdo(1): mac_do(4)
+# is loaded with one rule, that user to root.  sshd starts.  If the slice also
+# has backotter/ssh_host_ed25519_key, the stick presents that host key and no
+# other, so a controller can pin it across boots.  Root gets no key: the
+# image's sshd_config keeps PermitRootLogin no and AllowUsers backotter.
+#
+# With no such file this does nothing: sshd stays off until the console's
+# "remote access", as before.  Nothing survives a reboot: /etc, /home and /var
+# are in memory.  Other BSDs: nothing (FreeBSD first; the spec's scope).
+
+. /etc/rc.subr
+
+name=backotter_key_access
+desc="BackOtter: SSH keys from the stick's config slice"
+rcvar=
+start_cmd=bko_key_access_start
+stop_cmd=:
+
+user=backotter
+run=/var/run/backotter
+marker=/.disk/backotter.json
+
+# The marker's config partition: its number and FAT label (3 and BACKOTTER on
+# every image so far).
+bko_marker() {
+    /usr/libexec/flua -e '
+local ucl = require("ucl")
+local p = ucl.parser()
+assert(p:parse_file(arg[1]))
+local c = p:get_object().config_partition
+print(c.number, c.label)' "$marker" 2>/dev/null
+}
+
+bko_key_access() {
+    set -eu
+    [ "$(uname -s)" = FreeBSD ] || return 0
+    [ -f "$marker" ] || return 0
+    # The disk holding the root, by its GEOM label's provider (da0s2a: da0),
+    # as config-checks.sh finds it: another stick's slice never counts.
+    local root prov disk num label part mnt keys hostkey uid
+    root=$(mount -p | awk '$2 == "/" { print $1 }')
+    prov=$(glabel status -s | awk -v l="${root#/dev/}" '$1 == l { print $3 }')
+    [ -n "$prov" ] || return 0
+    disk=$(echo "$prov" | sed -E 's/s[0-9]+[a-h]?$//')
+    set -- $(bko_marker)
+    num=${1:-3} label=${2:-BACKOTTER}
+    part=/dev/${disk}s$num
+    [ -c "$part" ] || return 0
+    [ "$(fstyp -l "$part" 2>/dev/null)" = "msdosfs $label" ] || return 0
+
+    mkdir -p -m 700 "$run"
+    mnt=$(mktemp -d "$run/config.XXXXXX")
+    trap 'umount "$mnt" 2>/dev/null; rmdir "$mnt" 2>/dev/null' EXIT
+    mount -t msdosfs -o ro,noexec,nosuid "$part" "$mnt"
+    keys=$run/authorized_keys hostkey=$run/ssh_host_ed25519_key
+    (umask 077; : >"$keys")
+    if [ -s "$mnt/backotter/authorized_keys" ]; then
+        # FAT, perhaps edited on Windows: no carriage returns, and key lines only.
+        tr -d '\r' <"$mnt/backotter/authorized_keys" |
+            grep -E '^(ssh-(ed25519|rsa)|ecdsa-sha2-[a-z0-9-]+|sk-[a-z0-9@.-]+) ' >>"$keys" || true
+    fi
+    if grep -qs 'BEGIN OPENSSH PRIVATE KEY' "$mnt/backotter/ssh_host_ed25519_key"; then
+        (umask 077; tr -d '\r' <"$mnt/backotter/ssh_host_ed25519_key" >"$hostkey")
+    fi
+    umount "$mnt"; rmdir "$mnt"; trap - EXIT
+    if [ ! -s "$keys" ]; then
+        rm -f "$keys" "$hostkey"
+        return 0
+    fi
+
+    # The pinned host key, and no other: sshd offers each HostKey line's key,
+    # and rc.d/sshd makes no RSA or ECDSA key (its keygen goes by these knobs).
+    if [ -s "$hostkey" ]; then
+        install -m 600 "$hostkey" /etc/ssh/ssh_host_ed25519_key
+        ssh-keygen -y -f /etc/ssh/ssh_host_ed25519_key >/etc/ssh/ssh_host_ed25519_key.pub
+        rm -f "$hostkey"
+        { echo "HostKey /etc/ssh/ssh_host_ed25519_key"; cat /etc/ssh/sshd_config; } >/etc/ssh/sshd_config.new
+        mv /etc/ssh/sshd_config.new /etc/ssh/sshd_config
+        sysrc -q -f /etc/rc.conf.local sshd_rsa_enable=NO sshd_ecdsa_enable=NO >/dev/null
+    fi
+
+    # As remote-access makes it, so that its password and su still work.
+    id "$user" >/dev/null 2>&1 || pw useradd "$user" -m -s /bin/sh -G wheel -c "BackOtter remote access"
+    install -d -m 700 -o "$user" -g "$user" "/home/$user/.ssh"
+    install -m 600 -o "$user" -g "$user" "$keys" "/home/$user/.ssh/authorized_keys"
+
+    # The account has no password: mdo in place of sudo.  mac_do(4) lets a
+    # process running /usr/bin/mdo take the credentials a rule allows; this
+    # one lets the user become root with any groups (mdo sets root's own).
+    uid=$(id -u "$user")
+    kldstat -q -m mac_do || kldload mac_do
+    sysctl -q security.mac.do.rules="uid=$uid>uid=0,gid=*,+gid=*" >/dev/null
+
+    service sshd onestatus >/dev/null 2>&1 || service sshd onestart >/dev/null
+
+    {
+        echo "Remote access is ON, for the SSH keys on this stick:"
+        ssh-keygen -l -f "$keys" | sed 's/^/  /'
+        echo "Log in as $user, at the address above; mdo gives root."
+        echo "Host key fingerprints (check them on first connection):"
+        for key in /etc/ssh/ssh_host_*_key.pub; do
+            echo "  $(ssh-keygen -l -f "$key")"
+        done
+    } >"$run/remote-access"
+    chmod 600 "$run/remote-access"
+}
+
+bko_key_access_start() {
+    # In a subshell: set -e stops it, not rc.  A failure is said, and boot goes on.
+    ( bko_key_access ) || warn "BackOtter key access failed; sshd may be off (the console's remote access still works)"
+}
+
+load_rc_config $name
+run_rc_command "$1"

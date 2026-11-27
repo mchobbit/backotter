@@ -15,7 +15,8 @@ general FreeBSD knowledge or reasoning, not read in the repo or in FreeBSD's
 source. File references are to local `main` at d4aea22. backshot1/README.md
 is cited by section name, with its line at d4aea22: the uncommitted README
 edit inserts 84 lines at :686, so later lines move down by 84 once it is
-committed. stick/boot-test.py, which F1 changes, has uncommitted edits too.
+committed. F1 left stick/boot-test.py alone: its key login case is a file of
+its own, stick/key-login-test.py.
 D1-D10 are the decisions, F1-F13 the milestones, Q1-Q8 the open questions.
 
 ## Summary
@@ -472,7 +473,7 @@ option 3 (the stick's slice) or family F in QEMU only.
 
 | | What | Done when | est. |
 |---|---|---|---|
-| F1 | `stick/bsd/key-access` (FreeBSD: `backotter`, mdo, the one host key); `add-ssh-key.sh` run on the FreeBSD image (comment fixed, code only if the test fails); boot-test.py gains a key login case (High subagent) | a `--test` and a release image boot in QEMU, sshd answers `backotter@` by key with the pinned host key, `mdo id -u` prints 0, root can't log in, and with no keys the image is as before | 0.75 d |
+| F1 | `stick/bsd/key-access` (FreeBSD: `backotter`, mdo, the one host key), installed by build.sh as `/etc/rc.d/backotter_key_access`; `add-ssh-key.sh` run on the FreeBSD image (comment fixed, code only if the test fails); the key login case as `stick/key-login-test.py` (SSH-driven, so it runs on release images too; boot-test.py drives the serial console only). stick/bsd/* is in every VM platform's image digest (img-inputs.tsv), so the next image round builds all of them in full. Built 2026-11-27: mac_do(4) and `/usr/bin/mdo` are in 15.1 base, and the rule `uid=N>uid=0,gid=*,+gid=*` (sysctl `security.mac.do.rules`) lets `mdo id -u` print 0; `add-ssh-key.sh` worked unchanged on the MBR image | a `--test` and a release image boot in QEMU, sshd answers `backotter@` by key with the pinned host key, `mdo id -u` prints 0, root can't log in, and with no keys the image is as before | 0.75 d |
 | F2 | First look at the A100, read-only: the user boots the F1 stick by F12; checks over SSH | `machdep.bootmethod` is UEFI; the root mounted over xHCI and two full reads of the stick's root slice give one SHA-256; `re0` shows 8168H; the idents of every disk by `diskinfo -v` (nda0 is S7XMNF0Y787118; the stick's becomes `STICK_SERIAL`); `efibootmgr -v` and BootOrder saved on the Mac; the SecureBoot variable read (`efivar` [inferred tool]); `lsdev` at the loader's `OK` prompt, with a USB drive in (Q2); nothing written to any disk or to NVRAM | 0.25 d + an hour of the user's |
 | F3 | The lane drive and `thinkpad-bsd.conf` on the A100 (needs F6's QEMU run of `format-lane` and `stage --rescue`) | after the user's chat yes for that serial, the drive is `/dev/ufs/BS1BSD` on the stick, `backshot1/` staged, a multi-GB file written and read back with one SHA-256 and `re0` keeping its link through a multi-GB copy, and `format-lane`/`stage` refuse an unlisted disk | 0.5 d |
 | F4 | bko-holt `dump --only-disk` on FreeBSD: filter every section other/freebsd.rs:388-458 builds (`disks`, `mounts`, `fstab`, `swaps`, `glabels`, `zfs`), so the lane drive's `/mnt/bs1-backup` mount and labels go too; unit tests; HoltTest1BSD `freebsd15` and `freebsd15-geli` on two pick-host hosts (High subagent) | the lib.rs:93-96 refusal is gone, a dump with the drive and stick attached names only the internal disk anywhere, and both HoltTest1 runs PASS | 0.75 d |

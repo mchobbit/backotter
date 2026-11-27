@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# Let SSH keys into a Linux rescue image: at boot, a stick with this file starts
-# sshd by itself and takes these keys for the "backotter" user, who has
-# passwordless sudo (stick/layer/usr/lib/backotter/key-access).
+# Let SSH keys into a Linux or FreeBSD rescue image: at boot, a stick with this
+# file starts sshd by itself and takes these keys for the "backotter" user, who
+# has passwordless sudo on Linux (stick/layer/usr/lib/backotter/key-access) and
+# mdo on FreeBSD (stick/bsd/key-access).
 #
 # Usage: ./add-ssh-key.sh [--host-key PRIVATE_KEY] IMG PUBKEY_FILE...
 #
-# IMG is an image from make-img.sh, or a stick it was written to.  This replaces
-# backotter/authorized_keys in its BACKOTTER partition, and changes nothing else.
-# Anyone who can write to the stick could add a key the same way, so treat it as
-# you would any boot medium.
+# IMG is an image from make-img.sh or make-img-bsd.sh freebsd, or a stick it was
+# written to.  This replaces backotter/authorized_keys in its BACKOTTER
+# partition (the GPT's partition 3, or the FreeBSD image's MBR slice 3), and
+# changes nothing else.  Anyone who can write to the stick could add a key the
+# same way, so treat it as you would any boot medium.
 #
 # --host-key makes the stick present that ed25519 host key on every boot, so a
 # controller can pin it.  That puts a private key on the stick, readable by

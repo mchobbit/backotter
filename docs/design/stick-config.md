@@ -76,7 +76,7 @@ the backup location by hand.
 /backotter/reports/bko-report-<date-time>.txt  bko-rescue's 5 newest bug reports (and -UNREDACTED)
 /backotter/bin/{bko-holt,rustic-bko}     Linux image only
 /backotter/realworld/<date-time>/...     Linux image only; bko-realworld-1a's logs
-/backotter/authorized_keys               Linux image only; optional, see below
+/backotter/authorized_keys               Linux and FreeBSD images; optional, see below
 /README.txt        what this partition is, for someone who finds it in a file manager
 ```
 
@@ -92,7 +92,9 @@ add a partition in the stick's free space on first boot, moving the backup GPT.
 
 `authorized_keys` is for driving a restore from another machine.  With it,
 `key-access` starts sshd at boot and lets those public keys in as `backotter`,
-with passwordless sudo.  Without it sshd stays off until someone turns on remote
+with passwordless sudo (on the FreeBSD image, stick/bsd/key-access: `mdo`
+through mac_do(4), base FreeBSD having no sudo; the other BSDs' images don't
+have it yet).  Without it sshd stays off until someone turns on remote
 access at the console.  `stick/add-ssh-key.sh` writes it, to an image or a stick;
 release images don't have one.  Its `--host-key` adds
 `/backotter/ssh_host_ed25519_key`, so a test bench can pin the stick's identity

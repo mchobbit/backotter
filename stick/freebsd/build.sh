@@ -19,8 +19,10 @@
 # is copied into a new UFS2 labelled BACKOTTER-<first 8 hex digits of the
 # image ID>, so that a second stick (or the machine's own disks) can't stand
 # in for the root.  It gets BackOtter's console and remote access, restic-bko,
-# rustic-bko and bko-holt, and the marker /.disk/backotter.json.  The disk
-# layout is the memstick's, plus the config partition:
+# rustic-bko and bko-holt, key access at boot (/etc/rc.d/backotter_key_access:
+# SSH keys for "backotter" from the config slice, mdo for root), and the
+# marker /.disk/backotter.json.  The disk layout is the memstick's, plus the
+# config partition:
 #
 #   MBR slice 1   the memstick's ESP, its EFI/BOOT/bootx64.efi the updated
 #                 root's loader.efi
@@ -360,6 +362,9 @@ mkdir -p "root$LIB" root/usr/local/bin root/.disk root/home
 # on /mnt, for when that mount fails).
 mkdir -p root/mnt/bko-target
 install -m 755 in/console in/remote-access "root$LIB/"
+# SSH keys from the config slice, at boot (stick/bsd/key-access): before
+# /etc is copied into /conf/base below.
+install -m 555 in/key-access root/etc/rc.d/backotter_key_access
 install -m 755 in/restic-bko root/usr/local/bin/
 [ ! -f in/rustic-bko ] || install -m 755 in/rustic-bko root/usr/local/bin/
 install -m 755 in/bko-holt root/usr/local/bin/

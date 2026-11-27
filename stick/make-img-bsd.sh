@@ -49,7 +49,8 @@
 #                                        put there, with in/'s binaries and
 #                                        marker swapped in place (§4.2); exit
 #                                        3 when they don't fit
-#                   in/ holds the media, console, remote-access and
+#                   in/ holds the media, console, remote-access,
+#                   key-access (FreeBSD installs it) and
 #                   sshd_config.backotter (from stick/bsd/), BUILD_FILES,
 #                   restic-bko (unless RESTIC_REQUIRED=no and there is none)
 #                   and rustic-bko (if there is one for this platform, and
@@ -228,7 +229,7 @@ same_builder "while its VM came up"
 
 # --- Build ------------------------------------------------------------------------
 mkdir "$work/in"
-cp "$here/bsd/console" "$here/bsd/remote-access" "$here/bsd/sshd_config.backotter" \
+cp "$here/bsd/console" "$here/bsd/remote-access" "$here/bsd/key-access" "$here/bsd/sshd_config.backotter" \
     "$here/bsd/refresh-lib.sh" "$pdir/build.sh" "$work/in/"
 for f in "${BUILD_FILES[@]}"; do cp "$pdir/$f" "$work/in/"; done
 if [[ -x $BKO_BIN/$PLATFORM/restic-bko ]]; then

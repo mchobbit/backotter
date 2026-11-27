@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+"""rebuild-on: a guest's make-*.sh build (testvm/rebuild-one.sh) on any build host, its inputs
+copied from Chopin, and the finished guest shipped to Chopin for its vm-store publish
+(docs/design/img-speed.md §12 F12).  Run on the Mac, from the repository (or a copy of it):
+
+  rebuild-on inputs GUEST --host H [--dry-run]
+      copy into H's /bkoscratch/rebuild-inputs what GUEST's build reads there
+      (rebuild-one.sh --inputs GUEST, this checkout's): its own folder (or the one it shares)
+      and each folder its recipe names, as Chopin holds them; a guest Chopin has no own folder
+      for builds from its vms/ folder there, so that folder's input files
+      (rebuild-one.sh --input-files) become H's rebuild-inputs/GUEST.  Host to host, by tar over
+      ssh; a copied file over 64 MiB that H already holds elsewhere in rebuild-inputs (size and
+      SHA-256) becomes a hard link to it.  Refused, before anything is copied, when a folder
+      H holds already differs from Chopin's (its files are named: move it aside), when Chopin
+      lacks a folder the recipe names, or when the copy would leave H's file system under
+      BKO_REBUILD_FLOOR_GIB (default 50) GiB free.  Then every file's SHA-256 is compared on
+      both; exit 0 only when all are equal.  --dry-run: say what would be copied.
+  rebuild-on build GUEST --reserve D M [--host H] [--dir DIR] [--testvm PATH] [--tag TAG] [--no-wait]
+      the host: H, else the one pick-host --reserve D M chooses among the table's default amd64
+      build hosts (role build: not choubox); then inputs (as above), and on the host
+      rebuild-one.sh from a fixed copy of testvm/ in DIR (default /bkoscratch/rebuild, so the
+      guest lands in DIR/vms/GUEST), under that host's cmp-run.sh with GUEST=D%M (D GiB of RAM
+      disk, M of memory; WEAR_TAG rebuild:TAG), detached.  The copy is the host's synced
+      ~/backotter-work/testvm, or with --testvm PATH this Mac's PATH (rsync'd to the host first).
+      Then waits (polling; --no-wait: print the wait command) and prints the build's and boot's
+      results.  Exit: the job's (rebuild-one.sh's: 0 only if it built and booted).
+  rebuild-on wait TAG --host H [--dir DIR]
+      wait for a build started with --no-wait.
+  rebuild-on ship GUEST --host H [--dir DIR] [--to DIR] [--publish [--set-latest] [--no-relink]]
+      only a guest that built and booted (build.exit 0, rebuild-boot.json): copy H's
+      DIR/vms/GUEST to Chopin's --to folder (default /bkoscratch/rebuild/vms), as
+      TO/GUEST (refused if there), and compare its disks' SHA-256 on both.  --publish: then
+      Chopin's vm-store publish --from TO/GUEST GUEST (D2: only Chopin publishes; the store's own
+      rule applies: a rebuild has no image-state, so it is an i version, and latest moves only
+      for a new guest or with --set-latest).
+
+Hosts are table names or ssh targets.  Chopin is the table's first fleet host (hosts.json role
+fleet), or BKO_REBUILD_SOURCE.  For tests and private trials: BKO_REBUILD_SSH (ssh words),
+BKO_PICK_HOST, BKO_HOSTS_JSON, BKO_REBUILD_POLL (seconds, default 30), BKO_REBUILD_VM_STORE
+(Chopin's vm-store, default ~/backotter-work/testvm/vm-store), BKO_REBUILD_STORE_ROOT (passed
+to it as VM_STORE_ROOT: a private store).  Exit 0 ok; 1 refused or failed; 2 bad usage.
+"""
+
+import argparse
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+HOST_PY = os.path.join(HERE, "rebuild_on_host.py")
+ONE = os.path.join(HERE, "rebuild-one.sh")
+HOSTS_PY = os.path.join(HERE, "test2", "t2lib", "hosts.py")
+GUEST_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+GIB = 1 << 30
+
+
+class Refused(Exception):
+    pass
+
+
+def say(msg):
+    print(msg, flush=True)
+
+
+def ssh_words():
+    return shlex.split(os.environ.get("BKO_REBUILD_SSH") or "ssh -o BatchMode=yes -o ConnectTimeout=15")
+
+
+def hosts_py(*args):
+    r = subprocess.run([sys.executable, "-I", "-B", HOSTS_PY, *args], capture_output=True, text=True)
+    if r.returncode:
+        raise Refused(r.stderr.strip() or f"hosts.py {' '.join(args)} failed")
+    return r.stdout.split()
+
+
+def target(h):
+    return h if "@" in h or "." in h else hosts_py("get", h, "ssh")[0]
+
+
+def source():
+    s = os.environ.get("BKO_REBUILD_SOURCE")
+    if s:
+        return target(s)
+    f = hosts_py("names", "--role", "fleet", "--field", "ssh")
+    if not f:
+        raise Refused("no fleet host in the table")
+    return f[0]
+
+
+def remote(host, script, *args, check=True):
+    """SCRIPT (a file here) run on HOST as SCRIPT's interpreter reads stdin, with ARGS."""
+    inter = "python3 -I -" if script.endswith(".py") else "bash -s --"
+    r = subprocess.run(ssh_words() + [host, inter + " " + " ".join(shlex.quote(a) for a in args)],
+                       stdin=open(script, "rb"), capture_output=True, text=True)
+    if check and r.returncode:
+        raise Refused(f"{host}: {r.stderr.strip() or 'exit ' + str(r.returncode)}")
+    return r
+
+
+def remote_sh(host, line):
+    r = subprocess.run(ssh_words() + [host, line], capture_output=True, text=True)
+    if r.returncode:
+        raise Refused(f"{host}: {line}: {r.stderr.strip() or 'exit ' + str(r.returncode)}")
+    return r.stdout
+
+
+def hjson(host, *args):
+    return json.loads(remote(host, HOST_PY, *args).stdout)
+
+
+def gib(n):
+    return f"{n / GIB:.1f} GiB"
+
+
+def needs(guest):
+    r = subprocess.run(["bash", ONE, "--inputs", guest], capture_output=True, text=True)
+    if r.returncode:
+        raise Refused(r.stderr.strip() or f"rebuild-one.sh --inputs {guest} failed")
+    own, uses = [], []
+    for line in r.stdout.splitlines():
+        k, n = line.split()
+        (own if k == "own" else uses).append(n)
+    return own, uses
+
+
+def plan_inputs(guest, src):
+    """[(NAME on the host, SRC folder, [FILE] or None for all, {REL: entry} as SRC has it)]."""
+    own, uses = needs(guest)
+    have = hjson(src, "list", "--hash", *own, *uses)
+    out = []
+    mine = next((n for n in own if n in have["dirs"]), None)
+    if mine:
+        out.append((mine, os.path.join(have["root"], mine), None, have["dirs"][mine]))
+    else:
+        vms = f"backotter-work/vms/{guest}"
+        r = remote(src, ONE, "--input-files", vms, check=False)
+        if r.returncode:
+            raise Refused(f"{src} has no rebuild-inputs folder for {guest} ({' or '.join(own)}) and no {vms}")
+        files = r.stdout.split()
+        ld = hjson(src, "listdir", "--hash", vms, *files)
+        out.append((guest, ld["dir"], files, ld["files"]))
+    for n in uses:
+        if n not in have["dirs"]:
+            raise Refused(f"{src} has no {have['root']}/{n}, which {guest}'s recipe names")
+        out.append((n, os.path.join(have["root"], n), None, have["dirs"][n]))
+    return out
+
+
+def differ(want, got):
+    return sorted(k for k in set(want) | set(got) if want.get(k) != got.get(k))
+
+
+def cmd_inputs(a):
+    src, host = source(), target(a.host)
+    if host == src:
+        say(f"{host} is the inputs' source: nothing to copy")
+        return 0
+    plan = plan_inputs(a.guest, src)
+    held = hjson(host, "list", "--hash", *[n for n, *_ in plan])
+    todo, need, bad = [], 0, []
+    for name, sdir, files, want in plan:
+        if name in held["dirs"]:
+            got = held["dirs"][name]
+            d = differ(want, got)
+            if d:
+                parts = [(w, [k for k in d if f(k)]) for w, f in
+                         (("other bytes", lambda k: k in want and k in got), ("missing", lambda k: k not in got),
+                          ("only there", lambda k: k not in want))]
+                bad.append(f"{host}:{held['root']}/{name} differs from {src}:{sdir} ("
+                           + "; ".join(f"{w}: {', '.join(ks[:5])}" + (f" and {len(ks) - 5} more" if len(ks) > 5 else "")
+                                       for w, ks in parts if ks) + "): move it aside")
+            else:
+                say(f"{name}: held already, the same as {src}'s ({len(want)} files)")
+            continue
+        size = sum(e[1] for e in want.values() if e[0] == "f")
+        todo.append((name, sdir, files, size))
+        need += size
+    if bad:
+        raise Refused("; ".join(bad))
+    floor = float(os.environ.get("BKO_REBUILD_FLOOR_GIB") or 50) * GIB
+    for name, sdir, files, size in todo:
+        say(f"{name}: {'would copy' if a.dry_run else 'copying'} {src}:{sdir}"
+            + (f" ({len(files)} input files)" if files is not None else "") + f", {gib(size)}")
+    if todo and held["avail"] - need < floor:
+        raise Refused(f"{host}: {gib(need)} to copy and {gib(held['avail'])} free would leave it under "
+                      f"its floor of {gib(floor)} (BKO_REBUILD_FLOOR_GIB)")
+    if a.dry_run or not todo:
+        if not todo:
+            say(f"{host}: every input of {a.guest} is there")
+        return 0
+    for name, sdir, files, _ in todo:
+        r = remote(host, HOST_PY, "copy", src, sdir, os.path.join(held["root"], name), "--dedup",
+                   *(["--deref", *files] if files is not None else []))
+        sys.stdout.write(r.stdout)
+    got = hjson(host, "list", "--hash", *[n for n, *_ in plan])
+    bad = [f"{n}: {', '.join(differ(w, got['dirs'].get(n, {}))[:8])}" for n, _, _, w in plan
+           if differ(w, got["dirs"].get(n, {}))]
+    if bad:
+        raise Refused(f"{host}'s copies differ from {src}'s: " + "; ".join(bad))
+    say(f"{host}: {a.guest}'s inputs are {src}'s ({sum(len(w) for *_, w in plan)} files, SHA-256 equal)")
+    return 0
+
+
+def build_hosts():
+    return hosts_py("names", "--default", "--role", "build", "--arch", "amd64")
+
+
+def pick(d, m):
+    pickhost = os.environ.get("BKO_PICK_HOST") or os.path.join(HERE, "pick-host")
+    r = subprocess.run([pickhost, "--reserve", d, m, "--hosts", ",".join(build_hosts())],
+                       capture_output=True, text=True)
+    h = r.stdout.strip()
+    if r.returncode or not h:
+        raise Refused("pick-host found no build host: " + r.stderr.strip())
+    return h
+
+
+def wait(host, d, tag):
+    poll, misses = float(os.environ.get("BKO_REBUILD_POLL") or 30), 0
+    while True:
+        try:
+            st = hjson(host, "status", d, tag)
+            misses = 0
+        except (Refused, ValueError) as e:
+            misses += 1
+            if misses > 20:
+                raise Refused(f"{host}: no status for {tag} in {misses} tries: {e}")
+            st = {"exit": None}
+        if st["exit"] is not None:
+            break
+        time.sleep(poll)
+    say("\n".join(st.get("log") or []))
+    say(f"{tag} on {host}: exit {st['exit']}")
+    return st["exit"]
+
+
+def cmd_build(a):
+    if not GUEST_RE.fullmatch(a.guest):
+        raise Refused(f"not a guest name: {a.guest!r}")
+    needs(a.guest)                                  # a guest with no recipe goes no further
+    host = target(a.host) if a.host else pick(*a.reserve)
+    say(f"{a.guest}: building on {host}")
+    if cmd_inputs(argparse.Namespace(guest=a.guest, host=host, dry_run=False)):
+        return 1
+    tag = a.tag or f"rebuild-{a.guest}-{time.strftime('%Y%m%dT%H%M%S')}"
+    tv = []
+    if a.testvm:
+        dest = f"{a.dir}/rebuild-on/testvm-{tag}"
+        remote_sh(host, f"mkdir -p {shlex.quote(dest)}")
+        r = subprocess.run(["rsync", "-rlp", "--checksum", "--delete", "--exclude", "__pycache__",
+                            "-e", " ".join(shlex.quote(w) for w in ssh_words()),
+                            a.testvm.rstrip("/") + "/", f"{host}:{dest}/"], capture_output=True, text=True)
+        if r.returncode:
+            raise Refused(f"rsync of {a.testvm} to {host}:{dest} failed: {r.stderr.strip()}")
+        tv = [dest]
+    st = hjson(host, "start", a.dir, tag, a.guest, *a.reserve, *tv)
+    say(f"started {tag} on {host} (log {st['log']})")
+    if a.no_wait:
+        say(f"wait with: testvm/rebuild-on wait {tag} --host {host} --dir {a.dir}")
+        return 0
+    rc = wait(host, a.dir, tag)
+    say(json.dumps(hjson(host, "check", f"{a.dir}/vms/{a.guest}")))
+    return rc
+
+
+def cmd_wait(a):
+    return wait(target(a.host), a.dir, a.tag)
+
+
+def cmd_ship(a):
+    if not GUEST_RE.fullmatch(a.guest):
+        raise Refused(f"not a guest name: {a.guest!r}")
+    src, host = source(), target(a.host)
+    w = f"{a.dir}/vms/{a.guest}"
+    ck = hjson(host, "check", w)
+    if not ck["ok"]:
+        raise Refused(f"{host}:{w} is no finished rebuild: {'; '.join(ck['why'])}")
+    dest = f"{a.to.rstrip('/')}/{a.guest}"
+    r = remote(src, HOST_PY, "copy", "local" if host == src else host, w, dest)
+    sys.stdout.write(r.stdout)
+    got = hjson(src, "check", dest)["disks"]
+    if got != ck["disks"]:
+        raise Refused(f"{src}:{dest}'s disks differ from {host}:{w}'s: {got} against {ck['disks']}")
+    for n, (size, h) in sorted(got.items()):
+        say(f"{n}: {gib(size)}, sha256 {h} on {host} and {src}")
+    if not a.publish:
+        say(f"publish with: testvm/vm-store publish --from {dest} {a.guest} (on {src})")
+        return 0
+    vs = os.environ.get("BKO_REBUILD_VM_STORE") or "~/backotter-work/testvm/vm-store"
+    env = f"VM_STORE_ROOT={shlex.quote(os.environ['BKO_REBUILD_STORE_ROOT'])} " if os.environ.get(
+        "BKO_REBUILD_STORE_ROOT") else ""
+    words = [vs if vs.startswith("~/") else shlex.quote(vs), "publish", "--from", shlex.quote(dest), shlex.quote(a.guest)]
+    words += ["--set-latest"] * a.set_latest + ["--no-relink"] * a.no_relink
+    r = subprocess.run(ssh_words() + [src, env + " ".join(words)], text=True)
+    return 0 if r.returncode == 0 else 1
+
+
+def main(argv):
+    p = argparse.ArgumentParser(prog="rebuild-on", description=__doc__.split("\n\n")[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("inputs")
+    s.add_argument("guest")
+    s.add_argument("--host", required=True)
+    s.add_argument("--dry-run", action="store_true")
+    s = sub.add_parser("build")
+    s.add_argument("guest")
+    s.add_argument("--reserve", nargs=2, metavar=("D", "M"), required=True)
+    s.add_argument("--host")
+    s.add_argument("--dir", default="/bkoscratch/rebuild")
+    s.add_argument("--testvm")
+    s.add_argument("--tag")
+    s.add_argument("--no-wait", action="store_true")
+    s = sub.add_parser("wait")
+    s.add_argument("tag")
+    s.add_argument("--host", required=True)
+    s.add_argument("--dir", default="/bkoscratch/rebuild")
+    s = sub.add_parser("ship")
+    s.add_argument("guest")
+    s.add_argument("--host", required=True)
+    s.add_argument("--dir", default="/bkoscratch/rebuild")
+    s.add_argument("--to", default="/bkoscratch/rebuild/vms")
+    s.add_argument("--publish", action="store_true")
+    s.add_argument("--set-latest", action="store_true")
+    s.add_argument("--no-relink", action="store_true")
+    a = p.parse_args(argv)
+    if a.cmd == "build":
+        for v in a.reserve:
+            if not re.fullmatch(r"\d+(\.\d+)?", v):
+                p.error(f"--reserve takes two numbers, not {v!r}")
+        if a.tag and not GUEST_RE.fullmatch(a.tag):
+            p.error(f"bad tag {a.tag!r}")
+        if a.testvm and not os.path.isfile(os.path.join(a.testvm, "rebuild-one.sh")):
+            p.error(f"--testvm {a.testvm}: no rebuild-one.sh there")
+    if a.cmd == "ship" and (a.set_latest or a.no_relink) and not a.publish:
+        p.error("--set-latest and --no-relink go with --publish")
+    try:
+        return {"inputs": cmd_inputs, "build": cmd_build, "wait": cmd_wait, "ship": cmd_ship}[a.cmd](a)
+    except Refused as e:
+        print(f"rebuild-on: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

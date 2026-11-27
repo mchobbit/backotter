@@ -16,31 +16,72 @@
 # make-debian-stack.sh, make-chimera-zfs.sh) without a TMPDIR, so in /tmp: theirs would reach the
 # guest's chroot. Images go to REBUILD_DIR. Results: REBUILD_DIR/vms/GUEST/rebuild-build.json and
 # rebuild-boot.json; exit 0 only if it built and booted.
+#
+# Two read-only modes, for testvm/rebuild-on (docs/design/img-speed.md F12),
+# which seeds a build host's /bkoscratch/rebuild-inputs from Chopin's; they run
+# from anywhere (also sent over ssh as bash -s) and touch nothing:
+#   rebuild-one.sh --inputs GUEST
+#       the rebuild-inputs folders GUEST's build reads: "own NAME" for the one
+#       it takes as SRC (GUEST's, then the folder it shares: elementary8 for
+#       elementary8-luks, ...), "uses NAME" for each other one its recipe or
+#       ISO check names; exit 2 when there is no recipe.
+#   rebuild-one.sh --input-files DIR
+#       the names of the files in DIR (a guest's vms/ folder) the build would
+#       take as its inputs when GUEST has no rebuild-inputs folder.
 set -u
+IN=/bkoscratch/rebuild-inputs
+# What of a SRC folder is an input: not the guest's own outputs and records.
+input_file() {
+    case $1 in
+    openSUSE-MicroOS.*.qcow2) return 0 ;;   # microos's input image, not a guest's disk
+    *.qcow2|root-password|id_ed25519*|*.log|*.log.*|*.exit|*.start|image-state|vm-run-options|uefi-vars.fd|\
+    *-passphrase|*-passphrase-slot1|geli-*.key|*.verified|*.png|*.json|*.part|*.raw|update*|vmupdate*|install-media.*|*.try1|rebuild*) return 1 ;;
+    esac
+    return 0
+}
+# The rebuild-inputs folder a guest shares with another, used when it has none of its own.
+shares() {
+    case $1 in
+    elementary8-luks) echo elementary8 ;;   # built from elementary8's ISO
+    void-zbm-enc) echo void-zbm ;;          # built from void-zbm's inputs
+    slackware15-uefi) echo slackware15 ;;   # built from slackware15's tree
+    esac
+}
+MODE=build
+case ${1:-} in
+--inputs) MODE=inputs; shift; [ $# = 1 ] || { echo "usage: rebuild-one.sh --inputs GUEST" >&2; exit 2; } ;;
+--input-files)
+    [ $# = 2 ] && [ -d "$2" ] || { echo "usage: rebuild-one.sh --input-files DIR (a folder)" >&2; exit 2; }
+    for f in "$2"/*; do
+        [ -f "$f" ] || continue
+        [ -e "$f.part" ] && continue        # an unfinished download: the builder fetches it
+        input_file "${f##*/}" && echo "${f##*/}"
+    done
+    exit 0 ;;
+-*) echo "rebuild-one.sh: unknown option $1" >&2; exit 2 ;;
+esac
 G=$1 SLOT=${4:-1}
 R=${REBUILD_DIR:-/bkoscratch/rebuild} HOME_M=/home/m
 T=$R/testvm W=$R/vms/$G
 # The copy in R, never the checkout's (whose vms/ is the guests' own).
-[ "$(readlink -f "$0")" = "$(readlink -f $T/rebuild-one.sh)" ] ||
+[ $MODE = inputs ] || [ "$(readlink -f "$0")" = "$(readlink -f $T/rebuild-one.sh)" ] ||
     { echo "run $T/rebuild-one.sh, or set REBUILD_DIR to this copy's" >&2; exit 2; }
 # TMPDIR=/mnt/bko-ram only for the builders run as m: the root ones chroot
 # into the guest, where that path doesn't exist.
 RAMTMP=/mnt/bko-ram; unset TMPDIR
 export COMPARE_SLOT=$SLOT SUDO_USER=m
-# Inputs: a host without the ISOs gets copies in /bkoscratch/rebuild-inputs.
-SRC=$HOME_M/backotter-work/vms/$G
-[ -d /bkoscratch/rebuild-inputs/$G ] && SRC=/bkoscratch/rebuild-inputs/$G
-# elementary8-luks is built from elementary8's ISO.
-[ $G = elementary8-luks ] && [ ! -d /bkoscratch/rebuild-inputs/$G ] && [ -d /bkoscratch/rebuild-inputs/elementary8 ] &&
-    SRC=/bkoscratch/rebuild-inputs/elementary8
-# void-zbm-enc is built from void-zbm's inputs.
-[ $G = void-zbm-enc ] && [ ! -d /bkoscratch/rebuild-inputs/$G ] && [ -d /bkoscratch/rebuild-inputs/void-zbm ] &&
-    SRC=/bkoscratch/rebuild-inputs/void-zbm
-# slackware15-uefi is built from slackware15's tree.
-[ $G = slackware15-uefi ] && [ ! -d /bkoscratch/rebuild-inputs/$G ] && [ -d /bkoscratch/rebuild-inputs/slackware15 ] &&
-    SRC=/bkoscratch/rebuild-inputs/slackware15
-[ -d $T ] || { echo "no $T" >&2; exit 2; }
-[ -d "$SRC" ] || { echo "no $SRC" >&2; exit 2; }
+# Inputs: a host without the ISOs gets copies in /bkoscratch/rebuild-inputs
+# (testvm/rebuild-on inputs GUEST --host H copies Chopin's there).
+# Its own folder, else the one it shares (shares()), else its vms/ folder.
+SRC=$HOME_M/backotter-work/vms/$G S=$(shares $G)
+if [ -d $IN/$G ]; then SRC=$IN/$G
+elif [ -n "$S" ] && [ -d $IN/$S ]; then SRC=$IN/$S
+fi
+[ $MODE = inputs ] && SRC=$IN/$G    # (a stand-in: own names it)
+if [ $MODE = build ]; then
+    [ -d $T ] || { echo "no $T" >&2; exit 2; }
+    [ -d "$SRC" ] || { echo "no $SRC" >&2; exit 2; }
+fi
 asm() { runuser -u m -- env TMPDIR="$RAMTMP" PATH="$PATH:/usr/sbin:/sbin" "$@"; }
 note=()
 
@@ -212,24 +253,30 @@ esac
 # hardenedbsd$major.qcow2.
 IMG=$G; case $G in freebsd15-ufs|freebsd15-geli|freebsd15-geli-bios|freebsd15-geli-ufs) IMG=freebsd15 ;; ghostbsd26-zfs) IMG=ghostbsd26 ;; hardenedbsd15-zfs) IMG=hardenedbsd15 ;; esac
 # Never two VMs on one port: compare.py's boot uses 2230 + COMPARE_SLOT.
-if ss -ltnH "sport = :$((2230 + SLOT))" | grep -q .; then echo "port $((2230 + SLOT)) is taken" >&2; exit 2; fi
+if [ $MODE = build ] && ss -ltnH "sport = :$((2230 + SLOT))" | grep -q .; then echo "port $((2230 + SLOT)) is taken" >&2; exit 2; fi
 # The ISO: the recipe's .iso argument, wherever options put it.
+ISO="" what=ISO
 case $G in mx25|mint22|pop24|zorin18|neon24|elementary8|elementary8-luks|anduinos2|solus49)
-    ISO=""; for a in "${cmd[@]}"; do case $a in *.iso) ISO=$a ;; esac; done
-    [ -f "$ISO" ] || { echo "no ISO $ISO" >&2; exit 2; } ;;
-proxmox9|proxmox9-mirror)
-    ISO=/bkoscratch/rebuild-inputs/proxmox9/proxmox-ve_9.2-1.iso
-    [ -f "$ISO" ] || { echo "no ISO $ISO" >&2; exit 2; } ;;
-truenas25|truenas25-mirror)
-    ISO=/bkoscratch/rebuild-inputs/truenas25/TrueNAS-SCALE-25.10.6.iso
-    [ -f "$ISO" ] || { echo "no ISO $ISO" >&2; exit 2; } ;;
-qubes43)
-    ISO=/bkoscratch/rebuild-inputs/qubes43/Qubes-R4.3.2-x86_64.iso
-    [ -f "$ISO" ] || { echo "no ISO $ISO" >&2; exit 2; } ;;
-uc24|uc24-fde)
-    ISO=/bkoscratch/rebuild-inputs/ubuntu-core24/ubuntu-core-24-amd64.img.xz
-    [ -f "$ISO" ] || { echo "no image $ISO" >&2; exit 2; } ;;
+    for a in "${cmd[@]}"; do case $a in *.iso) ISO=$a ;; esac; done ;;
+proxmox9|proxmox9-mirror) ISO=$IN/proxmox9/proxmox-ve_9.2-1.iso ;;
+truenas25|truenas25-mirror) ISO=$IN/truenas25/TrueNAS-SCALE-25.10.6.iso ;;
+qubes43) ISO=$IN/qubes43/Qubes-R4.3.2-x86_64.iso ;;
+uc24|uc24-fde) ISO=$IN/ubuntu-core24/ubuntu-core-24-amd64.img.xz what=image ;;
 esac
+if [ $MODE = inputs ]; then
+    # own: GUEST's folder, then the one it shares; uses: every other folder the
+    # recipe's words or the ISO name (a word with $IN/ in it, anywhere).
+    S=$(shares $G)
+    echo "own $G"; [ -n "$S" ] && echo "own $S"
+    for a in "${cmd[@]}" "$ISO"; do
+        while [[ $a == *"$IN/"* ]]; do
+            a=${a#*"$IN/"}; n=${a%%/*}; n=${n%%[!A-Za-z0-9._-]*}
+            [ -n "$n" ] && [ "$n" != $G ] && [ "$n" != "$S" ] && echo "uses $n"
+        done
+    done | awk '!seen[$0]++'
+    exit 0
+fi
+[ -z "$ISO" ] || [ -f "$ISO" ] || { echo "no $what $ISO" >&2; exit 2; }
 leftovers() {  # what a failed root builder may leave: this build's loop devices; mounts, pools, arrays, VGs and LUKS volumes of any build on the host
     { losetup -a | grep -F "$W"; findmnt -rno TARGET | grep -E '^/mnt/(bko-debian-zfs|bko-debian-stack|bko-chimera-zfs|live-)'
       zpool list -H -o name 2>/dev/null | grep -E '^bko(dz|cz)'
@@ -251,11 +298,7 @@ else
         [ -f "$f" ] || continue
         [ -e "$f.part" ] && continue        # an unfinished download: the builder fetches it
         b=${f##*/}
-        case $b in
-        openSUSE-MicroOS.*.qcow2) ;;          # microos's input image, not a guest's disk
-        *.qcow2|root-password|id_ed25519*|*.log|*.log.*|*.exit|*.start|image-state|vm-run-options|uefi-vars.fd|\
-        *-passphrase|*-passphrase-slot1|geli-*.key|*.verified|*.png|*.json|*.part|*.raw|update*|vmupdate*|install-media.*|*.try1|rebuild*) continue ;;
-        esac
+        input_file "$b" || continue
         if [ "$(stat -Lc %s "$f")" -gt $((64 << 20)) ]; then ln -s "$(readlink -f "$f")" $W/$b
         else cp -L "$f" $W/$b; fi
     done

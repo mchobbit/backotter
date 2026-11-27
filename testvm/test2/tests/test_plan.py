@@ -354,6 +354,30 @@ class Holt(WorldCase):
         with self.assertRaises(plan.PlanError):
             self.w.plan("HoltTest2 plan", self.r_holt, holt_bin="~/nowhere")
 
+    def test_switch_to_a_cross_build_makes_its_platform_due(self):
+        """img-speed.md I12 (§8.2a, D17): testvm/test2/holt/builds.json names freebsd's cross kind,
+        so every holt line of freebsd is due once, keyed by that kind, and no other platform's."""
+        kind = "cross:1.94.1:freebsd14@0123456789ab"
+        with tempfile.TemporaryDirectory() as mr, mock.patch.dict(os.environ, {"T2_MAC_ROOT": mr}):
+            self.w.edit("testvm/test2/holt/builds.json", json.dumps(
+                {"schema": 1, "reference_days": 7, "cross": {"freebsd": {"kind": kind, "since": "2026-11-27"}}}),
+                commit=True)
+            p = self.w.plan("HoltTest2 plan", self.r_holt)
+            self.assertEqual(p.set["holt_build"], {"freebsd": kind})
+            fb = [pc for pc in p.cells if pc.cell.startswith("holt:") and
+                  pc.res["chopin"].inputs.get("bin", {}).get("freebsd/bko-holt")]
+            self.assertTrue(fb)
+            for pc in fb:
+                self.assertEqual(pc.status, "due", pc.cell)
+                self.assertEqual(pc.res["chopin"].inputs["bin"]["freebsd/bko-holt-build"], "ver:" + kind)
+            self.assertEqual(st(p, "holt:debian13")[0], "current")
+            self.assertTrue(any("VM reference due" in n for n in p.notes), p.notes)
+            # T2_HOLT_BUILD=vm (E2's and holt-ref.py's runs): the VM builds, the old keys
+            with mock.patch.dict(os.environ, {"T2_HOLT_BUILD": "vm"}):
+                p = self.w.plan("HoltTest2 plan", self.r_holt)
+            self.assertNotIn("holt_build", p.set)
+            self.assertEqual(p.totals["due"], 0)
+
     def test_version_only_bump_carries_all_90(self):
         self.w.edit("holt/Cargo.toml", self.w.read("holt/Cargo.toml").replace("0.2.4", "0.2.5"))
         self.w.edit("holt/Cargo.lock", self.w.read("holt/Cargo.lock").replace("0.2.4", "0.2.5"), commit=True)

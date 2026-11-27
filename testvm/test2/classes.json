@@ -133,7 +133,7 @@
                         "testvm/holttest1d/prep/garuda-snapper.sh", "testvm/holttest1d/prep/biglinux-timeshift.sh",
                         "testvm/holttest1d/prep/anduinos-older-snapshot.sh", "testvm/compare/wfwatch.sh",
                         "testvm/holttest1d/make-*.sh", "testvm/holttest1d/build-holt.sh",
-                        "testvm/holttest1d/holt-cross.sh", "testvm/holttest1d/holt-e2.sh", "testvm/holttest1d/holt_e2.py",
+                        "testvm/holttest1d/holt-cross.sh", "testvm/holttest1d/holt-e2.sh", "testvm/holttest1d/holt_e2.py", "testvm/holttest1d/holt-ref.py",
                         "testvm/holttest1d/ht1-debug.sh", "testvm/holttest1d/ht1-lib-test.sh", "testvm/holttest1d/ht1-bsd-test.sh",
                         "testvm/holttest1d/judge-test.py",
                         "testvm/holttest1d/ht1-json.sh", "testvm/holttest1d/ht1-json.py", "testvm/holttest1d/ht1-json-test.py",

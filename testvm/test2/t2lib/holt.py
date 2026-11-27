@@ -120,6 +120,7 @@ import signal
 import threading
 import time
 
+from . import holtbuild
 from . import hosts as hosts_table
 from . import keys, utc_now
 from .rows_holt import backfill_row, cell_of, gv_of
@@ -448,6 +449,32 @@ class Remote:
                 return False
         return self.sh(dst_host, f"chmod 755 {self.h.rq(part)} && mv -f {self.h.rq(part)} {self.h.rq(dst)}",
                        timeout=30)[0] == 0
+
+    def promote(self, host, src, dst):
+        """SRC to DST on HOST (img-speed.md I12: a cross build into CODE/PLAT/), by DST.part and
+        a rename that never writes over a DST that is there.  True once DST is SRC's bytes."""
+        q, d, part = self.h.rq(src), self.h.rq(dst), self.h.rq(dst + ".part")
+        rc, _, _ = self.sh(host, f"test ! -e {d} && mkdir -p {self.h.rq(os.path.dirname(dst))} && cp {q} {part} && "
+                                 f"chmod 755 {part} && cmp -s {q} {part} && mv -n {part} {d} && cmp -s {q} {d}; "
+                                 f"s=$?; rm -f {part}; exit $s", timeout=120)
+        return rc == 0
+
+    def retire(self, host, hd, rel, jrel):
+        """HD/REL (a bko-holt) and HD/JREL (its build json) to HD/retired/SHA12/ on HOST, and
+        REL's lines out of HD's SHA256SUMS and BUILD-INFO (img-speed.md I12: a build of another
+        kind than the run ships).  A copy already there with the same bytes is kept and REL
+        removed.  The directory it went to, or None."""
+        sh = ("set -e; cd {hd}; s=$(sha256sum {rel} | cut -c1-12); d=retired/$s; mkdir -p \"$d/$(dirname {rel})\"; "
+              "t=\"$d/{rel}\"; if [ -e \"$t\" ]; then cmp -s {rel} \"$t\"; rm -f {rel}; else mv -n {rel} \"$t\"; "
+              "test ! -e {rel}; fi; if [ -e {jrel} ]; then mkdir -p \"$d/$(dirname {jrel})\"; "
+              "mv -f {jrel} \"$d/{jrel}\"; fi; "
+              "for f in SHA256SUMS BUILD-INFO; do [ -f $f ] || continue; "
+              "awk -v f={rel} '{{n = ($1 == \"sha256\") ? $3 : $2; sub(/^\\*/, \"\", n)}} n != f' $f > $f.tmp.$$; "
+              "mv -f $f.tmp.$$ $f; done; echo \"$PWD/$d\"").format(
+            hd=self.h.rq(hd), rel=self.h.rq(rel), jrel=self.h.rq(jrel))
+        rc, out, _ = self.sh(host, sh, timeout=120)
+        last = (out or "").strip().splitlines()[-1:] if rc == 0 else []
+        return last[0] if last else None
 
     def order(self, host, script, lines):
         if not lines:
@@ -818,6 +845,13 @@ class Runner:
             return hb
         return os.path.join(self.host_root(), "holt-bin", self.code)
 
+    def kinds(self):
+        """{PLAT: KIND} of the platforms this run ships the cross build of (the plan's, from
+        holtbuild.kinds: img-speed.md I12); none with --holt-bin."""
+        if self.opts.get("holt_bin"):
+            return {}
+        return dict((self.plan.set or {}).get("holt_build") or {})
+
     def ensure_holt(self, pcs):
         """_ensure_holt under MAC_ROOT/runs/.lock-holt-bin-CODE: holt runs over other cells go
         side by side (run.CellLocks), and one at a time builds and ships a CODE (builds aren't
@@ -863,6 +897,11 @@ class Runner:
         every = self.all_hosts()
         every += [h for h in bh if h not in every]   # (a build host outside --hosts holds what it builds)
         outside = [h for h in every if h not in self.hosts]
+        kinds = {p: k for p, k in self.kinds().items() if p in plats}
+        if kinds:   # (I12: a build of another kind in CODE/PLAT/ goes to CODE/retired/, never tested as this one)
+            err = self.retire_other_kinds(hd, every, kinds)
+            if err:
+                return err
         infos = self.known_infos(hd, every)
         builds = self.state["builds"]
         for p, b in builds.items():   # this run's own builds win (a resume)
@@ -897,11 +936,18 @@ class Runner:
                 continue
             if b and b.get("pid") and b.get("rc") is None:
                 continue   # resume: still running (or ended: its exit file says)
+            if p in kinds:
+                ready = self.ready_cross(hd, p, kinds[p], every)
+                if ready:   # (cross builds are reproducible: a check build of this kind is the build)
+                    builds[p] = ready
+                    self.state.save()
+                    continue
             host = bh[i % len(bh)]
-            builds[p] = self.start_build(host, p)
+            builds[p] = self.start_build(host, p, cross=p in kinds)
             self.state.save()
-        self.start_crosses([p for p in order if p in CROSS_PLATS], bh, every)
+        self.start_crosses([p for p in order if p in CROSS_PLATS and p not in kinds], bh, every)
         err = self.wait_builds(order)
+        err = self.ship_crosses(hd, [p for p in order if p in kinds], kinds) or err
         if err:
             # (A failed build that ended, other than linux's, loses its platform's cells
             # alone; a build still running, or linux's failing, stops the run as before.)
@@ -976,6 +1022,90 @@ class Runner:
                 self.notes.append(f"bko-holt code {self.code[:12]} not shipped to {h}: {e}")
         self.wait_crosses()
         return None
+
+    # --- the switched platforms (img-speed.md I12, §8.3): their cross build is the one shipped ---------
+    def retire_other_kinds(self, hd, every, kinds):
+        """On each host, a CODE/PLAT/bko-holt of a switched PLAT whose CODE/build-PLAT.json
+        records another kind (a VM build of this CODE made before the switch, or a cross build
+        of another toolchain or sysroot) goes to CODE/retired/SHA12/ with its build-PLAT.json,
+        and its SHA256SUMS and BUILD-INFO lines go: never written over, never tested as the
+        kind the plan keyed.  Returns None, or why not."""
+        for h in every:
+            for p in sorted(kinds):
+                path = os.path.join(hd, holt_rel(p))
+                e = self.remote.exists(h, path)
+                if e is None and h in self.hosts:
+                    return f"can't tell whether {h} holds {path} (ssh failed): nothing built over it"
+                if not e:
+                    continue
+                t = self.remote.read(h, os.path.join(hd, f"build-{p}.json"))
+                try:
+                    info = json.loads(t) if t else None
+                except ValueError:
+                    info = None
+                got = holtbuild.kind_of(info)
+                if got == kinds[p] and info.get("sha256") == self.remote.sha256(h, path):
+                    continue
+                d = self.remote.retire(h, hd, holt_rel(p), f"build-{p}.json")
+                if not d:
+                    if h in self.hosts:
+                        return f"{h}: couldn't move {path} ({got}, not {kinds[p]}) to {hd}/retired/"
+                    self.notes.append(f"{h}: {path} is a {got} build, not {kinds[p]}, and couldn't be moved aside")
+                    continue
+                self.log(f"bko-holt {p}: {h}'s {got} build moved to {d} (this run ships {kinds[p]})")
+        return None
+
+    def ready_cross(self, hd, p, kind, every):
+        """A check build of KIND in CODE/cross/PLAT/ on a host of EVERY, made the shipped build
+        there (CODE/PLAT/): a builds entry, or None.  One of another kind there is moved to
+        CODE/retired/ first, so that this run's build may go there."""
+        path = os.path.join(self.cross_dir(p), "bko-holt")
+        for h in every:
+            if not self.remote.exists(h, path):
+                continue
+            t = self.remote.read(h, os.path.join(hd, "cross", f"build-{p}.json"))
+            try:
+                info = json.loads(t) if t else None
+            except ValueError:
+                info = None
+            if holtbuild.kind_of(info) == kind and info.get("sha256") == self.remote.sha256(h, path):
+                if not self.remote.promote(h, path, os.path.join(hd, holt_rel(p))):
+                    continue
+                self.log(f"bko-holt {p}: {h}'s cross build {info['sha256'][:12]} ({kind}) is the one shipped")
+                return {"host": h, "rc": 0, "info": info, "tool": "holt-cross.sh", "shipped": True,
+                        "started": utc_now(), "from_check": True}
+            if self.remote.retire(h, hd, f"cross/{p}/bko-holt", f"cross/build-{p}.json"):
+                self.log(f"bko-holt {p}: {h}'s cross check build of {holtbuild.kind_of(info)} moved to retired/")
+        return None
+
+    def ship_crosses(self, hd, plats, kinds):
+        """This run's cross builds of the switched PLATS: one whose kind is the plan's goes from
+        CODE/cross/PLAT/ to CODE/PLAT/ on its build host (with CODE/cross/build-PLAT.json); one
+        of another kind (the toolchain or the sysroot moved) fails its platform: it isn't the
+        build E2 passed on.  Returns why, or None."""
+        why = []
+        for p in plats:
+            b = self.state["builds"].get(p) or {}
+            if b.get("rc") != 0 or b.get("shipped"):
+                continue
+            got = holtbuild.kind_of(b.get("info"))
+            src = os.path.join(self.cross_dir(p), "bko-holt")
+            if got != kinds[p]:
+                b["rc"] = 1
+                b["why"] = (f"its kind is {got}, not {holtbuild.BUILDS}'s {kinds[p]}: E2 on the new kind first "
+                            f"(testvm/holttest1d/holt-ref.py run {p} --repin)")
+            elif self.remote.sha256(b["host"], src) != b["info"].get("sha256") or \
+                    not self.remote.promote(b["host"], src, os.path.join(hd, holt_rel(p))):
+                b["rc"], b["why"] = 1, f"couldn't put {src} in CODE/{holt_rel(p)} on {b['host']}"
+            else:
+                b["shipped"] = True
+                self.remote.write(b["host"], os.path.join(hd, "cross", f"build-{p}.json"),
+                                  json.dumps(b["info"], sort_keys=True) + "\n")
+                self.log(f"bko-holt {p}: cross build {b['info']['sha256'][:12]} ({got}) shipped from {b['host']}")
+            self.state.save()
+            if b.get("rc") != 0:
+                why.append(self.build_failure(p))
+        return "; ".join(why) or None
 
     # --- the cross check builds (img-speed.md I10, §8.2a: CODE/cross/PLAT/, never CODE/PLAT/) ---------
     def cross_dir(self, plat):

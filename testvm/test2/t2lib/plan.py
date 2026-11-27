@@ -572,6 +572,13 @@ class Planner:
                 self.opts["holt_sha256"] = dict(sums)
                 self.plan.set.update(holt_bin=ready, holt_built=sorted(sets))
                 self.notes.append(f"--holt-bin {ready}: bko-holt from that set (sha256 keys; rows count only where equal)")
+            else:   # img-speed.md I12 (§8.3, D17): the platforms that ship their cross build
+                from . import holtbuild
+                kinds, notes = holtbuild.kinds(self.ctx.src)
+                if kinds:   # (in the plan's set too, for the runner; none: the set as before)
+                    self.opts["holt_build"] = dict(kinds)
+                    self.plan.set["holt_build"] = dict(kinds)
+                self.notes += notes
             return
         reach = [h for h in self.ctx.hosts if h in self.ctx.facts]
         if self.w.round:

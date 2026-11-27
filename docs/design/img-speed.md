@@ -375,8 +375,12 @@ passes its `--run`, which defaults to the time, so only a bare img-one.sh
 leaves it null). The provenance is not written (said in `result.txt`) when the build's
 stick/ inputs, builder, ISO, slim, host tools or binaries moved since its
 start (`--start`), so that a vm-update or a sync during the boot tests cannot
-record inputs the image was not built from. `holt_code` is null until
-holt-bin records the CODE a bko-holt was built from (today only `COMMIT`). `tests.tools` holds the QEMU and OVMF
+record inputs the image was not built from. `holt_code` and `holt_build`
+(I12) come from HoltTest2's record of the bko-holt the image carries: the
+`T2_HOST_ROOT/holt-bin/CODE/build-PLAT.json` (or a copy under `CODE/retired/`)
+whose sha256 is the binary's names CODE, and `cross` when its kind is
+holt-cross.sh's, else `vm`. linux and haiku are always `vm`; with no record
+both are null (holt-bin itself records only `COMMIT`). `tests.tools` holds the QEMU and OVMF
 versions.
 
 **The tree listing.** One line per entry, tab-separated: tree, path, type
@@ -1135,6 +1139,42 @@ D10's pinned toolchain closes for the cross-built platforms.)
   **reference** once a week and at each change of the pinned toolchain or
   the guest generation, with E2's step 3 on one guest. A difference makes
   that platform go back to the VM build until it is explained.
+- *As built (I12, 2026-11-27):* the switch is `testvm/test2/holt/builds.json`:
+  `cross` names each switched platform with the kind E2 passed on (holt-cross.sh's
+  `cross:TOOLCHAIN:GUEST@SYSROOT12`; the sysroots and the cross builds are the same on
+  every host, §8.1) and its two E2 rounds. `t2lib/holtbuild.py` reads it. The plan keys
+  each holt cell with that kind (keys.py's `holt_build`), and the row keys the kind that
+  the set's `CODE/build-PLAT.json` records for the binary it used. So a row is keyed by
+  the build it tested, and a cross row never counts for a VM key.
+  - **The build.** HoltTest2 builds a switched platform with holt-cross.sh alone, into
+    `CODE/cross/PLAT/` as before. Once its kind is the pinned one, the build is copied to
+    `CODE/PLAT/` on its build host (never over a file there) and shipped like any build.
+    So it is the build the cells test and the one `img-refresh-holt.sh` copies (that
+    script is unchanged). A check build already in `CODE/cross/PLAT/` with the pinned
+    kind is shipped without a second build, since the builds are reproducible.
+  - **A kind that moved.** A cross build of another kind fails its platform for the run:
+    its cells are skipped and the note names `holt-ref.py run PLAT --repin`. This happens
+    when the toolchain changes, or when a vm-update of the sysroot's image changes the
+    sysroot. It is never shipped, because E2 did not pass on it.
+  - **Another kind in CODE/PLAT/.** A build of another kind already in `CODE/PLAT/` goes
+    to `CODE/retired/SHA12/` with its build json, and its SHA256SUMS and BUILD-INFO lines
+    go too. This is a VM build of the CODE that was current at the switch, or a cross
+    build of an older sysroot. It is moved, not overwritten. A run of an older copy whose
+    job reads the binary after the move gets an unmeasured row (R26: the set's binary
+    changed during the run), not a wrong one.
+  - **The weekly VM reference.** `testvm/holttest1d/holt-ref.py run PLAT...` runs on the
+    Mac and takes one guest per platform (freebsd14, netbsd11, omnios58, openbsd8,
+    dragonfly6). With `--all-guests` it takes every holt guest of the platform: that is
+    E2 for a holt-change round.
+    - It makes a HoltTest2 run under private roots with `T2_HOLT_BUILD=vm`, which gives
+      each platform its VM build with a cross check build beside it, as in I10/I11.
+    - Then come holt-e2.sh's steps 0-2, then the same guests on the cross set
+      (`--holt-bin`), then `holt_e2.py dumps`.
+    - It records the result in `MAC_ROOT/holt-ref/PLAT.json`. A FAIL sends the platform
+      back to its VM build at the next plan, until a reference passes again (D11).
+    - The plan notes a reference that is due: none has passed, the last PASS is over
+      `reference_days` (7) old, or it was on another kind than the pinned one.
+    - `holt-ref.py due` lists them. Its runs are not started by HoltTest2 itself.
 - Cross builds need no guest and no big host. (F8 has already removed
   "HoltTest2 needs a big build host": a VM build runs on any build host.)
 

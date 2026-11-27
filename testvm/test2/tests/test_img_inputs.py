@@ -500,6 +500,36 @@ class ImgOne(EnvCase):
                                   "SHA256SUMS", "retain.log"}, set())
         self.assertEqual(rd(os.path.join(d, "x.img")), "image\n")
 
+    # img-speed.md I12 (§8.3): provenance's holt_build and holt_code, from HoltTest2's record of
+    # the bko-holt the image carries (T2_HOST_ROOT/holt-bin/CODE/build-PLAT.json).
+    def record(self, platform, body, kind=None, code="e" * 64, retired=False):
+        import hashlib
+        info = {"platform": platform, "sha256": hashlib.sha256(body.encode()).hexdigest()}
+        if kind:
+            info.update(kind="cross", build=kind)
+        d = os.path.join(self.t, "host-root", "holt-bin", code, *(("retired", "0123456789ab") if retired else ()))
+        wr(os.path.join(d, f"build-{platform}.json"), json.dumps(info))
+
+    def test_a_cross_build_is_named_with_its_code(self):
+        self.record("netbsd", "holt netbsd\n", kind="cross:1.94.1:netbsd11@bcec88bbe419")
+        self.record("netbsd", "another build\n", code="f" * 64)
+        r = self.run_one("netbsd", BKO_IMG_RUN="img-test")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        b = self.prov("netbsd")["bins"]
+        self.assertEqual((b["holt_build"], b["holt_code"]), ("cross", "e" * 64))
+
+    def test_no_record_is_null_and_a_vm_build_is_vm(self):
+        r = self.run_one("netbsd", BKO_IMG_RUN="img-test")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((self.prov("netbsd")["bins"]["holt_build"], self.prov("netbsd")["bins"]["holt_code"]),
+                         (None, None))
+        sha = II.sha256_file(os.path.join(self.w, "holt-bin", "netbsd", "bko-holt"))
+        self.assertEqual(II.holt_build_of("netbsd", sha), (None, None))
+        self.record("netbsd", "holt netbsd\n", retired=True)   # a VM build the switch moved aside
+        self.assertEqual(II.holt_build_of("netbsd", sha), ("vm", "e" * 64))
+        self.assertEqual(II.holt_build_of("linux", "0" * 64), ("vm", None))   # never cross
+        self.assertEqual(II.holt_build_of("netbsd", None), (None, None))
+
 
 @unittest.skipUnless(shutil.which("flock") and BASH, "no flock here")
 class GuestLock(EnvCase):

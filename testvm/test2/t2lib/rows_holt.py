@@ -40,6 +40,7 @@ import subprocess
 import sys
 import time
 
+from . import holtbuild as _holtbuild
 from . import keys as _keys
 from . import facts_host as _facts
 
@@ -757,6 +758,18 @@ def build(argv, hostctx=None):
         if used and now_sha and now_sha != used:
             unmeasured.append(f"{holt_bin}'s {plat} bko-holt changed during the run")
         opts["holt_code"] = code
+        # (img-speed.md I12, §8.2a: the build kind the set's CODE/build-PLAT.json records for the
+        # binary used, so that a cross build's row has the cross key and a VM build's the VM one.)
+        bj = _read(os.path.join(holt_bin, f"build-{plat}.json"))
+        if bj is not None and used:
+            try:
+                info = json.loads(bj)
+            except ValueError:
+                info = None
+            if not isinstance(info, dict) or info.get("sha256") != used:
+                unmeasured.append(f"{holt_bin}/build-{plat}.json doesn't name the bko-holt used ({used[:12]})")
+            else:
+                opts["holt_build"] = {plat: _holtbuild.kind_of(info)}
     else:
         opts["holt_sha256"] = {plat: used} if used else {}
         if not used and not a.refused and not a.lost:

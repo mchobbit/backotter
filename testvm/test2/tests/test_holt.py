@@ -516,6 +516,32 @@ class U51RowsHolt(RecordsMixin, unittest.TestCase):
             self.assertEqual(row["key"], planned.key, cell)
             self.assertEqual(row["meta"]["holt"]["code"], code)
 
+    def test_row_key_has_the_build_kind_its_set_records(self):
+        """img-speed.md I12: the row keys the build kind CODE/build-PLAT.json records for the
+        binary used, as the plan keys builds.json's: a cross build's row has the cross key."""
+        src = keys.TreeSource(WT)
+        code = keys.holt_code(src)
+        hb = os.path.join(self.tmp, "holt-bin", code)
+        os.makedirs(hb)
+        used = "f341270ccedbbe34446f9d4e11595150a7c7cf5a82c63c7458a2d8ed478d661d"
+        wr(os.path.join(hb, "SHA256SUMS"), used + " *bko-holt\n")
+        facts = facts_for(["debian13"])
+        k = self.k("linux-pass", env={"HT_HOLT_BIN": hb}, holt_bin=hb)
+        kind = "cross:1.94.1:x@0123456789ab"
+        for info, want, ok in (({"sha256": used}, {}, True),                                # a VM build's info
+                               ({"sha256": used, "kind": "cross", "build": kind}, {"linux": kind}, True),
+                               ({"sha256": "0" * 64, "kind": "cross", "build": kind}, None, False)):
+            wr(os.path.join(hb, "build-linux.json"), json.dumps(info))
+            row = self.build(k, "debian13", facts=facts)
+            if not ok:
+                self.assertFalse(row["valid"])
+                self.assertIn("build-linux.json doesn't name the bko-holt used", row["note"])
+                continue
+            planned = keys.resolve("holt:debian13", src, facts, keys.Specs(src),
+                                   {"rustic_set": "bko-bin", **({"holt_build": want} if want else {})})
+            self.assertEqual(row["key"], planned.key, info)
+            self.assertEqual("linux/bko-holt-build" in row["inputs"]["bin"], bool(want))
+
     def test_an_img_row_checks_the_pins_bko_holt_against_the_key(self):
         pin = "/bkoscratch/test2/img-pin/linux/bko-holt"
         f = facts_for(["debian13", "freebsd15-ufs", "netbsd11", "haiku6"])
@@ -891,6 +917,32 @@ class FakeRemote:
     def order(self, host, script, lines):
         return sorted(lines, reverse=True)   # a size order of the fake's own
 
+    def promote(self, host, src, dst):
+        self.calls.append((host, "promote", src, dst))
+        if dst in self.files[host] or src not in self.files[host]:
+            return False
+        self.files[host][dst] = self.files[host][src]
+        return True
+
+    def retire(self, host, hd, rel, jrel):
+        self.calls.append((host, "retire", rel))
+        f = self.files[host]
+        src = os.path.join(hd, rel)
+        if src not in f:
+            return None
+        d = os.path.join(hd, "retired", hashlib.sha256(f[src].encode()).hexdigest()[:12])
+        f.setdefault(os.path.join(d, rel), f[src])
+        del f[src]
+        if os.path.join(hd, jrel) in f:
+            f[os.path.join(d, jrel)] = f.pop(os.path.join(hd, jrel))
+        for n in ("SHA256SUMS", "BUILD-INFO"):
+            t = f.get(os.path.join(hd, n))
+            if t is not None:
+                f[os.path.join(hd, n)] = "".join(x + "\n" for x in t.splitlines()
+                                                 if (x.split()[2:3] if x.startswith("sha256 ") else
+                                                     [x.split()[-1].lstrip("*")]) != [rel])
+        return d
+
     def ledger_rows(self, host, ledger_, needle):
         if self.blip("ledger", host):
             return None
@@ -1177,6 +1229,114 @@ class U53HoltRun(unittest.TestCase):
         self.assertEqual(self.crosses(), [])
         self.assertEqual(r.files["cinqcent"]["/bkoscratch/t2test/holt-bin/" + "c" * 64 + "/cross/freebsd/bko-holt"],
                          "older cross")
+
+    # --- img-speed.md I12: a switched platform ships its cross build (§8.3, D11, D17) -------------------
+    KIND = "cross:1.94.1:freebsd14@0123456789ab"   # (FakeRemote's cross builds' kind)
+    HB = "/bkoscratch/t2test/holt-bin/" + "c" * 64
+
+    def switch(self, kind=None):
+        self.plan.set["holt_build"] = {"freebsd": kind or self.KIND}
+
+    def vm_info(self, body):
+        return json.dumps({"platform": "freebsd", "sha256": hashlib.sha256(body.encode()).hexdigest(),
+                           "rustc": "rustc 1.100.0", "host": "cinqcent", "time": "2026-11-27T07:00:00Z"})
+
+    def test_switched_platform_builds_cross_only_and_ships_it(self):
+        self.switch()
+        res = self.go({})
+        self.assertEqual(res["exit"], 0, res)
+        r, hb = self.remote, self.HB
+        starts = [c[0] for h, op, *c in r.calls if op == "start"]
+        self.assertFalse([c for c in starts if "build-holt.sh --reserved" in c and c.endswith(" freebsd")])
+        fx = [c for c in starts if "holt-cross.sh --reserved" in c and c.endswith(" freebsd")]
+        self.assertEqual(len(fx), 1, "freebsd's cross build is its one build")
+        self.assertIn(f"HOLT_OUT={hb}/cross/freebsd ", fx[0])
+        for h in ("chopin", "cinqcent"):   # shipped in CODE/freebsd/: the build the cells test
+            self.assertEqual(r.files[h][hb + "/freebsd/bko-holt"], "cross bko-holt freebsd")
+            info = json.loads(r.files[h][hb + "/build-freebsd.json"])
+            self.assertEqual((info["kind"], info["build"]), ("cross", self.KIND))
+            sha = hashlib.sha256(b"cross bko-holt freebsd").hexdigest()
+            self.assertIn(f"{sha} *freebsd/bko-holt", r.files[h][hb + "/SHA256SUMS"])
+            # openbsd isn't switched: its VM build, and its cross check build beside it as before
+            self.assertEqual(r.files[h][hb + "/openbsd/bko-holt"], "bko-holt openbsd")
+        self.assertEqual([r.files[h].get(hb + "/cross/openbsd/bko-holt") for h in ("chopin", "cinqcent")
+                          if hb + "/cross/openbsd/bko-holt" in r.files[h]], ["cross bko-holt openbsd"])
+        self.assertTrue(any("cross build" in t and "shipped from" in t for t in self.rs.logged), self.rs.logged)
+
+    def test_the_switch_moves_a_vm_build_of_the_code_aside(self):
+        """A VM build in CODE/freebsd/ (made before the switch) goes to CODE/retired/, and its
+        SHA256SUMS line with it: never written over, never tested under the cross key."""
+        r, hb = FakeRemote({}), self.HB
+        vm = "bko-holt freebsd"
+        sha = hashlib.sha256(vm.encode()).hexdigest()
+        for h in ("chopin", "cinqcent"):
+            r.files[h][hb + "/freebsd/bko-holt"] = vm
+            r.files[h][hb + "/build-freebsd.json"] = self.vm_info(vm)
+            r.files[h][hb + "/SHA256SUMS"] = f"{sha} *freebsd/bko-holt\n"
+        self.switch()
+        res = self.go({}, r)
+        self.assertEqual(res["exit"], 0, res)
+        for h in ("chopin", "cinqcent"):
+            self.assertEqual(r.files[h][f"{hb}/retired/{sha[:12]}/freebsd/bko-holt"], vm)
+            self.assertIn(f"{hb}/retired/{sha[:12]}/build-freebsd.json", r.files[h])
+            self.assertEqual(r.files[h][hb + "/freebsd/bko-holt"], "cross bko-holt freebsd")
+            self.assertNotIn(sha, r.files[h][hb + "/SHA256SUMS"])
+        self.assertTrue(any("vm build moved to" in t for t in self.rs.logged), self.rs.logged)
+
+    def test_a_vm_build_stays_when_nothing_is_switched(self):
+        r, hb = FakeRemote({}), self.HB
+        vm = "bko-holt freebsd"
+        for h in ("chopin", "cinqcent"):
+            r.files[h][hb + "/freebsd/bko-holt"] = vm
+            r.files[h][hb + "/build-freebsd.json"] = self.vm_info(vm)
+        res = self.go({}, r)
+        self.assertEqual(res["exit"], 0, res)
+        self.assertFalse([c for c in r.calls if c[1] == "retire"])
+        self.assertEqual(r.files["cinqcent"][hb + "/freebsd/bko-holt"], vm)
+
+    def test_a_check_build_of_the_kind_is_shipped_not_built_again(self):
+        r, hb = FakeRemote({}), self.HB
+        body = "cross bko-holt freebsd (an earlier run's check build)"
+        r.files["cinqcent"][hb + "/cross/freebsd/bko-holt"] = body
+        r.files["cinqcent"][hb + "/cross/build-freebsd.json"] = json.dumps(
+            {"platform": "freebsd", "sha256": hashlib.sha256(body.encode()).hexdigest(), "kind": "cross",
+             "build": self.KIND, "host": "cinqcent", "rustc": "rustc 1.94.1", "time": "2026-11-27T07:35:52Z"})
+        self.switch()
+        res = self.go({}, r)
+        self.assertEqual(res["exit"], 0, res)
+        self.assertFalse([c for h, c in self.crosses() if c.endswith(" freebsd")])
+        for h in ("chopin", "cinqcent"):
+            self.assertEqual(r.files[h][hb + "/freebsd/bko-holt"], body)
+
+    def test_a_check_build_of_another_kind_is_moved_aside_and_built_anew(self):
+        r, hb = FakeRemote({}), self.HB
+        body = "cross bko-holt freebsd (another sysroot)"
+        r.files["cinqcent"][hb + "/cross/freebsd/bko-holt"] = body
+        r.files["cinqcent"][hb + "/cross/build-freebsd.json"] = json.dumps(
+            {"platform": "freebsd", "sha256": hashlib.sha256(body.encode()).hexdigest(), "kind": "cross",
+             "build": "cross:1.94.1:freebsd14@ffffffffffff"})
+        self.switch()
+        res = self.go({}, r)
+        self.assertEqual(res["exit"], 0, res)
+        self.assertEqual(len([c for h, c in self.crosses() if c.endswith(" freebsd")]), 1)
+        sha12 = hashlib.sha256(body.encode()).hexdigest()[:12]
+        self.assertEqual(r.files["cinqcent"][f"{hb}/retired/{sha12}/cross/freebsd/bko-holt"], body)
+        self.assertEqual(r.files["chopin"][hb + "/freebsd/bko-holt"], "cross bko-holt freebsd")
+
+    def test_a_cross_build_of_another_kind_loses_its_platform(self):
+        """The toolchain or the sysroot moved: the build isn't the one E2 passed on, so its
+        platform's cells are skipped (never tested on it), the others run."""
+        self.switch("cross:1.94.1:freebsd14@aaaaaaaaaaaa")
+        res = self.go({})
+        self.assertEqual(res["exit"], 1, res)
+        by = {c["cell"]: c for c in res["cells"]}
+        self.assertNotEqual(by["holt:freebsd15"]["verdict"], "PASS")
+        self.assertEqual(by["holt:debian13"]["verdict"], "PASS")
+        self.assertEqual(by["holt:openbsd8"]["verdict"], "PASS")
+        for h in ("chopin", "cinqcent"):
+            self.assertNotIn(self.HB + "/freebsd/bko-holt", self.remote.files[h])
+        lost = self.rs.logged + res["notes"] + [json.dumps(res)]
+        self.assertTrue(any("holt-ref.py run freebsd --repin" in t for t in lost), lost)
 
     def test_all_pass_and_resume(self):
         res = self.go({})

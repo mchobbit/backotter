@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import fnmatch
+import glob
 import hashlib
 import json
 import os
@@ -433,6 +434,37 @@ def bins_of(platform):
         if os.path.isfile(path):
             out[name] = sha256_file(path)
     return out
+
+
+CROSS_ABLE = ("freebsd", "netbsd", "illumos", "openbsd", "dragonfly")   # (img-speed.md §8.1: haiku, linux never)
+
+
+def holt_build_of(platform, sha):
+    """(holt_build, holt_code) of the bko-holt whose sha256 is SHA (img-speed.md I12, §8.3):
+    the HoltTest2 build it is, by T2_HOST_ROOT/holt-bin/CODE/build-PLATFORM.json (or a copy
+    under CODE/retired/, a build of a kind the set no longer ships): "cross" for holt-cross.sh's
+    (its kind "cross"), "vm" for build-holt.sh's, and that CODE.  img-refresh-holt.sh copies
+    CODE/PLATFORM/bko-holt, so the binary is one of these.  linux and haiku are VM builds
+    whatever is found; (None, None) when no record names SHA."""
+    if not sha:
+        return None, None
+    hb = os.path.join(env("T2_HOST_ROOT", "/bkoscratch/test2"), "holt-bin")
+    name = f"build-{platform}.json"
+    found = None
+    for pat in (os.path.join(hb, "*", name), os.path.join(hb, "*", "retired", "*", name)):
+        for jp in sorted(glob.glob(pat)):
+            j = read_json(jp)
+            if not isinstance(j, dict) or j.get("sha256") != sha:
+                continue
+            code = os.path.relpath(jp, hb).split(os.sep)[0]
+            if re.fullmatch(r"[0-9a-f]{64}", code):
+                found = ("cross" if j.get("kind") == "cross" else "vm", code)
+                break
+        if found:
+            break
+    if platform not in CROSS_ABLE:
+        return "vm", (found or (None, None))[1]
+    return found or (None, None)
 
 
 def digest(platform, cache=None):
@@ -951,6 +983,7 @@ def provenance(a):
         holt_code = c if re.fullmatch(r"[0-9a-f]{64}", c) else None
     except OSError:
         pass
+    hbuild, hcode = holt_build_of(a.platform, now["bins"].get("bko-holt"))
     rnd = None
     try:
         m = re.search(r"round ([^\s,]+)", open(os.path.join(bb, "BUILD-INFO"), encoding="utf-8").readline())
@@ -990,7 +1023,8 @@ def provenance(a):
         "base": {"digest": now["base"]["digest"], "inputs": now["base"]["inputs"],
                  "os_epoch": epoch, "os_manifest": manifest,
                  "trees": trees},
-        "bins": dict(now["bins"], bko_bin_round=rnd, holt_commit=holt_commit, holt_code=holt_code, holt_build="vm"),
+        "bins": dict(now["bins"], bko_bin_round=rnd, holt_commit=holt_commit, holt_code=holt_code or hcode,
+                     holt_build=hbuild),
         "tests": dict(now["tests"], boot=boot, tools=dpkg_versions(TEST_TOOLS)),
         "parent": parent,
     }

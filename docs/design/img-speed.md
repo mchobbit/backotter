@@ -928,8 +928,8 @@ reservation:
 | freebsd | x86_64-unknown-freebsd | rustup, tier 2 | pinned 1.94.1 | from freebsd14 (so it runs on 14 and 15, as today) |
 | netbsd | x86_64-unknown-netbsd | rustup, tier 2 | pinned 1.94.1 | netbsd11 |
 | illumos | x86_64-unknown-illumos | rustup, tier 2 | pinned 1.94.1 | omnios58 |
-| openbsd | x86_64-unknown-openbsd | tier 3: `-Zbuild-std` | a pinned nightly | openbsd8 (libc.so of that release: OpenBSD binaries link libc dynamically) |
-| dragonfly | x86_64-unknown-dragonfly | tier 3: `-Zbuild-std` | DragonFly rustic's pinned nightly | dragonfly6 (the existing `dragonfly-cross` sysroot) |
+| openbsd | x86_64-unknown-openbsd | tier 3: `-Zbuild-std` | pinned 1.94.1 with its rust-src (as built, I11: not a nightly) | openbsd8 (libc.so of that release: OpenBSD binaries link libc dynamically) |
+| dragonfly | x86_64-unknown-dragonfly | tier 3: `-Zbuild-std` | pinned 1.94.1 with its rust-src (as built, I11) | dragonfly6, copied as the others are (not the `dragonfly-cross` cache, whose lock is build-rustic.sh's) |
 | haiku | x86_64-unknown-haiku | tier 3 | needs Haiku's own cross GCC and libroot | **stays a VM build** (D9) |
 
 The link goes through clang and lld with `--sysroot`, as DragonFly's
@@ -984,7 +984,8 @@ before the cross build may ship:
    **This is the only guard for OpenBSD's IBT enforcement**: OpenBSD kills
    a binary without landing pads or `NOBTCFI` on Intel CPUs that have IBT
    (Tiger Lake and later), and no farm host has such a CPU (the M900s and
-   choubox's Comet Lake do not; est., to check for Chopin and Cinqcent), so
+   choubox's Comet Lake do not; checked at I11: the five Ryzen hosts have
+   `user_shstk` and no `ibt` in /proc/cpuinfo, choubox neither), so
    steps 2 and 3 cannot catch it.
 1. **API**: `bko-holt --version --json` of the cross build, run in a guest
    of the platform, equals the VM build's, apart from the build fields
@@ -1031,6 +1032,64 @@ following, and these steps follow it:
   the build image, not the bare test guest. illumos's needs 8 GiB, because its
   fork and exec reserve swap for a child's whole address space.
 
+*As built (I11):* openbsd and dragonfly go through the same holt-cross.sh,
+holt-e2.sh and holt_e2.py. Their check builds start beside the VM builds
+with 3 GiB reservations, since target/ holds std's build too. The code found
+the following, and these steps follow it:
+
+- **The toolchain.** The pinned nightly (nightly-2026-10-31, DragonFly
+  rustic's) built both platforms, and E2's step 0 to 1 passed. Step 2 on
+  OpenBSD then failed 184 tests that pass natively. Each of them panics in
+  std's `current_exe`: that nightly unwraps `argv_size.div_exact(8)` of a
+  `KERN_PROC_ARGV` whose size counts the strings too, and bko-holt's load
+  paths call `current_exe` as well. 1.94.1's std doesn't do that. So tier 3
+  builds with the pinned 1.94.1 too (D10, as built), from its rust-src, with
+  `-Zbuild-std=std,panic_unwind` under `RUSTC_BOOTSTRAP=1`. std's crates come
+  from cargo's cache or crates.io (`--locked`, not `--offline`).
+- **OpenBSD's link.** The VM build is linked by OpenBSD's own lld, which
+  does three things upstream lld 19 does not, and holt-cross.sh does them
+  instead:
+  - Without the first, upstream lld took libc.a, which gave a static PIE
+    with no DT_NEEDED and no IBT property. So `-lNAME` is the newest
+    `libNAME.so.MAJOR.MINOR`, given to lld as `-l:FILE`.
+  - `.openbsd.randomdata.*`, the retguard cookies of the base's crt objects,
+    is gathered into `.openbsd.randomdata` and so `PT_OPENBSD_RANDOMIZE`, by
+    an INSERT script. Without it the cookies stayed apart and unrandomised.
+  - The code segment is execute-only (E). Upstream lld refuses
+    `--execute-only` on x86-64, so `holt_e2.py xonly` sets PF_X alone once
+    it has checked that the segment holds code sections only.
+  The code, std's included, is built with `-Zcf-protection=branch`.
+- **Step 0 and IBT (D11).** For an OpenBSD file, step 0 also reads the IBT
+  handling: `PT_OPENBSD_NOBTCFI`, the GNU property note's IBT bit (lld writes
+  it only when every object linked has it), and whether the executable
+  segments are full of endbr64 (at least one per 4 KiB). The VM build has
+  landing pads and the IBT property, and no NOBTCFI. The cross build has the
+  same, so OpenBSD's ELF shape matches in every field: interpreter,
+  DT_NEEDED (libpthread 28.1, libc++abi 10.0, libc 104.0), notes, segments
+  and load flags.
+- **Step 0 and symbol versions.** DragonFly's cross build needs DF506.0
+  where the VM build needs DF508.0, because the two std versions call
+  different libc symbols. holt-e2.sh gives step 0 the cross build's sysroot.
+  A version difference is explained when the sysroot's library (the guest's
+  own libc.so.8) defines every version the cross build needs.
+- **DragonFly's link.** clang's DragonFly driver drops rustc's `-pie`, so
+  `-pie`, `/libexec/ld-elf.so.2`, the runpath `/usr/lib/gcc80` and
+  `--no-rosegment` are passed. These are what DragonFly's gcc does, and the
+  ELF shape then matches but for the versions.
+- **The sysroot digest.** OpenBSD relinks libc and libcrypto in a random
+  order at every boot (rc's `reorder_libs`). Two copies of openbsd8 gave two
+  SYSROOT digests, and so two kinds, for cross builds with the same bytes. So
+  those two files are digested by what a link reads of them
+  (`holt_e2.py linkface`: dynamic symbols, versions, SONAME, DT_NEEDED). Two
+  fresh sysroots, on chopin and cage, then gave the same `openbsd8@851ed0d8e527`.
+- **Reproducible.** The cross builds of one code had the same bytes on
+  every host that built them: openbsd 9a2140db (chopin and copland) and
+  dragonfly 00e4a179 (chopin and cinqcent).
+- **Step 2.** The native side is the guest's Rust: openbsd8's build image
+  has 1.98.1, and dragonfly6 has no build image, so its throwaway test guest
+  is given dports' rust (1.98.1 after `pkg upgrade`). DragonFly's tar won't
+  extract "./" over an existing directory, so the tree goes as its entries.
+
 ### 8.2a Keys: the cross build must be tested as itself
 
 HoltTest2 keys a platform's bko-holt by its **code digest** CODE (R14,
@@ -1065,7 +1124,8 @@ D10's pinned toolchain closes for the cross-built platforms.)
 
 ### 8.3 Rollout
 
-- **I10/I11**: HoltTest2's build step makes both builds, VM and cross. It
+- **I10/I11**: HoltTest2's build step makes both builds, VM and cross (I11:
+  for openbsd and dragonfly too). It
   ships and tests the VM build. The cross build is a **check build**, as
   `linux-arm64-check` is, and E2 runs privately.
 - **I12**: per platform that passed E2, HoltTest2 builds cross only. That
@@ -1165,7 +1225,7 @@ whenever a guest is updated.
   place a cell on any host whose facts show `images/P` with `done_exit` and
   no `bins_stale`. Once fanned out, every host qualifies, and the planner's
   existing ranking spreads the cells. Every +img line of the current panel
-  (D 3-5, MEM 4) fits a small host's 9.0 10.1.
+  (D 3-7, MEM 4) fits a small host's 9.0 10.1.
 - *As built (I8, 2026-11-27):* `fanout` (also `run`'s last step, inside its
   locks) takes every platform whose unit passed, from its builder to every
   `--to` host (default: every enabled amd64 host). First, one ssh per DEST
@@ -1179,8 +1239,31 @@ whenever a guest is updated.
   its copies again against its SHA256SUMS, which must be the builder's, and
   its done.exit must be 0; anything else is BAD in the summary (exit 1).
   Only the round's built platforms go: a reused one stays where it is.
-- Gain: ImgTest2's 7 cells and the panel's 7 lines spread over up to 6 hosts
-  instead of 2. The panel's floor becomes its longest single line
+- *As built (I9, 2026-11-27):* **the wait** is the round lock's, not
+  done.exit's alone: a host's done.exit goes missing only while its own copy
+  is under way, so a run started mid-fan-out would have put every cell on the
+  hosts already done. The facts' `image_round` says whether a round holds
+  `images/.round.lock` (an exclusive flock, found by a shared one tried
+  without waiting; promote-bins' and img-refresh-holt's shared ones don't
+  count) and its name, and `place_img` and `place_img_panel` place no img
+  cell and no +img line anywhere while any reached host's is held ("image
+  round NAME holds images/.round.lock on HOSTS: its build or fan-out has not
+  ended ..."), from the round's facts to the end of its fan-out. **The room:**
+  the D12 fallback (choubox taking test copies only) is not built, because no
+  host is short: choubox had 138 GB free (a set is about 16 GB, 15.3 raw
+  images). Instead fan-out's DEST probe gives the free bytes where DEST's
+  images/ is and the unit's status each platform's copy size (all but
+  `prev-*`), and DEST is refused for a platform whose copy does not fit above
+  `FANOUT_FLOOR_GIB` (10) after the round's other copies to it ("no room:
+  ..."; the old set moves to prev-x and is not counted as freed). **The
+  order:** HoltTest2's todo is biggest D first (ht1-queue.sh `--order`, for
+  the RAM disks' packing), which put dragonfly6+img (D 3) last; a part's
+  +img lines are now ordered among themselves longest estimated wall first,
+  in the places they held (`holt.img_longest_first`), the other lines as
+  before. choubox's img cells boot at width 1 (I6's `boot_width` of its
+  6.0), from a RAM copy.
+- Gain: ImgTest2's 7 cells and the panel's lines (17 today) spread over up to
+  6 hosts instead of 2. The panel's floor becomes its longest single line
   (dragonfly6+img, 16 gm) instead of the 26 min that two hosts took.
 
 ## 11. What a set costs, before and after (est.)
@@ -1895,6 +1978,10 @@ this spec's speedups 2 and 7.
     tier 3. This changes the compiler that ships the BSD binaries from each
     guest's packaged Rust (1.98-1.100 today) to a pinned one, and stops it
     changing when a guest updates.
+    *As built (I11):* tier 3 uses the same pinned 1.94.1, with its rust-src
+    and `RUSTC_BOOTSTRAP=1` for `-Zbuild-std`, because the nightly
+    (DragonFly rustic's nightly-2026-10-31) has a std whose OpenBSD
+    `current_exe` panics. E2's step 2 found it (§8.2).
 11. **D11. When a cross build may ship.** *Recommend:* after E2 (§8.2) passes
     on two consecutive holt-change rounds, platform by platform. The VM
     build then runs as a reference weekly and on every toolchain or guest
@@ -1975,7 +2062,7 @@ Each step is done when its proof passes. Figures are rough (est.).
 | **I6** | Parallel modes in img-one.sh and ImgTest2's boot.sh, the image copied into the RAM disk, reservations sized by width. (~0.5 d) | The same image tested serial and parallel gives the same per-check verdicts on 3 sets. No reservation goes over its ceiling (cmp-run logs). The flakes.json match rate is unchanged |
 | **I7** | `img-seed.sh`, and Linux inputs on copland, cage and czerny. (~0.5 d) As built (2026-11-27), with the media and copland's builder mended (§5.1). Proof: the slim manifests match on all three (e19af22fa576, ISO c8e9d797f718); full Linux builds at 05:05Z on Chopin and copland (private image dirs, the shared sets) gave the same base, bins and tests digests in the provenance, the same base squashfs (65bc6e21) and layer manifest (2c9863ec) in both images of each, layer squashfs bytes that differ only within E1's noise floor (114 tree-listing entries, none outside I3's diff(A, A')), and ImgTest2 `linux` PASS on each (private T2 roots, `T2_IMAGES` at each set; panel not needed). 13 new tests (test_img_seed, a fixture farm behind a fake ssh); the t2 suite passes (3310) | The slim manifests match. A full Linux build on copland and one on Chopin from the same inputs, the same day, have the same layer manifest (package list), the same base squashfs bytes, and both PASS ImgTest2 |
 | **I8** | `img-round.sh run` and `fanout`, the round lock (C10, after D16). Retire Chopin's `images/lanes.sh`. promote-bins' source relaxed (F20). (~1.5 d) As built (2026-11-27; §5.2, §10, C10): run, fanout, the host and Mac round locks, img-lanes.sh's `P@SHA256` refresh units, `BKO_IMG_RUN` and plan environment, img-one.sh's exit 5, the locks in promote-bins.sh and img-refresh-holt.sh, and Chopin's four stale scripts retired (§5.3). Proof, from private dirs on all six amd64 hosts (`/bkoscratch/imgspeed/I8`: stick/, the sets copied, images/; `--remote-env`): round i8r2 built full ×7 where its plan said (linux and dragonfly on cinqcent, freebsd on chopin, illumos on copland, openbsd and haiku on cage, netbsd on czerny; 3.2 to 17 min a unit) and fanned out 35 copies over 25 host pairs, 06:26 to 06:51Z; every platform's two images had the same SHA-256 on all six hosts, each hashed again there; `t2-host tool img pin` of all seven on each of the six said ok, no `bins-stale`, Linux `release_same` true; sampled every 30 s, no host's `cmp-run.sh --free` went below 0 and the small hosts' RAM disk peaked at 3.9 of 9.0 GiB. Mid-round, `promote-bins.sh --sets holt-bin,bko-bin cage choubox` said REFUSED with the round's name for both holt-bins (bko-bin was up to date), and `img-refresh-holt.sh` on copland was refused (exit 2). An `img-lanes.sh "haiku netbsd"` with the plan's environment on czerny, its holt-bin SHA256SUMS changed once haiku had started: haiku passed, netbsd refused (exit 5, nothing moved). The first round (i8r1, with the code before its blip fixes) lost the Mac's ssh to cage mid-build; that is why a lost ssh no longer stops the lanes or drops the lock. 27 new tests (test_img_round_run, a fixture farm behind a fake ssh, and test_round_dist's round refusal); t2 self-test all ok but test_plan's Performance timing (3.3 s against its 3.0 s on a loaded Mac). Review (2026-11-27): a RUN that has run is refused by `run` (§5.2), one test more; `run i8r2` again said so, exit 3 | A full farm round: each platform built where `plan` said, identical SHA-256 on every holding host, every host's pin accepts every platform, and no host over its limits. A promote-bins started mid-round is refused, and a unit started with a host's sets changed under it refuses |
-| **I9** | Proof cells on six hosts: fan-out to all, choubox's width-1 boot cells. (~0.5 d) | An ImgTest2 run places cells on at least 5 hosts. The panel's lines spread, and its wall time drops to about its longest line |
+| **I9** | Proof cells on six hosts: fan-out to all, choubox's width-1 boot cells. (~0.5 d) As built (2026-11-27; §10): the facts' `image_round` and the planner's wait for it, fan-out's room check, the panel's +img lines longest first in the queue; D12's test-copies-only fallback not built (no host short of disk). Proof, from private dirs on all six amd64 hosts (`/bkoscratch/imgspeed/I9`: stick/ and testvm/, the sets copied, images/, a T2_HOST_ROOT with each host's ledger and holt-bin seeded; T2_IMAGES there): round i9r2 built full ×7 (linux on cage, freebsd on chopin, netbsd and openbsd on cinqcent, dragonfly and haiku on czerny, illumos on copland; 2.9 to 15 min a unit) and fanned out to all six; a network blip on the Mac stopped 4 of its 35 copies before they began (freebsd to cage, choubox and czerny, illumos to chopin), which `img-xcopy.sh` from the builders then made; every platform's two images hashed again on every host: the same sums on all six, done.exit 0. During the round, `t2 ImgTest2` (all seven named) planned 7 not-runnable, each "image round i9r2 holds images/.round.lock on chopin, cinqcent, copland, cage, czerny, choubox" (i9r1, the first try, whose private tree lacked testvm/, said the same). After it, `t2 ImgTest2` of all seven (t2i-20261127T0842-dd1a) placed them on all six hosts (linux cinqcent, freebsd cage, netbsd czerny, openbsd and haiku choubox, dragonfly chopin, illumos copland), 7 PASS in under 5 min; choubox's two at width 1 from a RAM copy. The panel, all 17 +img lines named: first (t2h-20261127T0847-2247, before the order fix) 17 PASS over six hosts in 27.8 min, dragonfly6+img taken last at 08:58 and ending the queue at 09:13:52; again with the fix (t2h-20261127T0917-9eef) 17 PASS over six hosts (chopin 4, cinqcent 4, czerny 3, cage, copland, choubox 2 each) in 17.7 min, its queue 15.3 min against its longest line's 15.1 (dragonfly6+img, taken first). 5 new tests (test_facts' flock, test_plan's wait, test_img_round_run's room ×2, test_holt's order); test_plan, test_facts, test_img*, test_round_dist and test_holt pass, and `t2 self-test` all ok on HEAD | An ImgTest2 run places cells on at least 5 hosts. The panel's lines spread, and its wall time drops to about its longest line |
 | **I10** | `holt-cross.sh` for freebsd, netbsd and illumos, as HoltTest2 check builds in `CODE/cross/` with their own key (§8.2a, D17). (~1.5 d) As built (2026-11-27): `testvm/holttest1d/holt-cross.sh`, holt.py's check builds, keys.py's `holt_build`, `holt-e2.sh` and `holt_e2.py` (§8.1, §8.2 and §8.2a as built). Proof, on code 16832911. Steps 0-2: PASS for all three, on chopin, against the VM builds of run t2h-20261127T0733-d2dd. In step 2, of 981 tests every native pass was a cross pass, and 86-87 failed both ways. Step 3: HoltTest2 of the platforms' 16 guests under private roots, t2h-20261127T0733-d2dd on the VM builds and t2h-20261127T0757-4ef5 on the cross set. Both runs passed 16/16, and judge.py found every guest's src and restored dumps equal. The run's cross builds landed in `CODE/cross/PLAT/` only, while `CODE/PLAT/` and its SHA256SUMS held the VM builds. Tests: test_holt (4 new), test_keys, test_holt_cross (11); t2 self-test all ok. Review (2026-11-27): a sysroot could be remade (a vm-update of its image) under a build linking against it, so a build now holds the cache's lock shared (§8.1), and the info records clang and lld; a cross build on chopin from the reviewed script gave freebsd's ccbb4f60 again, with the lock held for the whole build; test_holt_cross 12 (the lock test fails on the old script) | E2 steps 0-3 for each. A check build never lands in `CODE/PLAT/` |
 | **I11** | The same for openbsd and dragonfly (tier 3). (~1.5 d) | E2 steps 0-3 for each |
 | **I12** | The switch per platform after D11, the weekly VM reference, `holt_build` in the provenance. (~0.5 d) | E2 on two consecutive rounds. At the switch, `t2 plan` shows every holt line of the platform due. The first image set built from cross builds passes ImgTest2 and the panel |

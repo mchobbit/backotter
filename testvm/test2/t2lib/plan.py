@@ -912,7 +912,7 @@ class Planner:
             if v.hosts and self.any_ceiling():
                 spec = self.stic_spec(v.name)
                 if spec is not None:   # each VM's --reserve, as cmp-run.sh and drive.py's pick() see it
-                    self.fit_ceilings(v, (spec.d, spec.m))
+                    self.fit_ceilings(v, lambda h: self.stic_need_here(spec, h))
         if not v.hosts and not v.why_not:
             v.why_not = "no host in --hosts is reachable"
 
@@ -1402,6 +1402,38 @@ class Planner:
             except SystemExit as e:
                 raise PlanError(str(e))
         return self._stic_specs.get(guest)
+
+    def stic_need_here(self, spec, h):
+        """A stic check's (DISK, MEM) as host H's ceiling holds it: (spec.d, spec.m), but for a
+        check whose scratch can overflow to the SSD (spec.overflow: scratch.sh's stic_scratch,
+        img-speed F9) on a host whose scratch_mode is overflow or ssd, a DISK over H's RAM-disk
+        ceiling goes to /bkoscratch under cmp-run.sh --reserve-ssd, so only its memory is held
+        to the ceiling, (0.0, M): as holt_need_here, only with room for its D on the SSD (the
+        facts' free space of /bkoscratch above H's ssd_floor_gib; unknown: not checked)."""
+        n = (spec.d, spec.m)
+        if not getattr(spec, "overflow", False) or hosts_table.scratch_mode(h) not in ("overflow", "ssd"):
+            return n
+        f = self.ctx.facts.get(h)
+        c = factsmod.ceiling(f)
+        if c is None or n[0] <= c[0] + 1e-9:
+            return n
+        free = ((f or {}).get("preflight") or {}).get("scratch_free_gb")
+        if isinstance(free, (int, float)) and n[0] > free * 1e9 / 2 ** 30 - hosts_table.limits(h)["ssd_floor_gib"] + 1e-9:
+            return n
+        return (0.0, n[1])
+
+    def stic_ceiling(self, h):
+        """Host H's ceiling as drive.py's placement takes it (facts.ceiling, None: not known),
+        with a third figure, the SSD's room for a check that can overflow there (drive.py's
+        ssd_most): the facts' free space of /bkoscratch above H's ssd_floor_gib where H's
+        scratch_mode is overflow or ssd (free space not known: not checked), else none."""
+        c = factsmod.ceiling(self.ctx.facts.get(h))
+        if c is None or hosts_table.scratch_mode(h) not in ("overflow", "ssd"):
+            return c
+        free = ((self.ctx.facts.get(h) or {}).get("preflight") or {}).get("scratch_free_gb")
+        if not isinstance(free, (int, float)):
+            return c + (1e6,)
+        return c + (max(0.0, free * 1e9 / 2 ** 30 - hosts_table.limits(h)["ssd_floor_gib"]),)
 
     def have(self, h):
         sf = (((self.ctx.facts.get(h) or {}).get("sets") or {}).get(self.set_name) or {})
@@ -2702,7 +2734,7 @@ class Planner:
             wall, place, left = estimates.stic_wall(ctx.drive, [v.name for v in due],
                                                     {v.name: v.pc.est["wall_s"] for v in due}, have, first,
                                                     slots={h: lim[h]["stic_slots"] for h in have},
-                                                    ceils={h: factsmod.ceiling(ctx.facts.get(h)) for h in have},
+                                                    ceils={h: self.stic_ceiling(h) for h in have},
                                                     guest_slots={h: min(lim[h]["guest_slots"], ctx.drive.GUEST_SLOTS)
                                                                  for h in have},
                                                     ranks={h: hosts_table.class_rank(h) for h in have})

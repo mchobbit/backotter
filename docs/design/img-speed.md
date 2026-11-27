@@ -1469,6 +1469,19 @@ this spec's speedups 2 and 7.
   theirs was left on /bkoscratch. Tests: TestSticScratch (the placement rule
   over a fake cmp-run.sh, the four checks taking it, the status's SSD line)
   and drive.py's self-test (overflow ceilings, room, pick, simulate).
+  *Review (2026-11-27):* t2's plan still held these checks to the RAM-disk
+  ceiling by their DISK (plan.py's stic `fit_ceilings` took `(spec.d,
+  spec.m)`), so `t2 plan SticTest2 rel16 debian13-zfs ubuntu24 ubuntu26-zfs
+  ubuntu26-zfsmirror --hosts copland,cage,czerny` said all four "not
+  runnable ... over the ceilings of copland 9.0 10.1, cage 9.0 10.1, czerny
+  9.0 10.1: needs 13 5" (23 4.5), and the stic estimate placed them on big
+  hosts only. Now `Planner.stic_need_here` holds an overflow check over a
+  host's RAM-disk ceiling by its MEM only where that host's scratch_mode is
+  overflow or ssd and the facts' free /bkoscratch above its ssd_floor_gib
+  holds its DISK (holt_need_here's rule), and the estimate's ceilings carry
+  that SSD room as drive.py's third figure (`stic_ceiling`). The same plan
+  now lists all four due on `any`; qubes43 stays not runnable there.
+  DiskMode.test_stic_overflow covers it.
 - **F10. Audit and compare scripts default to Chopin (yes).** `rust-lint.sh:72`,
   `stock-baseline.sh:42`, `rustic-exact-round.sh` (a hard-coded Chopin IP,
   and a thermal wait for Chopin only) and `compress-images.sh:38`. Change:

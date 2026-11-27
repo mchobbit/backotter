@@ -505,6 +505,50 @@ class DiskMode(AltTable):
                          "a +img that fits the RAM disk still goes anywhere")
         self.assertEqual(self.place((17.0, 4.0), "bigger").hosts, ["chopin", "cage"], "other variants: on /bkoscratch")
 
+    def test_stic_overflow(self):
+        """img-speed F9: a stic check that reserves through scratch.sh's stic_scratch (Spec.overflow)
+        is held to a host's RAM-disk ceiling by its memory only where the host's scratch_mode is
+        overflow or ssd and its SSD has room for its D (stic_need_here), as drive.py places it; the
+        estimate's ceilings carry that room (stic_ceiling).  A plain --reserve, or mode ram, as before."""
+        facts = {h: dict(f, preflight=dict(f["preflight"], scratch_free_gb=300.0)) for h, f in self.FACTS.items()}
+        self.use_table(table(class_limits={"big": {"scratch_mode": "overflow"}, "small": {"scratch_mode": "overflow"}},
+                             copland={"scratch_mode": "ram"}))
+        ov, plain = DRIVE.Spec("linux", 13, 5, overflow=True), DRIVE.Spec("linux", 13, 5)
+        p = fake_planner(facts, None)
+        self.assertEqual(p.stic_need_here(ov, "cage"), (0.0, 5))
+        self.assertEqual(p.stic_need_here(ov, "chopin"), (13, 5), "under chopin's ceiling: as it is")
+        self.assertEqual(p.stic_need_here(ov, "copland"), (13, 5), "copland put back to ram")
+        self.assertEqual(p.stic_need_here(plain, "cage"), (13, 5), "a plain --reserve")
+        short = dict(facts, cage=dict(facts["cage"], preflight=dict(facts["cage"]["preflight"], scratch_free_gb=100.0)))
+        self.assertEqual(fake_planner(short, None).stic_need_here(ov, "cage"), (0.0, 5), "13 of 13.1 GiB above the floor")
+        self.assertEqual(fake_planner(short, None).stic_need_here(DRIVE.Spec("linux", 23, 4.5, overflow=True), "cage"),
+                         (23, 4.5), "no SSD room for its D: held to the RAM-disk ceiling")
+        self.assertEqual(fake_planner(self.FACTS, None).stic_need_here(ov, "cage"), (0.0, 5), "free space not known")
+        v = view(["chopin", "cage", "copland"])
+        p.fit_ceilings(v, lambda h: p.stic_need_here(ov, h))
+        self.assertEqual(v.hosts, ["chopin", "cage"])
+        v = view(["cage", "copland"])
+        p.fit_ceilings(v, lambda h: p.stic_need_here(ov, h))
+        self.assertEqual((v.hosts, v.why_not), (["cage"], None), "runnable on the small hosts alone")
+        v = view(["cage"])
+        p.fit_ceilings(v, lambda h: p.stic_need_here(DRIVE.Spec("linux", 13, 9.5, overflow=True), h))
+        self.assertEqual(v.hosts, [], "its memory is still held to the ceiling")
+        v = view(["cage", "copland"])
+        p.fit_ceilings(v, lambda h: p.stic_need_here(plain, h))
+        self.assertEqual(v.hosts, [], "a plain --reserve 13 stays off the small hosts")
+        c = p.stic_ceiling("cage")
+        self.assertEqual(c[:2], (9.0, 9.2))
+        self.assertAlmostEqual(c[2], 300e9 / 2 ** 30 - 80)
+        self.assertEqual(p.stic_ceiling("copland"), (9.0, 9.2))
+        self.assertEqual(fake_planner(self.FACTS, None).stic_ceiling("cage"), (9.0, 9.2, 1e6))
+        g = "ubuntu24"
+        if os.path.isfile(os.path.join(TESTVM, "stictest1", g, "check.sh")):
+            have = {"cage": {f"linux/{x}" for x in ("restic-bko", "rustic-bko")}}
+            _, place, left = estimates.stic_wall(DRIVE, [g], {g: 600}, have, ceils={"cage": c})
+            self.assertEqual((place, left), ({g: "cage"}, []), "the estimate places it on the small host")
+            _, _, left = estimates.stic_wall(DRIVE, [g], {g: 600}, have, ceils={"cage": (9.0, 9.2)})
+            self.assertEqual(left, [g], "with no SSD figure, as before")
+
 
 # --- max_wall_x: the long and the slow cells kept off a slow host (2026-11-18) ------------------
 

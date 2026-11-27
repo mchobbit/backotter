@@ -73,7 +73,9 @@ gets the defaults):
                            while another host of the cell's is left (plan.Planner.fit_wall):
                            a slow host takes the short cells and leaves the long ones
     scratch_mode     "ram" where a job that can work on either puts its scratch (HoltTest's
-                           lines: ht1-queue.sh; every other job's is in the RAM disk as ever):
+                           lines: ht1-queue.sh; the SticTest checks that reserve through
+                           stictest1/scratch.sh, img-speed F9; every other job's is in the
+                           RAM disk as ever):
                            "ram": in the RAM disk, /mnt/bko-ram, waiting for room there, as
                            every host did before 2026-11-23; "overflow": RAM first: in the
                            RAM disk whenever its reservation fits there now, whatever its

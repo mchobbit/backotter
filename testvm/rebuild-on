@@ -116,8 +116,8 @@ def gib(n):
     return f"{n / GIB:.1f} GiB"
 
 
-def needs(guest):
-    r = subprocess.run(["bash", ONE, "--inputs", guest], capture_output=True, text=True)
+def needs(guest, one=ONE):
+    r = subprocess.run(["bash", one, "--inputs", guest], capture_output=True, text=True)
     if r.returncode:
         raise Refused(r.stderr.strip() or f"rebuild-one.sh --inputs {guest} failed")
     own, uses = [], []
@@ -127,14 +127,16 @@ def needs(guest):
     return own, uses
 
 
-def plan_inputs(guest, src):
-    """[(NAME on the host, SRC folder, [FILE] or None for all, {REL: entry} as SRC has it)]."""
-    own, uses = needs(guest)
+def plan_inputs(guest, src, one=ONE):
+    """([(NAME on the host, SRC folder, [FILE] or None for all, {REL: entry} as SRC has it)],
+    [the own folders rebuild-one.sh would take before the planned one: none may be on the host])."""
+    own, uses = needs(guest, one)
     have = hjson(src, "list", "--hash", *own, *uses)
-    out = []
+    out, ahead = [], []
     mine = next((n for n in own if n in have["dirs"]), None)
     if mine:
         out.append((mine, os.path.join(have["root"], mine), None, have["dirs"][mine]))
+        ahead = own[:own.index(mine)]
     else:
         vms = f"backotter-work/vms/{guest}"
         r = remote(src, ONE, "--input-files", vms, check=False)
@@ -147,7 +149,7 @@ def plan_inputs(guest, src):
         if n not in have["dirs"]:
             raise Refused(f"{src} has no {have['root']}/{n}, which {guest}'s recipe names")
         out.append((n, os.path.join(have["root"], n), None, have["dirs"][n]))
-    return out
+    return out, ahead
 
 
 def differ(want, got):
@@ -159,9 +161,15 @@ def cmd_inputs(a):
     if host == src:
         say(f"{host} is the inputs' source: nothing to copy")
         return 0
-    plan = plan_inputs(a.guest, src)
-    held = hjson(host, "list", "--hash", *[n for n, *_ in plan])
+    plan, ahead = plan_inputs(a.guest, src, getattr(a, "one", ONE))
+    held = hjson(host, "list", "--hash", *[n for n, *_ in plan], *ahead)
     todo, need, bad = [], 0, []
+    # A folder the host's build would take before the planned one (its own over the one it
+    # shares) is one Chopin's build doesn't read: C7's same inputs fail, so it is refused.
+    for n in ahead:
+        if n in held["dirs"]:
+            bad.append(f"{host}:{held['root']}/{n} would be {a.guest}'s inputs there, but {src} builds it from "
+                       f"{plan[0][0]} (it has no {n}): move it aside")
     for name, sdir, files, want in plan:
         if name in held["dirs"]:
             got = held["dirs"][name]
@@ -241,10 +249,11 @@ def wait(host, d, tag):
 def cmd_build(a):
     if not GUEST_RE.fullmatch(a.guest):
         raise Refused(f"not a guest name: {a.guest!r}")
-    needs(a.guest)                                  # a guest with no recipe goes no further
+    one = os.path.join(a.testvm, "rebuild-one.sh") if a.testvm else ONE   # the inputs of the copy that builds
+    needs(a.guest, one)                             # a guest with no recipe goes no further
     host = target(a.host) if a.host else pick(*a.reserve)
     say(f"{a.guest}: building on {host}")
-    if cmd_inputs(argparse.Namespace(guest=a.guest, host=host, dry_run=False)):
+    if cmd_inputs(argparse.Namespace(guest=a.guest, host=host, dry_run=False, one=one)):
         return 1
     tag = a.tag or f"rebuild-{a.guest}-{time.strftime('%Y%m%dT%H%M%S')}"
     tv = []

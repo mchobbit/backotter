@@ -1565,13 +1565,15 @@ this spec's speedups 2 and 7.
   becomes a hard link to it. It refuses, before copying, a folder H holds
   that differs from Chopin's (naming the files with other bytes, missing or
   only there: move it aside, nothing is overwritten under a running build),
-  a folder the recipe names that Chopin lacks, and a copy that would leave
+  a folder H holds that its build would take before the planned one (its
+  own, where Chopin builds from the one it shares: review 2026-11-27), a
+  folder the recipe names that Chopin lacks, and a copy that would leave
   H under `BKO_REBUILD_FLOOR_GIB` (50) free; then every file's SHA-256 is
   compared on both (C7's "same inputs"). `rebuild-on build GUEST --reserve D
   M` takes the host `pick-host --reserve D M` chooses among the default
   amd64 build hosts (not choubox), or `--host`, copies the inputs, and runs
   `rebuild-one.sh` there from a fixed copy of testvm/ (the host's synced one,
-  or `--testvm` from the Mac) in `--dir` (default `/bkoscratch/rebuild`)
+  or `--testvm` from the Mac, whose `--inputs` then names the inputs) in `--dir` (default `/bkoscratch/rebuild`)
   under its `cmp-run.sh` (GUEST=D%M, WEAR_TAG `rebuild:TAG`), detached, so a
   lost ssh doesn't stop it; the copy is refused while a rebuild runs from
   it (a lock the job holds shared). `rebuild-on ship GUEST --host H` takes

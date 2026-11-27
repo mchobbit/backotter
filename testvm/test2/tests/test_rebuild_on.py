@@ -210,6 +210,20 @@ class Inputs(Farm):
         self.assertIn("other bytes: p.iso; missing: p.sha; only there: extra): move it aside", r.stderr)
         self.assertFalse(os.path.exists(self.p("cage", "inputs", "pikaos4-luks")))
 
+    def test_own_folder_on_the_host_that_would_shadow_the_shared_one_is_refused(self):
+        # Chopin builds elementary8-luks from elementary8 (it has no elementary8-luks); a host
+        # holding an elementary8-luks would build from that instead, so it is refused.
+        self.inputs("chopin", "elementary8", {"e.iso": "E"})
+        self.inputs("cage", "elementary8-luks", {"e.iso": "stale"})
+        r = self.run_("inputs", "elementary8-luks", "--host", "cage")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("/elementary8-luks would be elementary8-luks's inputs there, but m@chopin.local builds it "
+                      "from elementary8 (it has no elementary8-luks): move it aside", r.stderr)
+        self.assertFalse(os.path.exists(self.p("cage", "inputs", "elementary8")))
+        r = self.run_("inputs", "elementary8-luks", "--host", "copland")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(rd(self.p("copland", "inputs", "elementary8", "e.iso")), "E")
+
     def test_vms_folder_when_chopin_has_no_inputs_folder(self):
         v = self.p("chopin", "home", "backotter-work", "vms", "pikaos4-luks")
         for n, t in (("live.iso", "L" * 3000), ("key.asc", "k"), ("pikaos4-luks.qcow2", "disk"),
@@ -286,11 +300,17 @@ class Build(Farm):
 
     def test_given_host_and_testvm_from_here(self):
         tv = os.path.join(self.d, "mytestvm")
-        wr(os.path.join(tv, "rebuild-one.sh"), "# mine\n")
+        # The inputs are the ones that copy's rebuild-one.sh --inputs names (here one more
+        # folder than the checkout's recipe), not the checkout's.
+        mine = '# mine\n[ "$1" = --inputs ] && { echo "own $2"; echo "uses arch"; exit 0; }\n'
+        wr(os.path.join(tv, "rebuild-one.sh"), mine)
+        self.inputs("chopin", "arch", {"arch.iso": "A"})
         r = self.build("--host", "czerny", "--testvm", tv, "--tag", "t2")
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
         self.assertFalse(os.path.exists(os.path.join(self.farm, "pick.log")))
-        self.assertEqual(rd(self.p("czerny", "home", "rb", "testvm", "rebuild-one.sh")), "# mine\n")
+        self.assertEqual(rd(self.p("czerny", "home", "rb", "testvm", "rebuild-one.sh")), mine)
+        self.assertEqual(rd(self.p("czerny", "inputs", "arch", "arch.iso")), "A")
+        self.assertTrue(os.path.isfile(self.p("czerny", "inputs", "alpine324", "a")))
 
     def test_failed_job_and_no_wait(self):
         wr(self.p("cage", "home", "job-rc"), "1\n")

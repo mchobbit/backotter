@@ -430,7 +430,9 @@ mkdir -p "$d" && tail -c +32769 "$i" | tar -xf - -C "$d"
         self.refused_before_the_move("--refresh-from", "ab" * 32, "linux", why="no set here has a provenance")
 
     def test_a_platform_whose_build_sh_has_no_refresh_is_refused(self):
-        r = self.run_one("--refresh-from", "ab" * 32, "haiku")    # (netbsd refreshes since I4)
+        # (Every VM platform refreshes since I4: this world's haiku/build.sh is one from before.)
+        wr(os.path.join(self.w, "stick", "haiku", "build.sh"), "#!/bin/bash\ncase $1 in info) ;; assemble) ;; esac\n")
+        r = self.run_one("--refresh-from", "ab" * 32, "haiku")
         self.assertEqual(r.returncode, 2)
         self.assertIn("no refresh of haiku yet", r.stderr)
 

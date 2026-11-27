@@ -4,6 +4,11 @@
 #
 #   build.sh info      checks the official anyboot image, prints KERNEL=
 #   build.sh assemble  writes out/image.img
+#   build.sh list      out/image.img's BFS, read-only, as a tar on stdout
+#   build.sh room      out/image.img's BFS: its free space (BKO-ROOM)
+#   build.sh refresh   out/image.img, the parent, with the binaries and the
+#                      marker swapped in place (docs/design/img-speed.md
+#                      §4.2): exit 3 when they don't fit
 #
 # The system is the anyboot image's, updated: each of its packages is
 # replaced by this VM's version where that differs.  The VM is a throwaway
@@ -38,6 +43,8 @@ ALIGN=2048
 CONFIG_SECTORS=524288           # marker.py's config.img, 256 MiB
 ROOM_MB=256                     # free space in the BFS
 lib=system/non-packaged/lib/backotter
+BINDIR=/system/non-packaged/bin
+BINS="rustic-bko bko-holt"      # in BINDIR (Haiku has no restic-bko)
 
 disks=() mounts=()
 cleanup() {
@@ -89,15 +96,20 @@ updated() {
     return 0
 }
 
+# hrev PACKAGE: the kernel's release a haiku package's name gives.
+# haiku-r1~beta6_hrev59866_79-1-x86_64.hpkg: hrev59866+79, the first word
+# of the kernel's uname -v.
+hrev() {
+    basename "$1" | sed -n 's/^haiku-[^_]*_\(hrev[0-9]*\)\(_[0-9]*\)\{0,1\}-[0-9]*-x86_64\.hpkg$/\1\2/p' | tr _ +
+}
+
 info() {
     official
     set -- src/system/packages/haiku-r1*.hpkg
     [ $# -eq 1 ] && [ -f "$1" ] || die "expected one haiku package in the official image"
     u=$(updated "$1")
     [ -z "$u" ] || set -- "$u"
-    # haiku-r1~beta6_hrev59866_79-1-x86_64.hpkg: hrev59866+79, the first word
-    # of the kernel's uname -v.
-    kernel=$(basename "$1" | sed -n 's/^haiku-[^_]*_\(hrev[0-9]*\)\(_[0-9]*\)\{0,1\}-[0-9]*-x86_64\.hpkg$/\1\2/p' | tr _ +)
+    kernel=$(hrev "$1")
     [ -n "$kernel" ] || die "can't read the hrev from $(basename "$1")"
     echo "KERNEL=$kernel"
 }
@@ -238,9 +250,88 @@ list() {
     tar -C lst -cf - bfs
 }
 
+# kib_of DIR FIELD: DIR's file system's blocks of stat -f's FIELD (%a free, %b
+# all), in KiB.
+kib_of() {
+    local n
+    n=$(stat -f -c "%S $2" "$1") || die "stat -f $1 failed"
+    set -- $n
+    echo $(( $1 * $2 / 1024 ))
+}
+
+# room: out/image.img's BFS, read-only: its free space and the binaries'
+# blocks, as refresh-lib.sh's BKO-ROOM line.
+room() {
+    in=$PWD/in
+    . in/refresh-lib.sh
+    register out/image.img rm_dev 3
+    mkdir -p rm
+    mnt -ro -t bfs "$rm_dev/0" rm
+    # shellcheck disable=SC2086
+    bko_room "$PWD/rm" "$BINDIR" "$(kib_of rm %a)" "$(kib_of rm %b)" $BINS
+}
+
+# fsck_clean DEVICE WHEN: checkfs -c of the BFS on DEVICE, mounted read-only
+# (Haiku's checkfs checks only a mounted volume), which must find nothing.
+fsck_clean() {
+    mkdir -p ck
+    mnt -ro -t bfs "$1" ck
+    if ! checkfs -c ck >fsck.out 2>&1 ||
+        ! grep -Eq '^[[:space:]]*[0-9]+ nodes checked' fsck.out ||
+        grep -Eq '^[[:space:]]*[1-9][0-9]* blocks (not allocated|already set|could be freed)' fsck.out; then
+        cat fsck.out >&2
+        die "checkfs $2 the swap: the BFS is not clean"
+    fi
+    echo "fsck $2: $(grep -E 'nodes checked|blocks (not allocated|already set|could be freed)' fsck.out | tr -s ' \t\n' ' ')"
+    unmount ck
+    mounts=("${mounts[@]:1}")
+}
+
+# refresh: out/image.img, the parent (make-img-bsd.sh puts it there), with the
+# binaries and the marker swapped in place in its BFS (img-speed.md §4.2).  The
+# MBR, the boot code and the ESP stay as they are; the host writes config.img
+# into partition 3.  Haiku's image has no random ids of its own (no GPT, the
+# BFS's name is BackOtter's), so the marker and config.img are its id sites.
+# The release and the test copy are each refreshed from their own parent, so
+# TEST plays no part.
+refresh() {
+    local f k m rc
+    for f in backotter.json bko-holt rustic-bko refresh-lib.sh; do
+        [ -e "in/$f" ] || die "no in/$f"
+    done
+    [ -f out/image.img ] || die "no out/image.img, the parent"
+    in=$PWD/in
+    . in/refresh-lib.sh
+    register out/image.img rf_dev 3
+    fsck_clean "$rf_dev/0" before
+    mkdir -p rf
+    mnt -t bfs "$rf_dev/0" rf
+    # The marker's kernel is the parent's (marker.py was given it): it must
+    # still be the hrev of the parent's haiku package.
+    set -- rf/system/packages/haiku-r1*.hpkg
+    [ $# -eq 1 ] && [ -f "$1" ] || die "expected one haiku package in the parent"
+    k=$(hrev "$1")
+    m=$(sed -n 's/.*"kernel": "\([^"]*\)".*/\1/p' in/backotter.json)
+    [ -n "$k" ] && [ "$k" = "$m" ] || die "the parent's haiku package is $k, its marker says '$m'"
+    echo "kernel: $k, as the parent's marker says"
+    rc=0
+    # shellcheck disable=SC2086
+    bko_fit "$PWD/rf" "$BINDIR" "$(kib_of rf %a)" $BINS || rc=$?
+    [ $rc -eq 0 ] || exit $rc
+    # shellcheck disable=SC2086
+    bko_swap "$PWD/rf" "$BINDIR" $BINS || die "the swap failed"
+    unmount rf
+    mounts=("${mounts[@]:1}")
+    fsck_clean "$rf_dev/0" after
+    diskimage unregister out/image.img >/dev/null
+    disks=("${disks[@]:1}")
+}
+
 case ${1:-} in
 info) info ;;
 assemble) assemble ;;
 list) list ;;
-*) die "usage: build.sh info|assemble|list" ;;
+room) room ;;
+refresh) refresh ;;
+*) die "usage: build.sh info|assemble|list|room|refresh" ;;
 esac

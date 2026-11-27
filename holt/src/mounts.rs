@@ -99,11 +99,9 @@ pub(crate) const PSEUDO: &[&str] = &[
     "nfsd",
     "overlay",
     "squashfs",
-    // A read-only image's view, never a filesystem load makes: KDE Linux's
-    // /usr (a loop mount of /system/kde-linux_V.erofs, a file the btrfs
-    // top level holds; docs/design/kde-linux.md), GNOME OS's (a dm-verity
-    // partition, taken raw), composefs's lower.
-    "erofs",
+    // (erofs isn't here: an erofs view, KDE Linux's or GNOME OS's /usr, is
+    // left out by report::erofs_view, which sees the device under it; an
+    // erofs on a plain partition stays a layout mount.)
     "fuse.lxcfs",
 ];
 

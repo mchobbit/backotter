@@ -373,7 +373,8 @@ pub(crate) fn read<'a>(given: &'a Layout, opts: &Options, sys: &Sys) -> Reading<
     // On ostree, the physical root has no etc: the repository's config.  On
     // ABRoot, the present root's abimage.abr (its raw etc is the image's).
     // On Ubuntu Core, ubuntu-data's modeenv (it has no `/` of its own).
-    // On KDE Linux, the top level's etc.mstack.v (/ is the btrfs top level).
+    // On KDE Linux, @system/etc/machine-id (/ is the btrfs top level;
+    // load/kdelinux.rs's MARKER, a file format doesn't make).
     let restored = tree_up
         && match Family::of_layout(&layout.v) {
             None if crate::load::ostree::of(&layout.v).is_none()

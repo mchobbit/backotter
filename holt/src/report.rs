@@ -273,6 +273,24 @@ impl Ctx<'_> {
                 .get("ID_PART_ENTRY_TYPE")
                 .is_some_and(|t| t == parttable::ESP || t == "0xef")
     }
+    /// Whether D is a GPT partition typed XBOOTLDR (Linux extended boot).
+    fn is_xbootldr_partition(&self, d: &Dev) -> bool {
+        d.b.parent
+            .as_ref()
+            .and_then(|p| self.dev(p))
+            .and_then(|p| p.table.as_ref())
+            .is_some_and(|t| {
+                let n = d.b.partition_number.unwrap_or(0);
+                matches!(t, Table::Gpt { gpt, .. } if gpt
+                    .parts
+                    .iter()
+                    .any(|p| p.number == n && p.type_guid == parttable::XBOOTLDR))
+            })
+            || d.b
+                .udev
+                .get("ID_PART_ENTRY_TYPE")
+                .is_some_and(|t| t == parttable::XBOOTLDR)
+    }
     fn partition_label(&self, d: &Dev) -> Option<String> {
         if let (Some(parent), Some(n)) = (&d.b.parent, d.b.partition_number) {
             if let Some(Table::Gpt { gpt, .. }) = self.dev(parent).and_then(|p| p.table.as_ref()) {
@@ -1116,8 +1134,11 @@ fn swaps_json(sys: &Sys, ctx: &Ctx<'_>) -> Vec<Value> {
 /// the autofs, which is pseudo, so the dump would have no ESP and a backup
 /// none of its files (docs/design/kde-linux.md, "dump").  Listing the
 /// directory mounts it again; a mount point still only autofs after that is
-/// warned about.
-fn trigger_automounts(sys: &Sys) -> Vec<Mount> {
+/// warned about.  Only while some ESP or XBOOTLDR partition is present and
+/// mounted nowhere: an automount whose device is absent (an fstab
+/// `x-systemd.automount` line for a disk not plugged in) would block the
+/// listing until systemd's device timeout, 90 s by default.
+fn trigger_automounts(sys: &Sys, devs: &[Dev]) -> Vec<Mount> {
     let read = || {
         sys.read("/proc/self/mountinfo")
             .map(|t| mounts::parse_mountinfo(&t))
@@ -1128,6 +1149,17 @@ fn trigger_automounts(sys: &Sys) -> Vec<Mount> {
             && !mi.iter().any(|m| m.target == at && m.fstype != "autofs")
     };
     let first = read();
+    let probe = Ctx {
+        devs,
+        mounts: &first,
+    };
+    let unmounted_boot_part = devs.iter().any(|d| {
+        (probe.is_esp_partition(d) || probe.is_xbootldr_partition(d))
+            && !first.iter().any(|m| m.devno == d.b.devno)
+    });
+    if !unmounted_boot_part {
+        return first;
+    }
     // (SteamOS's /esp too, crate::steamos.)
     let waiting: Vec<&str> = crate::sysupdate::checks::AUTOMOUNT_POINTS
         .into_iter()
@@ -1149,35 +1181,72 @@ fn trigger_automounts(sys: &Sys) -> Vec<Mount> {
     again
 }
 
+/// The mount a loop device's mount M is a view of, with its backing file:
+/// the deepest of the whole mount table holding that file, when it is one
+/// of LAYOUT (a filesystem the backup reads).  None for a mount that isn't
+/// of a loop device, an image deleted since `losetup` (`" (deleted)"`: no
+/// backup has its bytes), or one on a mount that isn't backed up (a tmpfs
+/// such as /dev/shm, which is pseudo): those mounts stay sources of their
+/// own.  The path is the kernel's (`d_path`, no symlinks); of several
+/// mounts at one target, the later (the one on top) holds it.
+fn loop_holder<'a>(
+    ctx: &Ctx<'_>,
+    m: &Mount,
+    layout: &[&'a Mount],
+) -> Option<(&'a Mount, String)> {
+    let d = ctx.by_devno(&m.devno)?;
+    if d.b.kind != Kind::Loop {
+        return None;
+    }
+    let file = d.b.loop_backing_file.clone()?;
+    if file.ends_with(" (deleted)") || !file.starts_with('/') {
+        return None;
+    }
+    let under = |dir: &str| {
+        let d = dir.trim_end_matches('/');
+        d.is_empty() || file == d || file.starts_with(&format!("{d}/"))
+    };
+    let deepest = ctx
+        .mounts
+        .iter()
+        .filter(|o| o.id != m.id && o.devno != m.devno && under(&o.target))
+        .max_by_key(|o| o.target.trim_end_matches('/').len())?;
+    let holder = layout.iter().copied().find(|o| o.id == deepest.id)?;
+    Some((holder, file))
+}
+
 /// The mounts of MOUNTS that are loop devices whose backing file is on
-/// another of them, with that mount (the deepest): a filesystem image kept
-/// as a file, whose bytes a backup of the filesystem holding it already
-/// has.  (KDE Linux's /usr is one, though erofs is pseudo anyway.)
+/// another of them (`loop_holder`), with that mount: a filesystem image
+/// kept as a file, whose bytes a backup of the filesystem holding it
+/// already has.  (KDE Linux's /usr is one, though an erofs view isn't a
+/// layout mount anyway, `erofs_view`.)
 fn loop_aliases<'a>(
     ctx: &Ctx<'_>,
     mounts: &[&'a Mount],
 ) -> Vec<(&'a Mount, &'a Mount, String)> {
-    let under = |file: &str, dir: &str| {
-        let d = dir.trim_end_matches('/');
-        d.is_empty() || file.starts_with(&format!("{d}/"))
-    };
     mounts
         .iter()
         .filter_map(|m| {
-            let d = ctx.by_devno(&m.devno)?;
-            if d.b.kind != Kind::Loop {
-                return None;
-            }
-            let file = d.b.loop_backing_file.clone()?;
-            let file = file.trim_end_matches(" (deleted)").to_string();
-            let holder = mounts
-                .iter()
-                .filter(|o| !std::ptr::eq(**o, *m) && o.devno != m.devno)
-                .filter(|o| under(&file, &o.target))
-                .max_by_key(|o| o.target.len())?;
-            Some((*m, *holder, file))
+            let (holder, file) = loop_holder(ctx, m, mounts)?;
+            (!std::ptr::eq(holder, *m)).then_some((*m, holder, file))
         })
         .collect()
+}
+
+/// Whether the erofs mount M is a read-only view, never a filesystem load
+/// makes: a loop mount of an image file a backed-up filesystem holds (KDE
+/// Linux's /usr, of /system/kde-linux_V.erofs; docs/design/kde-linux.md), or
+/// an erofs on dm-verity (GNOME OS's /usr, whose partitions are taken raw,
+/// crate::rawpart).  LAYOUT is the non-erofs layout mounts.  Any other
+/// erofs (on a disk partition, or an image on a tmpfs) stays a layout mount,
+/// as before erofs views were known, and is warned about.
+fn erofs_view(ctx: &Ctx<'_>, m: &Mount, layout: &[&Mount]) -> bool {
+    m.fstype == "erofs"
+        && (loop_holder(ctx, m, layout).is_some()
+            || ctx
+                .by_devno(&m.devno)
+                .and_then(|d| d.b.dm_uuid.as_deref())
+                .is_some_and(|u| u.starts_with("CRYPT-VERITY-")))
 }
 
 /// The mounted ESPs, as (device, mount point): vfat mounts of an ESP
@@ -1260,7 +1329,7 @@ pub fn build_with(
     // the dump reads them (crate::qubes).
     let activated = crate::qubes::activate_skipped(sys);
     let devs = devices(sys, only);
-    let mountinfo = trigger_automounts(sys);
+    let mountinfo = trigger_automounts(sys, &devs);
     let ctx = Ctx {
         devs: &devs,
         mounts: &mountinfo,
@@ -1306,10 +1375,22 @@ pub fn build_with(
     });
     let other = section(&[Kind::Zram, Kind::Rom, Kind::Floppy], &|_| None);
 
+    // erofs is a layout mount unless it is a view (erofs_view).
+    let non_erofs: Vec<&Mount> = mountinfo
+        .iter()
+        .filter(|m| mounts::is_layout_mount(m) && m.fstype != "erofs")
+        .collect();
     let layout_mounts: Vec<&Mount> = mountinfo
         .iter()
         .filter(|m| mounts::is_layout_mount(m))
+        .filter(|m| !erofs_view(&ctx, m, &non_erofs))
         .collect();
+    for m in layout_mounts.iter().filter(|m| m.fstype == "erofs") {
+        sys.warn(format!(
+            "{} is an erofs ({}) that isn't a view of an image file the backup has, nor dm-verity: bko-holt load can't make an erofs; back up its files another way",
+            m.target, m.source
+        ));
+    }
     if mountinfo.iter().any(mounts::is_pmxcfs) {
         sys.warn("/etc/pve is Proxmox VE's pmxcfs (FUSE), not a file system to back up: its data is /var/lib/pve-cluster/config.db, a file on /, and comes back with /");
     }

@@ -4949,10 +4949,14 @@ impl Builder<'_> {
                     mounts.push(Mount { target, subvol });
                 }
             }
-            // KDE Linux has no fstab: its tree is the top level at /
-            // (load/kdelinux.rs).
-            if mounts.is_empty() {
-                mounts = self.kdelinux_btrfs_mounts(&devs, &subs);
+            // KDE Linux: its tree is the top level at / (load/kdelinux.rs),
+            // whatever fstab says.  A line the user added (the same btrfs's
+            // subvol=/ at /mnt/top) would plan the shared snapshots from
+            // paths the backup doesn't have; the mount stage ignores fstab
+            // there too.
+            let kde = self.kdelinux_btrfs_mounts(&devs, &subs);
+            if !kde.is_empty() {
+                mounts = kde;
             }
             // Timeshift's snapshots: not in the backup, so neither made by
             // format nor planned as shared snapshots.  Their IDs are burnt
@@ -5345,7 +5349,26 @@ impl Builder<'_> {
         let mut out_mkdir: Vec<String> = Vec::new();
         // Ubuntu Core's fstab is the base snap's binds and tmpfs, none of
         // them the backup's tree (load/snapcore.rs mounts that).
-        let fstab = if super::snapcore::of(&self.layout.v).is_some() {
+        let kde_fstab = super::kdelinux::of(&self.layout.v).map(|_| {
+            self.layout
+                .arr(&["storage", "fstab"])
+                .iter()
+                .filter(|e| s(e, "type").as_deref() != Some("swap"))
+                .filter_map(|e| s(e, "file").filter(|f| f.starts_with('/')))
+                .collect::<Vec<_>>()
+        });
+        // KDE Linux's tree is the btrfs top level and the ESP
+        // (load/kdelinux.rs), not fstab's: a line the user added is
+        // restored with /etc, and mounted by the restored system, but not
+        // here (its paths would be the top level's, not @system's).
+        if let Some(files) = kde_fstab.as_ref().filter(|f| !f.is_empty()) {
+            self.notes.push(format!(
+                "KDE Linux: fstab's {} {} not mounted for the restore: the tree is the btrfs top level and the ESP; the line comes back with /etc",
+                files.join(", "),
+                if files.len() == 1 { "is" } else { "are" }
+            ));
+        }
+        let fstab = if super::snapcore::of(&self.layout.v).is_some() || kde_fstab.is_some() {
             &[][..]
         } else {
             self.layout.arr(&["storage", "fstab"])

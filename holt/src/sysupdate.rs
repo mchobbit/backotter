@@ -1369,6 +1369,10 @@ fn kdelinux_read(
         .set("etc_snapshots", etc_snapshots)
         .set("debug_subvolumes", debug)
         .set("layer0", layer0)
+        .set(
+            "restored_marker_present",
+            sys.is_file(&at(crate::load::kdelinux::MARKER)),
+        )
         .set("half_versions", halves)
         .set(
             "esp",

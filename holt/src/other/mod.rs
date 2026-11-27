@@ -325,7 +325,8 @@ pub fn node_path(sys: &Sys, node: &str) -> String {
 /// ostree the repository's config (the physical root has no etc), or on
 /// `ABRoot` the present root's abimage.abr (load/abroot.rs), or on Ubuntu
 /// Core ubuntu-data's modeenv (load/snapcore.rs), or on KDE Linux the
-/// btrfs top level's etc.mstack.v (load/kdelinux.rs).
+/// installer's @system/etc/machine-id under the btrfs top level
+/// (load/kdelinux.rs).
 pub fn restored_marker(layout: &Value) -> &'static str {
     if crate::load::ostree::of(layout).is_some() {
         return crate::load::ostree::MARKER;

@@ -15334,6 +15334,113 @@ fn loop_mount_of_a_file_is_an_alias() {
     assert_eq!(paths, ["/"]);
 }
 
+/// A loop mount whose image isn't in the backup stays a source of its own
+/// (review of K2, finding 1): the image on a tmpfs (/dev/shm, pseudo, so
+/// no layout mount holds it, though `/` is a prefix of every path), or
+/// deleted since `losetup` (the kernel's " (deleted)").
+#[test]
+fn loop_mount_of_a_file_not_backed_up_stays_a_source() {
+    for (file, extra) in [
+        (
+            "/dev/shm/data.img",
+            "28 26 0:30 / /dev/shm rw,nosuid,nodev shared:3 - tmpfs tmpfs rw\n",
+        ),
+        ("/srv/images/a.img (deleted)", ""),
+    ] {
+        let t = Tree::new("scn-loop-not-alias");
+        t.debian13();
+        let x = crate::probe::xfs::sample::image("bulk");
+        t.disk("sdc", "8:32", &x, 4096)
+            .disk("loop0", "7:0", &ext::sample::image(0x4, 0x2, 0x1, ""), 512)
+            .file("/sys/block/loop0/loop/backing_file", format!("{file}\n"))
+            .file(
+                "/proc/self/mountinfo",
+                format!("26 1 8:32 / / rw,relatime shared:1 - xfs /dev/sdc rw\n{extra}27 26 7:0 / /mnt/img rw,relatime shared:2 - ext4 /dev/loop0 rw\n"),
+            );
+        let v = run(&t, true, FakeRunner::default());
+        let m = arr(&v, &["storage", "mounts"]);
+        let img = m.iter().find(|m| s(m, &["target"]) == "/mnt/img").unwrap();
+        assert!(img.get("alias_of").is_none(), "{file}: {img:?}");
+        let paths: Vec<&str> = arr(&v, &["storage", "backup_sources"])
+            .iter()
+            .map(|x| s(x, &["path"]))
+            .collect();
+        assert_eq!(paths, ["/", "/mnt/img"], "{file}");
+    }
+}
+
+/// erofs (review of K2, finding 5): a loop mount of an image file on a
+/// backed-up filesystem is a view, left out of the layout's mounts, and so
+/// is an erofs on dm-verity (GNOME OS's /usr); an erofs on a disk stays
+/// one (load refuses it, as before), warned about.
+#[test]
+fn erofs_view_and_erofs_on_a_disk() {
+    let t = Tree::new("scn-erofs");
+    t.debian13();
+    let x = crate::probe::xfs::sample::image("bulk");
+    t.disk("sdc", "8:32", &x, 4096)
+        .disk("sdd", "8:48", &vec![0u8; 1 << 20], 512)
+        .disk("loop0", "7:0", &vec![0u8; 65536], 512)
+        .file("/sys/block/loop0/loop/backing_file", "/srv/images/os.erofs\n")
+        .disk("dm-1", "253:1", &vec![0u8; 65536], 512)
+        .file("/sys/block/dm-1/dm/name", "usr\n")
+        .file(
+            "/sys/block/dm-1/dm/uuid",
+            "CRYPT-VERITY-0123456789abcdef0123456789abcdef-usr\n",
+        )
+        .symlink("/dev/mapper/usr", "../dm-1")
+        .file(
+            "/proc/self/mountinfo",
+            "26 1 8:32 / / rw,relatime shared:1 - xfs /dev/sdc rw\n27 26 7:0 / /opt/os ro,relatime shared:2 - erofs /dev/loop0 ro\n28 26 8:48 / /srv/ro ro,relatime shared:3 - erofs /dev/sdd ro\n30 26 253:1 / /usr ro,relatime shared:5 - erofs /dev/mapper/usr ro\n",
+        );
+    let v = run(&t, true, FakeRunner::default());
+    let targets: Vec<&str> = arr(&v, &["storage", "mounts"])
+        .iter()
+        .map(|m| s(m, &["target"]))
+        .collect();
+    assert!(!targets.contains(&"/opt/os") && !targets.contains(&"/usr"), "{targets:?}");
+    assert!(targets.contains(&"/srv/ro"), "{targets:?}");
+    let paths: Vec<&str> = arr(&v, &["storage", "backup_sources"])
+        .iter()
+        .map(|x| s(x, &["path"]))
+        .collect();
+    assert_eq!(paths, ["/", "/srv/ro"]);
+    let w = arr(&v, &["warnings"]);
+    assert!(
+        w.iter()
+            .filter_map(Value::as_str)
+            .any(|w| w.starts_with("/srv/ro is an erofs (/dev/sdd)")),
+        "{w:?}"
+    );
+    assert!(
+        !w.iter()
+            .filter_map(Value::as_str)
+            .any(|w| w.contains("/opt/os") || w.starts_with("/usr ")),
+        "{w:?}"
+    );
+}
+
+/// The ESP automount is listed only while an ESP partition is present and
+/// unmounted (review of K2, finding 6): an autofs /boot with no ESP device
+/// (an fstab x-systemd.automount line for an absent disk) isn't listed, so
+/// the dump never waits on systemd's device timeout.
+#[test]
+fn automount_without_an_esp_device_isnt_listed() {
+    let t = Tree::new("scn-autofs-no-esp");
+    t.debian13();
+    let x = crate::probe::xfs::sample::image("bulk");
+    t.disk("sdc", "8:32", &x, 4096).file(
+        "/proc/self/mountinfo",
+        "26 1 8:32 / / rw,relatime shared:1 - xfs /dev/sdc rw\n29 26 0:40 / /boot rw,relatime shared:4 - autofs systemd-1 rw,fd=50,pgrp=1,timeout=120,minproto=5,maxproto=5,direct\n",
+    );
+    let v = run(&t, true, FakeRunner::default());
+    let w = arr(&v, &["warnings"]);
+    assert!(
+        !w.iter().filter_map(Value::as_str).any(|w| w.contains("automount")),
+        "{w:?}"
+    );
+}
+
 // ---- raw GPT partitions (crate::rawpart, docs/design/gnome-os.md GN3) ----
 
 const RAWPART_USR_A: &str = "a5a50001-0000-4000-8000-0000000000a1";
@@ -15659,7 +15766,11 @@ fn kdelinux_load_plan() {
     assert_eq!(crate::sysupdate::refusal(&v), None);
     let subs = arr(&v, &["storage", "btrfs", "0", "subvolumes"]);
     assert_eq!(subs.len(), 8, "{subs:?}");
-    assert_eq!(crate::other::restored_marker(&v), "etc.mstack.v");
+    assert_eq!(crate::other::restored_marker(&v), "@system/etc/machine-id");
+    assert_eq!(
+        v.at(&["boot", "sysupdate", "kdelinux", "restored_marker_present"]),
+        Some(&Value::Bool(true))
+    );
     let b = kdelinux_plan(&v, &["--repo", "/r"]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let text = |st: Stage| b.stage(st).iter().map(Cmd::shell).collect::<String>();
@@ -15681,7 +15792,7 @@ fn kdelinux_load_plan() {
     // Subvolumes in ID order, each parent before what is nested in it;
     // the snapshots of another (the /etc layers' and snapper's) shared,
     // after the restore.
-    let top = format!("{}/btrfs/b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf", crate::load::RUN_DIR);
+    let top = format!("{RUN_DIR}/btrfs/b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf");
     let at: Vec<usize> = [
         "@system",
         "@system/etc",
@@ -15697,6 +15808,15 @@ fn kdelinux_load_plan() {
     .collect();
     assert!(at.windows(2).all(|w| w[0] < w[1]), "{at:?} {format}");
     assert!(!format.contains(".bko-holt-nested-"), "{format}");
+    // The restore gate's marker is a file no stage before the restore
+    // makes (review of K3, finding 2): format makes etc.mstack.v (the
+    // directory the /etc layers' subvolumes are in), so that can't be it.
+    let marker = crate::load::kdelinux::MARKER;
+    assert!(format.contains(&format!("{top}/etc.mstack.v")), "{format}");
+    for st in [Stage::Partition, Stage::Assemble, Stage::Format, Stage::Mount] {
+        let x = text(st);
+        assert!(!x.contains("machine-id") && !x.contains(marker), "{st:?}: {x}");
+    }
     for p in [
         "@system/.etc.1763990000",
         "etc.mstack.v/etc_202611270255.mstack",
@@ -15750,6 +15870,9 @@ fn kdelinux_load_problems() {
     let mut v = base.clone();
     kdelinux_set(&mut v, &k, "variant_id", Value::from("stable"));
     assert!(has(&kdelinux_plan(&v, &[]), "restores the testing edition only; this is \"stable\""));
+    let mut v = base.clone();
+    kdelinux_set(&mut v, &k, "restored_marker_present", Value::Bool(false));
+    assert!(has(&kdelinux_plan(&v, &[]), "the source has no @system/etc/machine-id"));
     let mut v = base.clone();
     kdelinux_set(&mut v, &k, "layout", Value::Null);
     assert!(has(&kdelinux_plan(&v, &[]), "RootFSv3 layout with etc-mstack only"));
@@ -15809,7 +15932,7 @@ fn kdelinux_luks_plan() {
     assert_eq!(crate::sysupdate::refusal(&v), None);
     assert!(v.at(&["storage", "crypttab"]).is_none_or(|c| c.is_null() || c.as_array().is_some_and(Vec::is_empty)));
     assert_eq!(s(&v, &["boot", "sysupdate", "kdelinux", "top_device"]), "dm-0");
-    let b = kdelinux_plan(&v, &["--key-file", "root=/k"]);
+    let b = kdelinux_plan(&v, &["--key-file", "root=/k", "--repo", "/r"]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let text = |st: Stage| b.stage(st).iter().map(Cmd::shell).collect::<String>();
     let asm = text(Stage::Assemble);
@@ -15820,6 +15943,62 @@ fn kdelinux_luks_plan() {
     let mount = text(Stage::Mount);
     assert!(mount.contains("mount -t btrfs -o subvol=/,compress=zstd:-4 /dev/mapper/root /mnt/bko-target\n"), "{mount}");
     assert!(b.notes.iter().any(|n| n.contains("KDE Linux: the LUKS volume (gpt-auto's root, no crypttab)")), "{:?}", b.notes);
+    // The shared snapshots are planned by the backup's tree on LUKS too
+    // (the btrfs's device and the top level's named alike): made after
+    // the restore, sharing their extents, not full copies by format.
+    let format = text(Stage::Format);
+    let restore = text(Stage::Restore);
+    let top = format!("{RUN_DIR}/btrfs/b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf");
+    for p in [
+        "@system/.etc.1763990000",
+        "etc.mstack.v/etc_202611270255.mstack",
+        "@system/home/tester/.snapshots/1/snapshot",
+    ] {
+        assert!(!format.contains(&format!("{top}/{p}")), "{p}: {format}");
+        assert!(restore.contains(p), "{p}: {restore}");
+    }
+    // The top level's device named otherwise than the btrfs's devices
+    // (review of K3, finding 4): still the same device, sharing kept.
+    let mut w = v.clone();
+    kdelinux_set(&mut w, &["boot", "sysupdate", "kdelinux"], "top_device", Value::from("/dev/mapper/root"));
+    let b2 = kdelinux_plan(&w, &["--key-file", "root=/k", "--repo", "/r"]);
+    assert!(b2.problems.is_empty(), "{:?}", b2.problems);
+    let text2 = |st: Stage| b2.stage(st).iter().map(Cmd::shell).collect::<String>();
+    assert_eq!(text2(Stage::Format), format);
+    assert_eq!(text2(Stage::Restore), restore);
+    assert_eq!(text2(Stage::Mount), mount);
+}
+
+/// A line the user added to KDE Linux's fstab (review of K3, finding 3):
+/// the same btrfs's top level at /mnt/top.  The shared snapshots are still
+/// planned by the backup's tree, and the mount stage mounts that tree, not
+/// fstab's line (which would put the top level at @system's paths), saying
+/// so in a note.
+#[test]
+fn kdelinux_fstab_line_ignored() {
+    use crate::load::{Stage, commands::Cmd};
+    let base = kdelinux_dump();
+    let b0 = kdelinux_plan(&base, &["--repo", "/r"]);
+    let mut v = base.clone();
+    let line = crate::json::parse(
+        r#"[{"spec": "UUID=b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf", "file": "/mnt/top", "type": "btrfs", "options": "subvol=/,noatime", "dump": 0, "pass": 0, "resolves_to": "nvme0n1p2"}]"#,
+    )
+    .unwrap();
+    v.at_mut(&["storage"]).unwrap().put("fstab", line);
+    let b = kdelinux_plan(&v, &["--repo", "/r"]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let text = |b: &crate::load::commands::Built, st: Stage| {
+        b.stage(st).iter().map(Cmd::shell).collect::<String>()
+    };
+    for st in [Stage::Format, Stage::Mount, Stage::Restore] {
+        assert_eq!(text(&b, st), text(&b0, st), "{st:?}");
+    }
+    assert!(!text(&b, Stage::Mount).contains("/mnt/top"));
+    assert!(
+        b.notes.iter().any(|n| n.contains("KDE Linux: fstab's /mnt/top is not mounted for the restore")),
+        "{:?}",
+        b.notes
+    );
 }
 
 /// A subvolume nested in one with a larger ID (moved into it on the
@@ -15840,7 +16019,7 @@ fn nested_subvolume_older_than_its_parent() {
     kdelinux_set(&mut v, &["storage", "btrfs", "0"], "qgroups", Value::Arr(vec![]));
     let b = kdelinux_plan(&v, &[]);
     let f = b.stage(Stage::Format).iter().map(Cmd::shell).collect::<String>();
-    let top = format!("{}/btrfs/b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf", crate::load::RUN_DIR);
+    let top = format!("{RUN_DIR}/btrfs/b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf");
     let want = [
         format!("btrfs subvolume create {top}/@system\n"),
         format!("btrfs subvolume create {top}/.bko-holt-nested-257\n"),

@@ -22,12 +22,15 @@ use super::commands::{Builder, Cmd, atimes_cmd};
 use super::shared::{Mount, Sub};
 use crate::json::Value;
 
-/// What a restored KDE Linux tree has once the restore is done: the `/etc`
-/// layers' directory at the top level, which every layout version 1
-/// supports has (dump refuses one without it).  `restored_marker` returns a
-/// `&'static str`, so it can't name the booted version's image file; the
-/// boot stage's check tests that.
-pub const MARKER: &str = "etc.mstack.v";
+/// What a restored KDE Linux tree has once the restore is done
+/// (`checks::RESTORED_MARKER`): a regular file only the restore writes.
+/// Not `etc.mstack.v`, which format makes (`mkdir -p` before the
+/// `etc_V.mstack` subvolumes it creates), so it was there before any
+/// restore.  `restored_marker` returns a `&'static str`, so it can't name
+/// the booted version's image file; the boot stage's check tests that.
+/// Dump records whether the source has it (`restored_marker_present`);
+/// a source without it is a plan problem.
+pub const MARKER: &str = checks::RESTORED_MARKER;
 /// Where the boot stage's log goes in the restored tree (`@system`'s /var).
 pub const LOG: &str = "@system/var/log/bko-holt";
 /// Where the ESP is in the backup's tree.
@@ -40,6 +43,14 @@ pub const LAYER0: &str = "/sysusr/usr/share/factory/etc";
 /// The choices that rest on facts K1 hasn't settled yet (the spec's
 /// *check*s), in one place.
 pub mod checks {
+    /// The restore gate's file (`super::MARKER`): `@system/etc/machine-id`,
+    /// the installer's /etc subvolume's machine ID (Calamares' `machineid`
+    /// module, install.sh's `systemd-machine-id-setup --root`), kept after
+    /// etc-mstack's first migration.  A regular file, never made by format,
+    /// which makes only subvolumes and their parent directories.  Whether
+    /// every install has it there is *check* (K1); dump records its
+    /// presence, so a source without it is refused at plan time.
+    pub const RESTORED_MARKER: &str = "@system/etc/machine-id";
     /// gpt-auto opens the root's LUKS volume as `root`
     /// (`systemd-gpt-auto-generator`), and nothing else names it: no
     /// crypttab.  The restore opens it under the dump's own mapper name,
@@ -212,8 +223,33 @@ echo "kdelinux: $nuki UKIs, each with its image file; the booted version $booted
 impl Builder<'_> {
     /// The dump's KDE Linux btrfs: the one on the top level's device.
     fn kdelinux_fs(&self, k: &Value) -> Option<Value> {
-        let dev = s(k, "top_device")?;
-        self.btrfs_fs_on(&dev)
+        let dev = self.kname(&s(k, "top_device")?);
+        self.layout
+            .arr(&["storage", "btrfs"])
+            .iter()
+            .find(|fs| strs(fs.get("devices")).iter().any(|d| self.kname(d) == dev))
+            .cloned()
+    }
+
+    /// A device's kernel name, however the dump spells it: `dm-0` for
+    /// `dm-0`, `/dev/dm-0`, `/dev/mapper/root` or `mapper/root` (a
+    /// device-mapper device by its name), so the top level's device and the
+    /// btrfs's devices compare equal (a mismatch would drop the shared
+    /// snapshots silently: full copies, no error).
+    pub(crate) fn kname(&self, d: &str) -> String {
+        let d = d.strip_prefix("/dev/").unwrap_or(d);
+        if let Some(name) = d.strip_prefix("mapper/") {
+            if let Some(n) = self
+                .layout
+                .arr(&["storage", "dm_devices"])
+                .iter()
+                .find(|x| x.at(&["dm", "dm_name"]).and_then(Value::as_str) == Some(name))
+                .and_then(|x| s(x, "name"))
+            {
+                return n;
+            }
+        }
+        d.to_string()
     }
 
     /// The mounts `btrfs_plans` plans shared snapshots by, for the btrfs
@@ -228,7 +264,10 @@ impl Builder<'_> {
         let Some(k) = of(&self.layout.v) else {
             return Vec::new();
         };
-        if !s(k, "top_device").is_some_and(|d| devs.contains(&d)) {
+        let Some(top) = s(k, "top_device").map(|d| self.kname(&d)) else {
+            return Vec::new();
+        };
+        if !devs.iter().any(|d| self.kname(d) == top) {
             return Vec::new();
         }
         let uuids: Vec<&str> = subs.iter().filter_map(|x| x.uuid.as_deref()).collect();
@@ -287,7 +326,7 @@ impl Builder<'_> {
             .collect();
         let mut opts = vec!["subvol=/"];
         opts.extend(compress.iter().copied());
-        match s(k, "top_device").and_then(|d| self.names.dev(&d).map(|n| (d, n))) {
+        match s(k, "top_device").map(|d| self.kname(&d)).and_then(|d| self.names.dev(&d).map(|n| (d, n))) {
             Some((d, node)) => out.push((
                 "/".to_string(),
                 Cmd::new(&["mount", "-t", "btrfs", "-o", &opts.join(","), &node, &t]).why(format!(
@@ -321,6 +360,11 @@ impl Builder<'_> {
     fn kdelinux_problems(&mut self, k: &Value) {
         for r in strs(k.get("refusals")) {
             self.problems.push(format!("the dump refused this system: {r}"));
+        }
+        if k.get("restored_marker_present") == Some(&Value::Bool(false)) {
+            self.problems.push(format!(
+                "KDE Linux: the source has no {MARKER}, the file the boot stage's gate and `load status` take to mean the restore is done: a layout bko-holt hasn't seen"
+            ));
         }
         if s(k, "layout").as_deref() != Some(LAYOUT_V1) {
             self.problems.push(format!(
@@ -405,7 +449,7 @@ impl Builder<'_> {
             .iter()
             .filter_map(|i| i.get("size").and_then(Value::as_u64))
             .sum();
-        let Some(mut dev) = s(k, "top_device") else { return };
+        let Some(mut dev) = s(k, "top_device").map(|d| self.kname(&d)) else { return };
         for _ in 0..4 {
             if self.layout.disks.iter().any(|d| d.parts.iter().any(|p| p.name == dev)) {
                 break;
@@ -473,7 +517,7 @@ impl Builder<'_> {
         self.kdelinux_problems(k);
         let t = self.opts.target.clone();
         let mut out = vec![Cmd::note(format!(
-            "refuses to start unless {t}/{MARKER} is there: the restored btrfs top level"
+            "refuses to start unless {t}/{MARKER} is there: the restored btrfs top level (a file only the restore writes)"
         ))];
         out.push(Cmd::new(&["sh", "-c", &atimes_cmd(&t, "if-missing", &self.ro_shared())]).why("the restored atimes (the restore stage lists them), to put back after this stage's reads"));
         let what = "KDE Linux: the ESP, the UKIs, loader.conf, the image files and the /etc layers are restored as they were; no initramfs, no bootctl install, no chroot";

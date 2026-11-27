@@ -78,7 +78,7 @@ pub(crate) fn kde_files(t: &Tree) {
         .file(&format!("/system/kde-linux_{V2}.erofs"), vec![2u8; 8192])
         .file(&format!("/system/kde-linux_{V1}.erofs.caibx"), vec![3u8; 64])
         .file(&format!("/system/kde-linux_{V2}.erofs.caibx"), vec![4u8; 64])
-        .dir("/system/@system/etc")
+        .file("/system/@system/etc/machine-id", "0123456789abcdef0123456789abcdef\n")
         .dir("/system/@system/.etc.1763990000")
         .dir("/system/@system/home/tester/.snapshots/1/snapshot")
         .dir(&format!("/system/etc.mstack.v/etc_{V1}.mstack/rw/data"))

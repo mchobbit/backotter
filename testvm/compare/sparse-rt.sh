@@ -454,7 +454,7 @@ int main(int argc, char **argv) {
 	return 2;
 }
 C
-# The same in Python, where there is no C compiler (omnios58 has python3 and
+# The same in Python, where there is no C compiler (omnios60 has python3 and
 # no gcc): the digests are SHA-256 rather than FNV-1a, and are compared only
 # with each other.
 cat >$H.py <<'PY'

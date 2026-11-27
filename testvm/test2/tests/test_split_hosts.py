@@ -38,7 +38,7 @@ HT1_QUEUE = os.path.join(TESTVM, "holttest1d", "ht1-queue.sh")
 ALL_LFS = {"zfs", "zfs-onto-ext4", "bcachefs", "f2fs", "ext4", "xfs", "btrfs", "tmpfs", "jfs", "nonroot"}
 ALL_SFS = {"ext4", "xfs", "btrfs", "zfs", "zfs-nocomp"}
 GUEST_PLATS = {"zfsguests": ("ubuntu24", "ubuntu26-zfsmirror"), "dragonfly": ("dragonfly6",),
-               "openbsd_illumos": ("openbsd8", "omnios58"), "freebsd": ("freebsd15", "freebsd15-ufs"),
+               "openbsd_illumos": ("openbsd8", "omnios60"), "freebsd": ("freebsd15", "freebsd15-ufs"),
                "netbsd": ("netbsd11", "alpinebsd")}
 
 

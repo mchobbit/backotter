@@ -28,7 +28,7 @@ Here, in `testvm/compare/`:
 | `compare-freebsd.sh` | Whole-system backup and restore of a FreeBSD guest with restic-bko, and a boot of the result: `compare.py`'s FreeBSD counterpart (`freebsd/rescue.sh` records source and target mounted read-only, so that listing them moves no atimes, and gives a ZFS target a `zpool.cache` of its own pool) |
 | `OS/roundtrip.sh` | A round trip inside a guest of that OS: `freebsd/` (also NFSv4 ACLs on a UFS md disk, and a restore onto a UFS without ACLs), `openbsd/` (also a socket, which neither tool keeps), `netbsd/` (also AlpineBSD's root extended attributes, FFSv1, restores onto FFSv1 and plain FFSv2, and a socket, which neither tool keeps), `dragonfly/` (also a socket, which neither tool keeps), `illumos/` (also av_quarantined, a restore with idmap unreachable, and a socket, which neither tool keeps); each also restores over a changed copy of what it restored, and, run with both tools, compares their snapshots node by node (`rt-common.sh`) |
 | `run-guest-rt.sh GUEST [PORT] RESTIC RUSTIC [DIRECTION...]` | Runs `OS/roundtrip.sh` in throwaway copies of GUEST, in all four directions (restic->restic, rustic->rustic, and across), and prints PASS or FAIL with the failed checks |
-| `nonroot-rt.sh linux` or `GUEST [PORT]` | Restores as an unprivileged user, on the host (ext4 and ZFS) or in freebsd15, freebsd15-ufs, netbsd11, alpinebsd, dragonfly6, openbsd8 or omnios58 (`nonroot-inner.sh` is the part that runs there) |
+| `nonroot-rt.sh linux` or `GUEST [PORT]` | Restores as an unprivileged user, on the host (ext4 and ZFS) or in freebsd15, freebsd15-ufs, netbsd11, alpinebsd, dragonfly6, openbsd8 or omnios60 (`nonroot-inner.sh` is the part that runs there) |
 | `guest-run.sh GUEST [PORT] COMMAND [FILE...]` | A one-off command in a throwaway copy of a guest |
 | `rt-common.sh` | What the guests' round trips, `nonroot-inner.sh` and `sparse-rt.sh` share: a snapshot's nodes decoded (each tree blob's bytes as restic's `cat blob` gives them, read by the rustic beside it with the master key from a view of the tree packs alone, else by restic; `RT_JOBS` lanes, default the CPUs online from 4 to 12, each with its own decoder; `rt-decoder-test.sh` checks the decoder's window; `RT_CONTENT` keeps the content blob IDs; scratch files in `RT_TMP`), two snapshots compared, a restored tree changed for a restore over it, a socket made (`rt_mksock`: python3, perl, cc or `nc -lU`) |
 | `run-all.sh [--host H] [--platforms LIST] [--only RE] [--dry-run] BIN_DIR LOG_DIR` | A whole test round on one host, unattended (below): checks the binaries, runs every platform's scripts at once within the host's guest and job limits, and writes the verdict table, `LOG_DIR/summary.txt` and `summary.json`; exit 0 only if every step passes |
@@ -308,9 +308,9 @@ linux and sparse only, above):
 | Chopin | Cinqcent |
 |---|---|
 | restic-bko cross-builds (the restic fork's build) | native rustic-bko builds: freebsd14, openbsd8, omnios58, netbsd11 |
-| rustic-bko for Linux, `dragonfly/build-rustic.sh` and `haiku/build-rustic.sh` | round trips and `nonroot-rt.sh` on freebsd15, freebsd15-ufs, netbsd11, alpinebsd, openbsd8, omnios58 |
+| rustic-bko for Linux, `dragonfly/build-rustic.sh` and `haiku/build-rustic.sh` | round trips and `nonroot-rt.sh` on freebsd15, freebsd15-ufs, netbsd11, alpinebsd, openbsd8, omnios60 |
 | `fs_roundtrip.py` on zfs, zfs onto ext4, bcachefs, xfs, btrfs; `nonroot-rt.sh linux`; `sparse-rt.sh` on xfs, btrfs (as root) | `fs_roundtrip.py` on ext4, f2fs, tmpfs, jfs; `sparse-rt.sh` on zfs, zfs-nocomp, ext4 (as root) |
-| round trips and `nonroot-rt.sh` on dragonfly6; `zfs-guest-rt.sh`; `compare.py` | `sparse-rt.sh` in freebsd15, freebsd15-ufs, netbsd11's build image, omnios58 |
+| round trips and `nonroot-rt.sh` on dragonfly6; `zfs-guest-rt.sh`; `compare.py` | `sparse-rt.sh` in freebsd15, freebsd15-ufs, netbsd11's build image, omnios60 |
 
 `stick/build-round.sh` leaves the whole set of binaries on every build host
 (and on `--dist-hosts`).
@@ -346,7 +346,7 @@ In a guest, through `guest-run.sh`, it works in a directory of the guest's
 own file system (`SPARSE_DIR`, default `/root/bko-sparse`): FreeBSD and
 illumos have SEEK_HOLE; elsewhere the marks, contents and allocation are
 checked all the same.  Its helper needs cc (FreeBSD's base has one) or
-python3 (omnios58):
+python3 (omnios60):
 
     C=testvm/compare B=round8/bin/freebsd
     T=7200 $C/guest-run.sh freebsd15 2780 \

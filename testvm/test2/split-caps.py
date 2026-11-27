@@ -29,7 +29,7 @@ from t2lib import facts as F  # noqa: E402
 from t2lib import hosts as H  # noqa: E402
 
 # run-all.sh's guest platforms' guests (its UNITS in split_share).
-PLAT_GUESTS = ("netbsd11", "alpinebsd", "freebsd15", "freebsd15-ufs", "openbsd8", "omnios58", "dragonfly6")
+PLAT_GUESTS = ("netbsd11", "alpinebsd", "freebsd15", "freebsd15-ufs", "openbsd8", "omnios60", "dragonfly6")
 ZFS_GUESTS = ("ubuntu24", "ubuntu26-zfsmirror")
 
 

@@ -33,11 +33,11 @@
 #                           run-guest-rt.sh fetches)
 #           dragonfly6      /bkonr on the HAMMER2 root
 #           openbsd8        /bkonr on the FFS root
-#           omnios58        /bkonr a ZFS file system of its own
+#           omnios60        /bkonr a ZFS file system of its own
 #
 # RESTIC and RUSTIC (environment) name the binaries; by default
 # ~/backotter-work/bko-bin/OS/restic-bko and rustic-bko (OS linux, freebsd,
-# netbsd, dragonfly, openbsd, illumos for omnios58, where
+# netbsd, dragonfly, openbsd, illumos for omnios60, where
 # stick/illumos/build-rustic.sh puts it; BKO_BIN replaces bko-bin).
 # ~/backotter-work is BKO_WORK, by default the directory that holds this
 # testvm/, as for compare.py, and so the same when run as root.  Writes
@@ -107,7 +107,7 @@ case $guest in
     netbsd11|alpinebsd) binaries netbsd ;;
     dragonfly6) binaries dragonfly ;;
     openbsd8) binaries openbsd ;;
-    omnios58) binaries illumos ;;
+    omnios60) binaries illumos ;;
     *) die "no check for $guest" ;;
 esac
 [[ $port =~ ^[0-9]+$ ]] || die "usage: nonroot-rt.sh GUEST [PORT]"
@@ -141,7 +141,7 @@ case $guest in
     dragonfly6) setup='mkdir /bkonr && pw groupadd bkonr -g 4321 && pw useradd bkonr -u 4321 -g 4321 -s /bin/sh -d /nonexistent' ;;
     openbsd8) setup='mkdir /bkonr && mount -u -o noatime / &&
         groupadd -g 4321 bkonr && useradd -u 4321 -g 4321 -s /bin/sh -d /nonexistent bkonr' ;;
-    omnios58) setup='zfs create -o mountpoint=/bkonr -o atime=off "$(zfs list -H -o name / | cut -d/ -f1)/bkonr" &&
+    omnios60) setup='zfs create -o mountpoint=/bkonr -o atime=off "$(zfs list -H -o name / | cut -d/ -f1)/bkonr" &&
         groupadd -g 4321 bkonr && useradd -u 4321 -g 4321 -s /bin/sh -d /nonexistent bkonr' ;;
 esac
 vm_sh "$setup && chmod 755 /bkonr" || exit 1

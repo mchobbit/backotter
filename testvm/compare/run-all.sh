@@ -23,8 +23,8 @@
 #                           (ZFS_GUESTS)
 #                dragonfly  dragonfly6: run-guest-rt.sh, nonroot, sparse-rt.sh
 #                openbsd_illumos
-#                           openbsd8, omnios58: run-guest-rt.sh, nonroot;
-#                           sparse-rt.sh in omnios58
+#                           openbsd8, omnios60: run-guest-rt.sh, nonroot;
+#                           sparse-rt.sh in omnios60
 #                freebsd    freebsd15, freebsd15-ufs: run-guest-rt.sh,
 #                           nonroot, sparse-rt.sh
 #                netbsd     netbsd11, alpinebsd: run-guest-rt.sh, nonroot;
@@ -33,7 +33,7 @@
 #   --dry-run    check the binaries and print every step's command; run none
 #   BIN_DIR      the round's binaries: OS/restic-bko, OS/rustic-bko and their
 #                restic-commit, rustic-commit (OS linux freebsd openbsd netbsd
-#                dragonfly illumos; omnios58 runs illumos', alpinebsd netbsd's)
+#                dragonfly illumos; omnios60 runs illumos', alpinebsd netbsd's)
 #   LOG_DIR      PLATFORM/STEP.log (and the scripts' own logs beside it),
 #                summary.txt and summary.json (the table), rows.jsonl
 #
@@ -307,7 +307,7 @@ UNITS = [("linux", n, 1, {"zfs"}, set(), 6.5, ()) for n in ("zfs", "zfs-onto-ext
     [("sparse", n, 1, set(), set(), 0, ()) for n in ("ext4", "xfs", "btrfs")] + \
     [("plats", "netbsd", 5, vm("netbsd11", "alpinebsd"), {"netbsd-build"}, 0, (15, 16)),
      ("plats", "freebsd", 6, vm("freebsd15", "freebsd15-ufs"), set(), 0, (10, 11)),
-     ("plats", "openbsd_illumos", 5, vm("openbsd8", "omnios58"), set(), 0, (12, 13)),
+     ("plats", "openbsd_illumos", 5, vm("openbsd8", "omnios60"), set(), 0, (12, 13)),
      ("plats", "dragonfly", 3, vm("dragonfly6"), set(), 0, (10, 11)),
      ("plats", "zfsguests", 2, vm(*zg), set(), 0, (17, 18, 19))]
 
@@ -620,9 +620,9 @@ for p in $plats; do
     openbsd_illumos)
         guest_rt openbsd_illumos a openbsd8 "$(P 12)" openbsd
         nonroot openbsd_illumos a openbsd8 "$(P 12)" openbsd
-        guest_rt openbsd_illumos b omnios58 "$(P 13)" illumos
-        nonroot openbsd_illumos b omnios58 "$(P 13)" illumos
-        guest_sparse openbsd_illumos b omnios58 "$(P 13)" illumos ;;
+        guest_rt openbsd_illumos b omnios60 "$(P 13)" illumos
+        nonroot openbsd_illumos b omnios60 "$(P 13)" illumos
+        guest_sparse openbsd_illumos b omnios60 "$(P 13)" illumos ;;
     freebsd)
         i=10
         for g in freebsd15 freebsd15-ufs; do

@@ -7,14 +7,14 @@
 #
 # Usage: run-guest-rt.sh GUEST [PORT] RESTIC_BIN RUSTIC_BIN [DIRECTION ...]
 #   GUEST       freebsd15 freebsd15-ufs hardenedbsd15 ghostbsd26 openbsd8
-#               netbsd11 alpinebsd dragonfly6 omnios58
+#               netbsd11 alpinebsd dragonfly6 omnios60
 #   PORT        the guest's SSH port here (default 2710)
 #   RESTIC_BIN  restic-bko built for the guest's OS (bko-bin/OS/restic-bko)
 #   RUSTIC_BIN  rustic-bko built for it (stick/OS/build-rustic.sh; alpinebsd
 #               runs the NetBSD one)
 #   DIRECTION   restic-restic rustic-rustic restic-rustic rustic-restic (default: all)
 #
-# omnios58: after each direction, its repository goes into a second fresh
+# omnios60: after each direction, its repository goes into a second fresh
 # boot and is restored there again ("again" in the summary): the ephemeral
 # ids of SID owners are handed out anew in every boot.
 # alpinebsd has no mtree, chflags, stat, getfacl, *extattr or nc (for a
@@ -23,7 +23,7 @@
 # (on the same PORT) the first time, or again when a tool is missing.
 #
 # Writes logs to ~/backotter-work/rt/GUEST/DIRECTION.log (RT_LOGS replaces
-# ~/backotter-work/rt), and DIRECTION-again.log; omnios58's repositories go
+# ~/backotter-work/rt), and DIRECTION-again.log; omnios60's repositories go
 # to DIRECTION.tar there.  ~/backotter-work is BKO_WORK, by default the
 # directory that holds this testvm/, as for compare.py.  MEMORY (MB, default
 # 4096) is the guest's; RT_TIMEOUT (seconds, default 3600) bounds each run.

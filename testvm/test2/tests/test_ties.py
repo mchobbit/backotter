@@ -159,7 +159,7 @@ def split_script():
 
 
 FULL = "zfs,bcachefs,netbsd-build," + ",".join("vm:" + g for g in (
-    "netbsd11", "alpinebsd", "freebsd15", "freebsd15-ufs", "openbsd8", "omnios58", "dragonfly6", "ubuntu24",
+    "netbsd11", "alpinebsd", "freebsd15", "freebsd15-ufs", "openbsd8", "omnios60", "dragonfly6", "ubuntu24",
     "ubuntu26-zfsmirror"))
 
 

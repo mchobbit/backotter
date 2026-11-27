@@ -97,7 +97,7 @@
 #      EXPECT_* from build-round.sh and OLD_BIN the c517a69/ba93d6e build for
 #      fs_roundtrip.py on ext4, btrfs, xfs, nonroot-rt.sh linux, sparse-rt.sh on
 #      ext4, zfs-guest-rt.sh ubuntu24, the round trips of freebsd15 (and its
-#      nonroot), freebsd15-ufs, netbsd11, openbsd8, omnios58, dragonfly6;
+#      nonroot), freebsd15-ufs, netbsd11, openbsd8, omnios60, dragonfly6;
 #      exact-rt.sh with each tool; compare.py debian13, the four directions.
 #      Each job's summary comes back to LOG_DIR/step4/JOB/, and one table ends
 #      the step (verdict.py summary for run-all.sh's).  No unit tests run
@@ -1438,7 +1438,7 @@ rt-freebsd15;runall;1;5;freebsd15;;10;freebsd;^freebsd/(rt|nonroot)-freebsd15$;
 rt-freebsd15-ufs;runall;1;5;freebsd15-ufs;;11;freebsd;^freebsd/rt-freebsd15-ufs$;
 rt-netbsd11;runall;1;5;netbsd11;;15;netbsd;^netbsd/rt-netbsd11$;
 rt-openbsd8;runall;1;5;openbsd8;;12;openbsd_illumos;^openbsd_illumos/rt-openbsd8$;
-rt-omnios58;runall;1;6;omnios58;;13;openbsd_illumos;^openbsd_illumos/rt-omnios58$;
+rt-omnios60;runall;1;6;omnios60;;13;openbsd_illumos;^openbsd_illumos/rt-omnios60$;
 rt-dragonfly6;runall;1;5;dragonfly6;;10;dragonfly;^dragonfly/rt-dragonfly6$;'
     local name kind d m g nd off plats onlyre extra pfx k=0 OLDS=""
     while IFS=';' read -r name kind d m g nd off plats onlyre extra; do

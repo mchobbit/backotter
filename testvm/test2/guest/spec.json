@@ -28,7 +28,9 @@
   "bins": []
  },
  "excluded": {
-  "freebsd15-builder": "a build helper"
+  "freebsd15-builder": "a build helper",
+  "omnios58": "OmniOS r151058: GuestTest2 moved to omnios60 (r151060, illumos 18322's vioblk fix) on 2026-11-27; it stays as the illumos Rust build image's base and, until omnios60's corpus dumps land, as a HoltTest2 source",
+  "omnios58-mirror": "OmniOS r151058: GuestTest2 moved to omnios60-mirror on 2026-11-27; until omnios60-mirror's corpus dump lands it stays a HoltTest2 source"
  },
  "kinds": {
   "ssh": {
@@ -1786,13 +1788,14 @@
    },
    "notes": "memory 4096: pkg update's solver in vm-run's 2 GB swapped for 20-43 min (Solver setup 1231-2566 s, 2026-11-14), and on t2v-20261117T1639-dc6b oi2610 ran out of swap (tmpfs /etc/svc/volatile full) and hung"
   },
-  "omnios58": {
+  "omnios60": {
    "kind": "ssh",
    "plat": "illumos",
    "harness": [
     "testvm/make-omnios.sh",
     "testvm/omnios/**",
-    "testvm/update/in-guest.sh#SunOS"
+    "testvm/update/in-guest.sh#SunOS",
+    "testvm/test2/guest/new-guest.sh"
    ],
    "judge": [
     "entry:testvm/test2/guest/known-lines.json#ips"
@@ -1807,10 +1810,10 @@
      "mounts": "M-ill"
     },
     "fw": "bios",
-    "established": true
+    "established": false
    }
   },
-  "omnios58-mirror": {
+  "omnios60-mirror": {
    "kind": "ssh",
    "plat": "illumos",
    "harness": [

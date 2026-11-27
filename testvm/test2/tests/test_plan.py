@@ -144,7 +144,7 @@ class Scenarios(WorldCase):
         p = self.w.plan("SticTest2 rel4 plan", self.r_stic, facts=f)
         can = sorted(c.cell for c in p.due())
         self.assertEqual(can, sorted(f"stic:{g}" for g in ("debian12", "zorin18", "debian13-zfs", "freebsd15-ufs",
-                                                          "omnios58", "haiku6", "sculpt2610", "debian13-stack",
+                                                          "omnios60", "haiku6", "sculpt2610", "debian13-stack",
                                                           "omarchy")))
         self.assertTrue(all(c.rule == "canary:plumbing" for c in p.due()))
         self.assertEqual(len(p.by_status("awaiting-canaries")), N_STIC - 9)
@@ -674,15 +674,17 @@ class Estimates(unittest.TestCase):
             self.skipTest("no docs/design/test2/data")
         tsv = estimates.load_tsv(os.path.join(REPO, "testvm", "test2", "estimates.tsv"))
         runs = collections.defaultdict(list)
+        # (a guest renamed since: its row carries the old guest's figure, OmniOS r151060, 2026-11-27)
+        renamed = {"omnios58": "omnios60"}
         marked = set()
         with open(os.path.join(data, "st1_marks.tsv")) as f:
             for line in f:
                 h, g, mark, s, e, x = line.rstrip("\n").split("\t")
-                marked.add(g)
+                marked.add(renamed.get(g, g))
                 if x == "0" and s and e:
                     runs[g].append(int(e) - int(s))
         for g, d in runs.items():
-            self.assertAlmostEqual(tsv[f"stic:{g}"]["gm"], round(statistics.median(d) / 60, 2), places=2)
+            self.assertAlmostEqual(tsv[f"stic:{renamed.get(g, g)}"]["gm"], round(statistics.median(d) / 60, 2), places=2)
         with open(os.path.join(data, "ht_rows.json")) as f:
             r3 = {r["guest"]: r for r in json.load(f) if r["run"] == "r3all"}
         for g, r in r3.items():
@@ -1151,11 +1153,13 @@ class ImgCase(WorldCase):
         """Rows that give every binary of PLAT's image a real PASS, less SKIP."""
         im = (images or self.w.images())[plat]
         os_ = "omnios" if plat == "illumos" else plat
-        g = guest or {"netbsd": "netbsd11", "illumos": "omnios58", "haiku": "haiku6"}.get(plat, "debian12")
+        g = guest or {"netbsd": "netbsd11", "illumos": "omnios60", "haiku": "haiku6"}.get(plat, "debian12")
+        # (illumos' HoltTest2 source stays omnios58 until omnios60's corpus dumps land)
+        hg = guest or {"illumos": "omnios58"}.get(plat, g)
         code = "code:" + keys.holt_code(keys.GitSource(self.w.repo, im["holt_commit"], scope=("holt",)))
         rows = [self.bin_row(f"stic:{g}", f"{os_}/{n}", "sha256:" + h) for n, h in im["bins"].items()
                 if n != "bko-holt" and n not in skip]
-        rows.append(self.bin_row(f"holt:{g}", f"{plat}/bko-holt", code))
+        rows.append(self.bin_row(f"holt:{hg}", f"{plat}/bko-holt", code))
         return rows
 
     def plan_img(self, rows=(), text="ImgTest2 netbsd plan", **kw):

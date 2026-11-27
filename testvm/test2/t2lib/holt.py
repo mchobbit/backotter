@@ -97,7 +97,7 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      goes into ctx.facts, is summed (1a) and the plan made again first, and its
      cells-r2.json entry says rerun_why rescuer-made, under which a pass is a PASS.
      The copy is the host's for good (ht1-bsd.sh makes it once, under a lock), so the
-     other cells that boot it on that host (omnios58's copy: every illumos cell) are
+     other cells that boot it on that host (omnios60's copy: every illumos cell) are
      keyed again as soon as its row lands (rekey_made): the copy summed, the plan made
      again, and their cells.json entries there get the planned key at its sum, if
      their rows haven't landed yet and the copy is all the key changes by.  One whose

@@ -1013,7 +1013,7 @@
     "testvm/compare/expected-coverage.json",
     "entry:testvm/test2/stic/limits.json#oi2610"
    ],
-   "notes": "a copy of omnios58's check; the illumos binaries (built on omnios58) run on OpenIndiana as they are (docs/design/openindiana.md Decision 4)"
+   "notes": "a copy of omnios60's check (once omnios58's); the illumos binaries (built on omnios58) run on OpenIndiana as they are (docs/design/openindiana.md Decision 4)"
   },
   "omarchy": {
    "os": "linux",
@@ -1031,14 +1031,14 @@
    ],
    "notes": "om-boot.sh boots it; LUKS typed through QEMU's monitor (testvm/omarchy/type-luks-passphrase.py)"
   },
-  "omnios58": {
+  "omnios60": {
    "os": "omnios",
    "bins": [
     "omnios/restic-bko",
     "omnios/rustic-bko"
    ],
    "harness": [
-    "testvm/stictest1/omnios58/**",
+    "testvm/stictest1/omnios60/**",
     "testvm/compare/illumos/roundtrip.sh",
     "testvm/compare/nonroot-inner.sh",
     "testvm/compare/rt-common.sh"
@@ -1046,7 +1046,7 @@
    "judge": [
     "testvm/compare/verdict.py",
     "testvm/compare/expected-coverage.json",
-    "entry:testvm/test2/stic/limits.json#omnios58"
+    "entry:testvm/test2/stic/limits.json#omnios60"
    ]
   },
   "openbsd8": {

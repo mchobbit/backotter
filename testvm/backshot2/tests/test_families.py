@@ -78,6 +78,7 @@ PLANNED_GUESTS = {
     "freebsd15-mirror": "A4", "ghostbsd26": "A4", "ghostbsd26-zfs": "A4", "hardenedbsd15": "A4",
     "hardenedbsd15-zfs": "A4",
     "netbsd11": "A4", "openbsd8": "A4", "omnios58": "A5", "omnios58-mirror": "A5",
+    "omnios60": "A5", "omnios60-mirror": "A5",
     "haiku6": "A6", "redox": "A6", "sculpt2610": "A6",
 }
 

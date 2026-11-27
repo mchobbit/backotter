@@ -396,7 +396,7 @@ cant_why() {  # NM GUEST VARIANT D M [OVER]
     netbsd*|alpinebsd*) rg=netbsd11 ;;
     dragonfly*) rg=dragonfly6 ;;
     openbsd*) rg=openbsd8 ;;
-    omnios*|oi*) rg=omnios58 ;;
+    omnios*|oi*) rg=omnios60 ;;
     haiku*) rg=haiku6 ;;
     esac
     ri=${HT_RESCUER_IMG:-$L/rescuer/rescuer.qcow2}   # ht1.sh's and ht1-offline.sh's rescuer

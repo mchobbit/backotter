@@ -1385,7 +1385,7 @@ class Planner:
 
     def holt_prep(self, guest):
         """The one-time rescuer preps a BSD-kind source needs (holt/spec.json's rescuer names
-        that are files, NAME.qcow2: openbsd8-newduid, dragonfly6-newfsid, omnios58-reguid),
+        that are files, NAME.qcow2: openbsd8-newduid, dragonfly6-newfsid, omnios60-reguid),
         which ht1-bsd.sh makes on a host without them (an hour for DragonFly's) and whose
         imgsum is in the cell's key.  Its cells go to the hosts holding them (F11), as a UEFI
         source's go to the hosts with rescuer-uefi.qcow2; with none, anywhere."""

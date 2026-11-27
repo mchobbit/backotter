@@ -105,7 +105,7 @@ import screen  # noqa: E402
 PLATFORMS = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos", "haiku")
 # The rescuer guest whose vm-run-options the image boots with (ht1-bsd.sh's RG).
 OPTIONS_GUEST = {"freebsd": "freebsd15-ufs", "netbsd": "netbsd11", "openbsd": "openbsd8",
-                 "dragonfly": "dragonfly6", "illumos": "omnios58", "haiku": "haiku6"}
+                 "dragonfly": "dragonfly6", "illumos": "omnios60", "haiku": "haiku6"}
 # What profile.rs's table gives each screen (RT3).  OpenBSD's is DEC on VGA text
 # (BIOS), ASCII on a framebuffer (UEFI).
 EXPECT_SCREEN = {"linux": "utf8", "freebsd": "utf8", "netbsd": "dec", "openbsd": "dec or ascii",

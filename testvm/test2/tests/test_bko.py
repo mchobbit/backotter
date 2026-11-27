@@ -418,11 +418,11 @@ class TestCarriedCanaries(unittest.TestCase):
     def test_illumos_and_bko_holt(self):
         img = planmod.Plan(word("ImgTest2"), "img")
         pc = planmod.PlanCell("img:illumos", "img")
-        pc.binaries = {"rustic-bko": {"state": "carried-other", "digest": H64("a"), "canary": "stic:omnios58"},
+        pc.binaries = {"rustic-bko": {"state": "carried-other", "digest": H64("a"), "canary": "stic:omnios60"},
                        "bko-holt": {"state": "carried-other", "digest": H64("c"), "canary": "holt:omnios58"}}
         img.cells.append(pc)
         st, ho = planmod.Plan(word("SticTest2 rel4"), "stic"), planmod.Plan(word("HoltTest2"), "holt")
-        a, b = planmod.PlanCell("stic:omnios58", "stic"), planmod.PlanCell("holt:omnios58", "holt")
+        a, b = planmod.PlanCell("stic:omnios60", "stic"), planmod.PlanCell("holt:omnios58", "holt")
         a.inp = {"chopin": {"bin": {"omnios/rustic-bko": "sha256:" + H64("a")}}}
         b.inp = {"cinqcent": {"bin": {"illumos/bko-holt": "code:" + H64("e")}}}
         st.cells.append(a)

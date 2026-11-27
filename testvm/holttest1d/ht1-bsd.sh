@@ -117,11 +117,12 @@ case $G in
         # installboot -r puts the rescue system's /boot (the same release's).
         EXTRA_BOOT_RE='^(extra: |missing: )?(\./)?boot( |:|$)' ;;
     omnios*|oi*)
-        # The rescuer is a copy of the guest (of omnios58 for OpenIndiana's
-        # too, as the illumos image is OmniOS-based): its own pool is rpool
+        # The rescuer is a copy of omnios60 for every illumos source
+        # (OpenIndiana's too, as the illumos image is OmniOS-based; omnios60
+        # since 2026-11-27, for illumos 18322's vioblk fix): its own pool is rpool
         # too, so load makes the target's under another name until close,
         # and this script imports the source's and target's as ht1src.
-        PLAT=illumos RG=omnios58 DISK= RAWSFX=
+        PLAT=illumos RG=omnios60 DISK= RAWSFX=
         GPATH=/usr/gnu/bin:/usr/sbin:/usr/bin:/sbin:/opt/ooce/bin
         # Settled: nothing in transition (*) and nothing enabled still
         # offline, waiting on its dependencies (a first boot's NWAM can hold
@@ -389,8 +390,8 @@ PREP
     rimg=$prep
 fi
 # illumos won't import a pool with the GUID of one it has imported, and the
-# source's rpool is a copy of omnios58's own: the rescuer is a copy of
-# omnios58 whose pool has a new GUID (zpool reguid), made once.
+# source's rpool may be a copy of omnios60's own: the rescuer is a copy of
+# omnios60 whose pool has a new GUID (zpool reguid), made once.
 if [[ $PLAT == illumos ]]; then
     prep=/bkoscratch/holttest1d/rescuer/$RG-reguid.qcow2
     mkdir -p "${prep%/*}"
@@ -457,7 +458,7 @@ PREP
     rimg=$prep
 fi
 rfw=(); [[ -f $rdir/vm-run-options ]] && read -ra rfw < "$rdir/vm-run-options"
-# +img: the image's options, the rescuer guest's (omnios58's
+# +img: the image's options, the rescuer guest's (omnios60's
 # --legacy-virtio-net, haiku6's --disk-bus sata) less its disks and firmware,
 # with the source's firmware (a stick boots in the machine's own mode), and
 # img-boot.d's disk_bus where the rescuer guest names none.
@@ -1404,7 +1405,7 @@ EOF
             echo "mount -r /dev/${d}a $IMG_RR || { echo \"mount -r /dev/${d}a failed\"; exit 1; }" ;;
         dragonfly) # dragonfly6 (its HAMMER2 of its own): root the PFS ROOT of s1d
             echo "mount -t hammer2 -o ro /dev/${d}s1d@ROOT $IMG_RR || { echo \"mount /dev/${d}s1d@ROOT failed\"; exit 1; }" ;;
-        illumos)   # omnios58 (its pool GUID of its own): rpool, imported by its GUID under another name, read-only
+        illumos)   # omnios60 (its pool GUID of its own): rpool, imported by its GUID under another name, read-only
             cat <<EOF
 id=; for x in /dev/dsk/${d}s*; do id=\$(zdb -l \$x 2>/dev/null | awk '\$1 == "pool_guid:" { print \$2; exit }'); [ -n "\$id" ] && break; done
 [ -n "\$id" ] || { echo "no pool label on $d"; exit 1; }

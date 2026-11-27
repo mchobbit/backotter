@@ -57,7 +57,10 @@ class Spec(unittest.TestCase):
     def test_ninety_four_guests_and_the_exclusion(self):
         self.assertEqual(len(self.sf.names()), 100)   # 95, and A6's five arm64 guests
         self.assertNotIn("freebsd15-builder", self.sf.names())
-        self.assertEqual(self.sf.data["excluded"], {"freebsd15-builder": "a build helper"})
+        self.assertEqual(sorted(self.sf.data["excluded"]), ["freebsd15-builder", "omnios58", "omnios58-mirror"])
+        self.assertEqual(self.sf.data["excluded"]["freebsd15-builder"], "a build helper")
+        # OmniOS r151058's two: GuestTest2 moved to omnios60 and omnios60-mirror (2026-11-27)
+        self.assertNotIn("omnios58", self.sf.names())
 
     def test_every_rule_is_the_judges(self):
         loaders, sources = set(J.LOADER_RULES) | {"L-none"}, set(J.SOURCE_RULES) | {"S-none"}
@@ -78,7 +81,7 @@ class Spec(unittest.TestCase):
         self.assertEqual(new, sorted(["alpine324-uefi", "alpine324-lvm", "alpine324-luks", "guix15", "guix15-bios", "guix15-luks", "kali", "leap16",
                                       "openbsd8-crypt", "uc24",
                                       "endeavouros", "endeavouros-grub", "manjaro", "fedora44-raid", "ubuntu26-raid", "rocky10-raid5",
-                                      "freebsd15-mirror", "hardenedbsd15-zfs", "solus49", "omnios58-mirror", "ubuntu26-luks", "chimera", "kinoite44",
+                                      "freebsd15-mirror", "hardenedbsd15-zfs", "solus49", "omnios60", "omnios60-mirror", "ubuntu26-luks", "chimera", "kinoite44",
                                       "chimera-uefi", "chimera-zfs", "gentoo", "gentoo-systemd", "cachyos-zfs", "anduinos2", "neon24", "garuda", "biglinux", "vanilla3",
                                       "oi2610", "oi2610-bios", "pikaos4", "pikaos4-luks", "proxmox9", "proxmox9-mirror",
                                       "microos", "aeon", "ubuntu24-uefi", "ubuntu24-luks", "elementary8", "elementary8-luks",
@@ -126,7 +129,7 @@ class Spec(unittest.TestCase):
         from t2lib import guest_judge as J
         with open(os.path.join(REPO, "testvm/test2/guest/limits.json"), encoding="utf-8") as f:
             d = json.load(f)
-        self.assertEqual(sorted(d), ["ghostbsd26-zfs", "kali", "kinoite44", "microos", "omnios58", "omnios58-mirror", "pikaos4", "pikaos4-luks",
+        self.assertEqual(sorted(d), ["ghostbsd26-zfs", "kali", "kinoite44", "microos", "omnios60", "omnios60-mirror", "pikaos4", "pikaos4-luks",
                                      "slackware15", "slackware15-uefi", "vanilla3"])
         self.assertEqual(sorted(d["kinoite44"]), ["after:boot-state", "after:failed-units", "after:fstab", "image:free"])
         # PikaOS (pikaos.md): its one apt suite, pika, is rolling (sid's), with no -security suite
@@ -139,7 +142,7 @@ class Spec(unittest.TestCase):
         self.assertEqual(sorted(d["vanilla3"]), ["after:boot-state", "after:failed-units"])
         # OmniOS (make-omnios.sh): cloud-init:initlocal disabled after the first boot, so the stages
         # that require it stay offline at every boot
-        for g in ("omnios58", "omnios58-mirror"):
+        for g in ("omnios60", "omnios60-mirror"):
             self.assertEqual(sorted(d[g]), ["after:boot-state"])
             self.assertEqual(d[g]["after:boot-state"]["lines"], [f"down svc:/system/cloud-init:{s}" for s in ("final", "init", "modules")])
         # Slackware (slackware.md S4): the stock fstab's /dev/fd0 line findmnt --verify can't type,

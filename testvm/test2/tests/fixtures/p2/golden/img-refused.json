@@ -275,15 +275,15 @@
      "why": "no PASS at its digest"
     },
     "restic-bko": {
-     "canary": "stic:omnios58",
-     "command": "t2 SticTest2 ROUND omnios58",
+     "canary": "stic:omnios60",
+     "command": "t2 SticTest2 ROUND omnios60",
      "digest": "0d82a9690d13cfe7f7db9a96df9697ca946b296bae55916d1a43a2e8d69509ca",
      "state": "none",
      "why": "no PASS at its digest"
     },
     "rustic-bko": {
-     "canary": "stic:omnios58",
-     "command": "t2 SticTest2 ROUND omnios58",
+     "canary": "stic:omnios60",
+     "command": "t2 SticTest2 ROUND omnios60",
      "digest": "5a87834d63551527856e14d1aca40f746ecab8004dd5b9b515a55396e079d1b1",
      "state": "none",
      "why": "no PASS at its digest"
@@ -308,8 +308,8 @@
    "part": null,
    "reasons": [
     "illumos/bko-holt 9f334a07f8e8: no PASS at its digest; run t2 HoltTest2 omnios58",
-    "illumos/restic-bko 0d82a9690d13: no PASS at its digest; run t2 SticTest2 ROUND omnios58",
-    "illumos/rustic-bko 5a87834d6355: no PASS at its digest; run t2 SticTest2 ROUND omnios58"
+    "illumos/restic-bko 0d82a9690d13: no PASS at its digest; run t2 SticTest2 ROUND omnios60",
+    "illumos/rustic-bko 5a87834d6355: no PASS at its digest; run t2 SticTest2 ROUND omnios60"
    ],
    "refused": true,
    "rep": null,

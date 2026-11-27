@@ -1,5 +1,5 @@
 #!/bin/ksh
-# SticTest1 oi2610 (as omnios58's): what illumos/roundtrip.sh doesn't cover, as root in a
+# SticTest1 oi2610 (as omnios60's): what illumos/roundtrip.sh doesn't cover, as root in a
 # throwaway guest, after roundtrip.sh (it uses its /tmp/bko-crtime.py).
 # A ZFS dataset of its own in rpool (rpool's properties: NFSv4 ACLs, the
 # guest's compression; atime off for the listings), /bkosx, holds a fixture

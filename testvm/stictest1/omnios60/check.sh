@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SticTest1 targeted check of omnios58 (OmniOS r151058, illumos; ZFS root
+# SticTest1 targeted check of omnios60 (OmniOS r151060, illumos; ZFS root
 # pool rpool, NFSv4 ACLs, system attributes, named attribute files; tmpfs
 # /tmp and /var/run).
 # Usage: check.sh BIN_DIR PORT PREFIX [NEED_FILTER]
@@ -27,7 +27,7 @@
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 WORK=~/backotter-work C=${BKO_TESTVM:-$WORK/testvm}/compare
-GUEST=omnios58
+GUEST=omnios60
 DIRS="restic-restic rustic-rustic restic-rustic rustic-restic"
 # Before each direction: the round trip's trees gone (system attributes that
 # stop removal cleared first), its source and restore target fresh datasets.
@@ -179,7 +179,7 @@ for line in open(sys.argv[1]):
     v, rest = line.rstrip("\n").split(" ", 1)
     need, _, detail = rest.partition(": ")
     rows.append({"verdict": v, "need": need, "detail": detail})
-json.dump({"guest": "omnios58", "logs": sys.argv[3], "seconds": int(sys.argv[4]), "results": rows}, open(sys.argv[2], "w"), indent=1)
+json.dump({"guest": "omnios60", "logs": sys.argv[3], "seconds": int(sys.argv[4]), "results": rows}, open(sys.argv[2], "w"), indent=1)
 PY
 cp "$L/results.json" "$STC_LOGS/results.json"
 echo "logs: $L ($(( $(date +%s) - START )) s)"

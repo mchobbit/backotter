@@ -1736,7 +1736,7 @@ def self_test():
     want_os = {"freebsd15": "freebsd", "freebsd15-ufs": "freebsd", "hardenedbsd15": "freebsd",
                "hardenedbsd15-zfs": "freebsd", "ghostbsd26": "freebsd", "ghostbsd26-zfs": "freebsd", "freebsd14": "freebsd",
                "freebsd15-geli": "freebsd", "netbsd11": "netbsd", "alpinebsd": "netbsd",
-               "openbsd8": "openbsd", "openbsd8-crypt": "openbsd", "dragonfly6": "dragonfly", "omnios58": "omnios", "oi2610": "omnios", "haiku6": "haiku"}
+               "openbsd8": "openbsd", "openbsd8-crypt": "openbsd", "dragonfly6": "dragonfly", "omnios60": "omnios", "oi2610": "omnios", "haiku6": "haiku"}
     guests = all_guests()
     spec = load_specs(guests)
     for g in guests:

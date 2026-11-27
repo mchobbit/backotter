@@ -51,7 +51,7 @@ elif has_rule B-ill; then
     # for the same reason).  The listing is the reading that passed, not one taken after it.
     # ill_coming FMRI...: of these offline services, the ones SMF may yet start, one a line.
     # Not one held for good: it requires (require_all) a service that is disabled, in
-    # maintenance or absent, or one so held, as omnios58's cloud-init:init, modules and final
+    # maintenance or absent, or one so held, as omnios60's cloud-init:init, modules and final
     # do behind initlocal (limits.json), which would cost 120 s at every reading.  What
     # svcs -l doesn't say counts as coming.
     ill_coming() {

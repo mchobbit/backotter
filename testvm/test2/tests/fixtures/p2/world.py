@@ -31,12 +31,12 @@ HOSTS = ("chopin", "cinqcent")
 OSES = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "omnios", "illumos", "haiku")
 STIC_OS = {"freebsd15": "freebsd", "freebsd15-ufs": "freebsd", "hardenedbsd15": "freebsd", "ghostbsd26": "freebsd",
            "ghostbsd26-zfs": "freebsd", "hardenedbsd15-zfs": "freebsd", "freebsd14": "freebsd", "freebsd15-geli": "freebsd", "netbsd11": "netbsd",
-           "alpinebsd": "netbsd", "openbsd8": "openbsd", "dragonfly6": "dragonfly", "omnios58": "omnios",
+           "alpinebsd": "netbsd", "openbsd8": "openbsd", "dragonfly6": "dragonfly", "omnios60": "omnios",
            "oi2610": "omnios", "haiku6": "haiku", "openbsd8-crypt": "openbsd"}
 GUESTS = ("aerynos alpine324 alpinebsd arch artix-dinit artix-s6 cachyos debian12 debian13 debian13-stack debian13-zfs "
           "devuan6 dragonfly6 fedora44 fedora44-raid fedora44-uefi freebsd14 freebsd15 freebsd15-builder "
           "freebsd15-geli freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs haiku6 hardenedbsd15 hardenedbsd15-zfs mint22 mx25 "
-          "netbsd11 nixos2605 omarchy omnios58 omnios58-mirror openbsd8 pop24 redox rocky10 rocky10-lvm "
+          "netbsd11 nixos2605 omarchy omnios60 omnios60-mirror openbsd8 pop24 redox rocky10 rocky10-lvm "
           "rocky10-raid5 sculpt2610 tumbleweed ubuntu24 ubuntu26-raid ubuntu26-uefi ubuntu26-zfs ubuntu26-zfsmirror "
           "void-musl zorin18 endeavouros endeavouros-grub manjaro ubuntu26-luks chimera kinoite44 chimera-uefi "
           "chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda biglinux vanilla3 oi2610 oi2610-bios pikaos4 pikaos4-luks proxmox9 proxmox9-mirror microos aeon ubuntu24-uefi ubuntu24-luks solus49 elementary8 elementary8-luks void-zbm void-zbm-enc freebsd15-geli-bios freebsd15-geli-ufs slackware15 slackware15-uefi").split()
@@ -46,7 +46,7 @@ UEFI = set("aerynos alpinebsd debian13-stack fedora44-raid fedora44-uefi freebsd
 PLATS = words.PLATS
 UEFI.add("slackware15-uefi")
 NEW_GUESTS = set("endeavouros endeavouros-grub manjaro ubuntu26-luks chimera kinoite44 fedora44-raid ubuntu26-raid rocky10-raid5 freebsd15-mirror "
-                 "omnios58-mirror chimera-uefi chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda biglinux vanilla3 oi2610 oi2610-bios pikaos4 pikaos4-luks proxmox9 proxmox9-mirror microos aeon ubuntu24-uefi ubuntu24-luks solus49 elementary8 elementary8-luks hardenedbsd15-zfs void-zbm void-zbm-enc freebsd15-geli-bios freebsd15-geli-ufs slackware15 slackware15-uefi".split())
+                 "omnios60 omnios60-mirror chimera-uefi chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda biglinux vanilla3 oi2610 oi2610-bios pikaos4 pikaos4-luks proxmox9 proxmox9-mirror microos aeon ubuntu24-uefi ubuntu24-luks solus49 elementary8 elementary8-luks hardenedbsd15-zfs void-zbm void-zbm-enc freebsd15-geli-bios freebsd15-geli-ufs slackware15 slackware15-uefi".split())
 PM = {"apt": "debian12 debian13 debian13-stack debian13-zfs devuan6 mint22 mx25 pop24 ubuntu24 ubuntu26-raid ubuntu26-uefi "
              "ubuntu26-zfs ubuntu26-zfsmirror zorin18 ubuntu26-luks anduinos2 neon24 pikaos4 pikaos4-luks proxmox9 proxmox9-mirror ubuntu24-uefi ubuntu24-luks elementary8 elementary8-luks",
       "dnf": "fedora44 fedora44-raid fedora44-uefi rocky10 rocky10-lvm rocky10-raid5", "rpm-ostree": "kinoite44",
@@ -54,7 +54,7 @@ PM = {"apt": "debian12 debian13 debian13-stack debian13-zfs devuan6 mint22 mx25 
       "zypper": "tumbleweed", "xbps": "void-musl void-zbm void-zbm-enc", "apk": "alpine324 chimera chimera-uefi chimera-zfs", "moss": "aerynos",
       "NixOS": "nixos2605", "portage": "gentoo gentoo-systemd", "abroot": "vanilla3", "tukit": "microos aeon", "eopkg": "solus49", "slackpkg": "slackware15 slackware15-uefi",
       "FreeBSD": "freebsd14 freebsd15 freebsd15-geli freebsd15-geli-bios freebsd15-geli-ufs freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs hardenedbsd15 hardenedbsd15-zfs",
-      "NetBSD": "netbsd11 alpinebsd", "OpenBSD": "openbsd8", "DragonFly": "dragonfly6", "SunOS": "omnios58 omnios58-mirror oi2610 oi2610-bios",
+      "NetBSD": "netbsd11 alpinebsd", "OpenBSD": "openbsd8", "DragonFly": "dragonfly6", "SunOS": "omnios60 omnios60-mirror oi2610 oi2610-bios",
       "Haiku": "haiku6", "Redox": "redox", "Sculpt": "sculpt2610"}
 # guix15-luks (2026-11-24, docs/design/guix.md guix15-luks): GuestTest2's and a HoltTest2 source.
 REG_GUESTS_GUIX_LUKS = ["guix15-luks"]
@@ -84,11 +84,21 @@ BSD_RESCUER = {"freebsd15": "freebsd15-ufs", "freebsd15-mirror": "freebsd15-ufs"
                "freebsd15-geli-bios": "freebsd15-ufs", "freebsd15-geli-ufs": "freebsd15-ufs", "freebsd14": "freebsd15-ufs",
                "ghostbsd26": "freebsd15-ufs", "ghostbsd26-zfs": "freebsd15-ufs", "hardenedbsd15": "freebsd15-ufs", "hardenedbsd15-zfs": "freebsd15-ufs",
                "netbsd11": "netbsd11", "alpinebsd": "netbsd11", "openbsd8": "openbsd8-newduid.qcow2",
-               "dragonfly6": "dragonfly6-newfsid.qcow2", "omnios58": "omnios58-reguid.qcow2",
-               "omnios58-mirror": "omnios58-reguid.qcow2", "oi2610": "omnios58-reguid.qcow2",
-               "oi2610-bios": "omnios58-reguid.qcow2", "haiku6": "haiku6"}
+               "dragonfly6": "dragonfly6-newfsid.qcow2", "omnios58": "omnios60-reguid.qcow2",
+               "omnios58-mirror": "omnios60-reguid.qcow2", "oi2610": "omnios60-reguid.qcow2",
+               "oi2610-bios": "omnios60-reguid.qcow2", "haiku6": "haiku6"}
 BSD_PLAT["openbsd8-crypt"] = "openbsd"      # (a guest only: GUEST_ONLY)
 BSD_RESCUER["openbsd8-crypt"] = "openbsd8-newduid.qcow2"
+# OmniOS r151060 (2026-11-27, plan (b)): omnios60 and omnios60-mirror are GuestTest2's and
+# SticTest2's, and omnios60's copy is every illumos source's rescuer; omnios58 and
+# omnios58-mirror stay HoltTest2's sources (HOLT_ONLY: no guest/spec.json entry, no SticTest
+# check) until omnios60's corpus dumps land.
+OMNIOS60 = ("omnios60", "omnios60-mirror")
+HOLT_ONLY = ("omnios58", "omnios58-mirror")
+BSD_PLAT.update({g: "illumos" for g in OMNIOS60})
+BSD_RESCUER.update({g: "omnios60-reguid.qcow2" for g in OMNIOS60})
+GUEST_ONLY += OMNIOS60
+GUESTS += list(HOLT_ONLY)
 LINUX_PMS += ("snap",)                      # uc24's Linux.snapcore
 SECTION["snap"] = "snapcore"
 T0 = 1793491200        # 2026-11-01T00:00:00Z
@@ -261,7 +271,7 @@ class World:
                             "judge": ["testvm/test2/t2lib/guest_judge.py"], "host": ["qemu", "ovmf"], "update": True}}   # sculpt-update
         entries = {}
         for g in GUESTS:
-            if g == "freebsd15-builder":
+            if g == "freebsd15-builder" or g in HOLT_ONLY:
                 continue
             pm = PM_OF[g]
             e = {"kind": "ssh", "plat": BSD_PLAT.get(g, "linux"), "checks": {"pm": pm, "fw": "uefi" if g in UEFI else "bios",
@@ -283,7 +293,7 @@ class World:
                 e["kind"], e["update"], e["harness"] = "probe", False, ["testvm/compare/boot-state.sh"]
             entries[g] = e
         return {"v": 1, "family": "guest", "kinds": kinds, "entries": entries,
-                "excluded": {"freebsd15-builder": "a build helper"},
+                "excluded": {"freebsd15-builder": "a build helper", **{g: "HoltTest2 only" for g in HOLT_ONLY}},
                 "plumbing": ["testvm/vm-run", "testvm/vm-lib.sh", "shared:cmp-run.sh", "shared:testvm/compare/iolog.sh"]}
 
     @staticmethod
@@ -500,7 +510,7 @@ class World:
                  "rescuers": {"images": {"rescuer.qcow2": {"sha256": H("rescuer " + rescuer)},
                                          "openbsd8-newduid.qcow2": {"sha256": H("ob")},
                                          "dragonfly6-newfsid.qcow2": {"sha256": H("df")},
-                                         "omnios58-reguid.qcow2": {"sha256": H("om")}},
+                                         "omnios60-reguid.qcow2": {"sha256": H("om")}},
                               "bin": {"f2fs-tools_1.16.0-1_amd64.deb": H("f2fs"), "bcachefs": H("bcachefs")}},
                  "plumbing": {"shared:cmp-run.sh": H("cmp " + plumb), "shared:testvm/compare/iolog.sh": H("iolog")},
                  "host_inputs": {}, "synced": {}, "copies": []}

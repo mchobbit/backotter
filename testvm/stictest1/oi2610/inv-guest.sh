@@ -1,5 +1,5 @@
 #!/bin/ksh
-# Inventory of an illumos guest (oi2610; as omnios58's) (run as root in a throwaway boot).
+# Inventory of an illumos guest (oi2610; as omnios60's) (run as root in a throwaway boot).
 PATH=/usr/bin:/usr/sbin:/sbin:/usr/gnu/bin:$PATH; export LC_ALL=C
 echo "== os"; uname -a; cat /etc/release; isainfo -k; pkg list -H entire 2>/dev/null
 echo "== libc"; ls -l /lib/libc.so.1; pvs /lib/libc.so.1 2>/dev/null | tail -2

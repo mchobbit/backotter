@@ -72,7 +72,7 @@ testvm/HOSTS.md has every host and what stays on the big ones):
 | Host | Guests |
 |---|---|
 | Chopin | aeon, anduinos2, nixos2605, chimera, garuda, biglinux, gentoo, guix15, guix15-luks, kali, microos, pikaos4, proxmox9, truenas25, dragonfly6, ghostbsd26, ghostbsd26-zfs, hardenedbsd15, hardenedbsd15-zfs, kinoite44, ubuntu26-zfs, ubuntu26-uefi, ubuntu26-zfsmirror, ubuntu24, ubuntu24-uefi, ubuntu24-luks, debian12, devuan6, elementary8, zorin18, mint22, debian13, pop24, mx25, sculpt2610, slackware15, qubes43 |
-| Cinqcent | aerynos, alpine324, alpinebsd, freebsd14, freebsd15-geli, arch, artix-dinit, artix-s6, cachyos, chimera-uefi, chimera-zfs, debian13-stack, debian13-zfs, elementary8-luks, fedora44, fedora44-uefi, freebsd15, freebsd15-ufs, garuda, gentoo-systemd, haiku6, netbsd11, omarchy, omnios58, openbsd8, openbsd8-crypt, guix15-bios, leap16, pikaos4-luks, proxmox9-mirror, rocky10, rocky10-lvm, slackware15-uefi, solus49, tumbleweed, uc24, vanilla3, void-musl, void-zbm |
+| Cinqcent | aerynos, alpine324, alpinebsd, freebsd14, freebsd15-geli, arch, artix-dinit, artix-s6, cachyos, chimera-uefi, chimera-zfs, debian13-stack, debian13-zfs, elementary8-luks, fedora44, fedora44-uefi, freebsd15, freebsd15-ufs, garuda, gentoo-systemd, haiku6, netbsd11, omarchy, omnios60, openbsd8, openbsd8-crypt, guix15-bios, leap16, pikaos4-luks, proxmox9-mirror, rocky10, rocky10-lvm, slackware15-uefi, solus49, tumbleweed, uc24, vanilla3, void-musl, void-zbm |
 
 ## Running one
 
@@ -188,7 +188,7 @@ debian12 117, debian13 477, debian13-arm64 374, debian13-stack 547, debian13-zfs
 devuan6 310, dragonfly6 435, elementary8 411, elementary8-luks 458, fedora44 208, fedora44-arm64 268, fedora44-uefi 268, freebsd14 751,
 freebsd15 751, freebsd15-geli 800, freebsd15-ufs 391, ghostbsd26 1211,
 garuda 300, gentoo 270, gentoo-systemd 230, ghostbsd26-zfs 751, guix15 470, guix15-bios 475, guix15-luks 475, hardenedbsd15 519, hardenedbsd15-zfs 780, kali 330, kinoite44 404, leap16 250, microos 230, mint22 814, mx25 685, neon24 374, netbsd11 324,
-nixos2605 236, oi2610 490, omarchy 302, omnios58 370, openbsd8 338, openbsd8-crypt 360, pikaos4 300,
+nixos2605 236, oi2610 490, omarchy 302, omnios60 370, openbsd8 338, openbsd8-crypt 360, pikaos4 300,
 pikaos4-luks 400, pop24 622, proxmox9 460, proxmox9-mirror 560, qubes43 900,
 rocky10 113, rocky10-lvm 151, sculpt2610 49, slackware15 330, slackware15-uefi 250, solus49 410, truenas25 1200, tumbleweed 186, ubuntu24 957, ubuntu24-luks 458, ubuntu24-uefi 374, ubuntu26-arm64 374, ubuntu26-uefi 374,
 ubuntu26-zfs 957, ubuntu26-zfsmirror 623, uc24 700, vanilla3 1400, void-musl 115, void-zbm 310, zorin18 586.

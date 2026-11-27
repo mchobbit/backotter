@@ -111,7 +111,7 @@ def facts_for(guests, host="chopin", uefi_rescuer=True):
     if uefi_rescuer:
         images["rescuer-uefi.qcow2"] = {"sha256": "1" * 64, "imgsum": None}
     images["rescuer-arm64.qcow2"] = {"sha256": "4" * 64, "imgsum": None}   # (the arm64 sources': A6)
-    for n in ("openbsd8-newduid.qcow2", "dragonfly6-newfsid.qcow2", "omnios58-reguid.qcow2"):
+    for n in ("openbsd8-newduid.qcow2", "dragonfly6-newfsid.qcow2", "omnios60-reguid.qcow2"):
         images[n] = {"sha256": None, "imgsum": "img:" + "2" * 64}
     return {"host": host, "versions": {"kernel": "6.12.115+deb13.1-amd64", "zfs": "2.4.0-1", "qemu": "QEMU 10.0.13",
                                        "ovmf": "2025.02-8", "pkgs": {}},
@@ -1690,14 +1690,14 @@ class U53HoltRun(unittest.TestCase):
         self.assertFalse(self.rs.cells_written[1:], self.rs.cells_written)
         self.assertTrue(any("stopped by stop-os): holt:dragonfly6" in n for n in res["notes"]), res["notes"])
 
-    OM = "/bkoscratch/holttest1d/rescuer/omnios58-reguid.qcow2"
+    OM = "/bkoscratch/holttest1d/rescuer/omnios60-reguid.qcow2"
 
     def illumos_copy(self, remote=None, other=False):
-        """omnios58-mirror and omnios58 on cinqcent, which has no omnios58-reguid.qcow2 yet:
+        """omnios58-mirror and omnios58 on cinqcent, which has no omnios60-reguid.qcow2 yet:
         the mirror's attempt 1 makes it (the todo's order: it starts first), and omnios58
         boots it.  The re-plan keys both at the facts' sum, with real inputs (OTHER: another
         input changes too)."""
-        name = "rescuer/omnios58-reguid.qcow2"
+        name = "rescuer/omnios60-reguid.qcow2"
 
         def inp(cell, v):
             out = {"rescuer": {name: v}}
@@ -1712,7 +1712,7 @@ class U53HoltRun(unittest.TestCase):
         def replan(facts=None, ledger_rows=None):
             self.rs.replans = getattr(self.rs, "replans", 0) + 1
             im = (((facts or {}).get("cinqcent") or {}).get("rescuers") or {}).get("images", {}).get(
-                "omnios58-reguid.qcow2") or {}
+                "omnios60-reguid.qcow2") or {}
             if im.get("imgsum"):
                 cells = []
                 for pc in self.rs.plan.cells:
@@ -1728,7 +1728,7 @@ class U53HoltRun(unittest.TestCase):
         r = remote or FakeRemote({})
         r.made = {"omnios58-mirror": [self.OM]}
         s = "img:" + hashlib.sha256(self.OM.encode()).hexdigest()
-        r.boots = {"omnios58": ("omnios58-reguid.qcow2", keys.key("holt:omnios58", inp("holt:omnios58", s)))}
+        r.boots = {"omnios58": ("omnios60-reguid.qcow2", keys.key("holt:omnios58", inp("holt:omnios58", s)))}
         r.hold = {"omnios58": 50}
         return r
 

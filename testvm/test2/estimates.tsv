@@ -48,7 +48,7 @@ stic	stic:mx25	11.90	714	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
 stic	stic:netbsd11	5.40	324	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
 stic	stic:nixos2605	3.92	235	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
 stic	stic:omarchy	5.03	302	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
-stic	stic:omnios58	6.17	370	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:omnios60	6.17	370	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
 stic	stic:oi2610	8.21	493	0.00	-	openindiana.md O4: SticTest1 oi2610 2026-11-14 (oi4-*), one run on each host (cinqcent 465 s, chopin 520 s), their mean
 stic	stic:openbsd8	5.67	340	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
 stic	stic:pop24	10.18	610	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
@@ -223,8 +223,8 @@ guest	guest:elementary8-luks	18.27	1096	0.00	-	as guest:elementary8 (the 16G bui
 guest	guest:netbsd11	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:nixos2605	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:omarchy	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
-guest	guest:omnios58	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
-guest	guest:omnios58-mirror	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:omnios60	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:omnios60-mirror	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:oi2610	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:oi2610-bios	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:openbsd8	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks

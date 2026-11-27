@@ -1831,7 +1831,7 @@
    "via": null
   },
   {
-   "cell": "guest:omnios58",
+   "cell": "guest:omnios60",
    "differ": [],
    "est": {
     "gb": 0.0,
@@ -1840,16 +1840,16 @@
     "wall_s": 100
    },
    "host": "any",
-   "key": "cdf7112d6b420159ec776068ae3b09e2c46b9b8b89637a07373372d7dd175c3c",
+   "key": "c0f409b9cb6cfebef8657d5fb4aa32a4ddc15d3964095a5e8cad3eb438c00964",
    "keys": {
-    "chopin": "cdf7112d6b420159ec776068ae3b09e2c46b9b8b89637a07373372d7dd175c3c",
-    "cinqcent": "cdf7112d6b420159ec776068ae3b09e2c46b9b8b89637a07373372d7dd175c3c"
+    "chopin": "c0f409b9cb6cfebef8657d5fb4aa32a4ddc15d3964095a5e8cad3eb438c00964",
+    "cinqcent": "c0f409b9cb6cfebef8657d5fb4aa32a4ddc15d3964095a5e8cad3eb438c00964"
    },
    "klass": null,
    "last_pass": {
     "host": "chopin",
     "id": "chopin-20261107T000115Z-0000004b",
-    "key": "cdf7112d6b420159ec776068ae3b09e2c46b9b8b89637a07373372d7dd175c3c",
+    "key": "c0f409b9cb6cfebef8657d5fb4aa32a4ddc15d3964095a5e8cad3eb438c00964",
     "t": "2026-11-07T00:01:15Z"
    },
    "part": null,
@@ -1861,7 +1861,7 @@
    "via": null
   },
   {
-   "cell": "guest:omnios58-mirror",
+   "cell": "guest:omnios60-mirror",
    "differ": [],
    "est": {
     "gb": 0.0,
@@ -1870,16 +1870,16 @@
     "wall_s": 100
    },
    "host": "any",
-   "key": "60a63417ff35ce85e22c806546f474239dac63d7b8377aeab3e65106e5da82be",
+   "key": "9cc7c7d7fc6350e699aca58bc758afc93a7f64c2ae2c1db7e6131bed14adac33",
    "keys": {
-    "chopin": "60a63417ff35ce85e22c806546f474239dac63d7b8377aeab3e65106e5da82be",
-    "cinqcent": "60a63417ff35ce85e22c806546f474239dac63d7b8377aeab3e65106e5da82be"
+    "chopin": "9cc7c7d7fc6350e699aca58bc758afc93a7f64c2ae2c1db7e6131bed14adac33",
+    "cinqcent": "9cc7c7d7fc6350e699aca58bc758afc93a7f64c2ae2c1db7e6131bed14adac33"
    },
    "klass": null,
    "last_pass": {
     "host": "chopin",
     "id": "chopin-20261107T000116Z-0000004c",
-    "key": "60a63417ff35ce85e22c806546f474239dac63d7b8377aeab3e65106e5da82be",
+    "key": "9cc7c7d7fc6350e699aca58bc758afc93a7f64c2ae2c1db7e6131bed14adac33",
     "t": "2026-11-07T00:01:16Z"
    },
    "part": null,

@@ -7,16 +7,16 @@
       "B3": ["freebsd15-ufs", "hardenedbsd15", "ghostbsd26"],
       "B4": ["netbsd11", "alpinebsd"]
     },
-    "alone": ["freebsd14", "openbsd8", "dragonfly6", "omnios58", "oi2610", "haiku6"],
+    "alone": ["freebsd14", "openbsd8", "dragonfly6", "omnios60", "oi2610", "haiku6"],
     "linux": "every Linux guest and sculpt2610 run alone (decision 1): 33 checks plus sculpt2610",
     "non_linux": ["freebsd15", "freebsd15-geli", "ghostbsd26-zfs", "hardenedbsd15-zfs", "freebsd15-ufs", "hardenedbsd15", "ghostbsd26",
-                  "netbsd11", "alpinebsd", "freebsd14", "openbsd8", "dragonfly6", "omnios58", "oi2610", "haiku6"],
+                  "netbsd11", "alpinebsd", "freebsd14", "openbsd8", "dragonfly6", "omnios60", "oi2610", "haiku6"],
     "canaries": {
       "debian12": "RAM-disk overlay",
       "zorin18": "guest tmpfs",
       "debian13-zfs": "ZFS on the RAM disk",
       "freebsd15-ufs": "/dev/shm",
-      "omnios58": "two boots",
+      "omnios60": "two boots",
       "haiku6": "host side",
       "sculpt2610": "host side",
       "debian13-stack": "UEFI with Secure Boot, vm_boot's console passphrase (vm-lib.sh:77-80)",
@@ -84,7 +84,7 @@
       "haiku6": {"match": ["haiku6"], "guests": ["haiku6"]},
       "openbsd8-newduid": {"match": ["openbsd8-newduid"], "guests": ["openbsd8"]},
       "dragonfly6-newfsid": {"match": ["dragonfly6-newfsid"], "guests": ["dragonfly6"]},
-      "omnios58-reguid": {"match": ["omnios58-reguid"], "guests": ["omnios58", "omnios58-mirror", "oi2610", "oi2610-bios"]}
+      "omnios60-reguid": {"match": ["omnios60-reguid"], "guests": ["omnios58", "omnios58-mirror", "oi2610", "oi2610-bios"]}
     },
     "rustic_panel": {
       "linux": ["omarchy", "nixos2605"],

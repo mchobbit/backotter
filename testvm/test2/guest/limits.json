@@ -35,13 +35,13 @@
    "why": "openSUSE's MicroOS VM image (make-opensuse.sh microos) has a 20 MiB ESP, 16 MiB free, holding only shim and GRUB: GRUB loads the kernel and initrd from the btrfs root's /boot inside the snapshot (grub.cfg's linux /boot/vmlinuz-*), so a kernel update never writes to the ESP and the 200 MiB floor for kernel-holding ESPs doesn't apply; image:free's 90% full line still guards it (GuestTest2 t2v-20261117T1944-5b0f, the before hook on Chopin, 2026-11-17)"
   }
  },
- "omnios58": {
+ "omnios60": {
   "after:boot-state": {
    "lines": ["down svc:/system/cloud-init:final", "down svc:/system/cloud-init:init", "down svc:/system/cloud-init:modules"],
    "why": "make-omnios.sh's first boot ends with svcadm disable cloud-init:initlocal (testvm/omnios/user-data): later boots have no CIDATA disk, and searching for one stalls the boot.  cloud-init's init, modules and final stages require initlocal, so SMF holds them offline at every boot, by design; multi-user and console-login want cloud-init:final only optionally"
   }
  },
- "omnios58-mirror": {
+ "omnios60-mirror": {
   "after:boot-state": {
    "lines": ["down svc:/system/cloud-init:final", "down svc:/system/cloud-init:init", "down svc:/system/cloud-init:modules"],
    "why": "make-omnios.sh's first boot ends with svcadm disable cloud-init:initlocal (testvm/omnios/user-data): later boots have no CIDATA disk, and searching for one stalls the boot.  cloud-init's init, modules and final stages require initlocal, so SMF holds them offline at every boot, by design; multi-user and console-login want cloud-init:final only optionally"

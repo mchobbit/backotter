@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SticTest1 targeted check of oi2610 (OpenIndiana Hipster 2026.10, illumos,
-# from its text installer, UEFI; a copy of omnios58's: ZFS root pool rpool
+# from its text installer, UEFI; a copy of omnios60's (once omnios58's): ZFS root pool rpool
 # with /var a dataset of its own in the boot environment, NFSv4 ACLs, system attributes, named attribute files; tmpfs
 # /tmp and /var/run).
 # Usage: check.sh BIN_DIR PORT PREFIX [NEED_FILTER]

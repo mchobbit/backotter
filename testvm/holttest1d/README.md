@@ -393,7 +393,7 @@ copy of a guest of the same system, whose own disk comes first:
 | NetBSD, AlpineBSD | `netbsd11` | |
 | OpenBSD | `openbsd8`, with a disklabel UID of its own | made once (`rescuer/openbsd8-newduid.qcow2`): two disks with one DUID and OpenBSD mounts neither |
 | DragonFly | `dragonfly6` | its fstab names its own disk (`vbd0s1d@ROOT`) |
-| illumos | `omnios58` (OpenIndiana's guests too: the illumos image is OmniOS-based) | its pool is `rpool` too: `load` makes the target's under another name until close (`zpool create -t`), and the script imports the source's as `ht1src`; the backup also mounts the boot environment's own children (OpenIndiana's `/var`), which `zfs mount -a` skips |
+| illumos | `omnios60` (omnios58 until 2026-11-27; OpenIndiana's guests too: the illumos image is OmniOS-based) | its pool is `rpool` too: `load` makes the target's under another name until close (`zpool create -t`), and the script imports the source's as `ht1src`; the backup also mounts the boot environment's own children (OpenIndiana's `/var`), which `zfs mount -a` skips |
 | Haiku | `haiku6` | logs in as `user` (Haiku's uid 0); its mount_server is stopped, or it mounts every BFS volume it sees |
 
 Linux can't read most of these filesystems, so the rescuer does the backup
@@ -979,7 +979,7 @@ the stick, onto an old target: the panel is `holt.img_panel` in
 - **The boot.** The image is the first disk, through a 16 GiB throwaway
   overlay, in the source's firmware mode (`--uefi`, and `--no-secure-boot`
   where the guest has it), as a stick boots in the machine's own;
-  ht1-bsd.sh adds the rescuer guest's options (omnios58's
+  ht1-bsd.sh adds the rescuer guest's options (omnios60's
   `--legacy-virtio-net`, haiku6's `--disk-bus sata`).
   `img-boot.py LOG PLATFORM PUBKEY -- vm-run ...` runs it with the serial
   console on its own stdin: at each `Choose [1-4]: ` it picks the shell,
@@ -1541,7 +1541,7 @@ as root, no RAM disk) says why in its `.out` file only: its log,
   missing (every host has it since 2026-11).  `openbsd8`, `dragonfly6` and
   the illumos sources each need a one-time rescuer prep
   (`rescuer/openbsd8-newduid.qcow2`, `dragonfly6-newfsid.qcow2`,
-  `omnios58-reguid.qcow2`), which a host without it makes on its first run
+  `omnios60-reguid.qcow2`), which a host without it makes on its first run
   (dragonfly6's takes about an hour).  HoltTest2 keys their cells only on
   the hosts whose facts list the prep (plan.py `holt_prep`, img-speed.md
   F11, 2026-11-26: openbsd8's is on chopin, copland and cage, dragonfly6's

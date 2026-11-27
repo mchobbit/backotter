@@ -287,13 +287,20 @@ class Mac(unittest.TestCase):
         return subprocess.run(["bash", os.path.join(self.repo, "testvm", "holt-warm"), *args], env=env,
                               capture_output=True, text=True, timeout=60)
 
+    def build_hosts(self):
+        """pick-host's --hosts: the table's default amd64 build hosts, by name."""
+        return ",".join(subprocess.run(
+            ["python3", "-I", "-B", os.path.join(T2, "t2lib", "hosts.py"), "names", "--default",
+             "--role", "build", "--arch", "amd64"], capture_output=True, text=True, check=True).stdout.split())
+
     def calls_(self):
         return rd(self.calls).splitlines() if os.path.exists(self.calls) else []
 
     def test_host_picked_once_then_recorded(self):
         r = self.hw("host", "f14")
         self.assertEqual((r.returncode, r.stdout), (0, "m@copland.local\n"), r.stderr)
-        self.assertEqual(self.calls_(), ["pick --reserve 2 4"])
+        self.assertEqual(self.calls_(), ["pick --reserve 2 4 --hosts " + self.build_hosts()])
+        self.assertNotIn("choubox", self.build_hosts(), "choubox has no build role")
         self.assertEqual(rd(os.path.join(self.state, "f14.host")), "m@copland.local\n")
         r = self.hw("host", "f14", PICKED="m@cage.local")
         self.assertEqual(r.stdout, "m@copland.local\n")
@@ -319,7 +326,7 @@ class Mac(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(d, ".holt-warm-host.sh")))
         self.assertTrue(os.path.isfile(os.path.join(d, ".last-used")))
         c = self.calls_()
-        self.assertEqual(c[0], "pick --reserve 2 4")
+        self.assertEqual(c[0], "pick --reserve 2 4 --hosts " + self.build_hosts())
         self.assertIn("cmp --reserve 2 4 tag=holt-warm:f14", c)
         self.assertIn(f"cargo test --offline --lib stick:: in {d}/src/holt", c)
         self.assertEqual({x for x in c if x.startswith("ssh ")}, {"ssh m@copland.local"})
@@ -327,9 +334,37 @@ class Mac(unittest.TestCase):
     def test_test_host_given_by_name_is_recorded(self):
         r = self.hw("test", "f14", "--host", "czerny")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertNotIn("pick --reserve 2 4", self.calls_())
+        self.assertFalse([x for x in self.calls_() if x.startswith("pick ")])
         self.assertIn("ssh m@czerny.local", self.calls_())
         self.assertEqual(rd(os.path.join(self.state, "f14.host")), "m@czerny.local\n")
+
+    def test_tag_stamped_before_the_reservation(self):
+        """.last-used is there before cmp-run.sh's wait for room, so a prune meanwhile keeps the tag."""
+        wr(self.cmp, f"#!/bin/bash\nls -a {self.root}/f14 >>{self.calls}\nexit 7\n", 0o755)
+        r = self.hw("test", "f14")
+        self.assertEqual(r.returncode, 7, r.stderr)
+        self.assertIn(".last-used", self.calls_())
+
+    def test_content_put_back_is_newer_than_the_build(self):
+        """A source put back to older content, with its older mtime, lands newer than the last
+        build (cargo goes by mtimes), and an unchanged one keeps its time (the build stays warm)."""
+        main = os.path.join(self.repo, "holt", "src", "main.rs")
+        keep = os.path.join(self.repo, "holt", "Cargo.toml")
+        self.assertEqual(self.hw("test", "f14").returncode, 0)
+        d = os.path.join(self.root, "f14", "src", "holt")
+        built = time.time()
+        old = os.stat(main).st_mtime
+        wr(main, "fn main() { edited() }\n")
+        self.assertEqual(self.hw("test", "f14").returncode, 0)
+        kept = os.stat(os.path.join(d, "Cargo.toml")).st_mtime
+        wr(main, "fn main() {}\n")
+        os.utime(main, (old - DAY, old - DAY))   # a revert: the old content, an old time
+        os.utime(keep, (old - DAY, old - DAY))   # same content, another time
+        time.sleep(1.1)
+        self.assertEqual(self.hw("test", "f14").returncode, 0)
+        self.assertEqual(rd(os.path.join(d, "src", "main.rs")), "fn main() {}\n")
+        self.assertGreater(os.stat(os.path.join(d, "src", "main.rs")).st_mtime, built)
+        self.assertEqual(os.stat(os.path.join(d, "Cargo.toml")).st_mtime, kept)
 
     def test_test_failure_is_the_status(self):
         wr(os.path.join(self.home, ".cargo", "bin", "cargo"), "#!/bin/sh\nexit 101\n", 0o755)

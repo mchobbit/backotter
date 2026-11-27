@@ -6,8 +6,8 @@
 #
 #   testvm/holt-warm host TAG [--repick]
 #       print the ssh target TAG's warm dir lives on: the host recorded for it,
-#       else (or with --repick) the one pick-host --reserve 2 4 chooses, which
-#       is then recorded (~/backotter-work/holt-warm/TAG.host,
+#       else (or with --repick) the one pick-host --reserve 2 4 chooses among
+#       the table's default amd64 build hosts (role build), which is then recorded (~/backotter-work/holt-warm/TAG.host,
 #       BKO_HOLT_WARM_STATE).  A new host's first build is cold.
 #   testvm/holt-warm test TAG [--host H] [--repick] [-- CARGO_TEST_ARG...]
 #       rsync holt/ (without target/), testvm/test2/classes.json and
@@ -60,7 +60,12 @@ host_of() {
     local tag=$1 repick=$2 f=$STATE/$1.host h=""
     if [[ $repick != 1 && -s $f ]]; then read -r h <"$f"; fi
     if [[ -z $h ]]; then
-        h=$("$PICK" --reserve 2 4) || { echo "holt-warm: pick-host found no host" >&2; return 1; }
+        # The build hosts alone (the table's build role): choubox, say, is a
+        # default host but no build host, and pick-host's own default would take it.
+        local b
+        b=$(python3 -I -B "$HOSTS_PY" names --default --role build --arch amd64 | paste -sd, -)
+        [[ -n $b ]] || { echo "holt-warm: no default amd64 build host in the table" >&2; return 1; }
+        h=$("$PICK" --reserve 2 4 --hosts "$b") || { echo "holt-warm: pick-host found no host" >&2; return 1; }
         [[ -n $h ]] || { echo "holt-warm: pick-host printed no host" >&2; return 1; }
         record "$tag" "$h"
     fi
@@ -98,11 +103,19 @@ cmd_test() {
     if [[ -n $host ]]; then record "$tag" "$host" || exit 1; else host=$(host_of "$tag" "$repick") || exit 1; fi
     local d=$ROOT/$tag cmp=${BKO_CMP_RUN:-'~/backotter-work/cmp-run.sh'}
     echo "holt-warm: $tag on $host ($d)" >&2
-    "${SSH[@]}" "$host" "mkdir -p $(q "$d/src/holt" "$d/src/testvm/test2" "$d/src/docs/design")" || exit 1
-    rsync -a --delete --exclude /target "$REPO/holt/" "$host:$d/src/holt/" &&
-        rsync -a "$REPO/testvm/test2/classes.json" "$host:$d/src/testvm/test2/" &&
-        rsync -a "$REPO/docs/design/holt-json.md" "$host:$d/src/docs/design/" &&
-        rsync -a "$HERE/holt-warm-host.sh" "$host:$d/.holt-warm-host.sh" || exit 1
+    # Stamped before the rsync (which keeps the Mac's mtimes) and the wait for
+    # cmp-run.sh's room, so prune sees the tag in use from here on.
+    "${SSH[@]}" "$host" "mkdir -p $(q "$d/src/holt" "$d/src/testvm/test2" "$d/src/docs/design") && touch $(q "$d/.last-used")" || exit 1
+    # By content, and without the Mac's mtimes (no -t): cargo rebuilds when a
+    # source is newer than its last build, so a file put back to older content
+    # (a revert, a checkout, another worktree) with its older mtime kept would
+    # leave the warm build of the content it replaced, and test that.  A file
+    # rsync writes gets the time of the sync; one it skips is unchanged.
+    local rs=(rsync -rlp --checksum)
+    "${rs[@]}" --delete --exclude /target "$REPO/holt/" "$host:$d/src/holt/" &&
+        "${rs[@]}" "$REPO/testvm/test2/classes.json" "$host:$d/src/testvm/test2/" &&
+        "${rs[@]}" "$REPO/docs/design/holt-json.md" "$host:$d/src/docs/design/" &&
+        "${rs[@]}" "$HERE/holt-warm-host.sh" "$host:$d/.holt-warm-host.sh" || exit 1
     local env=(WEAR_TAG="holt-warm:$tag")
     [[ -z ${BKO_HOLT_WARM_TMP:-} ]] || env+=(BKO_HOLT_WARM_TMP="$BKO_HOLT_WARM_TMP")
     "${SSH[@]}" "$host" "cd ~/backotter-work 2>/dev/null || cd; $(q env "${env[@]}") $cmp --reserve 2 4 $(q bash "$d/.holt-warm-host.sh" test "$d" "$TC" "$@")"

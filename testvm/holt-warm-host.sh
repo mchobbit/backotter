@@ -10,7 +10,7 @@
 #       cargo_home when unset (hosts.sh hosts_rust_env), and TMPDIR in the RAM
 #       disk (/mnt/bko-ram, BKO_HOLT_WARM_TMP), removed after.  It stamps
 #       DIR/.last-used first, so prune sees the tag in use however old its
-#       files (rsync -a keeps the Mac's mtimes).  testvm/holt-warm runs it
+#       files (rsync skips a file whose content is unchanged).  testvm/holt-warm runs it
 #       under cmp-run.sh --reserve 2 4, which holds that room meanwhile.
 #   holt-warm-host.sh prune ROOT DAYS [--whole] [--dry-run]
 #       Each tag ROOT/TAG is stale when neither its .last-used nor any file or

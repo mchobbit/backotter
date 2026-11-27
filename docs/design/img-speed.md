@@ -1220,10 +1220,15 @@ this spec's speedups 2 and 7.
   *Built 2026-11-27:* `testvm/holt-warm test TAG [--host H] [-- ARGS]`
   (on the Mac) uses the host recorded for TAG
   (`~/backotter-work/holt-warm/TAG.host`), else the one `pick-host --reserve
-  2 4` chooses, and records it, so a cycle's later runs stay warm. It rsyncs
+  2 4` chooses among the table's default amd64 build hosts (role `build`:
+  not choubox, a default host but no build host; review fix), and records
+  it, so a cycle's later runs stay warm. It rsyncs
   holt/ (no target/), `testvm/test2/classes.json` and
   `docs/design/holt-json.md` (the two files holt's tests read beside holt/)
-  to `HOST:/bkoscratch/holt-warm/TAG/src`, and runs `cargo test --offline`
+  to `HOST:/bkoscratch/holt-warm/TAG/src` by content and without the Mac's
+  mtimes (`rsync -rlp --checksum`; review fix: with `-a`, a file put back to
+  older content kept its older mtime, cargo saw no change, and the run tested
+  the replaced content's build), and runs `cargo test --offline`
   there under the host's `cmp-run.sh --reserve 2 4` (WEAR_TAG
   `holt-warm:TAG`), with Rust `HOLT_RUST_TOOLCHAIN` (1.94.1, build-holt.sh's
   rule, not the host's rustup default, which differs: 1.94.1 on Chopin,

@@ -661,6 +661,10 @@ def layout(img, rewritten=(), xorriso=None, eltorito=True):
                             b = bytearray(f.read(2048 * SECTOR))
                             b[SECTOR:8 * SECTOR] = bytes(7 * SECTOR)
                             out.append(f"/mbr/part/{i + 1}/boot\tsha256={_sha(bytes(b))}")
+                        elif e[4] == 0xEB:
+                            # Haiku's BFS: its first sector, makebootable's boot code; the BFS's
+                            # superblock after it is rewritten by the read-write mount.
+                            out.append(f"/mbr/part/{i + 1}/boot\tsha256={_range_sha(f, first * SECTOR, SECTOR)}")
                     else:
                         line += f" size={n * SECTOR} sha256={_range_sha(f, first * SECTOR, n * SECTOR)}"
                 out.append(f"/mbr/part/{i + 1}\t{line}")

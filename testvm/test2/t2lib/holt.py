@@ -49,7 +49,8 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      run's default host first, then hosts.tie_key's order, kept in holt.json: F15)
      /bkoscratch/holttest1d/queue/RUN/todo, canaries first, then the guests whose
      golden plan changed, then the rest, each part biggest first
-     (ht1-queue.sh --order); a runner on every host from the copy, as m,
+     (ht1-queue.sh --order), its +img lines among themselves longest first
+     (img_longest_first); a runner on every host from the copy, as m,
      detached (BASEPORT 2600, MAXJOBS the host's holt_jobs in testvm/hosts.json, 3 by
      default; the others with QHOST the queue host),
      ONLY_ELSEWHERE from the plan's per-host keys (pins, R17's UEFI rescuer, the hosts
@@ -291,6 +292,20 @@ def order_groups(pcs):
         else:
             rest.append(pc.cell)
     return [first, diff, rest]
+
+
+def img_longest_first(lines, walls):
+    """LINES (ht1-queue.sh's order: biggest D first) with their +img lines, among themselves,
+    longest estimated wall first (WALLS: {line: wall_s}), in the places the +img lines held:
+    the other lines keep theirs.  A +img line has a small D and runs in a RAM slot only, so
+    the D order put the panel's longest line (dragonfly6+img, 16 gm, a D of 3) last, and a
+    panel spread over six hosts ended a line's length after the rest (img-speed.md §10, I9)."""
+    at = [i for i, x in enumerate(lines) if x.endswith("+img")]
+    img = sorted((lines[i] for i in at), key=lambda x: -(walls.get(x) or 0))   # (stable: ties keep the D order)
+    out = list(lines)
+    for i, x in zip(at, img):
+        out[i] = x
+    return out
 
 
 def only_elsewhere(pcs, hosts, pins=None):
@@ -1386,9 +1401,10 @@ class Runner:
             return
         if not q.get("todo_written"):
             lines = []
+            walls = {todo_line(pc.cell): (getattr(pc, "est", None) or {}).get("wall_s") for pc in pcs}
             for part in order_groups(pcs):
-                lines += self.remote.order(self.qhost, self.tool(self.qhost, "ht1-queue.sh"),
-                                           [todo_line(c) for c in part])
+                lines += img_longest_first(self.remote.order(self.qhost, self.tool(self.qhost, "ht1-queue.sh"),
+                                                             [todo_line(c) for c in part]), walls)
             self.remote.write(self.qhost, f"{QUEUE}/{qrun}/todo", "".join(x + "\n" for x in lines))
             q.update(todo=lines, todo_written=utc_now())
             q.setdefault("runners", {})

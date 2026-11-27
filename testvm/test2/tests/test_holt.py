@@ -610,6 +610,18 @@ class U52Todo(unittest.TestCase):
                                                   ["holt:rocky10", "holt:arch", "holt:debian13-stack+bigger"],
                                                   ["holt:mint22"]])
 
+    def test_img_longest_first(self):
+        # img-speed.md §10 (I9): the panel's longest line first, not last by its small D; the
+        # other lines keep the D order's places.
+        d_order = ["ubuntu24", "guix15+img", "debian12", "omnios58+img", "dragonfly6+img", "haiku6+img"]
+        walls = {"guix15+img": 330, "omnios58+img": 790, "dragonfly6+img": 958, "haiku6+img": 186,
+                 "ubuntu24": 2000, "debian12": 100}
+        self.assertEqual(holt.img_longest_first(d_order, walls),
+                         ["ubuntu24", "dragonfly6+img", "debian12", "omnios58+img", "guix15+img", "haiku6+img"])
+        # (no estimate counts as 0; ties keep the D order; no +img line: as given)
+        self.assertEqual(holt.img_longest_first(["a+img", "b+img", "c+img"], {"c+img": 5}), ["c+img", "a+img", "b+img"])
+        self.assertEqual(holt.img_longest_first(["x", "y"], {"y": 9}), ["x", "y"])
+
     def test_only_elsewhere(self):
         both = {"chopin": "k", "cinqcent": "k"}
         pcs = [self.PC("holt:openbsd8", keys_={"chopin": "k"}), self.PC("holt:dragonfly6", keys_={"cinqcent": "k"}),

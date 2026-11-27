@@ -1251,7 +1251,20 @@ this spec's speedups 2 and 7.
   `h1/collect-dumps.sh:53`. Change: the default hosts come from hosts.json
   (the default amd64 hosts with HoltTest records), and the collector is an
   argument. *Gain:* coverage: the small hosts' dumps enter the corpus, and
-  `--scan` checks each host's own strings.
+  `--scan` checks each host's own strings. *As built (2026-11-27):* without
+  `--hosts`, the hosts are `hosts_names --default --arch amd64` whose
+  RECORDS directory exists (a default host out of reach is an exit 1), each
+  reached by its row's ssh target. `--collector H` (default: this host,
+  which must be in the table, so the raw dumps never land on the Mac) runs
+  the job on H from a private temporary copy of the script, leakscan.py, the
+  table, classes.json, `--sources` and `--scan`'s corpus, deleted at the
+  end. *Proof:* `test_collect_dumps.py` (10, on the Mac and on chopin); from
+  the Mac with `--collector cinqcent`, 88 of 88 sources collected from all
+  six hosts (chopin 25, cinqcent 17, copland 15, cage 14, czerny 11, choubox
+  6), and `--scan` of the corpus's 88 source dumps 0 findings on each of the
+  six hosts' own strings, raw twins 88 of 88. The corpus's 10 other dumps
+  (arm64, bs1-*, uc24-fde) are no HoltTest2 sources, so a collection never
+  holds their raw twins and a whole-corpus `--scan` is exit 2, as before.
 - **F17. vm-store's default source names Chopin (partly) (user: FD5).**
   `vmstore.py:68` `DEFAULT_CHOPIN`. Change: read the store-mirror role. *Stays:*
   publish, push, verify and sculpt-update on Chopin (D2). A second mirror on

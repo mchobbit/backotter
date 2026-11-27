@@ -1002,7 +1002,7 @@ testvm/test2/h1/collect-dumps.sh --out RAW         # default T2_HOST_ROOT/h1-raw
     --manifest-path "$PWD/holt/Cargo.toml" --test corpus_build -- --ignored --nocapture
                                                    # twice, into two OUTs: the same sha256s
 testvm/test2/h1/collect-dumps.sh --scan OUT --out RAW
-                                                   # leakscan (a) and (b) on both hosts: 0 findings
+                                                   # leakscan (a) and (b) on each host: 0 findings
 rm -rf /mnt/bko-ram/NAME
 ```
 
@@ -1032,7 +1032,7 @@ testvm/test2/h1/collect-dumps.sh --sources SOURCES --out RAW
     --manifest-path "$PWD/holt/Cargo.toml" --test corpus_build -- --ignored --nocapture
                                                    # twice, into two OUTs: the same sha256s
 testvm/test2/h1/collect-dumps.sh --scan OUT --out RAW
-                                                   # 0 findings on both hosts
+                                                   # 0 findings on each host
 rm -rf /mnt/bko-ram/NAME
 ```
 

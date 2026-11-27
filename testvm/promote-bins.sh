@@ -34,7 +34,13 @@
 # PLATFORM/ the set has (img-one.sh's lock: no image build reads a half
 # promoted set; one that is held refuses that host's set), it is copied into
 # place with rsync --delay-updates (every changed file renamed in at the
-# end), and checked again.  The source's files go as they are, BUILD-INFO and
+# end), and checked again.  While an image round holds a host
+# (images/.round.lock there, img-speed.md C10, D16: stick/img-round.sh run,
+# from its facts to the end of its fan-out), its bko-bin and holt-bin are
+# refused and left as they were, said with the round's name: a set that moved
+# between two of the round's units would mix its images' binaries.  The
+# install holds a shared flock on that file, so no round starts meanwhile;
+# cmp-bin is not the images' and goes as ever.  The source's files go as they are, BUILD-INFO and
 # SHA256SUMS included, so every host ends with the same SHA256SUMS.  Files a
 # host has that the source doesn't stay, and are counted, unless --delete
 # removes them.  --dry-run reads only: per host and set, what would be copied
@@ -150,10 +156,19 @@ LINKS
     fi
     return $bad
 }
+round_free() {  # SET [FD]: 0 unless an image round holds this host and SET is one its images read
+    case $1 in bko-bin|holt-bin) ;; *) return 0 ;; esac
+    [ -d images ] || return 0
+    eval "exec ${2:-3}>>images/.round.lock" || return 0
+    flock -n -s "${2:-3}" && return 0
+    echo "image round $(head -n 1 images/.round.lock 2>/dev/null | cut -c1-120) holds this host (images/.round.lock): $1 left as it was; promote once the round has ended" >&2
+    return 5
+}
 install_set() {  # SET STAGE DELETE: STAGE's files into SET, under the image builds' locks
-    local set_=$1 stage=$2 n=3 p
+    local set_=$1 stage=$2 n=4 p
     case $stage in .promote-*) ;; *) echo "bad stage $stage" >&2; return 2 ;; esac
     [ -d "$stage" ] || { echo "no ~/$W/$stage" >&2; return 3; }
+    round_free "$set_" 3 || return 5   # (fd 3 held to the end: no round starts under the copy)
     if [ -d images ]; then
         for p in $PLATFORMS; do
             [ -d "$stage/$p" ] || [ -d "$set_/$p" ] || continue
@@ -173,6 +188,7 @@ case $op in
     stage) case $1 in .promote-*) rm -rf "$1" && mkdir -p "$1" ;; *) exit 2 ;; esac ;;
     drop) case $1 in .promote-*) rm -rf "$1" ;; *) exit 2 ;; esac ;;
     install) install_set "$1" "$2" "$3" ;;
+    round) round_free "$1" ;;
     *) echo "no such op $op" >&2; exit 2 ;;
 esac
 EOF
@@ -260,6 +276,10 @@ for set in $sets; do
             continue
         fi
         ntodo=$(printf '%s' "$todo" | grep -c . || true)
+        if ! why=$(remote "$t" round "$set" 2>&1); then
+            if [[ $dry == yes ]]; then log "$h $set: would be REFUSED: ${why##*$'\n'}"; continue; fi
+            log "$h $set: REFUSED: ${why##*$'\n'}"; failed+=" $set@$h"; continue
+        fi
         if [[ $dry == yes ]]; then
             log "$h $set: would copy $ntodo of $nfiles files ($(printf '%s\n' "$todo" | paths | some 8))$xnote"
             continue

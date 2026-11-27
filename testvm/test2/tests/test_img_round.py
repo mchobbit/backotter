@@ -613,9 +613,9 @@ class Cli(unittest.TestCase):
                            capture_output=True, text=True)
         self.assertEqual(r.returncode, 2)
         self.assertIn("choubox is not a build host", r.stderr)
-        r = subprocess.run([os.path.join(STICK, "img-round.sh"), "run", "x"], capture_output=True, text=True)
+        r = subprocess.run([os.path.join(STICK, "img-round.sh"), "deal", "x"], capture_output=True, text=True)
         self.assertEqual(r.returncode, 2)
-        self.assertIn("I8", r.stderr)
+        self.assertIn("img-round.sh run", r.stderr)   # (the usage: run and fanout are I8's, built)
 
 
 if __name__ == "__main__":

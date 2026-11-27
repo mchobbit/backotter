@@ -3,6 +3,8 @@
 
     img_round.py plan [--hosts H,H|all] [--full P,P|all] [--no-refresh] [--ref HOST]
                       [--remote-env K=V]... [--facts-dir DIR] [--today YYYY-MM-DD] [--json] RUN
+    img_round.py run  [the same] [--to H,H|all] [--jobs N] [--lock-wait S] RUN
+    img_round.py fanout [--to H,H|all] [--jobs N] RUN
 
 stick/img-round.sh runs it.  `plan` executes nothing: it gathers the facts, decides each
 platform's action, deals the build units and writes RUN/plan.json.
@@ -33,6 +35,15 @@ platform's action, deals the build units and writes RUN/plan.json.
    (deal_images: longest first, earliest finish, Chopin penalised as pick-host does,
    room free now preferred).
 
+5. run (I8): the Mac's lock (BKO_ROUND_DIR/.round.lock) and every used host's
+   images/.round.lock (C10: HOLD_PY over ssh, exclusive, until the round lets go; a host whose
+   lock stays held --lock-wait seconds, by another round or a promotion's install, refuses the
+   round), then 1-4, then each host's img-lanes.sh --run RUN over its lanes (lanes_of), with
+   BKO_PLAN_BKO_BIN, BKO_PLAN_HOLT_BIN and BKO_PLAN_BUILDER_P, then the fan-out (§10: DEST_PY
+   checks a DEST's holt-bin and bko-bin first, img-xcopy.sh from the builder, VERIFY_PY hashes
+   every holder's images again).  The remote environment is kept in plan.json, and fanout
+   uses it.
+
 RUN is a name (a directory of BKO_ROUND_DIR, default ~/backotter-work/img-rounds) or a path.
 Exit 0 with a plan; 1 when a platform the plan builds has no host, or the reference gave no
 digest of a platform (action none); 2 on bad usage; 3 when
@@ -42,14 +53,18 @@ the plan is refused (the reference not reached, the sets differ).
 import argparse
 import concurrent.futures
 import datetime
+import fcntl
 import importlib.machinery
 import importlib.util
 import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
+import threading
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -521,9 +536,820 @@ def pick_list(spec, allowed, what):
     return xs
 
 
+# --- run and fanout (I8: §5.2 steps 4-5, §10, C10) ---------------------------------------------
+
+LOCK_WAIT = 120          # s a host's round lock waits for a promotion's install to end
+LOCK_GRACE = 900         # s a holder whose ssh is gone holds on, for the round to take it over
+WAIT_NOTE_MIN = 5        # run's summary names a unit that waited longer for its reservation
+SSH_OPTS = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=30",
+            "-o", "ServerAliveCountMax=10", "-o", "ControlMaster=no", "-o", "ControlPath=none"]
+
+
+def ssh_argv(table, host, cmd):
+    return ["ssh"] + SSH_OPTS + [table.ssh(host), cmd]
+
+
+def env_sh(remote_env):
+    return "".join(f"export {k}={shlex.quote(v)}\n" for k, v in remote_env)
+
+
+def py_cmd(remote_env, code, *args):
+    """A host's command: the round's environment, then python3 running CODE with ARGS."""
+    return "bash -c " + shlex.quote(env_sh(remote_env) + "exec python3 -I -B -c " + shlex.quote(code) + " "
+                                    + " ".join(shlex.quote(str(a)) for a in args))
+
+
+def utcnow():
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# The host's round lock (C10): images/.round.lock, held exclusive by this process (flock(2), as
+# promote-bins.sh's and img-refresh-holt.sh's flock(1) take it shared) until the round says
+# "release" on its stdin.  When its stdin ends without that (the Mac's ssh is gone: a network
+# blip, or the Mac died), it holds on for GRACE seconds, in which the round's next holder of the
+# same RUN takes over (it TERMs this one, named by the pid the file records), and then lets go.
+HOLD_PY = r"""
+# img-round-hold
+import fcntl, os, subprocess, sys, time
+run, who, wait, grace = sys.argv[1], sys.argv[2], float(sys.argv[3]), float(sys.argv[4])
+work = os.environ.get("BKO_WORK") or "/home/m/backotter-work"
+I = os.environ.get("BKO_IMG_DIR") or os.path.join(work, "images")
+os.makedirs(I, exist_ok=True)
+path = os.path.join(I, ".round.lock")
+fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o664)
+def first():
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.readline().strip()
+    except OSError:
+        return ""
+def cmdline(pid):
+    try:
+        with open("/proc/%d/cmdline" % pid, "rb") as f:
+            return f.read().decode("utf-8", "replace")
+    except OSError:
+        r = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True)
+        return r.stdout
+end = time.time() + wait
+while True:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        break
+    except OSError:
+        held = first()
+        w = held.split()
+        if w and w[0] == run and w[-1].rstrip(")").isdigit():   # (this round's last holder: take over)
+            pid = int(w[-1].rstrip(")"))
+            if pid != os.getpid() and "img-round-hold" in cmdline(pid):
+                try:
+                    os.kill(pid, 15)
+                except OSError:
+                    pass
+        if time.time() >= end:
+            print("BUSY " + (("image round " + held) if held else "a promotion or an img-refresh-holt.sh"), flush=True)
+            sys.exit(3)
+        time.sleep(1)
+os.ftruncate(fd, 0)
+os.write(fd, ("%s (img-round.sh from %s, since %s, pid %d)\n"
+              % (run, who, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), os.getpid())).encode())
+print("HELD " + path, flush=True)
+for line in sys.stdin:
+    if line.strip() == "release":
+        os.ftruncate(fd, 0)
+        sys.exit(0)
+time.sleep(grace)
+os.ftruncate(fd, 0)
+"""
+
+
+class HostLock:
+    """One host's round lock, held by a holder over ssh until release()."""
+
+    def __init__(self, table, host, run, remote_env, wait=LOCK_WAIT, grace=LOCK_GRACE):
+        self.host, self.state, self.why = host, None, None
+        who = os.uname().nodename.split(".")[0]
+        try:
+            self.p = subprocess.Popen(ssh_argv(table, host, py_cmd(remote_env, HOLD_PY, run, who, wait, grace)),
+                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        except OSError as e:
+            self.p, self.state, self.why = None, "unreached", f"ssh: {e}"
+
+    def wait(self, timeout):
+        """HELD, BUSY or unreached, once the holder has said."""
+        if self.p is None:
+            return self.state
+        q = []
+        t = threading.Thread(target=lambda: q.append(self.p.stdout.readline()), daemon=True)
+        t.start()
+        t.join(timeout)
+        line = (q[0] if q else "").strip()
+        if line.startswith("HELD "):
+            self.state = "held"
+        elif line.startswith("BUSY "):
+            self.state, self.why = "busy", line[5:]
+        else:
+            p, err = self.p, ""
+            if q:   # (its stdout ended: what it said)
+                try:
+                    err = (p.stderr.read() or "").strip().splitlines()
+                    err = err[-1][:160] if err else ""
+                except (OSError, ValueError):
+                    pass
+            self.state = "unreached"
+            self.release()
+            for f in (p.stdout, p.stderr):
+                try:
+                    f.close()
+                except (OSError, ValueError):
+                    pass
+            self.state, self.why = "unreached", err or ("no answer in %ds" % timeout if not q else "no lock (exit %s)"
+                                                         % p.returncode)
+        return self.state
+
+    def release(self):
+        if self.p is None:
+            return
+        try:
+            self.p.stdin.write("release\n")
+            self.p.stdin.flush()
+        except (OSError, ValueError):
+            pass
+        try:
+            self.p.stdin.close()
+        except (OSError, ValueError):
+            pass
+        try:
+            self.p.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            self.p.terminate()
+            try:
+                self.p.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.p.kill()
+        if self.state != "unreached":
+            for f in (self.p.stdout, self.p.stderr):
+                try:
+                    f.close()
+                except (OSError, ValueError):
+                    pass
+        self.p = None
+
+
+class MacLock:
+    """The Mac's round lock: BKO_ROUND_DIR/.round.lock, one round at a time."""
+
+    def __init__(self, base, run):
+        os.makedirs(base, exist_ok=True)
+        self.path = os.path.join(base, ".round.lock")
+        self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            with open(self.path, encoding="utf-8", errors="replace") as f:
+                held = f.readline().strip()
+            os.close(self.fd)
+            raise Refused(f"another round holds the Mac's lock ({self.path}): {held or 'its holder said nothing'}")
+        os.ftruncate(self.fd, 0)
+        os.write(self.fd, f"{run} (pid {os.getpid()}, since {utcnow()})\n".encode())
+
+    def release(self):
+        if self.fd is not None:
+            os.ftruncate(self.fd, 0)
+            os.close(self.fd)
+            self.fd = None
+
+
+class LockWatch(threading.Thread):
+    """While the round runs: a holder whose ssh ended (a network blip) is replaced, the new
+    holder taking the lock over from the old one in its grace.  EVENTS: what happened."""
+
+    def __init__(self, table, held, run, remote_env, wait, every=10):
+        super().__init__(daemon=True)
+        self.table, self.held, self.run_, self.env, self.wait_, self.every = table, held, run, remote_env, wait, every
+        self.events, self.halt = [], threading.Event()
+        self.mu = threading.Lock()
+
+    def run(self):
+        while not self.halt.wait(self.every):
+            for h in list(self.held):
+                with self.mu:
+                    lk = self.held[h]
+                    if lk.p is None or lk.p.poll() is None or self.halt.is_set():
+                        continue
+                    new = HostLock(self.table, h, self.run_, self.env, self.wait_)
+                    st = new.wait(self.wait_ + 60)
+                    self.events.append({"host": h, "when": utcnow(), "retaken": st == "held",
+                                        "why": None if st == "held" else new.why})
+                    if st == "held":
+                        self.held[h] = new
+                        lk.release()
+
+    def stop(self):
+        self.halt.set()
+        with self.mu:
+            pass
+
+
+def take_locks(table, hosts, run, remote_env, wait=LOCK_WAIT):
+    """Every host's round lock, all at once: ({host: HostLock held}, {host: why unreached},
+    {host: why busy}).  A busy host is a refusal (the caller lets go of the rest)."""
+    locks = {h: HostLock(table, h, run, remote_env, wait) for h in hosts}
+    held, gone, busy = {}, {}, {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(locks))) as pool:
+        st = dict(zip(locks, pool.map(lambda lk: lk.wait(wait + 60), locks.values())))
+    for h, s in st.items():
+        if s == "held":
+            held[h] = locks[h]
+        elif s == "busy":
+            busy[h] = locks[h].why
+            locks[h].release()
+        else:
+            gone[h] = locks[h].why
+    return held, gone, busy
+
+
+def lanes_of(units, n):
+    """A host's units [(platform, action, minutes)] (longest first, as dealt) over its N lanes:
+    each to the lane with the fewest minutes so far.  [[unit, ...], ...], empty lanes left out."""
+    lanes = [[] for _ in range(max(1, n))]
+    tot = [0.0] * len(lanes)
+    for u in sorted(units, key=lambda u: (-u[2], u[0])):
+        i = min(range(len(lanes)), key=lambda j: (tot[j], j))
+        lanes[i].append(u)
+        tot[i] += u[2]
+    return [l for l in lanes if l]
+
+
+def builder_line(ref_digest):
+    """img_inputs.py identity's line for the reference's builder (img-one.sh's BKO_PLAN_BUILDER)."""
+    b = (((ref_digest or {}).get("base") or {}).get("inputs") or {}).get("builder")
+    return None if b is None else json.dumps(b, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def unit_token(plan, p, action):
+    if action == "refresh":
+        return f"{p}@{plan['platforms'][p]['parent']['test_sha256']}"
+    return p
+
+
+def build_units(plan, ref_digests):
+    """{host: {"lanes": [[token...]...], "env": [(K, V)], "units": [platform...]}} from the deal."""
+    out = {}
+    sets = plan.get("sets") or {}
+    for d in plan.get("deal") or ():
+        if not d["units"]:
+            continue
+        ls = lanes_of([(u["platform"], u["action"], u["minutes"]) for u in d["units"]], d["lanes"])
+        env = [("BKO_PLAN_BKO_BIN", sets["bko-bin"]), ("BKO_PLAN_HOLT_BIN", sets["holt-bin"])]
+        for u in d["units"]:
+            b = builder_line(ref_digests.get(u["platform"]))
+            if b is not None and u["platform"] != "linux":
+                env.append((f"BKO_PLAN_BUILDER_{u['platform']}", b))
+        out[d["host"]] = {"lanes": [[unit_token(plan, x[0], x[1]) for x in l] for l in ls], "env": env,
+                          "units": [x[0] for l in ls for x in l]}
+    return out
+
+
+def lanes_script(remote_env, run, host_units):
+    """The host's side of its build: img-lanes.sh in its own session, its output in
+    images/.round-RUN.log, its pid and then its exit in .round-RUN.pid and .round-RUN.exit (what
+    the round reads when its ssh was lost: the lanes go on).  A "stop" line on stdin sends the
+    session a HUP, as from a terminal that hung up; stdin ending does nothing."""
+    lanes = " ".join(shlex.quote(" ".join(l)) for l in host_units["lanes"])
+    r = shlex.quote(run)
+    return env_sh(list(remote_env) + host_units["env"]) + f"""
+trap '' PIPE
+I=${{BKO_IMG_DIR:-${{BKO_WORK:-/home/m/backotter-work}}/images}}; mkdir -p "$I" || exit 1
+x=$I/.round-{run}
+rm -f "$x.exit" "$x.pid"
+L=${{S:-/home/m/backotter-work/stick}}/img-lanes.sh
+echo "img-round: start $(date +%s) $(hostname -s): img-lanes.sh --run {r} {lanes}"
+exec 3<&0
+if command -v setsid >/dev/null 2>&1; then setsid "$L" --run {r} {lanes} </dev/null >"$x.log" 2>&1 3<&- &
+else "$L" --run {r} {lanes} </dev/null >"$x.log" 2>&1 3<&- & fi
+p=$!
+echo "$p" >"$x.pid"
+( while kill -0 "$p" 2>/dev/null; do
+      line=; read -r -t 5 line <&3; rc=$?
+      if [ "$rc" -eq 0 ] && [ "$line" = stop ] && kill -0 "$p" 2>/dev/null; then
+          echo "img-round: stopped: a HUP to the lanes"; kill -HUP -- "-$p" 2>/dev/null || kill -HUP "$p"; exit 0
+      fi
+      # (EOF: the round's ssh is gone, and the lanes go on; the round reads .round-RUN.exit.)
+      [ "$rc" -eq 0 ] || [ "$rc" -gt 128 ] || exit 0
+  done ) 3<&3 &
+w=$!
+wait "$p"; rc=$?
+echo "$rc" >"$x.exit.part" && mv -f "$x.exit.part" "$x.exit"
+kill "$w" 2>/dev/null
+cat "$x.log"
+echo "img-round: img-lanes.sh exit $rc"
+exit "$rc"
+"""
+
+
+# A host's build whose ssh was lost: its lanes' pid and exit, and their output.
+POLL_PY = r"""
+import json, os, sys
+work = os.environ.get("BKO_WORK") or "/home/m/backotter-work"
+x = os.path.join(os.environ.get("BKO_IMG_DIR") or os.path.join(work, "images"), ".round-" + sys.argv[1])
+def rd(p):
+    try:
+        with open(p, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return None
+pid, ex = (rd(x + ".pid") or "").strip(), (rd(x + ".exit") or "").strip()
+alive = False
+if pid.isdigit():
+    try:
+        os.kill(int(pid), 0)
+        alive = True
+    except OSError:
+        alive = False
+print("poll " + json.dumps({"pid": pid or None, "alive": alive, "exit": int(ex) if ex.lstrip("-").isdigit() else None,
+                            "log": rd(x + ".log") if ex else None}))
+"""
+
+
+# What a host's images say after a build: per platform, done.exit, the sums, the provenance's
+# built and mode, bko-bin.sha256, and the times a unit started and ended (its own clock).
+STATUS_PY = r'''
+import hashlib, json, os, sys, time
+work = os.environ.get("BKO_WORK") or "/home/m/backotter-work"
+I = os.environ.get("BKO_IMG_DIR") or os.path.join(work, "images")
+def rd(p, n=None):
+    try:
+        with open(p, encoding="utf-8", errors="replace") as f:
+            t = f.read()
+        return t if n is None else "\n".join(t.splitlines()[-n:])
+    except OSError:
+        return None
+def mt(p):
+    try:
+        return os.stat(p).st_mtime
+    except OSError:
+        return None
+out = {"now": time.time(), "images": I, "platforms": {}}
+for p in sys.argv[1:]:
+    d = os.path.join(I, p)
+    pv = None
+    try:
+        pv = json.loads(rd(os.path.join(d, "provenance.json")) or "null")
+    except ValueError:
+        pv = None
+    out["platforms"][p] = {"done_exit": (rd(os.path.join(d, "done.exit")) or "").strip() or None,
+        "release_sums": rd(os.path.join(d, "SHA256SUMS")), "test_sums": rd(os.path.join(d, "test", "SHA256SUMS")),
+        "bins": rd(os.path.join(d, "bko-bin.sha256")), "built": (pv or {}).get("built"), "mode": (pv or {}).get("mode"),
+        "start": mt(os.path.join(d, "bko-bin.sha256")),
+        "end": max([t for t in (mt(os.path.join(d, "done.exit")), mt(os.path.join(I, p + ".lane.log"))) if t] or [None]),
+        "lane_log": rd(os.path.join(I, p + ".lane.log"), 6), "result": rd(os.path.join(d, "result.txt"), 8)}
+print("status " + json.dumps(out, sort_keys=True))
+'''
+
+# A fan-out destination's sets before the copy (§10): holt-bin's SHA256SUMS and each platform's
+# bko-holt, and bko-bin's binaries, by SHA-256.
+DEST_PY = r'''
+import hashlib, json, os, sys
+work = os.environ.get("BKO_WORK") or "/home/m/backotter-work"
+B = os.environ.get("BKO_BIN") or os.path.join(work, "bko-bin")
+H = os.environ.get("BKO_HOLT_BIN") or os.path.join(work, "holt-bin")
+def sha(p):
+    try:
+        h = hashlib.sha256()
+        with open(p, "rb") as f:
+            for c in iter(lambda: f.read(1 << 20), b""):
+                h.update(c)
+        return h.hexdigest()
+    except OSError:
+        return None
+out = {"holt_sums": sha(os.path.join(H, "SHA256SUMS")), "platforms": {}}
+for p in sys.argv[1:]:
+    bd = os.path.join(B, p)
+    try:
+        names = sorted(n for n in os.listdir(bd) if n.endswith("-bko"))
+    except OSError:
+        names = []
+    out["platforms"][p] = {"bko-holt": sha(os.path.join(H, p, "bko-holt")),
+                           "bins": {n: sha(os.path.join(bd, n)) for n in names}}
+print("dest " + json.dumps(out, sort_keys=True))
+'''
+
+# Every image a host holds of the round's platforms, hashed again against its SHA256SUMS.
+VERIFY_PY = r'''
+import hashlib, json, os, sys
+work = os.environ.get("BKO_WORK") or "/home/m/backotter-work"
+I = os.environ.get("BKO_IMG_DIR") or os.path.join(work, "images")
+def sha(p):
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for c in iter(lambda: f.read(1 << 22), b""):
+            h.update(c)
+    return h.hexdigest()
+out = {}
+for p in sys.argv[1:]:
+    d, r = os.path.join(I, p), {"ok": True, "why": [], "sums": {}}
+    try:
+        with open(os.path.join(d, "done.exit")) as f:
+            r["done_exit"] = f.read().strip()
+    except OSError:
+        r["done_exit"] = None
+    for sub in ("", "test"):
+        sp = os.path.join(d, sub, "SHA256SUMS")
+        try:
+            with open(sp, encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            r["ok"] = False; r["why"].append("no " + sp); continue
+        r["sums"][sub or "release"] = text
+        for line in text.splitlines():
+            want, _, name = line.partition("  ")
+            name = name.lstrip("*")
+            if not name.endswith(".img"):
+                continue
+            try:
+                got = sha(os.path.join(d, sub, name))
+            except OSError:
+                got = None
+            if got != want:
+                r["ok"] = False; r["why"].append("%s is %s, its SHA256SUMS says %s" % (os.path.join(sub, name), (got or "missing")[:12], want[:12]))
+    out[p] = r
+print("verify " + json.dumps(out, sort_keys=True))
+'''
+
+
+def run_py(table, host, remote_env, code, args, tag, timeout=900):
+    """CODE on HOST: its "TAG {json}" line, or {"error": why}."""
+    try:
+        r = subprocess.run(ssh_argv(table, host, py_cmd(remote_env, code, *args)), capture_output=True, text=True,
+                           timeout=timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return {"error": f"timed out after {timeout}s"}
+    except OSError as e:
+        return {"error": f"ssh: {e}"}
+    for line in (r.stdout or "").splitlines():
+        if line.startswith(tag + " {"):
+            try:
+                return json.loads(line[len(tag) + 1:])
+            except ValueError:
+                break
+    err = (r.stderr or "").strip().splitlines()
+    return {"error": err[-1][:200] if err else f"no answer (exit {r.returncode})"}
+
+
+def pool_map(fn, items, jobs):
+    items = list(items)
+    if not items:
+        return []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(jobs, len(items)))) as pool:
+        return list(pool.map(fn, items))
+
+
+def build(table, plan, units, remote_env, rdir, say, poll=30, lost_max=6 * 3600):
+    """Each host's img-lanes.sh at once (step 4), its output in RUN/HOST.log.  A host whose ssh
+    is lost (exit 255 before its exit was said) is polled (POLL_PY) until its lanes end, so a
+    network blip doesn't cost a build.  A stop of the round (an interrupt) sends each host
+    "stop", which HUPs its lanes.  {host: exit}."""
+    procs = {}
+    for h, hu in units.items():
+        log = open(os.path.join(rdir, f"{h}.log"), "a", encoding="utf-8")
+        say(f"  build on {h}: " + "  |  ".join(" ".join(l) for l in hu["lanes"]))
+        try:
+            procs[h] = (subprocess.Popen(ssh_argv(table, h, "bash -c " + shlex.quote(lanes_script(remote_env, plan["run"], hu))),
+                                         stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True), log)
+        except OSError as e:
+            log.write(f"img-round: ssh: {e}\n")
+            procs[h] = (None, log)
+
+    def one(h):
+        p, log = procs[h]
+        rc = p.wait() if p is not None else 255
+        if rc != 255:
+            return rc
+        log.write(f"img-round: {utcnow()}: the ssh to {h} was lost; its lanes go on, polled every {poll}s\n")
+        log.flush()
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < lost_max:
+            st = run_py(table, h, remote_env, POLL_PY, [plan["run"]], "poll", timeout=120)
+            if st.get("exit") is not None:
+                log.write((st.get("log") or "") + f"img-round: img-lanes.sh exit {st['exit']} (read after the ssh was lost)\n")
+                return st["exit"]
+            if "error" not in st and not st.get("alive"):
+                log.write(f"img-round: {h}'s lanes are gone with no exit said (pid {st.get('pid')})\n")
+                return 254
+            time.sleep(poll)
+        log.write(f"img-round: gave up polling {h} after {lost_max}s\n")
+        return 253
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(procs)))
+    futs = {h: pool.submit(one, h) for h in procs}
+    try:
+        rcs = {h: f.result() for h, f in futs.items()}
+        pool.shutdown()
+    except BaseException:
+        pool.shutdown(wait=False)
+        for p, _ in procs.values():
+            if p is not None and p.poll() is None:
+                try:
+                    p.stdin.write("stop\n")
+                    p.stdin.flush()
+                except (OSError, ValueError):
+                    pass
+        raise
+    finally:
+        for p, log in procs.values():
+            if p is not None and p.stdin and not p.stdin.closed:
+                try:
+                    p.stdin.close()
+                except (OSError, ValueError):
+                    pass
+            log.close()
+    return rcs
+
+
+def lane_start(rdir, h):
+    try:
+        with open(os.path.join(rdir, f"{h}.log"), encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = re.match(r"img-round: start (\d+) ", line)
+                if m:
+                    return float(m.group(1))
+    except OSError:
+        pass
+    return None
+
+
+def unit_rows(plan, units, statuses, rdir):
+    """Per built platform: {host, action, done_exit, ok, minutes, waited, built_run, sums, bins, why}."""
+    rows = {}
+    for h, hu in units.items():
+        st = statuses.get(h) or {}
+        start0 = lane_start(rdir, h)
+        for lane in hu["lanes"]:
+            prev_end = start0
+            for tok in lane:
+                p = tok.split("@")[0]
+                s = (st.get("platforms") or {}).get(p) or {}
+                r = {"host": h, "action": plan["platforms"][p]["action"], "done_exit": s.get("done_exit"),
+                     "built_run": (s.get("built") or {}).get("run"), "release_sums": s.get("release_sums"),
+                     "test_sums": s.get("test_sums"), "bins": s.get("bins"), "minutes": None, "waited": None}
+                if s.get("start") and s.get("end") and s["end"] >= s["start"]:
+                    r["minutes"] = round((s["end"] - s["start"]) / 60.0, 1)
+                if s.get("start") and prev_end and s["start"] >= prev_end:
+                    r["waited"] = round((s["start"] - prev_end) / 60.0, 1)
+                prev_end = s.get("end") or prev_end
+                why = None
+                if st.get("error"):
+                    why = f"no status from {h}: {st['error']}"
+                elif r["built_run"] != plan["run"]:
+                    why = (f"its images are not this round's (provenance built.run {r['built_run']!r}): "
+                           + ((s.get("lane_log") or "").strip().splitlines() or ["no lane log"])[-1][:200])
+                elif r["done_exit"] != "0":
+                    why = f"done.exit {r['done_exit']}: " + ((s.get("result") or "").strip().splitlines() or [""])[-1][:200]
+                r["ok"], r["why"] = why is None, why
+                rows[p] = r
+    return rows
+
+
+def bins_of(text):
+    """bko-bin.sha256's lines: {name: sha} (./restic-bko -> restic-bko)."""
+    out = {}
+    for line in (text or "").splitlines():
+        sha_, _, name = line.partition("  ")
+        if name.startswith("./"):
+            out[name[2:]] = sha_
+    return out
+
+
+def dest_why(dest_facts, p, row, plan_holt):
+    """Why DEST must not take P's image (§10), or None."""
+    if "error" in dest_facts:
+        return f"no facts: {dest_facts['error']}"
+    want = bins_of(row.get("bins"))
+    d = (dest_facts.get("platforms") or {}).get(p) or {}
+    holt = want.get("bko-holt")
+    if not (dest_facts.get("holt_sums") == plan_holt or (holt and d.get("bko-holt") == holt)):
+        return (f"its holt-bin is neither the plan's set ({_short(dest_facts.get('holt_sums'))} vs {_short(plan_holt)}) "
+                f"nor the image's bko-holt ({_short(d.get('bko-holt'))} vs {_short(holt)}): a copy could roll it back")
+    bad = [n for n, s in want.items() if n != "bko-holt" and (d.get("bins") or {}).get(n) != s]
+    if bad:
+        return f"its bko-bin/{p} is not the image's ({', '.join(bad)}): its pin would write bins-stale"
+    return None
+
+
+def dest_env(remote_env):
+    """img-xcopy.sh's DEST paths for the round's environment (the same layout on every host)."""
+    e = dict(remote_env)
+    out = list(remote_env)
+    di = e.get("BKO_IMG_DIR") or (os.path.join(e["BKO_WORK"], "images") if e.get("BKO_WORK") else None)
+    if di:
+        out.append(("BKO_DEST_IMAGES", di))
+    dh = e.get("BKO_HOLT_BIN") or (os.path.join(e["BKO_WORK"], "holt-bin") if e.get("BKO_WORK") else None)
+    if dh:
+        out.append(("BKO_DEST_HOLT_BIN", dh))
+    if e.get("S"):
+        out.append(("BKO_DEST_STICK", e["S"]))
+    return out
+
+
+def fanout(table, plan, rows, dests, remote_env, rdir, jobs, say):
+    """Step 5, §10: every built platform that passed, from its builder to every other DEST (after
+    DEST's sets are checked), then every holder's images hashed again.  Returns the fan-out
+    record {platform: {host: "ok" | why}}."""
+    good = {p: r for p, r in rows.items() if r["ok"]}
+    plats = sorted(good)
+    rec = {p: {r["host"]: "builder"} for p, r in good.items()}
+    others = [d for d in dests if any(good[p]["host"] != d for p in plats)]
+    dfacts = dict(zip(others, pool_map(lambda d: run_py(table, d, remote_env, DEST_PY, plats, "dest"), others, jobs)))
+    pairs = {}
+    for p in plats:
+        for d in dests:
+            if d == good[p]["host"]:
+                continue
+            why = dest_why(dfacts[d], p, good[p], (plan.get("sets") or {}).get("holt-bin"))
+            if why:
+                rec[p][d] = "refused: " + why
+            else:
+                pairs.setdefault((good[p]["host"], d), []).append(p)
+    denv = dest_env(remote_env)
+
+    def copy(pair):
+        src, d = pair
+        ps = pairs[pair]
+        cmd = "bash -c " + shlex.quote(env_sh(denv) + "exec \"${S:-/home/m/backotter-work/stick}\"/img-xcopy.sh "
+                                       + shlex.quote(table.ssh(d)) + " " + " ".join(ps))
+        logp = os.path.join(rdir, f"fanout-{src}-{d}.log")
+        with open(logp, "w", encoding="utf-8") as log:
+            try:
+                rc = subprocess.run(ssh_argv(table, src, cmd), stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                    timeout=4 * 3600).returncode
+            except (subprocess.TimeoutExpired, OSError) as e:
+                log.write(f"img-round: {e}\n")
+                rc = 255
+        return pair, rc, logp
+    if pairs:
+        say(f"  fan-out: {sum(len(v) for v in pairs.values())} copies over {len(pairs)} host pairs")
+    for (src, d), rc, logp in pool_map(copy, pairs, jobs):
+        for p in pairs[(src, d)]:
+            rec[p][d] = "copied" if rc == 0 else f"img-xcopy.sh exit {rc} ({os.path.basename(logp)})"
+    # The proof that every holder has the same bytes: each one's images hashed again.
+    holders = sorted({h for p in plats for h, s in rec[p].items() if s in ("builder", "copied")})
+    ver = dict(zip(holders, pool_map(lambda h: run_py(table, h, remote_env, VERIFY_PY,
+                                                       [p for p in plats if rec[p].get(h) in ("builder", "copied")],
+                                                       "verify", timeout=3600), holders, jobs)))
+    for p in plats:
+        ref_sums = (good[p].get("release_sums"), good[p].get("test_sums"))
+        for h in list(rec[p]):
+            if rec[p][h] not in ("builder", "copied"):
+                continue
+            v = ver.get(h) or {}
+            if "error" in v:
+                rec[p][h] = f"not verified: {v['error']}"
+                continue
+            x = v.get(p) or {}
+            sums = ((x.get("sums") or {}).get("release"), (x.get("sums") or {}).get("test"))
+            if not x.get("ok"):
+                rec[p][h] = "BAD: " + "; ".join(x.get("why") or ["no answer"])
+            elif sums != ref_sums:
+                rec[p][h] = "BAD: its SHA256SUMS are not the builder's"
+            elif x.get("done_exit") != "0":
+                rec[p][h] = f"BAD: done.exit {x.get('done_exit')}"
+            else:
+                rec[p][h] = "ok"
+    return rec
+
+
+def render_round(plan, rows, rec, rcs):
+    out = [f"img-round run {plan['run']}: {plan['made']}"]
+    out.append(f"  {'PLATFORM':<10} {'ACTION':<8} {'HOST':<9} {'MIN':>5} {'EXIT':>4}  HOLDERS")
+    for p in PLATFORMS:
+        pr = plan["platforms"].get(p) or {}
+        r = rows.get(p)
+        if r is None:
+            out.append(f"  {p:<10} {pr.get('action', '-'):<8} {pr.get('host') or '-':<9} {'-':>5} {'-':>4}  "
+                       f"{pr.get('why', '')}")
+            continue
+        f = rec.get(p) or {}
+        okh = sorted(h for h, s in f.items() if s == "ok")
+        mins = f"{r['minutes']:g}" if r.get("minutes") is not None else "-"
+        out.append(f"  {p:<10} {r['action']:<8} {r['host']:<9} {mins:>5} {str(r['done_exit']):>4}  "
+                   + (f"{len(okh)} identical: {', '.join(okh)}" if okh else "none"))
+        if r["why"]:
+            out.append(f"      FAILED: {r['why']}")
+        for h, s in sorted(f.items()):
+            if s not in ("ok",):
+                out.append(f"      {h}: {s}")
+        if (r.get("waited") or 0) > WAIT_NOTE_MIN:
+            out.append(f"      waited {r['waited']:g} min for its reservation on {r['host']}")
+    for h, rc in sorted(rcs.items()):
+        if rc != 0:
+            out.append(f"  {h}: img-lanes.sh exit {rc} ({h}.log)")
+    for x in plan.get("left") or ():
+        out.append(f"  NOT PLACED: {x['platform']}: {x['why']}")
+    return out
+
+
+def write_json(path, obj):
+    tmp = path + ".part"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=1, sort_keys=True, default=list)
+        f.write("\n")
+    os.replace(tmp, path)
+
+
+def statuses_of(table, units, remote_env, jobs):
+    hs = sorted(units)
+    return dict(zip(hs, pool_map(lambda h: run_py(table, h, remote_env, STATUS_PY, units[h]["units"], "status"), hs, jobs)))
+
+
+def round_hosts(table_rows, to):
+    """Fan-out destinations: every enabled amd64 host (D12), or --to's."""
+    allh = [r["name"] for r in table_rows if r.get("enabled", True) is not False and (r.get("arch") or "amd64") == "amd64"]
+    if to in (None, "all"):
+        return allh
+    xs = [x for x in to.split(",") if x]
+    bad = [x for x in xs if x not in allh]
+    if bad or not xs:
+        raise Usage(f"--to: of {' '.join(allh)} or all, not {','.join(bad) or repr(to)}")
+    return xs
+
+
+def do_run(c):
+    """`run` (C): the Mac's lock, every host's round lock, the facts and the plan, the builds,
+    the fan-out and its check.  C: {table, rows_of, run, rdir, builders, ref, opts, today,
+    remote_env, dests, gather, rows, jobs, say, lock_wait, fanout_only}.  The exit code."""
+    say = c["say"]
+    mac = MacLock(os.path.dirname(c["rdir"]), c["run"])
+    held, watch = {}, None
+    try:
+        if c.get("fanout_only"):
+            try:
+                with open(os.path.join(c["rdir"], "plan.json"), encoding="utf-8") as f:
+                    plan = json.load(f)
+            except (OSError, ValueError) as e:
+                raise Refused(f"no plan of {c['run']} to fan out ({e})")
+            c["remote_env"] = [tuple(x) for x in plan.get("remote_env") or ()]
+            want = list(dict.fromkeys([d["host"] for d in plan.get("deal") or () if d["units"]] + c["dests"]))
+        else:
+            want = list(dict.fromkeys(c["builders"] + [c["ref"]] + c["dests"]))
+        held, gone, busy = take_locks(c["table"], want, c["run"], c["remote_env"], c.get("lock_wait", LOCK_WAIT))
+        if busy:
+            raise Refused("a host's round lock is held (C10): " + "; ".join(f"{h}: {w}" for h, w in sorted(busy.items())))
+        for h, w in sorted(gone.items()):
+            say(f"  {h}: no round lock ({w}): not used")
+        watch = LockWatch(c["table"], held, c["run"], c["remote_env"], c.get("lock_wait", LOCK_WAIT),
+                          c.get("watch_every", 10))
+        watch.start()
+        if c.get("fanout_only"):
+            units = {d["host"]: {"units": [u["platform"] for u in d["units"]],
+                                 "lanes": [[u["platform"] for u in d["units"]]]} for d in plan.get("deal") or () if d["units"]}
+            units = {h: u for h, u in units.items() if h in held}
+            rcs = {}
+        else:
+            if c["ref"] not in held:
+                raise Refused(f"the reference {c['ref']} holds no round lock ({gone.get(c['ref'])}): the plan's inputs are its")
+            builders = [h for h in c["builders"] if h in held]
+            gathered = c["gather"](list(dict.fromkeys(builders + [c["ref"]])))
+            plan = plan_round(gathered, builders, c["ref"], c["rows"], c["opts"], c["today"], c.get("table_rows"))
+            plan["run"], plan["made"] = c["run"], utcnow()
+            plan["remote_env"] = [list(x) for x in c["remote_env"]]
+            os.makedirs(c["rdir"], exist_ok=True)
+            write_json(os.path.join(c["rdir"], "plan.json"), plan)
+            write_json(os.path.join(c["rdir"], "facts.json"), gathered)
+            for line in render(plan):
+                say(line)
+            if plan["refused"]:
+                return 3
+            ref_dig = ((gathered.get(c["ref"]) or {}).get("facts") or {}).get("digests") or {}
+            units = build_units(plan, ref_dig)
+            rcs = build(c["table"], plan, units, c["remote_env"], c["rdir"], say, poll=c.get("poll", 30))
+        statuses = statuses_of(c["table"], units, c["remote_env"], c["jobs"])
+        rows = unit_rows(plan, units, statuses, c["rdir"])
+        dests = [d for d in c["dests"] if d in held]
+        rec = fanout(c["table"], plan, rows, dests, c["remote_env"], c["rdir"], c["jobs"], say)
+        watch.stop()
+        rnd = {"run": c["run"], "made": utcnow(), "units": rows, "fanout": rec, "lanes_exit": rcs, "dests": dests,
+               "statuses": statuses, "lock_events": watch.events}
+        write_json(os.path.join(c["rdir"], "fanout.json" if c.get("fanout_only") else "round.json"), rnd)
+        lines = render_round(plan, rows, rec, rcs) + [
+            f"  {e['host']}: its round lock's ssh ended at {e['when']}: "
+            + ("taken again" if e["retaken"] else f"NOT taken again ({e['why']})") for e in watch.events]
+        with open(os.path.join(c["rdir"], "summary.txt"), "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        for line in lines:
+            say(line)
+        bad = (any(not r["ok"] for r in rows.values()) or any(s != "ok" for f in rec.values() for s in f.values())
+               or any(rc != 0 for rc in rcs.values()) or bool(plan.get("left")))
+        return 1 if bad else 0
+    finally:
+        if watch is not None:
+            watch.stop()
+        for lk in held.values():
+            lk.release()
+        mac.release()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="img-round.sh", add_help=True)
-    ap.add_argument("cmd", choices=("plan",))
+    ap.add_argument("cmd", choices=("plan", "run", "fanout"))
     ap.add_argument("--hosts")
     ap.add_argument("--full")
     ap.add_argument("--no-refresh", action="store_true")
@@ -533,6 +1359,9 @@ def main(argv=None):
     ap.add_argument("--today")
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--to")
+    ap.add_argument("--jobs", type=int, default=6)
+    ap.add_argument("--lock-wait", type=int, default=LOCK_WAIT)
     ap.add_argument("run")
     try:
         a = ap.parse_args(argv)
@@ -565,6 +1394,20 @@ def main(argv=None):
             env.append((k, v))
         today = datetime.date.fromisoformat(a.today) if a.today else datetime.datetime.now(datetime.timezone.utc).date()
         rdir = run_dir(a.run)
+        if a.cmd in ("run", "fanout"):
+            def term(*_):
+                raise KeyboardInterrupt
+            signal.signal(signal.SIGTERM, term)
+            sys.path.insert(0, T2)
+            from t2lib import ledger
+            c = {"table": H, "table_rows": table, "run": os.path.basename(rdir), "rdir": rdir, "builders": builders,
+                 "ref": ref, "opts": {"full": full, "no_refresh": a.no_refresh}, "today": today, "remote_env": env,
+                 "dests": round_hosts(table["hosts"], a.to), "jobs": a.jobs, "lock_wait": a.lock_wait,
+                 "fanout_only": a.cmd == "fanout", "say": lambda x: print(x, flush=True),
+                 "gather": ((lambda hs: read_facts_dir(a.facts_dir, hs)) if a.facts_dir
+                            else (lambda hs: gather(H, hs, env, a.timeout))),
+                 "rows": [] if a.cmd == "fanout" else ledger.view(fill_wear=False).rows}
+            return do_run(c)
         ask = list(dict.fromkeys(builders + [ref]))
         gathered = read_facts_dir(a.facts_dir, ask) if a.facts_dir else gather(H, ask, env, a.timeout)
         sys.path.insert(0, T2)

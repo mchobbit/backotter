@@ -312,6 +312,19 @@ in §14.
   `img-one.sh` refuses at its start when the host's sets differ. Without
   this, a promotion between two units of one round yields a set whose
   platforms were built from different binaries (D16).
+  *As built (I8, 2026-11-27):* the Mac's lock is `BKO_ROUND_DIR/.round.lock`
+  (fcntl, one round at a time); a host's is an exclusive flock on
+  `images/.round.lock` (BKO_IMG_DIR's) held by a small holder over ssh that
+  ends when its stdin does, so the lock goes with the round (the Mac letting
+  go, or its ssh gone), and the file says the round's name while held.
+  `img-refresh-holt.sh` and promote-bins' install take a shared flock on it
+  (held to their end, so no round starts under them) and refuse a held one,
+  naming the round; promote-bins refuses only the sets images read (bko-bin,
+  holt-bin; cmp-bin goes as ever), checks before staging and again at the
+  install, and a dry run says "would be REFUSED". A round whose holder waits
+  out `--lock-wait` (120 s) on a host is refused (exit 3). `img-one.sh` checks
+  `BKO_PLAN_BKO_BIN` and `BKO_PLAN_HOLT_BIN` (the SHA-256 of the two
+  SHA256SUMS, as the facts take them) before anything moves, exit 5.
 
 ## 3. Provenance and input digests (the base for speedups 1 and 3)
 
@@ -356,8 +369,9 @@ As built in I1: `base.trees` adds, for the release and the test copy, the
 listing's `os_manifest`, its entry count, its tree names and `swap_missing`
 (the swap-list paths, not marked optional, that the listing lacks: empty on
 all seven in I1's set). `test.os_manifest` is the test copy's. `built.run`
-is null when img-one.sh is given no `BKO_IMG_RUN` (img-lanes.sh passes none
-yet). The provenance is not written (said in `result.txt`) when the build's
+is null when img-one.sh is given no `BKO_IMG_RUN` (since I8 img-lanes.sh
+passes its `--run`, which defaults to the time, so only a bare img-one.sh
+leaves it null). The provenance is not written (said in `result.txt`) when the build's
 stick/ inputs, builder, ISO, slim, host tools or binaries moved since its
 start (`--start`), so that a vm-update or a sync during the boot tests cannot
 record inputs the image was not built from. `holt_code` is null until
@@ -772,7 +786,35 @@ Chopin's current images (symlinks, the real ledger) it said reuse ×7, each
 proven by the 2026-11-26 ImgTest2 rows. The literal proof, `plan` right after
 a fresh set, waits for the first set built with I1's provenance.
 
-### 5.3 What moves with it
+*As built (I8, 2026-11-27):* `img-round.sh run` (`img_round.py do_run`)
+takes the Mac's lock, then every used host's round lock (C10) in parallel:
+the builders, the reference and the fan-out hosts. A host no ssh reaches is
+named and not used; one whose lock stays held refuses the round (exit 3).
+Then it gathers facts and plans as `plan` does (RUN/plan.json keeps the
+`--remote-env`, which `fanout` reuses). Each host with units runs
+`img-lanes.sh --run RUN` over one ssh, its units split over its deal lanes
+(`lanes_of`: longest first, each to the lane with the fewest minutes; a
+refresh is `P@PARENT-TEST-SHA256`, which img-lanes.sh turns into
+`--refresh-from`). The units get `BKO_PLAN_BKO_BIN`, `BKO_PLAN_HOLT_BIN` and
+`BKO_PLAN_BUILDER_P` (the reference's builder identity, `img_inputs.py
+identity`'s line, which img-lanes.sh passes as `BKO_PLAN_BUILDER`).
+img-lanes.sh runs in a session of its own on the host, its output and then
+its exit in `images/.round-RUN.{log,pid,exit}`. **A network blip costs no
+build**: the first farm round lost the Mac's ssh to cage ("Host is down")
+mid-build, so a lost build ssh is polled for `.round-RUN.exit` until the
+lanes end, and a stop of the round (an interrupt, a TERM) sends "stop",
+which HUPs the lanes' session; the end of stdin alone does nothing. Likewise
+a round-lock holder whose ssh ends without the round's "release" line holds
+on for 15 min, and the round's lock watch (every 10 s) starts a new holder
+of the same RUN, which takes over (it TERMs the old one, named by the pid
+the lock file records); round.json's `lock_events` and the summary say so.
+After the builds, one ssh per host reads each unit's done.exit, SHA256SUMS,
+`bko-bin.sha256` and provenance `built.run` (a unit counts only when
+`built.run` is this RUN and done.exit 0), and its minutes and wait from the
+host's own file times. `RUN/HOST.log`, `round.json`, `summary.txt`: per
+platform the action, host, minutes, done.exit and the hosts whose copy is
+identical, and any unit that waited over 5 min for its reservation.
+
 
 - `promote-bins.sh`'s "the shared sets are assembled where the images are
   built", which makes the source big-class Chopin by default: the source can
@@ -782,6 +824,10 @@ a fresh set, waits for the first set built with I1's provenance.
   HoltTest2 already copies to every run host.
 - Chopin's `images/lanes.sh` and its stale copies of `img-one.sh` and
   `img-lanes.sh` are retired. The farm runs the synced `stick/` copies.
+  *Done (I8, 2026-11-27):* the four (`lanes.sh`, `img-lanes.sh`,
+  `img-one.sh`, and an `xcopy.sh` that compressed on DEST) moved to Chopin's
+  `~/backotter-work/retired/images-scripts-20261127/` with a README; nothing
+  in the repo named them but this spec.
 
 ## 6. Speedup 3: rebuild only what changed
 
@@ -1043,6 +1089,19 @@ whenever a guest is updated.
   no `bins_stale`. Once fanned out, every host qualifies, and the planner's
   existing ranking spreads the cells. Every +img line of the current panel
   (D 3-5, MEM 4) fits a small host's 9.0 10.1.
+- *As built (I8, 2026-11-27):* `fanout` (also `run`'s last step, inside its
+  locks) takes every platform whose unit passed, from its builder to every
+  `--to` host (default: every enabled amd64 host). First, one ssh per DEST
+  reads its holt-bin SHA256SUMS and each platform's bko-holt and bko-bin
+  binaries: DEST is refused for P unless its holt-bin set is the plan's or
+  its `holt-bin/P/bko-holt` is the image's, and its `bko-bin/P` binaries are
+  the image's. Then `img-xcopy.sh DEST P...` runs on the builder, one per
+  (builder, DEST) pair, `--jobs` (6) at once, with BKO_DEST_IMAGES,
+  BKO_DEST_HOLT_BIN and BKO_DEST_STICK taken from the round's
+  `--remote-env` (the same layout on every host). Last, every holder hashes
+  its copies again against its SHA256SUMS, which must be the builder's, and
+  its done.exit must be 0; anything else is BAD in the summary (exit 1).
+  Only the round's built platforms go: a reused one stays where it is.
 - Gain: ImgTest2's 7 cells and the panel's 7 lines spread over up to 6 hosts
   instead of 2. The panel's floor becomes its longest single line
   (dragonfly6+img, 16 gm) instead of the 26 min that two hosts took.
@@ -1711,7 +1770,7 @@ Each step is done when its proof passes. Figures are rough (est.).
 | **I5** | `BKO_IMG_COMPRESS=0` in img-one.sh and img-xcopy.sh, `img-one.sh` writing `SHA256SUMS`, and `img-publish.sh`. The retention rule only after D6. (~0.5 d) | A set builds with no xz process (sampled ps and wear tags). Facts give the same release SHA-256 as before, and ImgTest2's keys for an unchanged image are unchanged. Publish's decompress-and-hash matches the raw SHA-256 of every image, and publish refuses a set past the cadence |
 | **I6** | Parallel modes in img-one.sh and ImgTest2's boot.sh, the image copied into the RAM disk, reservations sized by width. (~0.5 d) | The same image tested serial and parallel gives the same per-check verdicts on 3 sets. No reservation goes over its ceiling (cmp-run logs). The flakes.json match rate is unchanged |
 | **I7** | `img-seed.sh`, and Linux inputs on copland, cage and czerny. (~0.5 d) As built (2026-11-27), with the media and copland's builder mended (§5.1). Proof: the slim manifests match on all three (e19af22fa576, ISO c8e9d797f718); full Linux builds at 05:05Z on Chopin and copland (private image dirs, the shared sets) gave the same base, bins and tests digests in the provenance, the same base squashfs (65bc6e21) and layer manifest (2c9863ec) in both images of each, layer squashfs bytes that differ only within E1's noise floor (114 tree-listing entries, none outside I3's diff(A, A')), and ImgTest2 `linux` PASS on each (private T2 roots, `T2_IMAGES` at each set; panel not needed). 13 new tests (test_img_seed, a fixture farm behind a fake ssh); the t2 suite passes (3310) | The slim manifests match. A full Linux build on copland and one on Chopin from the same inputs, the same day, have the same layer manifest (package list), the same base squashfs bytes, and both PASS ImgTest2 |
-| **I8** | `img-round.sh run` and `fanout`, the round lock (C10, after D16). Retire Chopin's `images/lanes.sh`. promote-bins' source relaxed (F20). (~1.5 d) | A full farm round: each platform built where `plan` said, identical SHA-256 on every holding host, every host's pin accepts every platform, and no host over its limits. A promote-bins started mid-round is refused, and a unit started with a host's sets changed under it refuses |
+| **I8** | `img-round.sh run` and `fanout`, the round lock (C10, after D16). Retire Chopin's `images/lanes.sh`. promote-bins' source relaxed (F20). (~1.5 d) As built (2026-11-27; §5.2, §10, C10): run, fanout, the host and Mac round locks, img-lanes.sh's `P@SHA256` refresh units, `BKO_IMG_RUN` and plan environment, img-one.sh's exit 5, the locks in promote-bins.sh and img-refresh-holt.sh, and Chopin's four stale scripts retired (§5.3). Proof, from private dirs on all six amd64 hosts (`/bkoscratch/imgspeed/I8`: stick/, the sets copied, images/; `--remote-env`): round i8r2 built full ×7 where its plan said (linux and dragonfly on cinqcent, freebsd on chopin, illumos on copland, openbsd and haiku on cage, netbsd on czerny; 3.2 to 17 min a unit) and fanned out 35 copies over 25 host pairs, 06:26 to 06:51Z; every platform's two images had the same SHA-256 on all six hosts, each hashed again there; `t2-host tool img pin` of all seven on each of the six said ok, no `bins-stale`, Linux `release_same` true; sampled every 30 s, no host's `cmp-run.sh --free` went below 0 and the small hosts' RAM disk peaked at 3.9 of 9.0 GiB. Mid-round, `promote-bins.sh --sets holt-bin,bko-bin cage choubox` said REFUSED with the round's name for both holt-bins (bko-bin was up to date), and `img-refresh-holt.sh` on copland was refused (exit 2). An `img-lanes.sh "haiku netbsd"` with the plan's environment on czerny, its holt-bin SHA256SUMS changed once haiku had started: haiku passed, netbsd refused (exit 5, nothing moved). The first round (i8r1, with the code before its blip fixes) lost the Mac's ssh to cage mid-build; that is why a lost ssh no longer stops the lanes or drops the lock. 27 new tests (test_img_round_run, a fixture farm behind a fake ssh, and test_round_dist's round refusal); t2 self-test all ok | A full farm round: each platform built where `plan` said, identical SHA-256 on every holding host, every host's pin accepts every platform, and no host over its limits. A promote-bins started mid-round is refused, and a unit started with a host's sets changed under it refuses |
 | **I9** | Proof cells on six hosts: fan-out to all, choubox's width-1 boot cells. (~0.5 d) | An ImgTest2 run places cells on at least 5 hosts. The panel's lines spread, and its wall time drops to about its longest line |
 | **I10** | `holt-cross.sh` for freebsd, netbsd and illumos, as HoltTest2 check builds in `CODE/cross/` with their own key (§8.2a, D17). (~1.5 d) | E2 steps 0-3 for each. A check build never lands in `CODE/PLAT/` |
 | **I11** | The same for openbsd and dragonfly (tier 3). (~1.5 d) | E2 steps 0-3 for each |

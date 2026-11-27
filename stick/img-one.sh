@@ -40,7 +40,8 @@
 # 1), 2 on bad usage or when T2_HOST_ROOT is a test's and the images
 # directory is the real one, 3 when a build of this platform is already under
 # way, 4 when a refresh's parent is refused (nothing moved, no done.exit
-# written).
+# written), 5 when the host's bko-bin or holt-bin set is not the plan's
+# (BKO_PLAN_BKO_BIN, BKO_PLAN_HOLT_BIN below; nothing moved either).
 #
 # The boot tests (stick/boot-modes.sh, img-speed.md §9): BKO_BOOT_WIDTH modes at
 # once (default 1, one after another; img-lanes.sh gives as many as its
@@ -55,7 +56,8 @@
 # builder's identity, the ISO, slim, the host tools or the binaries moved by
 # the time it ends; BKO_PLAN_BUILDER (the builder identity a plan computed,
 # `img_inputs.py identity P`'s line) also refuses a builder that isn't the
-# plan's.  The FreeBSD builder's vms/freebsd15-builder/.vm-update.lock is held
+# plan's.  BKO_IMG_RUN names the round (provenance built.run; img-lanes.sh
+# passes its --run).  The FreeBSD builder's vms/freebsd15-builder/.vm-update.lock is held
 # while it runs (make-img-bsd.sh holds a snapshot builder's), and its
 # fingerprint (freebsd-version -ku and its build tools' SHA-256) is written to
 # vms/freebsd15-builder/fingerprint and must not change during the build.
@@ -120,6 +122,20 @@ if [[ -n $REFRESH ]]; then
     pj() { python3 -c 'import json, sys; d = json.loads(sys.argv[1]); print(eval(sys.argv[2]))' "$pjson" "$1"; }
     pdir=$(pj 'd["dir"]') && prel=$(pj 'd["release"]["file"]') || { echo "img-one: can't read the parent check: $pjson" >&2; exit 4; }
 fi
+# C10: a round's unit is built from the round's sets.  BKO_PLAN_BKO_BIN and
+# BKO_PLAN_HOLT_BIN (the SHA-256 of the plan's bko-bin and holt-bin SHA256SUMS,
+# as its facts took them) refuse a host whose sets moved since (a promotion, an
+# img-refresh-holt.sh): exit 5, nothing moved, no done.exit written.
+for v in BKO_PLAN_BKO_BIN:$B BKO_PLAN_HOLT_BIN:$H; do
+    k=${v%%:*} want=${!k:-} f=${v#*:}/SHA256SUMS
+    [[ -n $want ]] || continue
+    got=$(sha256sum <"$f" 2>/dev/null | cut -d' ' -f1)
+    if [[ $got != "$want" ]]; then
+        g=${got:0:12}; [[ -n $g ]] || g=missing
+        echo "img-one: $f is $g, the plan's is ${want:0:12}: the host's sets changed since the plan (C10); not built" >&2
+        exit 5
+    fi
+done
 stamp=$(date -u +%Y%m%d-%H%M%S)
 if [[ -n $(find . -maxdepth 1 -mindepth 1 ! -name 'prev-*') ]]; then
     mkdir "prev-$stamp" || exit 1

@@ -18,7 +18,10 @@
 # BKO_WORK/holt-bin is the real one, under any of its names (a test writing to
 # production's set).  COMMIT goes before the new binary lands and comes back
 # after it: a refresh cut short leaves no COMMIT, and an image built then is
-# refused (img-one.sh writes no bko-holt.commit).  Exit 0, 1 when a copy failed,
+# refused (img-one.sh writes no bko-holt.commit).  Refused too while an image
+# round holds this host (images/.round.lock, img-speed.md C10, D16: a holt-bin
+# that moved between two of its units would mix the round's set); a shared
+# flock on it is held to the end, so no round starts meanwhile.  Exit 0, 1 when a copy failed,
 # 2 on bad usage or a refusal.
 set -uo pipefail
 die() { echo "img-refresh-holt: $*" >&2; exit 2; }
@@ -37,6 +40,10 @@ fi
 SRC=$HR/holt-bin/$CODE
 [[ -d $SRC ]] || die "no $SRC"
 [[ $# -gt 0 ]] || set -- $ALL
+if [[ -d $I ]]; then   # (C10: a round's lock, shared and held to the end of this script)
+    exec {rl}>>"$I/.round.lock" || die "can't open $I/.round.lock"
+    flock -n -s "$rl" || die "image round $(head -n 1 "$I/.round.lock" 2>/dev/null | cut -c1-120) holds this host ($I/.round.lock): wait for it to end, or stop it"
+fi
 rel() { if [[ $1 == linux ]]; then echo bko-holt; else echo "$1/bko-holt"; fi; }
 for p; do
     [[ " $ALL " == *" $p "* ]] || die "PLATFORM: one of $ALL, not '$p'"

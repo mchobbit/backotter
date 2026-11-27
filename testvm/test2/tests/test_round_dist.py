@@ -85,7 +85,9 @@ if on and remote and os.path.exists(os.path.join(root, "noh2h")):
 os.execv(os.environ["FAKE_REAL_RSYNC"], ["rsync"] + out)
 '''
 
-FAKE_FLOCK = '#!/bin/sh\n[ -e "$FAKE_ROOT/lock-held" ] && exit 1\nexit 0\n'
+# (A shared flock is the image round's lock, images/.round.lock, which round-held holds.)
+FAKE_FLOCK = ('#!/bin/sh\ncase " $* " in *" -s "*) [ -e "$FAKE_ROOT/round-held" ] && exit 1; exit 0 ;; esac\n'
+              '[ -e "$FAKE_ROOT/lock-held" ] && exit 1\nexit 0\n')
 
 # build-round.sh's BKO_PICK_HOST: the host the world's "pick" file names (pick-host's
 # answer), else no host (exit 1), as pick-host when every candidate was dropped.
@@ -570,6 +572,26 @@ class PromoteBins(unittest.TestCase):
         self.assertIsNone(self.w.read("cage", "backotter-work/holt-bin/linux/bko-holt"))
         self.assertEqual([n for n in os.listdir(os.path.join(self.w.home("cage"), "backotter-work"))
                           if n.startswith(".promote-")], [])
+
+    def test_a_round_holding_the_host_refuses_its_images_sets(self):
+        # C10, D16: while img-round.sh run holds cage's images/.round.lock, its bko-bin and
+        # holt-bin are refused, with the round's name; cmp-bin still goes.
+        self.w.put("cage", "backotter-work/images/.round.lock", "r8 (img-round.sh from mac, since now, pid 1)\n")
+        self.w.flag("round-held")
+        r = self.pb("cage")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        for s in ("bko-bin", "holt-bin"):
+            self.assertIn(f"cage {s}: REFUSED: image round r8 (img-round.sh from mac", r.stdout)
+            self.assertIsNone(self.w.read("cage", f"backotter-work/{s}/SHA256SUMS" if s == "bko-bin"
+                                          else f"backotter-work/{s}/linux/bko-holt"))
+        self.assertIn("cage cmp-bin: 2 of 2 files copied", r.stdout)
+        r = self.pb("--dry-run", "--sets", "holt-bin", "cage")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("cage holt-bin: would be REFUSED: image round r8", r.stdout)
+        self.w.flag("round-held", False)
+        r = self.pb("--sets", "holt-bin", "cage")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIsNotNone(self.w.read("cage", "backotter-work/holt-bin/linux/bko-holt"))
 
     def test_through_the_mac(self):
         self.w.flag("noh2h")

@@ -34,16 +34,20 @@
 #   the drive, or with a key that doesn't fit, ZFSBootMenu asks as before.
 #   Once a boot found no drive, a second encryption root doesn't wait again.
 #
-#   unlock-key --booster-fifos, then --booster in the background (family P:
-#   booster, PikaOS; the kernel runs BackShot1's booster-preinit first, by
-#   rdinit=, which runs these with busybox, then execs booster's /init):
-#   --booster-fifos makes a FIFO /backshot1-key.UUID for each of the
+#   unlock-key --booster-fifos, then --booster-run in the background
+#   (family P: booster, PikaOS; the kernel runs BackShot1's booster-preinit
+#   first, by rdinit=, which runs these with busybox, then execs booster's
+#   /init): --booster-fifos makes a FIFO /backshot1-key.UUID for each of the
 #   record's P volumes, the key file booster's rd.luks.key=UUID=PATH names;
-#   --booster, once booster has mounted /run, waits up to wait= seconds for
-#   the drive and writes its key into each FIFO, which booster is waiting
-#   to read, then marks NAME drive; without the drive it writes nothing
-#   (booster asks at once) and marks NAME typed.  A key that doesn't fit
-#   shows in the kernel's log, where booster says so (bs1-common).
+#   --booster-run marks itself started (the preinit removes the FIFOs if it
+#   never does) and runs --booster's work: once booster has mounted /run,
+#   wait up to wait= seconds for the drive and write its key into each
+#   FIFO, which booster is waiting to read, then mark NAME drive; without
+#   the drive (or the key not read within GIVE_WAIT) it writes nothing and
+#   ends the FIFO (booster asks at once) and marks NAME typed.  A deadline,
+#   wait= plus 60 s, ends the FIFOs the same way should the drive hang it.
+#   A key that doesn't fit shows in the kernel's log, where booster says so
+#   (bs1-common).
 #
 #   unlock-key --keystore, then --keystore-done (family S's Ubuntu ZFS
 #   keystore, volume HOW K: BackShot1's dracut module's pre-mount hooks 85
@@ -133,13 +137,22 @@ umask 077
 mode=keyscript
 case ${1:-} in
 --to) mode=to ;; --zfs) mode=zfs ;; --keystore) mode=keystore ;; --keystore-done) mode=keystore-done ;;
---booster-fifos) mode=booster-fifos ;; --booster) mode=booster ;;
+--booster-fifos) mode=booster-fifos ;; --booster) mode=booster ;; --booster-run) mode=booster-run ;;
 esac
 
 # Family P (booster, PikaOS): each P volume's key file, the FIFO
 # BOOSTER_KEY.UUID that rd.luks.key=UUID=/backshot1-key.UUID names, in the
-# initramfs's own root (booster wipes it before switching root).
+# initramfs's own root (booster wipes it before switching root).  Booster's
+# read of it ends only when its last writer closes it, so every FIFO gets
+# the key or nothing, never left for no one to write: give is bounded by
+# GIVE_WAIT, release never blocks, and --booster-run releases whatever is
+# left when the helper is done or BOOSTER_DEADLINE s have gone by without
+# it having the drive's key (a mount that hangs).  CLAIM, a directory one
+# mkdir makes, is the helper's or the deadline's, never both.
 BOOSTER_KEY=$R/backshot1-key
+STARTED=$R/backshot1-key-started
+CLAIM=$R/backshot1-key-claim
+DONE=$R/backshot1-key-done
 # give FROM FIFO: FROM's bytes through FIFO, once booster opens it to read
 # (it does as soon as the volume appears); given up after GIVE_WAIT s, when
 # it never does.
@@ -151,6 +164,15 @@ give() {
         sh -c 'exec cat "$1" >"$2"' sh "$1" "$2"
     fi
 }
+# release FIFO: no key through FIFO, and booster asks: a read-write open
+# (which never waits) wakes a booster waiting to open it, the FIFO goes, and
+# the close is its end of file; a booster that hasn't opened it yet finds
+# no key file.
+release() {
+    [ -p "$1" ] || return 0
+    ( exec 3<>"$1" && rm -f "$1" ) 2>/dev/null
+    rm -f "$1"
+}
 p_volumes() {
     for v in $volumes; do
         [ "${v##*:}" = P ] || continue
@@ -158,16 +180,17 @@ p_volumes() {
         echo "${v%%:*} ${u%%:*}"
     done
 }
-
-if [ $mode = booster-fifos ]; then
+# release_all: each FIFO still there released, its volume typed.
+release_all() {
     p_volumes | while read -r name uuid; do
-        rm -f "$BOOSTER_KEY.$uuid"
-        mkfifo -m 600 "$BOOSTER_KEY.$uuid" || echo "BackShot1: no $BOOSTER_KEY.$uuid; booster will ask for $name" >&2
+        f=$BOOSTER_KEY.$uuid
+        [ -p "$f" ] || continue
+        release "$f"
+        mark "$name" typed
     done
-    exit 0
-fi
-
-if [ $mode = booster ]; then
+}
+# booster_give: the drive's key into each FIFO, or none.
+booster_give() {
     # booster's own /proc, /dev and /run first (it mounts them as it
     # starts): the marks go into the /run it moves into the booted system.
     i=0
@@ -178,6 +201,11 @@ if [ $mode = booster ]; then
     tmp=$R/backshot1-key.tmp
     got=no
     fetch "$tmp" && got=yes
+    # The deadline came first: it released every FIFO.
+    if ! mkdir "$CLAIM" 2>/dev/null; then
+        rm -f "$tmp"
+        return 0
+    fi
     p_volumes | {
     while read -r name uuid; do
         f=$BOOSTER_KEY.$uuid
@@ -189,17 +217,54 @@ if [ $mode = booster ]; then
                 # doesn't fit (bs1-common's unlock_how P).
                 echo "<5>BackShot1: $name: the backup drive's key, handed to booster" >"$R/dev/kmsg" 2>/dev/null
                 mark "$name" drive
+                rm -f "$f"
             else
-                # No key: an empty one, so booster asks at once.
-                [ $got = yes ] || give /dev/null "$f"
+                # No key (or booster never read it): nothing, so booster asks.
+                release "$f"
                 mark "$name" typed
             fi
-            rm -f "$f"
         ) &
     done
     wait
     }
     rm -f "$tmp"
+}
+
+if [ $mode = booster-fifos ]; then
+    p_volumes | while read -r name uuid; do
+        rm -f "$BOOSTER_KEY.$uuid"
+        mkfifo -m 600 "$BOOSTER_KEY.$uuid" || echo "BackShot1: no $BOOSTER_KEY.$uuid; booster will ask for $name" >&2
+    done
+    exit 0
+fi
+
+if [ $mode = booster ]; then
+    booster_give
+    release_all
+    exit 0
+fi
+
+if [ $mode = booster-run ]; then
+    # The preinit waits for this before booster's /init runs.
+    : >"$STARTED"
+    deadline=${BS1_BOOSTER_DEADLINE:-$((wait + 60))}
+    (
+        i=0
+        while [ "$i" -lt "$deadline" ] && [ ! -e "$DONE" ]; do
+            sleep 1
+            i=$((i + 1))
+        done
+        if [ ! -e "$DONE" ] && mkdir "$CLAIM" 2>/dev/null; then
+            echo "BackShot1: no key from the backup drive in $deadline s; booster asks instead" >&2
+            release_all
+        fi
+    ) &
+    w=$!
+    ( booster_give )
+    : >"$DONE"
+    wait "$w"
+    # Whatever the helper left (it died): booster asks.
+    release_all
     exit 0
 fi
 

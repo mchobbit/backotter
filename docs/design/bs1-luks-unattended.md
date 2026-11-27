@@ -845,16 +845,42 @@ build` doesn't pass).  So nothing in booster itself can wait for the drive.
   `sh`).  It links the applets it needs under `/backshot1-bin` (the image has
   only `/usr/bin/busybox`, no applet links and no `/bin/sh`), runs
   `bs1-unlock-key --booster-fifos` (`mkfifo /backshot1-key.UUID` for each of
-  the record's P volumes), starts `bs1-unlock-key --booster` in the
+  the record's P volumes), starts `bs1-unlock-key --booster-run` in the
   background and execs `/init`.  booster's read of the FIFO blocks (Go's
   `os.ReadFile`) until the helper, once booster has mounted `/run` and up to
   `wait=` s later, writes the drive's key into it and closes it; without the
-  drive it closes it empty (booster logs the failed key file and asks at
+  drive it ends it empty (booster logs the failed key file and asks at
   once).  The helper finds the drive by busybox `findfs LABEL=` (booster makes
   no by-label links), mounts it `ro,norecovery` (xfs), and marks `NAME drive`
   or `NAME typed` in `/run/backshot1-unlock`, which booster moves into the
   booted system.  booster wipes its root (FIFOs, key copy, links) before it
   switches root.
+- **No FIFO left unwritten** (review of 1a0bcce): a FIFO no one writes
+  holds booster for ever, with no prompt.  So:
+  - the preinit makes `/dev/null` first (`mknod -m 666 /dev/null c 1 3`;
+    booster's devtmpfs covers it later): before booster's `/init` the
+    kernel's `/dev` has only `console`, and busybox `sh` can start no
+    background job without `/dev/null` (shown in a user-namespace chroot
+    under Debian's busybox, where `mknod` is refused: "can't open
+    '/dev/null'");
+  - `--booster-run` touches `/backshot1-key-started` first; the preinit
+    waits up to 3 s for it and otherwise removes the FIFOs, so booster
+    finds no key file and asks (the same chroot run: "no fifo", no hang);
+  - `release` ends a FIFO without waiting: a read-write open (a FIFO's
+    never blocks on Linux) wakes a booster waiting to open it, the FIFO is
+    removed, and the close is booster's end of file; a booster not there
+    yet finds no file.  The helper releases on every path without the key
+    handed over: no drive, no key on it, `give` failing or timing out
+    (`GIVE_WAIT` 600 s, booster never opened it);
+  - `--booster-run`'s deadline, `wait=` + 60 s, releases every FIFO should
+    the helper not yet have the drive's key (a mount that hangs), and
+    whatever is left once the helper ends (killed, died) goes too.  The
+    helper and the deadline each `mkdir /backshot1-key-claim`; only the one
+    that made it hands keys or releases, so a late key can't be marked
+    `drive` after the deadline released its FIFO;
+  - adopt requires busybox `--list` to have `ln mknod sh cat mount umount
+    mkdir rmdir rm mkfifo sleep grep findfs timeout` (`modprobe` and
+    `blkid` fetch does without), else family A.
 - **adopt** (`bs1-luks`, family P, generator `booster`, found after
   mkinitcpio as holt's `initramfs_json` does): the preinit and
   `unlock-key` (listed in `made`), `/etc/booster.yaml` (in `orig/`) with
@@ -874,7 +900,7 @@ build` doesn't pass).  So nothing in booster itself can wait for the drive.
   puts both files back before remaking the images.  A first line (rEFInd's
   default) that doesn't name the volume, an `rdinit=` of the line's own, a
   name other than the open mapping's, booster without
-  `refind_linux.conf`, or no busybox: family A.  An `rd.luks.key=` of its
+  `refind_linux.conf`, or no busybox or one without those applets: family A.  An `rd.luks.key=` of its
   own: `own`.  A volume the booted system opens is S's, under systemd.
 - **Evidence** (`unlock_how P`): the helper's mark, unless this boot's
   kernel log (`journalctl -k -b`, else `dmesg`) has booster's
@@ -896,7 +922,9 @@ build` doesn't pass).  So nothing in booster itself can wait for the drive.
 Unit tests: `testvm/test2/tests/test_bs1_booster.py` (booster.yaml and
 refind_linux.conf edits, `lk_p_volume`'s cases, adopt, rerun and
 `--luks-off` on a fake PikaOS with a fake `booster`, an image without the
-preinit putting everything back, the helper's FIFOs with and without the
-drive, the evidence, install.sh's key-file lines).  Not yet rehearsed in
+preinit putting everything back, a busybox without an applet, the
+helper's FIFOs with and without the drive, `release` waking a waiting
+reader, a key booster never reads, `--booster-run` with and without the
+drive and with a mount that hangs past the deadline, the evidence, install.sh's key-file lines).  Not yet rehearsed in
 QEMU (`pika-bootstrap-qemu.sh` with `--luks`, then `bs1-qemu.py`), nor run on
 the Thinkpad.

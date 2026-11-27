@@ -519,8 +519,8 @@ Built, unit-tested, not yet rehearsed or run on the Thinkpad.
   `rd.luks.name=UUID=crypt_root rd.luks.options=discard`.
 - **Family P** ([[bs1-luks-unattended]], "Built, family P"): BackShot1's
   preinit as the kernel's `rdinit=` makes the key file a FIFO and starts
-  `bs1-unlock-key --booster`, which writes the drive's key into it once the
-  drive appears (else closes it empty after 30 s, and booster asks);
+  `bs1-unlock-key --booster-run`, which writes the drive's key into it once the
+  drive appears (else ends it empty after 30 s, and booster asks);
   `booster.yaml`'s `extra_files` and `modules_force_load` carry what that
   needs; `refind_linux.conf` gets `rdinit=`, `rd.luks.key=` and, on `quiet`
   lines, `booster.log=warning`. The restore needs no change: it restores

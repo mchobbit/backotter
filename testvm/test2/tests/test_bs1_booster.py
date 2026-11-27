@@ -13,6 +13,7 @@ import stat
 import subprocess
 import textwrap
 import threading
+import time
 import sys
 import unittest
 from pathlib import Path
@@ -25,6 +26,9 @@ BS1 = base.BS1
 exe = base.exe
 UUID = "7c1d2e3f-4a5b-4c6d-8e7f-a0b1c2d3e4f5"
 INIT = "/usr/local/lib/backshot1/booster-preinit"
+# A busybox --list with every applet BackShot1's preinit and helper use.
+APPLETS = ["ln", "mknod", "sh", "cat", "mount", "umount", "mkdir", "rmdir", "rm", "mkfifo", "sleep", "grep",
+           "modprobe", "blkid", "findfs", "timeout", "ls"]
 
 # What pikainstall 2.0.5 writes on LUKS (pika-install-host.sh's booster.yaml;
 # _REFIND_CRYPT_SETUP_FILE's three lines, rootflags as findmnt gave them).
@@ -152,7 +156,13 @@ class RefindText(Lib):
         text = self.lib("lk_p_preinit")
         self.assertTrue(text.startswith("#!/usr/bin/busybox sh\n"))
         self.assertIn('$b sh /usr/local/lib/backshot1/unlock-key --booster-fifos\n', text)
-        self.assertIn('$b sh /usr/local/lib/backshot1/unlock-key --booster </dev/null &\n', text)
+        self.assertIn('$b sh /usr/local/lib/backshot1/unlock-key --booster-run </dev/null &\n', text)
+        # /dev/null before the background job (the kernel's /dev has only
+        # console); the FIFOs go if the helper never says it started.
+        self.assertLess(text.index("[ -e /dev/null ] || $b mknod -m 666 /dev/null c 1 3\n"), text.index("unlock-key --booster-run"))
+        self.assertLess(text.index("unlock-key --booster-fifos"), text.index("unlock-key --booster-run"))
+        self.assertIn("while [ ! -e /backshot1-key-started ] && [ $i -lt 30 ]; do\n", text)
+        self.assertIn("[ -e /backshot1-key-started ] || $b rm -f /backshot1-key.*\nexec /init", text)
         self.assertTrue(text.rstrip().endswith('exec /init "$@"'))
         f = self.t / "preinit"
         f.write_text(text)
@@ -221,7 +231,7 @@ class AdoptP(base.Tmp):
         self.yaml = t / "etc/booster.yaml"
         self.yaml.write_text(PIKA_YAML)
         (t / "crypttab").write_text(f"crypt_root\tUUID={UUID}\tnone\tluks,discard\n")
-        exe(t / "usr/bin/busybox", "#!/bin/sh\nexit 0\n")
+        self.busybox(APPLETS)
         exe(self.bin / "booster", BOOSTER % {"root": str(t)})
         exe(self.bin / "findmnt", f'#!/bin/sh\ncase "$2" in TARGET) echo "{t}/drive" ;; SOURCE) echo /dev/sdb1 ;; FSTYPE) echo xfs ;; esac\n')
         exe(self.bin / "blkid", "#!/bin/sh\necho mybig512\n")
@@ -234,6 +244,9 @@ class AdoptP(base.Tmp):
             case $3 in xhci_pci) echo "(builtin)" ;; usb_storage|uas|sd_mod|xfs) echo "/lib/modules/7.3.3-pikaos/kernel/$3.ko.zst" ;; *) exit 1 ;; esac
             """))
         (t / "proc-cmdline").write_text(f"initrd=\\booster.img-7.3.3-pikaos rd.luks.name={UUID}=crypt_root quiet splash ---\n")
+
+    def busybox(self, applets):
+        exe(self.t / "usr/bin/busybox", '#!/bin/sh\n[ "$1" = --list ] && printf "%s\\n" ' + " ".join(applets) + "\nexit 0\n")
 
     def adopt(self, what="luks_adopt", rc=0):
         t = self.t
@@ -328,6 +341,17 @@ class AdoptP(base.Tmp):
         self.assertIn("for BackShot1's preinit", self.adopt())
         self.assertEqual(self.builds(), [])
 
+    def test_a_busybox_without_an_applet_attended(self):
+        # modprobe and blkid it can do without; not timeout or findfs.
+        self.busybox([a for a in APPLETS if a not in ("modprobe", "blkid")])
+        self.assertIn(f"family P (initramfs: booster): crypt_root:{UUID}:P", self.adopt())
+        self.adopt("luks_off")
+        self.busybox([a for a in APPLETS if a not in ("timeout", "findfs")])
+        out = self.adopt()
+        self.assertIn("busybox has no findfs timeout (BackShot1's preinit", out)
+        self.assertNotIn("family P", out)
+        self.assertEqual(self.refind.read_text(), PIKA_REFIND)
+
     def test_a_key_of_its_own_is_own(self):
         self.refind.write_text(f'"x" "rd.luks.name={UUID}=crypt_root rd.luks.key={UUID}=/etc/root.key quiet"\n')
         out = self.adopt()
@@ -369,9 +393,10 @@ class UnlockKeyBooster(base.Tmp):
             """))
         self.fifo = self.root / f"backshot1-key.{UUID}"
 
-    def run_key(self, *args):
+    def run_key(self, *args, **env):
+        env = {"BS1_UNLOCK_ROOT": str(self.root), "BS1_GIVE_WAIT": "20", **env}
         return subprocess.run(["sh", str(BS1 / "bs1-unlock-key"), *args], capture_output=True, text=True, timeout=60,
-                              env=self.env(BS1_UNLOCK_ROOT=str(self.root), BS1_GIVE_WAIT="20"))
+                              env=self.env(**env))
 
     def marks(self):
         p = self.root / "run/backshot1-unlock"
@@ -382,8 +407,12 @@ class UnlockKeyBooster(base.Tmp):
         got = {}
 
         def read():
-            with open(self.fifo, "rb") as f:
-                got["key"] = f.read()
+            try:
+                with open(self.fifo, "rb") as f:
+                    got["key"] = f.read()
+            except FileNotFoundError:
+                # Released before booster opened it: no key file, it asks.
+                got["key"] = None
         th = threading.Thread(target=read, daemon=True)
         th.start()
         return th, got
@@ -414,9 +443,86 @@ class UnlockKeyBooster(base.Tmp):
         r = self.run_key("--booster")
         th.join(10)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(got.get("key"), b"")
+        self.assertFalse(th.is_alive())
+        self.assertIn(got.get("key"), (b"", None))
         self.assertEqual(self.marks(), ["crypt_root typed"])
         self.assertIn("no backup drive mybig512", r.stderr)
+        self.assertFalse(self.fifo.exists())
+
+    def test_release_wakes_a_waiting_reader(self):
+        """release, never blocking: a booster waiting to open the FIFO gets
+        end of file; one that opens it later finds none."""
+        self.run_key("--booster-fifos")
+        th, got = self.booster_reads()
+        time.sleep(0.3)
+        script = f'R=; BOOSTER_KEY=x; {base.functions(BS1 / "bs1-unlock-key", "release")}\nrelease "{self.fifo}"'
+        r = subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=10)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        th.join(5)
+        self.assertFalse(th.is_alive())
+        self.assertEqual(got.get("key"), b"")
+        self.assertFalse(self.fifo.exists())
+
+    def test_a_key_booster_never_reads(self):
+        """give times out (booster never opened the FIFO): the FIFO goes, so a
+        booster coming late finds no key file and asks."""
+        (self.root / "dev/disk/by-label/mybig512").write_text("")
+        if not shutil.which("timeout"):
+            # macOS: SIGALRM, kept across exec, stands in for timeout.
+            if not shutil.which("perl"):
+                self.skipTest("no timeout or perl")
+            exe(self.bin / "timeout", "#!/bin/sh\nexec perl -e 'alarm shift; exec @ARGV or exit 127' \"$@\"\n")
+        self.run_key("--booster-fifos")
+        r = self.run_key("--booster", BS1_GIVE_WAIT="1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.marks(), ["crypt_root typed"])
+        self.assertFalse(self.fifo.exists())
+        self.assertFalse((self.root / "backshot1-key.tmp").exists())
+
+    def test_run_the_drive_key(self):
+        (self.root / "dev/disk/by-label/mybig512").write_text("")
+        self.run_key("--booster-fifos")
+        th, got = self.booster_reads()
+        r = self.run_key("--booster-run", BS1_BOOSTER_DEADLINE="100000")
+        th.join(10)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(got.get("key"), b"s3cret")
+        self.assertEqual(self.marks(), ["crypt_root drive"])
+        self.assertTrue((self.root / "backshot1-key-started").exists())
+        self.assertFalse(self.fifo.exists())
+        self.assertNotIn("booster asks instead", r.stderr)
+
+    def test_run_without_the_drive(self):
+        self.run_key("--booster-fifos")
+        th, got = self.booster_reads()
+        r = self.run_key("--booster-run", BS1_BOOSTER_DEADLINE="100000")
+        th.join(10)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(th.is_alive())
+        self.assertIn(got.get("key"), (b"", None))
+        self.assertEqual(self.marks(), ["crypt_root typed"])
+
+    def test_run_a_mount_that_hangs_meets_the_deadline(self):
+        """The drive's mount hangs: past the deadline booster's FIFO ends, it
+        asks, the volume is typed, and the late key goes nowhere."""
+        (self.root / "dev/disk/by-label/mybig512").write_text("")
+        exe(self.bin / "mount", f'#!/bin/sh\n{shutil.which("sleep")} 4\nfor d; do :; done\ncp -R "{self.root}/drive/." "$d/"\n')
+        self.run_key("--booster-fifos")
+        th, got = self.booster_reads()
+        t0 = time.monotonic()
+        r = subprocess.Popen(["sh", str(BS1 / "bs1-unlock-key"), "--booster-run"], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.PIPE, text=True,
+                             env=self.env(BS1_UNLOCK_ROOT=str(self.root), BS1_GIVE_WAIT="20", BS1_BOOSTER_DEADLINE="3"))
+        th.join(3.5)
+        self.assertFalse(th.is_alive())
+        self.assertLess(time.monotonic() - t0, 3.5)
+        self.assertIn(got.get("key"), (b"", None))
+        err = r.communicate(timeout=30)[1]
+        self.assertEqual(r.returncode, 0, err)
+        self.assertIn("no key from the backup drive in 3 s", err)
+        self.assertEqual(self.marks(), ["crypt_root typed"])
+        self.assertFalse(self.fifo.exists())
+        self.assertFalse((self.root / "backshot1-key.tmp").exists())
 
     def test_no_fifo_is_typed(self):
         (self.root / "dev/disk/by-label/mybig512").write_text("")

@@ -143,8 +143,14 @@ LK_BOOSTER_KEY=/backshot1-key
 LK_BUSYBOX=/usr/bin/busybox
 LK_MODULES_DIR=/lib/modules
 LK_BOOT=/boot
-# What bs1-unlock-key runs in booster's image, as busybox applets.
+# What bs1-unlock-key runs in booster's image, as busybox applets (the
+# preinit links them under /backshot1-bin), and those adopt requires of
+# LK_BUSYBOX's --list: these, but modprobe and blkid (fetch can do without
+# them), and the preinit's own ln and mknod.  Without findfs the drive is
+# never found; without timeout a key booster never reads could hold the
+# helper for ever.
 LK_P_APPLETS="sh cat mount umount mkdir rmdir rm mkfifo sleep grep modprobe blkid findfs timeout"
+LK_P_NEED="ln mknod sh cat mount umount mkdir rmdir rm mkfifo sleep grep findfs timeout"
 LK_P_VOLS=()
 LK_P_FORCE=
 # Family S on dracut: BackShot1's drop-in; dracut's modules, among them the
@@ -1060,13 +1066,16 @@ lk_grub_luks() {
 # in time could hold its key.  But a FIFO can: booster's read of it waits
 # until a writer closes it.  So the kernel runs BackShot1's preinit first
 # (rdinit=LK_BOOSTER_INIT): it makes the FIFO LK_BOOSTER_KEY.UUID for each
-# volume, starts bs1-unlock-key --booster in the background and execs
+# volume, starts bs1-unlock-key --booster-run in the background and execs
 # booster's /init.  That helper waits for booster's /run (where its marks
 # go: booster moves /run into the booted system), then up to LUKS_WAIT s for
 # LABEL=BACKUP_LABEL (busybox findfs: booster makes no by-label links),
 # mounts it read-only and writes the key into the FIFO, marking the volume
-# drive; without the drive it closes the FIFO empty and marks it typed, and
-# booster asks at once.  A booster.yaml mount_timeout would count from
+# drive; without the drive it ends the FIFO empty (bs1-unlock-key's
+# release, which never waits) and marks it typed, and booster asks at once.
+# No FIFO is left for no one to write, which would hold booster for ever:
+# the preinit removes them if the helper never starts, and the helper's
+# deadline and its end release whatever is left.  A booster.yaml mount_timeout would count from
 # booster's start, the wait included (PikaOS sets none: booster then waits
 # for the root for ever).  The preinit, bs1-unlock-key and the
 # record get into the image by booster.yaml's extra_files, with busybox (the
@@ -1149,14 +1158,39 @@ lk_p_preinit() {
 # starts, or closes empty after $LUKS_WAIT s without it, when booster asks.
 # Whatever fails here, booster's /init runs.
 # TESTBED ONLY; bs1-adopt --luks-off removes it.
+# Booster mounts devtmpfs on /dev only once its /init runs; until then the
+# kernel's own /dev has /dev/console alone, and busybox sh can't start a
+# background job without /dev/null.  Booster's /dev covers this one.
+# Should the helper (--booster-run) not have started within 3 s, the FIFOs
+# go: with no key file booster asks, where a FIFO no one writes would hold
+# it for ever.  Once started, the helper hands every FIFO a key or nothing,
+# within its deadline, whatever happens to the drive.
 b=$LK_BUSYBOX
 d=/backshot1-bin
+[ -e /dev/null ] || \$b mknod -m 666 /dev/null c 1 3
 \$b mkdir -p \$d
 for a in $LK_P_APPLETS; do \$b ln -sf \$b \$d/\$a; done
 PATH=\$d:/usr/bin \$b sh $UNLOCK_KEY --booster-fifos
-PATH=\$d:/usr/bin \$b sh $UNLOCK_KEY --booster </dev/null &
+PATH=\$d:/usr/bin \$b sh $UNLOCK_KEY --booster-run </dev/null &
+i=0
+while [ ! -e $LK_BOOSTER_KEY-started ] && [ \$i -lt 30 ]; do
+    \$b sleep 0.1 2>/dev/null || \$b sleep 1
+    i=\$((i + 1))
+done
+[ -e $LK_BOOSTER_KEY-started ] || \$b rm -f $LK_BOOSTER_KEY.*
 exec /init "\$@"
 EOF
+}
+
+# lk_p_missing: the applets of LK_P_NEED that LK_BUSYBOX hasn't, a space
+# between (none: empty).
+lk_p_missing() {
+    local have a out=
+    have=$("$LK_BUSYBOX" --list 2>/dev/null) || have=
+    for a in $LK_P_NEED; do
+        grep -qxF "$a" <<<"$have" || out+=" $a"
+    done
+    echo "${out# }"
 }
 
 # lk_p_options FILE: each line's options (its last quoted string), one a
@@ -1366,6 +1400,7 @@ luks_adopt() {
         booster)
             if [[ ! -f $LK_REFIND_CONF ]]; then family=A reason="booster's initramfs without rEFInd's $LK_REFIND_CONF, the only command line bs1-adopt gives booster's key file on"
             elif [[ ! -x $LK_BUSYBOX ]]; then family=A reason="booster's initramfs, but no $LK_BUSYBOX for BackShot1's preinit to run in it"
+            elif [[ -n $(lk_p_missing) ]]; then family=A reason="booster's initramfs, but $LK_BUSYBOX has no $(lk_p_missing) (BackShot1's preinit and bs1-unlock-key need them)"
             else family=P
             fi
             ;;

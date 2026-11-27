@@ -180,7 +180,11 @@ ssh_cmd=(ssh -q -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFi
 # Through sh: root's shell may be csh (DragonFly's is).  Archives are unpacked
 # with cd first: illumos tar's -C names a directory to archive from only.
 ssh_vm() { local sq="'"; local q=${1//$sq/$sq\\$sq$sq}; "${ssh_cmd[@]}" "/bin/sh -c '$q'"; }
+rdir=""
 cleanup() {
+    # A running builder (FreeBSD's) keeps its disk: a build that stops early leaves no
+    # copy of the parent or the media in it.
+    [[ -z $rdir || $started == yes ]] || timeout 60 "${ssh_cmd[@]}" "rm -rf $rdir" >/dev/null 2>&1 || true
     if [[ $started == yes ]]; then
         # By path: NetBSD's sshd gives commands no /sbin in PATH.
         ssh_vm "$BUILD_VM_POWEROFF" >/dev/null 2>&1 || true

@@ -684,7 +684,8 @@ def preflight(facts, hosts):
 
 def our_leftovers(mac_root=None, live=()):
     """[(run, host, path, pid)] that dead runs of ours made (their made.json), runs with no
-    report and no live lock.  Only paths under /mnt/bko-ram or a copy root that name the run."""
+    report and no live lock.  Only paths under /mnt/bko-ram or a copy root that name the run, and
+    a bko-holt build's SSD scratch, /bkoscratch/t2b-RUN-PLAT (build-holt.sh --reserved, F8)."""
     out = []
     d = runs_dir(mac_root)
     if not os.path.isdir(d):
@@ -699,7 +700,8 @@ def our_leftovers(mac_root=None, live=()):
         for host, items in made.items():
             for it in items or []:
                 p, pid = it.get("path"), it.get("pid")
-                if p and run in p and (p.startswith("/mnt/bko-ram/") or "/t2/copy/" in p or it.get("copy_root")):
+                if p and run in p and (p.startswith(("/mnt/bko-ram/", f"/bkoscratch/t2b-{run}-")) or "/t2/copy/" in p
+                                       or it.get("copy_root")):
                     out.append((run, host, p, pid))
     return out
 

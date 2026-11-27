@@ -667,8 +667,13 @@ class Runs(unittest.TestCase):
         rid = "t2s-20261101T0000-dead"
         run.write_json(os.path.join(run.run_dir(rid, self.mac), "made.json"),
                        {"chopin": [{"path": f"/mnt/bko-ram/{rid}-debian12", "pid": 4242},
-                                   {"path": "/mnt/bko-ram/someone-elses", "pid": 1}]})
-        self.assertEqual(run.our_leftovers(self.mac), [(rid, "chopin", f"/mnt/bko-ram/{rid}-debian12", 4242)])
+                                   {"path": "/mnt/bko-ram/someone-elses", "pid": 1},
+                                   # (a bko-holt build's SSD scratch, build-holt.sh --reserved: F8)
+                                   {"path": f"/bkoscratch/t2b-{rid}-linux", "pid": 4243},
+                                   {"path": f"/bkoscratch/elsewhere/{rid}-linux", "pid": 4244},
+                                   {"path": "/bkoscratch/t2b-someone-elses-linux", "pid": 2}]})
+        self.assertEqual(run.our_leftovers(self.mac), [(rid, "chopin", f"/mnt/bko-ram/{rid}-debian12", 4242),
+                                                       (rid, "chopin", f"/bkoscratch/t2b-{rid}-linux", 4243)])
         self.assertEqual(run.our_leftovers(self.mac, live={rid}), [])
         with open(os.path.join(run.run_dir(rid, self.mac), "report.txt"), "w") as f:
             f.write("done\n")

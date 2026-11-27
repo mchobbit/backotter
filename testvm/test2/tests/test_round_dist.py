@@ -800,8 +800,9 @@ class Remote4(test_holt.FakeRemote):
 
 
 class HoltBuildHosts(unittest.TestCase):
-    """bko-holt builds go to the table's build hosts only; the builds go to every --hosts host,
-    and (holt_ship known) to every known host."""
+    """bko-holt builds go to the table's build hosts only (role build: big or small since
+    img-speed.md F8, 2026-11-27); the builds go to every --hosts host, and (holt_ship known) to
+    every known host."""
     PC = test_holt.U53HoltRun.PC
     go = test_holt.U53HoltRun.go
 
@@ -836,15 +837,35 @@ class HoltBuildHosts(unittest.TestCase):
         return [(h, re.search(r"--reserved \S+ (\S+)", c[0]).group(1))
                 for h, op, *c in r.calls if op == "start" and "--reserved" in c[0]]
 
-    def test_a_small_host_in_hosts_builds_nothing(self):
+    def test_a_small_build_host_in_hosts_builds_too(self):
+        """F8: a small host with the build role builds as a big one does, in --hosts' order
+        (linux on the first), and the other host gets its binaries."""
         self.hosts(["copland", "chopin"])
         r = Remote4({})
         res = self.go({}, r)
         self.assertEqual(res["exit"], 0, res)
-        self.assertEqual({h for h, _ in self.builds(r)}, {"chopin"})
+        self.assertEqual(self.builds(r), [("copland", "linux"), ("chopin", "freebsd"), ("copland", "openbsd")])
         for p in ("bko-holt", "freebsd/bko-holt", "openbsd/bko-holt"):
             self.assertEqual(r.files["copland"][f"{self.HB}/{p}"], r.files["chopin"][f"{self.HB}/{p}"])
         self.assertEqual(r.files["copland"][self.HB + "/SHA256SUMS"], r.files["chopin"][self.HB + "/SHA256SUMS"])
+
+    def test_an_all_small_set_builds(self):
+        """F8's proof, in a fake world: --hosts copland,cage,czerny (all small) builds every
+        platform there, one deep, and every host holds every build; each build's two scratch
+        places (the RAM disk's, the SSD's: build-holt.sh picks) are recorded for the sweep."""
+        self.hosts(["copland", "cage", "czerny"])
+        r = Remote4({})
+        res = self.go({}, r)
+        self.assertEqual(res["exit"], 0, res)
+        self.assertEqual(self.builds(r), [("copland", "linux"), ("cage", "freebsd"), ("czerny", "openbsd")])
+        for h in ("copland", "cage", "czerny"):
+            self.assertEqual(r.files[h][self.HB + "/SHA256SUMS"], r.files["copland"][self.HB + "/SHA256SUMS"], h)
+            for p in ("bko-holt", "freebsd/bko-holt", "openbsd/bko-holt"):
+                self.assertEqual(r.files[h][f"{self.HB}/{p}"], r.files["copland"][f"{self.HB}/{p}"], h)
+        made = {(h, p) for h, p, _ in self.rs.made}
+        for h, plat in self.builds(r):
+            for root in ("/mnt/bko-ram", "/bkoscratch"):
+                self.assertIn((h, f"{root}/t2b-{self.rs.run}-{plat}"), made)
 
     def test_the_builds_stay_on_the_build_hosts_and_reach_the_others(self):
         """The build hosts build, as ever; the binaries reach every other default host,
@@ -869,22 +890,22 @@ class HoltBuildHosts(unittest.TestCase):
         self.assertEqual({h for h, _ in self.builds(r)}, {"chopin", "cinqcent"})
 
     def test_no_build_host_refuses_the_build(self):
-        self.hosts(["cage"])
+        self.hosts(["choubox"])   # (no build role: cache only)
         r = Remote4({})
         res = self.go({}, r)
         self.assertEqual(res["exit"], 1, res)
         self.assertEqual(self.builds(r), [])
-        self.assertTrue(any("no big build host (role build, class big in testvm/hosts.json) in --hosts cage" in s
+        self.assertTrue(any("no build host (role build in testvm/hosts.json) in --hosts choubox" in s
                             for s in res["stops"]), res["stops"])
 
-    def test_a_build_host_holding_the_copy_builds_for_small_hosts(self):
+    def test_a_build_host_holding_the_copy_builds_for_the_others(self):
         self.cells[:] = [pc for pc in self.cells if pc.cell in ("holt:debian13", "holt:freebsd15", "holt:mint22")]
-        self.hosts(["cage"], copies=["cage", "cinqcent"])
+        self.hosts(["choubox"], copies=["choubox", "cinqcent"])
         r = Remote4({})
         res = self.go({}, r)
         self.assertEqual(res["exit"], 0, res)
         self.assertEqual({h for h, _ in self.builds(r)}, {"cinqcent"})
-        self.assertEqual(r.files["cage"][self.HB + "/SHA256SUMS"], r.files["cinqcent"][self.HB + "/SHA256SUMS"])
+        self.assertEqual(r.files["choubox"][self.HB + "/SHA256SUMS"], r.files["cinqcent"][self.HB + "/SHA256SUMS"])
 
     def test_a_platform_a_host_has_needs_no_build_host(self):
         import hashlib as hl

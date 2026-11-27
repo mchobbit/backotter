@@ -8,14 +8,17 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      tests/ and *.md) names HOST_ROOT/holt-bin/CODE/, laid out as
      /bkoscratch/holttest1d/bin is (bko-holt, PLAT/bko-holt).  Each platform the
      due cells need that no test host has (any of them, not only --hosts: builds
-     aren't reproducible, R14) is built on a big build host of --hosts (the host
-     table's role build and its first class: chopin, cinqcent; else one holding
-     the run's copy; never a small host, whose RAM-disk ceiling leaves no room
-     for a build beside the run's own cells), as m, detached:
+     aren't reproducible, R14) is built on a build host of --hosts (the host
+     table's role build, big or small since img-speed.md F8, 2026-11-27: chopin,
+     cinqcent, copland, cage, czerny; else one holding the run's copy), as m,
+     detached:
          build-holt.sh --reserved RUN PLAT    (from the copy; HOLT_SRC=COPY/holt)
-     which reserves HOLT_RESERVE GiB of RAM disk (3, else 1.1 x the last builds'
+     which reserves HOLT_RESERVE GiB of scratch (3, else 1.1 x the last builds'
      peak + 0.25), keeps cargo's target/ and the build guest's -snapshot file in
-     /mnt/bko-ram/t2b-RUN-PLAT, takes a port of 2600-2689 under ht1-queue.sh's
+     /mnt/bko-ram/t2b-RUN-PLAT (RAM first, the SSD for overflow: by the host's
+     scratch_mode, /bkoscratch/t2b-RUN-PLAT under cmp-run.sh --reserve-ssd when
+     the RAM disk has no room for it now, which a small host's often hasn't
+     beside the run's own cells), takes a port of 2600-2689 under ht1-queue.sh's
      locks, and is tagged ht1:RUN:build-PLAT in the wear log (R16).  A binary is
      copied to the hosts that lack it (scp, host to host; through the Mac if that
      fails) and checked by its sha256, never written over one that is there; then
@@ -253,14 +256,16 @@ def holt_rel(plat):
     return "bko-holt" if plat == "linux" else f"{plat}/bko-holt"
 
 
-def big_build_hosts(hosts, table=None):
-    """The hosts of HOSTS, in their order, a bko-holt build may run on: the host table's big
-    build hosts (role build and the table's first class: chopin, cinqcent, never a small M900,
-    which has the role for a round's units since 2026-11-14 but no room for a holt build beside
-    the run's cells).  Runner.build_hosts' rule, and t2 batch's (batchfile.refusals, the
-    scheduler's feasible sets): one predicate, so the batch never places a HoltTest2 where its
-    stop rule would end it.  Raises when the table doesn't load."""
-    role = [h for h in hosts_table.with_role("build", table) if hosts_table.class_rank(h, table) == 0]
+def holt_build_hosts(hosts, table=None):
+    """The hosts of HOSTS, in their order, a bko-holt build may run on: the host table's build
+    hosts (role build), big or small.  Until img-speed.md F8 (2026-11-27) only the table's first
+    class (chopin, cinqcent): a small M900's RAM disk had no room for a build beside the run's
+    cells; build-holt.sh --reserved now puts its scratch on /bkoscratch when the RAM disk has no
+    room for it (RAM first, the SSD for overflow, by the host's scratch_mode).  Runner.build_hosts'
+    rule, and t2 batch's (batchfile.refusals, the scheduler's feasible sets): one predicate, so
+    the batch never places a HoltTest2 where its stop rule would end it.  Raises when the table
+    doesn't load."""
+    role = hosts_table.with_role("build", table)
     return [h for h in hosts if h in role]
 
 
@@ -760,16 +765,14 @@ class Runner:
         return self.hosts + [h for h in every if h not in self.hosts]
 
     def build_hosts(self):
-        """Where a bko-holt build may run: the host table's big build hosts (role build and
-        the table's first class: chopin, cinqcent, never a small M900, which has the role
-        for a round's units since 2026-11-14 but no room for a holt build beside the run's
-        cells) among --hosts, in --hosts' order; else the ones that hold this run's copy
-        (it builds from there).  [] when there are none."""
+        """Where a bko-holt build may run: the host table's build hosts (role build, big or
+        small: holt_build_hosts) among --hosts, in --hosts' order; else the ones that hold this
+        run's copy (it builds from there).  [] when there are none."""
         try:
-            mine = big_build_hosts(self.hosts)
+            mine = holt_build_hosts(self.hosts)
             if mine:
                 return mine
-            role = big_build_hosts(hosts_table.with_role("build"))
+            role = holt_build_hosts(hosts_table.with_role("build"))
         except Exception:   # noqa: BLE001 - a table that doesn't load builds nowhere (the reason says so)
             return []
         return [h for h in role if ((self.rs.copy or {}).get(h) or {}).get("path")]
@@ -855,13 +858,13 @@ class Runner:
         if [p for p in todo if p in unsure]:
             return (f"can't tell whether {hd} holds {', '.join(holt_rel(p) for p in todo if p in unsure)} on "
                     f"{', '.join(self.hosts)} (ssh failed): nothing built over it")
-        # Builds not done yet: start each (round-robin over the big build hosts of --hosts,
-        # linux on the first; never on a host without the build role, never on a small one).
+        # Builds not done yet: start each (round-robin over the build hosts of --hosts,
+        # linux on the first; never on a host without the build role).
         order = sorted(todo, key=lambda p: (p != "linux", p))
         start = [p for p in order if not (builds.get(p) and (builds[p].get("rc") == 0 or
                                                               (builds[p].get("pid") and builds[p].get("rc") is None)))]
         if start and not bh:
-            return (f"no big build host (role build, class big in testvm/hosts.json) in --hosts "
+            return (f"no build host (role build in testvm/hosts.json) in --hosts "
                     f"{', '.join(self.hosts)} to build bko-holt {', '.join(start)} on, and none holds this "
                     f"run's copy: add one to --hosts, or give --holt-bin")
         for i, p in enumerate(order):
@@ -1010,7 +1013,10 @@ class Runner:
         pid = self.remote.start(host, cmd, os.path.join(logs, "wrapper.out"), pidfile)
         pid = self.started_pid(host, pid, pidfile, "build-holt.sh")
         self.log(f"bko-holt {plat}: building on {host} (pid {pid}, --reserve {res:g} 4, code {self.code[:12]})")
+        # (Its scratch: the RAM disk's, or the SSD's when the RAM disk had no room: build-holt.sh
+        # picks, so both are recorded for a dead run's sweep.)
         self.rs.record_made(host, f"/mnt/bko-ram/t2b-{self.run_id}-{plat}", pid)
+        self.rs.record_made(host, f"/bkoscratch/t2b-{self.run_id}-{plat}", pid)
         b = {"host": host, "pid": pid, "rc": None, "info": None, "reserve": res, "logs": logs, "started": utc_now()}
         if pid is None:
             b["rc"], b["why"] = 1, "its wrapper didn't start"

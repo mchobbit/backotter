@@ -51,7 +51,7 @@ SPLITS = ("none", "seven", "any")
 class HostCap:
     """One batch host: its pools' slots, its cmp-run.sh ceiling (DISK, MEM) or None, its class
     (big, small), whether it is the shared host (Chopin: ties go against it), its arch, whether
-    it is a big build host (holt.big_build_hosts: where a HoltTest2 may build bko-holt)."""
+    it is a build host (holt.holt_build_hosts: where a HoltTest2 may build bko-holt)."""
 
     def __init__(self, name, cls=None, pools=None, ceiling=None, arch="amd64", shared=False, index=0,
                  builder=False):
@@ -83,8 +83,8 @@ def capacity(table, hosts, facts=None):
     """{host: HostCap} for HOSTS, in their order: each pool's slots from hosts.limits() (gate 1);
     the ceiling from FACTS ({host: facts, or [D, M]}), None when not known."""
     from . import hosts as H
-    from .holt import big_build_hosts   # (import-time pure: HoltTest2's own stop rule's predicate)
-    builders = set(big_build_hosts(list(hosts), table))
+    from .holt import holt_build_hosts   # (import-time pure: HoltTest2's own stop rule's predicate)
+    builders = set(holt_build_hosts(list(hosts), table))
     out = {}
     for i, h in enumerate(hosts):
         lim = H.limits(h, table)
@@ -138,7 +138,7 @@ class Profile:
     share     {host: (D, M)}: a share given outright, overriding the jobs'
     builds    the round its plan would build, or None (two that build the same conflict)
     needs_builder  its run may build bko-holt linux (batchfile.builds_holt): a set takes it only
-              with a big build host in it (HostCap.builder), as HoltTest2's stop rule asks"""
+              with a build host in it (HostCap.builder), as HoltTest2's stop rule asks"""
 
     def __init__(self, id, kind, pos, locks=(), pools=(), serial=False, after=(), hosts=None, walls=None,
                  wall_src="default", splittable=False, growable=False, share=None, single=None, jobs=None,
@@ -331,7 +331,7 @@ def single_on(p, h, cap):
 def feasible(p, hosts, cap):
     """Whether P on HOSTS still has a host for every job the batch's full set could run, and no
     host of it is one none of its jobs can use (a pool held for nothing); and, for a P that may
-    build bko-holt (needs_builder), a big build host among HOSTS (HoltTest2 stops without one)."""
+    build bko-holt (needs_builder), a build host among HOSTS (HoltTest2 stops without one)."""
     k = frozenset(hosts)
     if any(h not in cap for h in hosts):
         return False

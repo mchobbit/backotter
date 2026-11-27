@@ -174,25 +174,33 @@ class Refusals(unittest.TestCase):
         self.assertTrue(any("not among the batch's hosts" in x for x in r), r)
         self.assertEqual(self.R("cmd x hosts=chopin -- true\n", hosts=["chopin", "cage"]), [])
 
-    def test_holt_build_needs_a_big_build_host(self):
-        """bt-20261115T1132-e4ca: HoltTest2 on the small hosts alone stops 9 s in (holt.py's stop
-        rule); the batch refuses it first, by the same predicate, unless it has --holt-bin."""
-        r = self.R("set hosts copland,cage\nt2 HoltTest2 alpine324\n")
+    def test_holt_build_needs_a_build_host(self):
+        """bt-20261115T1132-e4ca: HoltTest2 on hosts with no build host stops 9 s in (holt.py's
+        stop rule); the batch refuses it first, by the same predicate, unless it has --holt-bin.
+        A small build host is one since img-speed.md F8 (2026-11-27): an all-small set builds
+        (build-holt.sh puts its scratch on the SSD when the RAM disk has no room); choubox, with
+        no build role, is not."""
+        self.assertEqual(self.R("set hosts copland,cage\nt2 HoltTest2 alpine324\n"), [])     # (F8)
+        self.assertEqual(self.R("t2 HoltTest2 alpine324 hosts=copland\n"), [])
+        self.assertEqual(self.R("set hosts copland,cage\nt2 BkoTest2 rel6\n"), [])
+        r = self.R("set hosts choubox\nt2 HoltTest2 alpine324\n")
         self.assertEqual(len(r), 1, r)
-        for frag in ("001-t2-holttest2-alpine324", "copland,cage", "no", "add one (chopin, cinqcent)", "--holt-bin DIR"):
+        for frag in ("001-t2-holttest2-alpine324", "on a build host (role build in testvm/hosts.json)",
+                     "its hosts choubox have none", "add one (chopin, cinqcent, copland, cage)", "--holt-bin DIR"):
             self.assertIn(frag, r[0])
-        r = self.R("t2 HoltTest2 alpine324 hosts=copland\n")
-        self.assertTrue(any("hosts copland have none" in x and "its hosts=" in x for x in r), r)
-        self.assertEqual(self.R("set hosts copland,cage\nt2 HoltTest2 alpine324 --holt-bin=/x\n"), [])
-        self.assertEqual(self.R("set hosts copland,cinqcent\nt2 HoltTest2 alpine324\n"), [])
+        r = self.R("set hosts copland,cage\nt2 HoltTest2 alpine324 hosts=choubox\n")
+        self.assertTrue(any("hosts choubox have none" in x and "its hosts=" in x for x in r), r)
+        self.assertEqual(self.R("set hosts choubox\nt2 HoltTest2 alpine324 --holt-bin=/x\n"), [])
+        self.assertEqual(self.R("set hosts choubox,cinqcent\nt2 HoltTest2 alpine324\n"), [])
         # (+img cells alone run the image's own bko-holt: nothing to build)
-        self.assertEqual(self.R("set hosts copland,cage\nt2 HoltTest2 +img\n"), [])
-        self.assertEqual(self.R("set hosts copland,cage\nt2 HoltTest2 alpine324+img\n"), [])
-        self.assertEqual(len(self.R("set hosts copland,cage\nt2 HoltTest2 alpine324 alpine324+img\n")), 1)
-        r = self.R("set hosts copland,cage\nt2 BkoTest2 rel6\n")
+        self.assertEqual(self.R("set hosts choubox\nt2 HoltTest2 +img\n"), [])
+        self.assertEqual(self.R("set hosts choubox\nt2 HoltTest2 alpine324+img\n"), [])
+        self.assertEqual(len(self.R("set hosts choubox\nt2 HoltTest2 alpine324 alpine324+img\n")), 1)
+        r = self.R("set hosts choubox\nt2 BkoTest2 rel6\n")
         self.assertTrue(any("HoltTest2 only" in x for x in r), r)
-        self.assertEqual(self.R("set hosts copland,cage\nht1 R1 debian13\nt2 GuestTest2\n"), [])
-        self.assertEqual(bf.holt_builders(["copland", "cinqcent", "cage", "chopin"], table()), ["cinqcent", "chopin"])
+        self.assertEqual(self.R("set hosts choubox\nht1 R1 debian13\nt2 GuestTest2\n"), [])
+        self.assertEqual(bf.holt_builders(["copland", "cinqcent", "choubox", "cage", "chopin", "bigfoot"], table()),
+                         ["copland", "cinqcent", "cage", "chopin"])
         self.assertEqual(bf.word_argv(["HoltTest2", "a", "--holt-bin", "/d", "b"]), ["HoltTest2", "a", "b"])
 
     def test_table_rows(self):

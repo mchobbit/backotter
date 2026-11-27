@@ -6,8 +6,8 @@ is read through the READ the caller passes.
     locks_of(entry) -> set                  the t2 family locks the entry's run takes (run.family_locks)
     lock_list(entry) -> [str]               the same, in the order the run takes them
     pools_of(entry) -> set                  the host pools it owns on each host it uses (§4.5)
-    builds_holt(entry) -> bool              its run may build bko-holt linux (needs a big build host)
-    holt_builders(hosts, table) -> [host]   the big build hosts among HOSTS (holt.big_build_hosts)
+    builds_holt(entry) -> bool              its run may build bko-holt linux (needs a build host)
+    holt_builders(hosts, table) -> [host]   the build hosts among HOSTS (holt.holt_build_hosts)
     lock_matrix(entries, builds=None) -> {(id, id): reason}   pairs that may not run at once
     parse_duration("90m") -> 5400           fmt_hm(5400) -> "1:30"
 
@@ -663,15 +663,15 @@ def builds_holt(entry):
 
 
 def holt_builders(hosts, table=None):
-    """The big build hosts among HOSTS: holt.big_build_hosts, HoltTest2's own stop rule's
-    predicate (never a copy of it)."""
+    """The build hosts among HOSTS (role build, big or small since img-speed.md F8):
+    holt.holt_build_hosts, HoltTest2's own stop rule's predicate (never a copy of it)."""
     from . import holt   # (import-time pure)
-    return holt.big_build_hosts(list(hosts), table)
+    return holt.holt_build_hosts(list(hosts), table)
 
 
 def _holt_build_refusals(e, bhosts, table):
     """An entry that builds bko-holt linux (builds_holt) whose hosts (hosts=, else the batch's)
-    hold no big build host: HoltTest2 would stop-family there 9 s in (bt-20261115T1132-e4ca)."""
+    hold no build host: HoltTest2 would stop-family there 9 s in (bt-20261115T1132-e4ca)."""
     if not builds_holt(e):
         return []
     hs = list(e.hosts) if e.hosts is not None else list(bhosts)
@@ -685,7 +685,7 @@ def _holt_build_refusals(e, bhosts, table):
         fix += ", or give the entry --holt-bin DIR (a ready bko-holt set on every host it uses)"
     else:
         fix += " (--holt-bin goes with HoltTest2 only)"
-    return [f"{e.args[0]} builds bko-holt linux on a big build host (role build, class big in testvm/hosts.json) "
+    return [f"{e.args[0]} builds bko-holt linux on a build host (role build in testvm/hosts.json) "
             f"and its hosts {','.join(hs)} have none: {fix}"]
 
 

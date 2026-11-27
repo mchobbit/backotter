@@ -146,14 +146,22 @@ class Sets(Fixture):
                            "t2 SticTest2 hosts=copland,cage est=1h\nserial ht1 S y est=1h\ncmd c -- true\n")
         hol, h1, gate, bko, claim, ser, cmd = ps
         seven = bs.candidate_sets(hol, self.cap)
-        # (never the small ones alone: a HoltTest2 builds bko-holt on a big build host)
-        self.assertEqual(seven, [tuple(HOSTS), ("chopin", "cinqcent"),
+        # (the small ones alone too: every build host builds bko-holt since img-speed.md F8)
+        self.assertEqual(seven, [tuple(HOSTS), ("chopin", "cinqcent"), ("copland", "cage"),
                                  ("cinqcent", "copland", "cage"), ("chopin", "copland", "cage"),
                                  ("chopin", "cinqcent", "cage"), ("chopin", "cinqcent", "copland")])
-        sti = bs.Profile("s", "t2", 1, pools={"stic"}, split="seven", walls={None: H})
-        self.assertIn(("copland", "cage"), bs.candidate_sets(sti, self.cap))
         self.assertEqual({h: c.builder for h, c in self.cap.items()},
-                         {"chopin": True, "cinqcent": True, "copland": False, "cage": False})
+                         {"chopin": True, "cinqcent": True, "copland": True, "cage": True})
+        # A HoltTest2 never takes a set with no build host (a host without the role, as choubox).
+        nob = {h: copy.copy(c) for h, c in self.cap.items()}
+        for h in ("copland", "cage"):
+            nob[h].builder = False
+        self.assertEqual(bs.candidate_sets(hol, nob),
+                         [tuple(HOSTS), ("chopin", "cinqcent"),
+                          ("cinqcent", "copland", "cage"), ("chopin", "copland", "cage"),
+                          ("chopin", "cinqcent", "cage"), ("chopin", "cinqcent", "copland")])
+        sti = bs.Profile("s", "t2", 1, pools={"stic"}, split="seven", walls={None: H})
+        self.assertIn(("copland", "cage"), bs.candidate_sets(sti, nob))
         nb = bs.Profile("n", "t2", 1, pools={"holt"}, split="seven", walls={None: H}, needs_builder=True)
         self.assertEqual(bs.Profile.from_json(json.loads(json.dumps(nb.to_json()))).needs_builder, True)
         anys = bs.candidate_sets(h1, self.cap)
@@ -505,11 +513,13 @@ class Profiles(Fixture):
     def test_t2_planned_per_set(self):
         fp = self.FakePlanner()
         b, (hol, gate) = self.prof("t2 HoltTest2\nt2 GateTest2\n", bp.Sources(planner=fp))
-        self.assertEqual(len([c for c in fp.calls if c[0] == hol.id]), 6)   # (not the small set: no big build host)
+        # (the small set too: copland and cage build bko-holt since img-speed.md F8)
+        self.assertEqual(len([c for c in fp.calls if c[0] == hol.id]), 7)
+        self.assertIn((hol.id, ("copland", "cage")), fp.calls)
         self.assertEqual([c[1] for c in fp.calls if c[0] == gate.id], [tuple(HOSTS)])   # never split
         self.assertEqual(hol.wall_src, "plan")
         self.assertEqual(hol.walls[frozenset(HOSTS)], 6 * H)
-        self.assertIsNone(hol.walls[frozenset(["copland", "cage"])])                  # infeasible
+        self.assertIsNone(hol.walls[frozenset(["copland", "cage"])])   # infeasible: its plan's not-runnable cell
         self.assertNotIn(("copland", "cage"), bs.candidate_sets(hol, self.cap))
         self.assertEqual([j.name for j in hol.jobs], ["holt:big1", "holt:a"])
         js = json.dumps(hol.to_json(), sort_keys=True)

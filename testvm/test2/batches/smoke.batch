@@ -6,9 +6,11 @@
 # of ~/git/restic, rustic_core, rustic), built as t2r-... when none exists yet
 # (testvm/test2/README.md).
 # stic1 must name a round directory (drive.py): it stays pinned.
-# Cinqcent is there so HoltTest2 can build bko-holt: a HoltTest2 builds bko-holt linux
-# on a big build host (role build, class big in testvm/hosts.json), and with only
-# the small hosts it stopped 9 s in (bt-20261115T1132-e4ca).  --holt-bin isn't
+# Cinqcent is there so HoltTest2 can build bko-holt: a HoltTest2 built bko-holt linux
+# on a big build host only (role build, class big in testvm/hosts.json), and with only
+# the small hosts it stopped 9 s in (bt-20261115T1132-e4ca).  Since img-speed.md F8
+# (2026-11-27) copland and cage build too (any role build host); cinqcent stays so the
+# smoke test runs as it always has.  --holt-bin isn't
 # the way round here: the promoted holt-bin (~/backotter-work/holt-bin) keeps
 # linux's binary at linux/bko-holt, where HoltTest2's --holt-bin wants DIR/bko-holt,
 # and a ready set would make its rows count only where equal (R14).  So the

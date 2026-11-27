@@ -5,6 +5,7 @@
 #
 #   build-holt.sh [--keep] PLATFORM [PORT]
 #   build-holt.sh --reserved RUN PLATFORM     (HoltTest2's: under a reservation of its own)
+#   build-holt.sh --where RUN PLATFORM        (where --reserved would put its scratch now)
 #
 # PLATFORM: freebsd (built on freebsd14, so that it runs on 14 and 15, and on
 # HardenedBSD and GhostBSD), netbsd, openbsd, dragonfly, illumos or haiku;
@@ -59,9 +60,24 @@
 # TMPDIR is set inside the reservation, since its sudo -E drops a TMPDIR
 # given to cmp-run.sh.  It makes DIR before and removes it after; PORT is the
 # first free one of 2600-2689 under ht1-queue.sh's /tmp/bko-ht1-ports locks,
-# held for the build's life (linux needs none).  It waits in cmp-run.sh's line
-# for its room and never builds on disk.  Its exit status goes in
+# held for the build's life (linux needs none).  Its exit status goes in
 # HOLT_LOGS/exit.  HOLT_SRC, HOLT_OUT, HOLT_LOGS and HOLT_INFO go through.
+# RAM first, the SSD for overflow (docs/design/img-speed.md F8: a build may run
+# on any build host, the small ones too), by this host's scratch_mode in the
+# host table (SCRATCH_MODE in the environment instead), as ht1-queue.sh places
+# a line: ram, in the RAM disk, waiting in cmp-run.sh's line for its room
+# there (every build before F8); overflow, in the RAM disk when HOLT_RESERVE
+# fits it right now (cmp-run.sh --free's "after" figures, the memory's 4 GiB
+# with it), else on /bkoscratch when cmp-run.sh --ssd-free has room for
+# HOLT_RESERVE there now, else the RAM disk's line as in mode ram; ssd, on
+# /bkoscratch when it has the room, else the RAM disk.  On /bkoscratch DIR is
+# /bkoscratch/t2b-RUN-PLATFORM, under cmp-run.sh --reserve-ssd HOLT_RESERVE 4
+# (the wear log's scratch=ssd, which the write stop rule doesn't count).  A
+# cmp-run.sh with no --reserve-ssd (a host not synced yet) is mode ram.
+# `build-holt.sh --where RUN PLATFORM` prints where --reserved would put it
+# now, "ram DIR" or "ssd DIR", and starts nothing.  HOLT_CMP_RUN, HOLT_RAM_ROOT
+# and HOLT_SSD_ROOT (defaults WORK/cmp-run.sh, /mnt/bko-ram, /bkoscratch) are
+# for a test.
 #
 # HOLT_CRATE=rescue (docs/design/rescue-tui.md, "Builds"; default holt, whose
 # build nothing here changes) builds bko-rescue instead, the same way, in the
@@ -149,20 +165,52 @@ refuse_pinned() {
     done
 }
 
-if [[ ${1:-} == --reserved ]]; then
-    [[ $# -eq 3 ]] || { echo "build-holt: --reserved RUN PLATFORM" >&2; exit 2; }
-    refuse_shipped
+# --reserved's scratch (the header): WHERE (ram or ssd) and DIR for RUN
+# PLATFORM, by this host's scratch_mode and the room cmp-run.sh says it has now.
+CMP_RUN=${HOLT_CMP_RUN:-$WORK/cmp-run.sh}
+place_scratch() {
+    local run=$1 plat=$2 d=${HOLT_RESERVE:-3} m=4 mode hpy fr ad am sr num='^[0-9]+([.][0-9]+)?$'
+    WHERE=ram DIR=${HOLT_RAM_ROOT:-/mnt/bko-ram}/t2b-$run-$plat MODE=ram
+    hpy=$(dirname "$HERE")/test2/t2lib/hosts.py; [[ -f $hpy ]] || hpy=$WORK/testvm/test2/t2lib/hosts.py
+    mode=${SCRATCH_MODE:-$(python3 -I -B "$hpy" limit "$(hostname -s)" scratch_mode 2>/dev/null)}
+    case $mode in overflow|ssd) MODE=$mode ;; *) return 0 ;; esac
+    grep -q -- '--reserve-ssd' "$CMP_RUN" 2>/dev/null || return 0
+    sr=$("$CMP_RUN" --ssd-free 2>/dev/null) && [[ $sr =~ $num ]] || sr=0
+    awk -v s="$sr" -v d="$d" 'BEGIN { exit !(s + 0 >= d + 0) }' || return 0
+    if [[ $mode == overflow ]]; then
+        fr=$("$CMP_RUN" --free 2>/dev/null) && read -r _ ad am < <(sed -n '3p' <<<"$fr") &&
+            [[ ${ad:-} =~ $num && ${am:-} =~ $num ]] &&
+            awk -v ad="$ad" -v am="$am" -v d="$d" -v m="$m" 'BEGIN { exit !(d + 0 <= ad + 0 && d + m <= am + 0) }' &&
+            return 0
+    fi
+    WHERE=ssd DIR=${HOLT_SSD_ROOT:-/bkoscratch}/t2b-$run-$plat
+}
+
+if [[ ${1:-} == --reserved || ${1:-} == --where ]]; then
+    [[ $# -eq 3 ]] || { echo "build-holt: $1 RUN PLATFORM" >&2; exit 2; }
+    verb=$1
+    [[ $verb == --where ]] || refuse_shipped
     RUN=$2 PLATFORM=$3
     [[ $RUN =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "build-holt: RUN '$RUN': a plain name" >&2; exit 2; }
     case $PLATFORM in linux|linux-arm64|freebsd|netbsd|openbsd|dragonfly|illumos|haiku) ;;
         *) echo "build-holt: PLATFORM: $PLATFORMS" >&2; exit 2 ;; esac
+    place_scratch "$RUN" "$PLATFORM"
+    [[ $verb == --reserved ]] || { echo "$WHERE $DIR"; exit 0; }
     LOGS=${HOLT_LOGS:-/bkoscratch/holttest1d/build-holt-$PLATFORM}
     [[ $CRATE != rescue ]] || { LOGS=${HOLT_LOGS:-/bkoscratch/rescue-build/build-$PLATFORM}; OUT=; refuse_pinned; }
     mkdir -p "$LOGS"; rm -f "$LOGS/exit" "$LOGS/peak-kib"
-    tmp=/mnt/bko-ram/t2b-$RUN-$PLATFORM rc=0 port=() lk=""
+    tmp=$DIR rc=0 port=() lk=""
     finish() { rm -rf --one-file-system "$tmp"; echo "$1" >"$LOGS/exit"; exit "$1"; }
     trap 'finish 143' TERM; trap 'finish 130' INT; trap 'finish 129' HUP
-    mountpoint -q /mnt/bko-ram || { echo "build-holt: no RAM disk at /mnt/bko-ram" >&2; finish 2; }
+    res=(--reserve "${HOLT_RESERVE:-3}" 4)
+    if [[ $WHERE == ssd ]]; then
+        res=(--reserve-ssd "${HOLT_RESERVE:-3}" 4)
+        why="the RAM disk has no room for ${HOLT_RESERVE:-3} GiB now"; [[ $MODE == overflow ]] || why="scratch_mode $MODE"
+        echo "build-holt: scratch on the SSD, $tmp ($why)"
+    else
+        r=${HOLT_RAM_ROOT:-/mnt/bko-ram}
+        mountpoint -q "$r" || { echo "build-holt: no RAM disk at $r" >&2; finish 2; }
+    fi
     if [[ $PLATFORM != linux && $PLATFORM != linux-arm64 ]]; then
         mkdir -p /tmp/bko-ht1-ports
         for p in $(seq 2600 2689); do
@@ -188,7 +236,7 @@ if [[ ${1:-} == --reserved ]]; then
           sleep 5
       done ) </dev/null >/dev/null 2>&1 &
     tag=ht1; [[ $CRATE == holt ]] || tag=rescue
-    WEAR_TAG=$tag:$RUN:build-$PLATFORM "$WORK/cmp-run.sh" --reserve "${HOLT_RESERVE:-3}" 4 \
+    WEAR_TAG=$tag:$RUN:build-$PLATFORM "$CMP_RUN" "${res[@]}" \
         env TMPDIR="$tmp" ${HOLT_CRATE:+HOLT_CRATE="$HOLT_CRATE"} "$HERE/build-holt.sh" "$PLATFORM" ${port[@]+"${port[@]}"} || rc=$?
     finish "$rc"
 fi

@@ -919,8 +919,8 @@ D10's pinned toolchain closes for the cross-built platforms.)
   **reference** once a week and at each change of the pinned toolchain or
   the guest generation, with E2's step 3 on one guest. A difference makes
   that platform go back to the VM build until it is explained.
-- Cross builds need no guest and no big host, which also removes F8's
-  "HoltTest2 needs a big build host".
+- Cross builds need no guest and no big host. (F8 has already removed
+  "HoltTest2 needs a big build host": a VM build runs on any build host.)
 
 Gain: about 5-7 min of wall time per holt-change round, because DragonFly's
 9 min VM build is the longest today (est. 1-3 min cross). Up to six guest
@@ -1208,6 +1208,30 @@ this spec's speedups 2 and 7.
   this moot for the BSDs. *Proof:* a HoltTest2 run on an all-small set
   builds and PASSes, and `t2 batch plan` accepts such a set. *Gain:* medium:
   6-12 min builds go one deep over 5 hosts.
+  *Built 2026-11-27:* the SSD path, not the cap. `holt.holt_build_hosts`
+  (was `big_build_hosts`) is the table's role `build` alone: chopin,
+  cinqcent, copland, cage, czerny (choubox has no build role and still
+  builds nothing). It stays the one predicate of HoltTest2's stop rule,
+  `batchfile.refusals` and the scheduler's `HostCap.builder`.
+  `build-holt.sh --reserved` (both crates) places its scratch as
+  ht1-queue.sh places a line, by the host's `scratch_mode`: in mode
+  overflow the RAM disk when HOLT_RESERVE fits it right now (`cmp-run.sh
+  --free`'s "after" figures, its 4 GiB of memory with it), else
+  `/bkoscratch/t2b-RUN-PLAT` under `cmp-run.sh --reserve-ssd` when `--ssd-free`
+  has the room (the wear log's scratch=ssd, which the write stop rule does
+  not count), else the RAM disk's line as before; `--where RUN PLAT` prints
+  the choice. holt.py records both places for a dead run's sweep, and
+  `run.our_leftovers` takes the SSD one. *Proof run 2026-11-27* (private
+  T2_MAC_ROOT and T2_HOST_ROOT, so code 1683291 was built afresh): `t2
+  HoltTest2 alpine324 freebsd15 netbsd11 --hosts copland,cage,czerny`
+  (t2h-20261127T0432-4441) built linux on copland, freebsd on cage and netbsd
+  on czerny, one deep and all in RAM (each had the room), copied each to the
+  other two by sha256, and gate:holt and the three cells PASSed. `t2 batch
+  FILE plan` on `set hosts copland,cage,czerny` with that HoltTest2 accepts
+  it; on `set hosts choubox` it refuses it. The SSD path ran for real on
+  cage (`SCRATCH_MODE=ssd build-holt.sh --reserved f8ssd linux`, private
+  out): exit 0, its jobs.log line scratch=ssd, the directory removed after;
+  BuildHoltScratch tests the placement rule on czerny and cage.
 - **F9. SticTest checks whose reserve exceeds a small RAM disk (partly)
   (user: FD4).** debian13-zfs, ubuntu24 and ubuntu26-zfs need `13 5`,
   ubuntu26-zfsmirror `23 MEM`, qubes43 `16 4`. Change: give check.sh the

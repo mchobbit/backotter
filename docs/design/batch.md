@@ -358,7 +358,7 @@ surprise:
 | `--universe` | test-only, refused in the real root | — |
 | a `cmd` whose command reads a tty, or contains `sudo` without `-n` | would prompt | fix the command |
 | two `ht1` entries with the same RUN | one queue would serve both | rename one |
-| a `t2` entry that may build bko-holt (HoltTest2 unless all its cells are `+img`, BkoTest2, SweepTest2) with no big build host among its hosts | HoltTest2 stops at once (§6.1 item 8) | add chopin or cinqcent to its hosts, or (HoltTest2) `--holt-bin DIR` |
+| a `t2` entry that may build bko-holt (HoltTest2 unless all its cells are `+img`, BkoTest2, SweepTest2) with no build host (role `build`, big or small since img-speed.md F8) among its hosts | HoltTest2 stops at once (§6.1 item 8) | add one (chopin, cinqcent, copland, cage, czerny) to its hosts, or (HoltTest2) `--holt-bin DIR` |
 
 `t2 GuestTest2 update`, when allowed, is always `serial`: it changes guests
 under any `ht1`, `stic1` or `bs2` entry, which no lock of `t2`'s covers.
@@ -577,11 +577,11 @@ Refuse with every unmet item listed (exit 2), never a part-run batch:
    `--holt-bin`, unless its cells are all `+img` ones — `+img` alone or only
    `NAME+img` words, which run the image's own bko-holt — and `t2
    BkoTest2`/`SweepTest2` for their holt child; not `ht1`, which takes the
-   promoted holt-bin) has a big build host (role
-   `build`, class `big` in `testvm/hosts.json`) among its hosts (`hosts=`,
-   else the batch's). The predicate is HoltTest2's own stop rule's
-   (`holt.big_build_hosts`), so the two can't drift; the refusal names the
-   entry, its hosts and the remedies: add a big build host, or give the
+   promoted holt-bin) has a build host (role `build` in
+   `testvm/hosts.json`; until img-speed.md F8, 2026-11-27, class `big` too)
+   among its hosts (`hosts=`, else the batch's). The predicate is HoltTest2's
+   own stop rule's (`holt.holt_build_hosts`), so the two can't drift; the
+   refusal names the entry, its hosts and the remedies: add a build host, or give the
    HoltTest2 `--holt-bin DIR`. The scheduler, likewise, never places such an
    entry on a candidate set without one (`bt-20261115T1132-e4ca`: HoltTest2 on
    copland alone stopped 9 s in).

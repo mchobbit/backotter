@@ -215,7 +215,7 @@ def _t2_profile(e, src, cap, prof):
     for s in sets[1:]:
         if prof.needs_builder and not any(cap[h].builder for h in s if h in cap):
             walls[frozenset(s)] = None      # (batchsched.feasible refuses it too: no plan needed)
-            prof.srcs[bs._key(s)] = "not runnable: no big build host for bko-holt"
+            prof.srcs[bs._key(s)] = "not runnable: no build host for bko-holt"
             continue
         pj = planner.plan(e, args, s)
         if not pj:

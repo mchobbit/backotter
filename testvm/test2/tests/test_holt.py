@@ -1707,6 +1707,98 @@ def modern_bash():
     return None
 
 
+# --- build-holt.sh --reserved's scratch: RAM first, the SSD for overflow (img-speed.md F8) ------------
+
+FAKE_CMP_RUN = r"""#!/usr/bin/env bash
+# a fake cmp-run.sh (it knows --reserve-ssd): its figures from FAKE_SSD and FAKE_AFTER
+case $1 in
+    --ssd-free) [[ -n ${FAKE_SSD:-} ]] || exit 1; echo "$FAKE_SSD" ;;
+    --free) [[ -n ${FAKE_AFTER:-} ]] || exit 1; printf '9.0 9.0\nwaiting 0\nafter %s\n' "$FAKE_AFTER" ;;
+    *) printf '%s\n' "$@" >"$FAKE_ARGS"
+       for a in "$@"; do [[ $a == TMPDIR=* && -d ${a#TMPDIR=} ]] && echo "made ${a#TMPDIR=}" >>"$FAKE_ARGS"; done
+       exit 0 ;;
+esac
+"""
+
+
+@unittest.skipUnless(modern_bash(), "needs bash 4 or newer with timeout and realpath (the test hosts')")
+class BuildHoltScratch(unittest.TestCase):
+    """build-holt.sh --where and --reserved: where a build's scratch goes, by the host's
+    scratch_mode and the room a (fake) cmp-run.sh says it has now."""
+    TOOL = os.path.join(WT, "testvm", "holttest1d", "build-holt.sh")
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="t2-f8-")
+        self.addCleanup(shutil.rmtree, self.d, True)
+        self.cmp = os.path.join(self.d, "cmp-run.sh")
+        wr(self.cmp, FAKE_CMP_RUN)
+        os.chmod(self.cmp, 0o755)
+        self.ram, self.ssd = os.path.join(self.d, "ram"), os.path.join(self.d, "ssd")
+        os.makedirs(self.ram)
+        os.makedirs(self.ssd)
+        self.args = os.path.join(self.d, "args")
+
+    def run_tool(self, verb, mode, ssd=None, after=None, reserve=None, cmp=None, plat="linux"):
+        e = {k: v for k, v in os.environ.items() if k not in ("T2_HOST_ROOT", "HOLT_RESERVE", "HOLT_CRATE")}
+        e.update({"SCRATCH_MODE": mode, "HOLT_CMP_RUN": cmp or self.cmp, "HOLT_RAM_ROOT": self.ram,
+                  "HOLT_SSD_ROOT": self.ssd, "FAKE_ARGS": self.args, "HOLT_LOGS": os.path.join(self.d, "logs")})
+        for k, v in (("FAKE_SSD", ssd), ("FAKE_AFTER", after), ("HOLT_RESERVE", reserve)):
+            if v is not None:
+                e[k] = v
+        return subprocess.run([modern_bash(), self.TOOL, verb, "r1", plat], capture_output=True, text=True,
+                              env=e, timeout=60)
+
+    def where(self, *a, **kw):
+        p = self.run_tool("--where", *a, **kw)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return p.stdout.strip()
+
+    def test_where(self):
+        ram, ssd = f"ram {self.ram}/t2b-r1-linux", f"ssd {self.ssd}/t2b-r1-linux"
+        # mode ram: the RAM disk, whatever the room (every build before F8)
+        self.assertEqual(self.where("ram", ssd="100", after="0 0"), ram)
+        # overflow: the RAM disk when D fits it now and D + 4 the memory, else the SSD when it has D
+        self.assertEqual(self.where("overflow", ssd="100", after="5.0 20.0"), ram)
+        self.assertEqual(self.where("overflow", ssd="100", after="3.0 7.0"), ram)
+        self.assertEqual(self.where("overflow", ssd="100", after="2.9 20.0"), ssd)
+        self.assertEqual(self.where("overflow", ssd="100", after="5.0 6.9"), ssd)
+        self.assertEqual(self.where("overflow", ssd="100", after="5.0 20.0", reserve="6.5"), ssd)
+        self.assertEqual(self.where("overflow", ssd="100", after=None), ssd)   # (--free can't say)
+        # ... and the RAM disk's line when the SSD has no room for it either
+        self.assertEqual(self.where("overflow", ssd="2.5", after="0 0"), ram)
+        self.assertEqual(self.where("overflow", ssd=None, after="0 0"), ram)
+        # ssd: the SSD when it has the room
+        self.assertEqual(self.where("ssd", ssd="3", after="9 20"), ssd)
+        self.assertEqual(self.where("ssd", ssd="1", after="9 20"), ram)
+        # a cmp-run.sh with no --reserve-ssd (a host not synced yet): mode ram
+        old = os.path.join(self.d, "old-cmp-run.sh")
+        wr(old, FAKE_CMP_RUN.replace("--reserve-ssd", "--reserve"))
+        os.chmod(old, 0o755)
+        self.assertEqual(self.where("overflow", ssd="100", after="0 0", cmp=old), ram)
+        p = self.run_tool("--where", "overflow", plat="nosuch")
+        self.assertEqual(p.returncode, 2)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "GNU rm's --one-file-system (the test hosts')")
+    def test_reserved_on_the_ssd(self):
+        p = self.run_tool("--reserved", "overflow", ssd="100", after="1.0 20.0")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn(f"scratch on the SSD, {self.ssd}/t2b-r1-linux (the RAM disk has no room for 3 GiB now)", p.stdout)
+        got = rd(self.args).splitlines()
+        tmp = f"{self.ssd}/t2b-r1-linux"
+        self.assertEqual(got[:5], ["--reserve-ssd", "3", "4", "env", f"TMPDIR={tmp}"])
+        self.assertEqual(got[-1], f"made {tmp}")
+        self.assertFalse(os.path.exists(tmp))   # (removed after)
+        self.assertEqual(rd(os.path.join(self.d, "logs", "exit")).strip(), "0")
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "GNU rm's --one-file-system (the test hosts')")
+    def test_reserved_in_ram_needs_the_ram_disk(self):
+        p = self.run_tool("--reserved", "overflow", ssd="100", after="9.0 20.0")
+        self.assertEqual(p.returncode, 2)
+        self.assertIn(f"no RAM disk at {self.ram}", p.stderr)   # (a plain directory: no mount point)
+        self.assertFalse(os.path.exists(self.args))
+        self.assertEqual(rd(os.path.join(self.d, "logs", "exit")).strip(), "2")
+
+
 @unittest.skipUnless(modern_bash(), "needs bash 4 or newer with timeout and realpath (the test hosts')")
 class HookShell(unittest.TestCase):
     def run_hook(self, tool, env=None, args="0 0 --k /x/K"):

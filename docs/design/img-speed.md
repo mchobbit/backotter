@@ -646,7 +646,11 @@ in every plan.
 - **The BSDs, illumos and Haiku need nothing new** on copland, cage and
   czerny. Checked on copland: `vms/` has freebsd15-builder, netbsd11,
   openbsd8, dragonfly6, omnios58 and haiku6, and `img-media/` has a directory
-  for each of the six. Cage and czerny were not checked: the facts step
+  for each of the six. *(I7 found that check wrong, 2026-11-27: on all three,
+  `img-media/{freebsd,openbsd,haiku}` and `vms/freebsd15-builder` were links
+  copied from Chopin's tree into a `/bkoscratch/imgbuild` those hosts lacked,
+  so they dangled; `img-seed.sh --media` and `--builder` mend them, below.)*
+  Cage and czerny were not checked: the facts step
   (§5.2) finds out, and a host that lacks a builder or its media gets no unit
   of that platform. Their 10G RAM disk (ceiling 9.0) holds the largest
   measured build peak (illumos 3.9 GB, so `--reserve` about 4.6). The
@@ -666,6 +670,32 @@ in every plan.
   apt.bcachefs.org). Whenever slim is repointed on Chopin, the same script
   repoints every seeded host, and the planner refuses a host whose slim
   manifest differs.
+- *As built (I7, 2026-11-27):* `stick/img-seed.sh` runs `stick/img_seed.py`,
+  which sends its host half, `stick/img-seed-host.sh`, over ssh (no synced
+  copy needed). The source is `--from`, default the fleet host. For each host
+  it makes `/bkoscratch/imgbuild` (the user's, as Chopin's) and `server/`
+  (root's), links `~/backotter-work/server`, pulls the source's current
+  `slim-YYYYMMDD` and the ISO its `report.txt` names, host to host, through a
+  `.seed-part` directory (a name already there is not copied again), and
+  repoints `slim` by one rename only once that host's own `img_inputs.py
+  digest linux` gives the source's `slim` and `iso` (what the planner
+  compares). The tools are checked against the minimums and against the
+  source's versions (D15: a host whose versions differ is named, since it
+  gets no Linux unit). `--seeded` takes every enabled amd64 build host but
+  the source that has `server/`; `--check` changes nothing; exit 0 every host
+  ready, 1 not, 3 an unusable source. `--media` mends an `img-media/P` link
+  that dangles into `/bkoscratch/imgbuild/img-media`: the directory, filled
+  with the source's media but `MEDIA` (a host's own fetch writes that and
+  verifies the files). `--builder` mends a dangling `vms/freebsd15-builder`
+  with a copy of the source's folder (57 GiB), taken under its
+  `.vm-update.lock` and refused while a process has its disk open, then every
+  file's SHA-256 compared on both and the source's files unchanged since. Its
+  `fingerprint` comes along, so the host's FreeBSD identity is the source's
+  and the planner deals it FreeBSD units. Run 2026-11-27: copland, cage and
+  czerny seeded (Linux and media), copland's builder copied (17 files
+  checked); `--check` says all four non-reference build hosts ready, and
+  `img-round.sh plan --full all` puts linux on copland and finds copland able
+  for FreeBSD (cinqcent, cage and czerny still differ in the builder).
 - **choubox** gets no build units. It has no build role, its RAM disk is 4G,
   and its memory ceiling of 6.0 is under img-lanes' 10.
 
@@ -1645,7 +1675,7 @@ Each step is done when its proof passes. Figures are rough (est.).
 | **I4** | `build.sh refresh` for netbsd, then freebsd, openbsd, dragonfly, illumos, haiku. The headroom rule in their full builds, where §4.2's measure says it is short. (~0.5-1 d each) | E1 per platform. fsck clean before and after. The id sites rewritten (the label checked from the booted image), OpenBSD's DUID and the GPT GUIDs new. With parent and child attached to one guest, each boots its own root. The marker's kernel and ZFS fields equal the parent's. A too-large binary set makes the refresh refuse and the planner fall back to a full build |
 | **I5** | `BKO_IMG_COMPRESS=0` in img-one.sh and img-xcopy.sh, `img-one.sh` writing `SHA256SUMS`, and `img-publish.sh`. The retention rule only after D6. (~0.5 d) | A set builds with no xz process (sampled ps and wear tags). Facts give the same release SHA-256 as before, and ImgTest2's keys for an unchanged image are unchanged. Publish's decompress-and-hash matches the raw SHA-256 of every image, and publish refuses a set past the cadence |
 | **I6** | Parallel modes in img-one.sh and ImgTest2's boot.sh, the image copied into the RAM disk, reservations sized by width. (~0.5 d) | The same image tested serial and parallel gives the same per-check verdicts on 3 sets. No reservation goes over its ceiling (cmp-run logs). The flakes.json match rate is unchanged |
-| **I7** | `img-seed.sh`, and Linux inputs on copland, cage and czerny. (~0.5 d) | The slim manifests match. A full Linux build on copland and one on Chopin from the same inputs, the same day, have the same layer manifest (package list), the same base squashfs bytes, and both PASS ImgTest2 |
+| **I7** | `img-seed.sh`, and Linux inputs on copland, cage and czerny. (~0.5 d) As built (2026-11-27), with the media and copland's builder mended (§5.1). Proof: the slim manifests match on all three (e19af22fa576, ISO c8e9d797f718); full Linux builds at 05:05Z on Chopin and copland (private image dirs, the shared sets) gave the same base, bins and tests digests in the provenance, the same base squashfs (65bc6e21) and layer manifest (2c9863ec) in both images of each, layer squashfs bytes that differ only within E1's noise floor (114 tree-listing entries, none outside I3's diff(A, A')), and ImgTest2 `linux` PASS on each (private T2 roots, `T2_IMAGES` at each set; panel not needed). 13 new tests (test_img_seed, a fixture farm behind a fake ssh); the t2 suite passes (3310) | The slim manifests match. A full Linux build on copland and one on Chopin from the same inputs, the same day, have the same layer manifest (package list), the same base squashfs bytes, and both PASS ImgTest2 |
 | **I8** | `img-round.sh run` and `fanout`, the round lock (C10, after D16). Retire Chopin's `images/lanes.sh`. promote-bins' source relaxed (F20). (~1.5 d) | A full farm round: each platform built where `plan` said, identical SHA-256 on every holding host, every host's pin accepts every platform, and no host over its limits. A promote-bins started mid-round is refused, and a unit started with a host's sets changed under it refuses |
 | **I9** | Proof cells on six hosts: fan-out to all, choubox's width-1 boot cells. (~0.5 d) | An ImgTest2 run places cells on at least 5 hosts. The panel's lines spread, and its wall time drops to about its longest line |
 | **I10** | `holt-cross.sh` for freebsd, netbsd and illumos, as HoltTest2 check builds in `CODE/cross/` with their own key (§8.2a, D17). (~1.5 d) | E2 steps 0-3 for each. A check build never lands in `CODE/PLAT/` |

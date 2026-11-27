@@ -67,7 +67,7 @@ ARCHES = ("amd64", "arm64")
 # FreeBSD 15.1 reads QEMU's USB stick on xHCI garbled (umass: "bad CSW
 # signature") unless kern.maxphys is cut to 64 KiB, and the root never
 # mounts; on EHCI it boots as it would from a real stick.  illumos runs on
-# the PC machine, as the omnios58 test guest does.
+# the PC machine, as the omnios60 test guest does.
 MACHINE = {"dragonfly": "pc", "illumos": "pc"}
 USB_CONTROLLER = {"dragonfly": "usb-ehci", "freebsd": "usb-ehci"}
 # Bytes a second to type at the serial console, for platforms that drop input

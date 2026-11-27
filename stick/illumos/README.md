@@ -1,8 +1,8 @@
 # The illumos rescue image
 
 `../make-img-bsd.sh illumos` makes `backotter-live-illumos-VERSION-amd64.img`,
-an OmniOS r151058 system that runs from RAM, built in a throwaway
-`--snapshot` copy of the `omnios58` test guest (`testvm/make-omnios.sh`) with
+an OmniOS r151060 system that runs from RAM, built in a throwaway
+`--snapshot` copy of the `omnios60` test guest (`testvm/make-omnios.sh`) with
 OmniOS's own tools for its install media (kayak).  Write it raw to a USB
 stick.  It boots with BIOS or UEFI, but not with Secure Boot on: illumos'
 loader isn't signed.  `platform` is `illumos`, the family of systems it
@@ -20,10 +20,10 @@ Linux image's.
 
 - `platform.conf`: the release, the build VM, and `fetch`, which clones
   kayak (github.com/omniosorg/kayak), checks that the pinned commit is on its
-  `r151058` branch, and keeps `git archive` of that commit as
-  `~/backotter-work/img-media/illumos/kayak-fea4340.tar`.  No OS image is
+  `r151060` branch, and keeps `git archive` of that commit as
+  `~/backotter-work/img-media/illumos/kayak-e6cc8a9.tar`.  No OS image is
   downloaded: the system comes from OmniOS's package repository
-  (pkg.omnios.org/r151058/core), every package signed.
+  (pkg.omnios.org/r151060/core), every package signed.
 - `build.sh`: runs in the VM.  `info` gives the VM's kernel and ZFS features;
   `assemble` makes the image (below); `list` and `room` read an image;
   `refresh` swaps new binaries into a built image in place
@@ -135,7 +135,7 @@ What changes from OmniOS's installer:
 - `restic-bko` and `rustic-bko` in `/usr/local/bin`, from
   `~/backotter-work/bko-bin/illumos/` (both required), `bko-holt` there
   too, from `~/backotter-work/holt-bin/illumos/` (`BKO_HOLT_BIN`, a pinned set of holt's builds), the marker in
-  `/.disk/backotter.json` (mode 444).  `zfs.version` is `illumos-r151058`
+  `/.disk/backotter.json` (mode 444).  `zfs.version` is `illumos-r151060`
   (illumos' ZFS isn't OpenZFS), and its features are the VM's
   `zpool upgrade -v`.
 - No pool is imported at boot: there's no `zpool.cache` and no root pool,
@@ -155,11 +155,12 @@ reading only that sector of each disk and mounting nothing else.
 
 `build-rustic.sh [PORT]` builds it natively in a throwaway copy of
 `omnios58`, with OmniOS's Rust, gcc 14 and cmake (`../build-rustic-native.sh`
-does the work), into `bko-bin/illumos/` (`bko-bin/omnios` on the hosts is a
+does the work; the build stays on r151058 when the image and the test guests
+move to r151060, 2026-11-27, so the binary runs on both), into `bko-bin/illumos/` (`bko-bin/omnios` on the hosts is a
 link to it, for older commands).  `restic-bko` is the restic fork's
 cross-build for `GOOS=illumos`.
 
 ## Testing in QEMU
 
 `boot-test.py` boots illumos on the `pc` machine (`MACHINE` there), as the
-`omnios58` guest runs, with the default xHCI controller.
+`omnios60` guest runs, with the default xHCI controller.

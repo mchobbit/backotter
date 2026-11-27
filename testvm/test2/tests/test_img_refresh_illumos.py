@@ -205,9 +205,9 @@ class IllumosImgOne(TB.NetbsdImgOne):
     def setUp(self):
         super().setUp()
         wr(os.path.join(self.w, "stick", "make-img-bsd.sh"), STUB, 0o755)
-        T.set_generation(self.w, "omnios58", "cd" * 32)
-        wr(os.path.join(self.w, "img-media", "illumos", "kayak-fea4340.tar"), "kayak\n")
-        wr(os.path.join(self.w, "img-media", "illumos", "MEDIA"), "kayak-fea4340.tar\n")
+        T.set_generation(self.w, "omnios60", "cd" * 32)
+        wr(os.path.join(self.w, "img-media", "illumos", "kayak-e6cc8a9.tar"), "kayak\n")
+        wr(os.path.join(self.w, "img-media", "illumos", "MEDIA"), "kayak-e6cc8a9.tar\n")
 
     def d(self, *p):
         return os.path.join(self.i, "illumos", *p)

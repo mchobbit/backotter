@@ -1,10 +1,11 @@
 #!/bin/bash
 # bs2all: BackShot2All from the Mac, start to report, without typing the run's name.
 #
-#   bs2all start          bs2 BackShot2All; the run's name saved in ~/backotter-work/bs2all-last
+#   bs2all start [--hosts H,H]   bs2 BackShot2All (on those hosts); the run's name saved in
+#                         ~/backotter-work/bs2all-last, only when it really started
 #   bs2all finish [RUN]   wait for RUN's host queues, then its corpus, its leftovers set
 #                         (and wait for it), then its report
-#   bs2all all            start, then finish
+#   bs2all all [--hosts H,H]    start, then finish (nothing more when it didn't start)
 #   bs2all name           the run finish and report would use
 #   bs2all wait [RUN]     only wait for RUN's queues
 #   bs2all report [RUN]   only its report (now, finished or not)
@@ -66,19 +67,29 @@ wait_for() {   # wait_for RUN [SUFFIX] WHAT
 start() {
     local out name
     out=$(mktemp)
-    "$bs2" BackShot2All 2>&1 | tee "$out"
+    "$bs2" "$@" BackShot2All 2>&1 | tee "$out"
     local rc=${PIPESTATUS[0]}
     name=$(grep -oE '^BackShot2All bs2all-[0-9]{8}-[0-9]{6}' "$out" | head -1 | cut -d' ' -f2)
     rm -f "$out"
     [[ -n $name ]] || die "bs2 BackShot2All exited $rc and printed no run name"
+    started "$name" || die "$name didn't start (bs2 exited $rc; its reason is above): nothing to finish"
     mkdir -p "$(dirname "$last")" && echo "$name" > "$last"
     echo "bs2all: run $name (saved in $last; bs2 exited $rc)"
     [[ $rc -eq 0 ]] || echo "bs2all: bs2 exited $rc: some host may not have started (its cases show as INCOMPLETE)" >&2
 }
 
+started() {   # started RUN: true when some host has RUN's manifest (bs2 writes it before any host starts)
+    local h
+    for h in $(hosts); do
+        ssh -n -o BatchMode=yes -o ConnectTimeout=8 "$h" "test -s /bkoscratch/backshot2/runs/$1/bs2all.json" 2>/dev/null && return 0
+    done
+    return 1
+}
+
 finish() {
     local run
     run=$(resolve "${1:-}") || exit 2
+    started "$run" || die "$run never started (no host has its bs2all.json): nothing to finish"
     echo "bs2all: finishing $run"
     wait_for "$run" "" "the queues"
     echo "$(date +%H:%M) the corpus"
@@ -94,11 +105,11 @@ finish() {
 }
 
 case ${1:-} in
-    start) start ;;
+    start) shift; start "$@" ;;
     finish) finish "${2:-}" ;;
-    all) start && finish "$(<"$last")" ;;
+    all) shift; start "$@" && finish "$(<"$last")" ;;
     name) resolve "${2:-}" ;;
     wait) run=$(resolve "${2:-}") || exit 2; wait_for "$run" "" "the queues" ;;
     report) run=$(resolve "${2:-}") || exit 2; "$bs2" BackShot2All report "$run" ;;
-    *) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+    *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

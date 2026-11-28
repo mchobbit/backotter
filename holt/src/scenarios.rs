@@ -12569,7 +12569,9 @@ fn freebsd_pools_glob_file() {
     // 15), the kept headers' copies too though this layout kept none.
     assert_eq!(
         rs[w].stdin.as_deref(),
-        Some("!/data/**\n!/.bko-holt/luks-headers/**\n!/.bko-holt/luks-headers\n!/.bko-holt/system.json\n!/.bko-holt\n")
+        Some(
+            "!/data/**\n!/.bko-holt/luks-headers/**\n!/.bko-holt/luks-headers\n!/.bko-holt/system.json\n!/.bko-holt\n"
+        )
     );
     let r = rs
         .iter()

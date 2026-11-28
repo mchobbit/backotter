@@ -303,7 +303,11 @@ pub fn copy(ask: &Ask, out: &Path) -> Result<Value, (E, String)> {
 /// rustic-bko's after `SNAPSHOT:` (a snapshot ID holds no colon, so a
 /// SUBPATH's colons and spaces stay in it), restic-bko's its own argument.
 fn dumped_path(argv: &[String]) -> &str {
-    match argv.iter().rposition(|a| a == "dump").map(|i| &argv[i + 1..]) {
+    match argv
+        .iter()
+        .rposition(|a| a == "dump")
+        .map(|i| &argv[i + 1..])
+    {
         Some([one]) => one.split_once(':').map_or(one.as_str(), |(_, p)| p),
         Some([_, p]) => p.as_str(),
         _ => SYSTEM_PATH,
@@ -774,7 +778,10 @@ mod tests {
         ));
         // restic-bko 0.20.0+backotter.1's line for a SUBPATH not there
         // (seen 2026-11-26): not the file missing.
-        assert!(!says_missing("Fatal: cannot dump file: path sub: not found", SYSTEM_PATH));
+        assert!(!says_missing(
+            "Fatal: cannot dump file: path sub: not found",
+            SYSTEM_PATH
+        ));
     }
 
     #[test]

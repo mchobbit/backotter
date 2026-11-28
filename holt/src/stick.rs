@@ -3172,7 +3172,12 @@ mod tests {
         // without them (the approved order): one free cluster more than
         // BODY's need beside them keeps them, the layout left out.
         let beside = without_layout(&sys, "stick_full", 5 * MIB).pretty().len() as u64;
-        let w = stick_write(&big, &sys, 5 * MIB, &edge(beside.div_ceil(4096) * 4096 + 4096));
+        let w = stick_write(
+            &big,
+            &sys,
+            5 * MIB,
+            &edge(beside.div_ceil(4096) * 4096 + 4096),
+        );
         assert!(
             matches!(
                 w,
@@ -3186,7 +3191,12 @@ mod tests {
         // A file too big for any stick is never written whole, even once
         // the older copies are gone.
         assert!(matches!(
-            stick_write(&big, &sys, SYSTEM_MAX + 1, &room(0, Some(40 * MIB), Some(40 * MIB), false)),
+            stick_write(
+                &big,
+                &sys,
+                SYSTEM_MAX + 1,
+                &room(0, Some(40 * MIB), Some(40 * MIB), false)
+            ),
             StickWrite::WithoutLayout {
                 remove_old: true,
                 ..
@@ -3689,12 +3699,22 @@ mod tests {
         ];
         let bodies = [
             system(ids[0], "lovelace", "", &with_layout(DUMP)),
-            without_layout(&sys(ids[1], "babbage", &with_layout(DUMP)), "stick_full", 20 << 20).pretty(),
+            without_layout(
+                &sys(ids[1], "babbage", &with_layout(DUMP)),
+                "stick_full",
+                20 << 20,
+            )
+            .pretty(),
             without_layout(&sys(ids[2], "hopper", ""), "system_too_big", SYSTEM_MAX + 1).pretty(),
             // A size at the limit isn't "over" it: no bytes.
             without_layout(&sys(ids[3], "turing", ""), "system_too_big", SYSTEM_MAX).pretty(),
             // A code it doesn't know: neither it nor its bytes passed on.
-            system(ids[4], "noether", "", ", \"layout_left_out\": {\"code\": \"x\\u001b[2J\", \"bytes\": 9}"),
+            system(
+                ids[4],
+                "noether",
+                "",
+                ", \"layout_left_out\": {\"code\": \"x\\u001b[2J\", \"bytes\": 9}",
+            ),
             // Today's system.json, and a layout that isn't a document.
             system(ids[5], "hamilton", "", ""),
             system(ids[6], "liskov", "", ", \"layout\": \"see the backup\""),
@@ -4060,8 +4080,16 @@ mod tests {
         assert_eq!(s.doc.arr_at(&["machines"]).len(), 2);
         // Each row says only whether it carries one (open question 18).
         let line = jsonout::line(&s.doc);
-        assert!(!line.contains("ext4") && !line.contains("storage"), "{line}");
-        assert!(s.doc.arr_at(&["machines"]).iter().all(|m| m.str_at(&["layout", "state"]) == Some("present")));
+        assert!(
+            !line.contains("ext4") && !line.contains("storage"),
+            "{line}"
+        );
+        assert!(
+            s.doc
+                .arr_at(&["machines"])
+                .iter()
+                .all(|m| m.str_at(&["layout", "state"]) == Some("present"))
+        );
         // --copy reads the machine asked for only; the other is counted.
         let s = scan(&sys_of(&t), None, Some(BABBAGE));
         assert_eq!(s.kept.len(), 1);

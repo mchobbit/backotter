@@ -92,7 +92,7 @@ holt	holt:mx25	5.38	323	0.00	15.73	ht_rows.json r3all cinqcent PASS; r3all_files
 holt	holt:netbsd11	4.18	251	0.00	0.01	ht_rows.json r3all chopin PASS; r3all_files.tsv left 0.01 GiB
 holt	holt:nixos2605	3.22	193	0.00	3.50	ht_rows.json r3all chopin PASS; r3all_files.tsv left 2.76 GiB
 holt	holt:omarchy	9.35	561	0.00	19.52	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 15.41 GiB
-holt	holt:omnios58	5.62	337	0.00	0.04	ht_rows.json r3all chopin PASS; r3all_files.tsv left 0.03 GiB
+holt	holt:omnios60	5.62	337	0.00	0.04	as holt:omnios58 (ht_rows.json r3all chopin PASS; r3all_files.tsv left 0.03 GiB), until measured (est.)
 holt	holt:openbsd8	6.33	380	0.00	0.01	ht_rows.json r3all chopin PASS; r3all_files.tsv left 0.01 GiB
 holt	holt:pop24	9.17	550	0.00	20.66	ht_rows.json r3all chopin PASS; r3all_files.tsv left 16.30 GiB
 holt	holt:redox	2.50	150	0.00	0.43	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 0.34 GiB
@@ -112,7 +112,7 @@ holt	holt:freebsd15-mirror	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirr
 holt	holt:freebsd15-geli	5.60	336	0.00	-	chopin geli3 PASS 2026-11-14, 04:17:10Z to 04:22:46Z (ht1-bsd.sh, passphrase typed through console-boot.py)
 holt	holt:freebsd15-geli-bios	5.47	328	0.00	-	cinqcent geli2a PASS 2026-11-17, 21:53:16Z to 21:58:44Z (ht1-bsd.sh, passphrase typed through console-boot.py)
 holt	holt:freebsd15-geli-ufs	4.85	291	0.00	-	cinqcent geli2b PASS 2026-11-17, 23:19:19Z to 23:24:10Z (ht1-bsd.sh, slot-1 refusal and checks, /data key file)
-holt	holt:omnios58-mirror	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
+holt	holt:omnios60-mirror	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
 holt	holt:oi2610	5.63	338	0.00	-	openindiana.md: as holt:omnios58 (r3all chopin PASS), until measured (est.)
 holt	holt:oi2610-bios	5.63	338	0.00	-	openindiana.md: as holt:omnios58 (r3all chopin PASS), until measured (est.)
 holt	holt:rocky10-raid5	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
@@ -288,7 +288,7 @@ holt	holt:freebsd15-geli+img	5.60	336	0.00	-	geli.md G7/D6: holt:freebsd15-geli'
 holt	holt:netbsd11+img	4.18	250	0.00	-	test2.md ImgTest2 Cost: the panel's figure
 holt	holt:openbsd8+img	6.33	379	0.00	-	test2.md ImgTest2 Cost: the panel's figure
 holt	holt:dragonfly6+img	15.38	922	0.00	-	test2.md ImgTest2 Cost: the panel's figure
-holt	holt:omnios58+img	5.62	337	0.00	-	test2.md ImgTest2 Cost: the panel's figure
+holt	holt:omnios60+img	5.62	337	0.00	-	test2.md ImgTest2 Cost: the panel's figure
 holt	holt:oi2610+img	5.63	338	0.00	-	openindiana.md: as holt:omnios58+img (the panel's figure), until measured (est.)
 holt	holt:haiku6+img	3.35	201	0.00	-	test2.md ImgTest2 Cost: the panel's figure
 holt	holt:endeavouros	4.00	240	0.00	-	contract: about one Linux source, 11-09

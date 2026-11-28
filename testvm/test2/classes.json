@@ -41,7 +41,7 @@
       "F": ["fedora44", "fedora44-uefi", "fedora44-raid", "rocky10", "rocky10-lvm", "rocky10-raid5", "kinoite44"],
       "A": ["arch", "alpine324", "aerynos", "artix-dinit", "artix-s6", "endeavouros", "endeavouros-grub", "manjaro", "garuda", "biglinux"],
       "C": ["cachyos", "mx25", "cachyos-zfs"],
-      "I": ["omnios58", "omnios58-mirror", "oi2610", "oi2610-bios"],
+      "I": ["omnios60", "omnios60-mirror", "oi2610", "oi2610-bios"],
       "G": ["gentoo", "gentoo-systemd"],
       "Obscure": ["pop24", "nixos2605", "omarchy", "sculpt2610", "redox", "tumbleweed", "debian12", "chimera",
                   "chimera-uefi", "chimera-zfs", "vanilla3", "pikaos4", "pikaos4-luks", "microos",
@@ -84,7 +84,7 @@
       "haiku6": {"match": ["haiku6"], "guests": ["haiku6"]},
       "openbsd8-newduid": {"match": ["openbsd8-newduid"], "guests": ["openbsd8"]},
       "dragonfly6-newfsid": {"match": ["dragonfly6-newfsid"], "guests": ["dragonfly6"]},
-      "omnios60-reguid": {"match": ["omnios60-reguid"], "guests": ["omnios58", "omnios58-mirror", "oi2610", "oi2610-bios"]}
+      "omnios60-reguid": {"match": ["omnios60-reguid"], "guests": ["omnios60", "omnios60-mirror", "oi2610", "oi2610-bios"]}
     },
     "rustic_panel": {
       "linux": ["omarchy", "nixos2605"],
@@ -92,7 +92,7 @@
       "netbsd": ["netbsd11"],
       "openbsd": ["openbsd8"],
       "dragonfly": ["dragonfly6"],
-      "illumos": ["omnios58"],
+      "illumos": ["omnios60"],
       "haiku": ["haiku6"]
     },
     "plan_visible": ["holt/src/load/commands.rs"],
@@ -102,7 +102,7 @@
       "netbsd": {"guests": ["netbsd11"]},
       "openbsd": {"guests": ["openbsd8"]},
       "dragonfly": {"guests": ["dragonfly6"]},
-      "illumos": {"guests": ["omnios58", "oi2610"]},
+      "illumos": {"guests": ["omnios60", "oi2610"]},
       "haiku": {"guests": ["haiku6"]}
     }
   },

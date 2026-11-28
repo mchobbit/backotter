@@ -17,7 +17,7 @@ ht1 h1d debian13 debian13-zfs debian13-stack proxmox9 proxmox9-mirror truenas25 
 ht1 h1f fedora44 fedora44-uefi fedora44-raid rocky10 rocky10-lvm rocky10-raid5 kinoite44
 ht1 h1a arch alpine324 aerynos artix-dinit artix-s6
 ht1 h1all endeavouros endeavouros-grub manjaro garuda biglinux
-ht1 h1i omnios58 omnios58-mirror oi2610 oi2610-bios
+ht1 h1i omnios60 omnios60-mirror oi2610 oi2610-bios
 ht1 h1c cachyos mx25 cachyos-zfs
 ht1 h1g gentoo gentoo-systemd
 ht1 h1m mint22

@@ -552,6 +552,31 @@ Settled on a freebsd15 guest (chopin, `--ram`):
   rehearsal's lane drive must be on EHCI, as the stick is
   (stick/freebsd/README.md).
 
+**F5 part 2: bs1-adopt and bs1-backup.** Both branch on bash's `$OSTYPE`
+(bs1-adopt's sh prelude on `uname -s`); Linux runs nothing new.
+
+- bs1-adopt: with no bash, the sh prelude runs `pkg install -y bash`
+  (ASSUME_ALWAYS_YES) and execs `/usr/local/bin/bash` by its full path. Then
+  the lane guard (`bs1-lane guard --lane`) before anything changes; init
+  `bsd`: `sysrc hostname` and `hostname`, `sysrc NAME_enable=YES` (dashes as
+  underscores) and `service NAME restart`, `ps -axo comm` for `running`,
+  pkg's python3 and avahi-app (dbus comes with it), `sshd_rsa_enable=NO` and
+  `sshd_ecdsa_enable=NO` (rc.d/sshd makes every enabled type that is
+  missing) in place of `mkdir -p /run/sshd`, and on a UEFI boot
+  (`machdep.bootmethod`) `/boot/efi` must be in fstab and mounted. An
+  enabled pf or ipfw is named, not changed (F13 settles GhostBSD's). No
+  sleep drop-in: nothing suspends a base system by itself.
+- bs1-backup: the guard first in both the preflight and phase 1, then
+  `bsd_be_check` (D9: on a ZFS root any BE `bectl list` shows without `N`,
+  named, inactive or activated for the next boot) before the coverage check;
+  `unhinted_check` passes on FreeBSD (its dump has no backup_sources). The
+  drive's key is tested against every GELI provider that asks
+  (`geli_key_test`). The baseline has `gpart.txt` (`gpart show -lp`, `gpart
+  list DISK`) and `gpart-backup.txt` (`gpart backup DISK`) in place of
+  lsblk.txt and sfdisk.txt (bs1-verify reads neither), and the log has
+  `gpart show -lp` and the tree's `mount -p` lines.
+- Base 15.1 has `sha256sum`; `/etc/os-release` gives `freebsd-15.1`.
+
 F1 and F4 are independent and can run side by side; F2 needs F1; F5 needs
 F4; F6 needs F1 and F5; F7 needs F6; F3 needs F6; F8 needs F2, F3 and F7.
 Nothing writes to the A100's disks, NVRAM or a real USB drive before F3,

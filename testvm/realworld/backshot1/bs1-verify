@@ -43,9 +43,21 @@
 #
 # The check and --boot hold a sleep, idle and lid-switch inhibitor while
 # they run (hold_awake in bs1-common).
+#
+# On FreeBSD (docs/design/freebsd-bs1.md) the same checks by FreeBSD's tools
+# (bs1-common-freebsd): the boot is finished when /etc/rc is; the stick's
+# marker is /.disk/backotter.json; BootCurrent by efibootmgr -v; cron, which
+# hold_awake stops while this runs, must have been running before it.
 
 # shellcheck disable=SC1091
 . "$(dirname "$(readlink -f "$0")")/bs1-common"
+
+FREEBSD=
+[[ $OSTYPE != freebsd* ]] || FREEBSD=1
+MARKER=/cdrom/.disk/backotter.json
+[[ -z $FREEBSD ]] || MARKER=/.disk/backotter.json
+# D3: only the internal disk, the lane drive and the stick here.
+if [[ -n $FREEBSD ]]; then sh "$HERE/bs1-lane" guard --lane >&2 || exit 1; fi
 
 if [[ ${1:-} == --unlock ]]; then
     disk=$(internal_disk) || { echo "no single disk has serial $INTERNAL_SERIAL" >&2; exit 2; }
@@ -69,6 +81,11 @@ else
 fi
 : >"$LOG"
 say "checking restore $(basename "$ATTEMPT") of $(basename "$RUN")"
+# FreeBSD: whether rc started cron at this boot, before hold_awake stops it.
+cron_at_boot=
+if [[ -n $FREEBSD ]] && service -e 2>/dev/null | grep -qx /etc/rc.d/cron; then
+    if service cron onestatus >/dev/null 2>&1; then cron_at_boot=running; else cron_at_boot=stopped; fi
+fi
 # The restored system boots to its own desktop, which may suspend it when idle.
 hold_awake "bs1-verify: a suspend would cut the controller's SSH"
 fails=0
@@ -84,8 +101,19 @@ trap drop_tree EXIT
 # pattern in it, doesn't match.
 rc_m_running() { grep -qsE -e "${RC_M//./\\.}" /proc/[0-9]*/cmdline; }
 RC_M=/etc/rc.d/rc.M
+# FreeBSD: /etc/rc runs every rc.d script at boot (sshd among them, so the
+# controller can get in before the rest), as "/bin/sh /etc/rc autoboot".
+bsd_rc_running() { ps -axww -o args= 2>/dev/null | awk '$1 ~ /(^|\/)sh$/ && $2 == "/etc/rc" { f = 1 } END { exit !f }'; }
 system_settled() {
     local s= i
+    if [[ -n $FREEBSD ]]; then
+        for i in $(seq 60); do
+            bsd_rc_running || { echo rc-finished; return 0; }
+            sleep 5
+        done
+        echo unknown
+        return 1
+    fi
     if ! command -v systemctl >/dev/null && [[ -e $RC_M ]]; then
         for i in $(seq 60); do
             rc_m_running || { echo rc.M-finished; return 0; }
@@ -202,6 +230,33 @@ sys.exit(1 if parts else 0)
 PY
 }
 
+# FreeBSD: BootCurrent's entry in efibootmgr -v ("+Boot0004* LABEL
+# HD(1,GPT,GUID,...)/File(...)") names one of the disk's ESPs by disk_esps'
+# KEY; an entry naming no partition (the firmware's own for a whole disk)
+# passes, as above.
+bsd_booted_the_restored_esp() {
+    local keys key cur
+    keys=$(disk_esps "$disk" | awk '{ print $2 }')
+    [[ -n $keys ]] || return 1
+    cur=$(efibootmgr -v | awk '/^\+Boot[0-9A-Fa-f]{4}/ { print; exit }')
+    echo "BootCurrent: ${cur:-none}; the disk's ESP: ${keys//$'\n'/ }"
+    [[ -n $cur ]] || return 1
+    cur=$(tr '[:upper:]' '[:lower:]' <<<"$cur" | sed -E 's/0x0+([0-9a-f])/0x\1/g')
+    for key in $keys; do
+        [[ $cur != *"$key,"* ]] || return 0
+    done
+    [[ $cur != *"hd("* ]]
+}
+efi_booted() {
+    if [[ -n $FREEBSD ]]; then [[ $(sysctl -n machdep.bootmethod 2>/dev/null) == UEFI ]]
+    else [[ -d /sys/firmware/efi ]]; fi
+}
+# mount -p's or findmnt's type of the file system at MOUNT.
+fstype_at() {
+    if [[ -n $FREEBSD ]]; then bsd_mounts | awk -v m="$1" '$2 == m { t = $3 } END { print t }'
+    else findmnt -nro FSTYPE -M "$1"; fi
+}
+
 state=$(system_settled)
 say "system state: $state"
 
@@ -254,15 +309,18 @@ elif is_abroot; then
 fi
 check "hostname is $SOURCE_HOST" test "$(this_host)" == "$SOURCE_HOST"
 check "$(root_mount) is on the restored $disk" on_disk "$(root_source)" "$disk"
-check "this isn't the rescue stick" test ! -f /cdrom/.disk/backotter.json
+check "this isn't the rescue stick" test ! -f "$MARKER"
 check "the boot finished" test "$state" != unknown
+[[ -z $cron_at_boot ]] || check "cron was running at this boot (rc started it; a held cron came back)" test "$cron_at_boot" = running
 failed_units >"$ATTEMPT/failed-units-after.txt"
 new_failed=$(comm -13 "$RUN/baseline/failed-units.txt" "$ATTEMPT/failed-units-after.txt")
 [[ -z $new_failed ]] || say "failed since the backup: $new_failed"
 check "no unit fails that didn't before the backup" test -z "$new_failed"
 check "the same swap is in use" swap_same
 check "the restore's log is on the restored system" test -d /var/log/bko-holt
-if [[ -d /sys/firmware/efi ]]; then
+if efi_booted && [[ -n $FREEBSD ]]; then
+    check "firmware booted the restored ESP's entry" bsd_booted_the_restored_esp
+elif efi_booted; then
     check "firmware booted the restored ESP's entry" booted_the_restored_esp
 fi
 check "the package list is unchanged" packages_same
@@ -271,7 +329,7 @@ reformatted=
 if [[ -s $ATTEMPT/reformat ]]; then
     reformatted=--reformatted
     while IFS='=' read -r m ty; do
-        check "$m is $ty now" test "$(findmnt -nro FSTYPE -M "$m")" = "$ty"
+        check "$m is $ty now" test "$(fstype_at "$m")" = "$ty"
     done <"$ATTEMPT/reformat"
 fi
 # The baseline's volumes the drive's key opened: so must it now, at the
@@ -280,9 +338,17 @@ fi
 if [[ $(head -n 1 "$RUN/baseline/unlock.txt" 2>/dev/null) == drive:* ]]; then
     unlock_now=$(unlock_mode "$disk")
     printf '%s\n' "$unlock_now" >"$ATTEMPT/unlock-after.txt"
+    # FreeBSD family F (D7): the loader's local.lua says in kenv bs1.unlock
+    # that it found the drive's key.
+    vol=LUKS
+    if [[ -n $FREEBSD ]]; then
+        vol=GELI
+        # shellcheck disable=SC2016
+        check "the loader read the lane drive's key at this boot (kenv bs1.unlock=$(kenv -q bs1.unlock 2>/dev/null))" sh -c 'case $(kenv -q bs1.unlock) in drive*) ;; *) exit 1 ;; esac'
+    fi
     while read -r name how; do
         [[ $how == drive ]] || continue
-        check "LUKS $name was opened by the backup drive's key, not typed" grep -qx "  $name drive" "$ATTEMPT/unlock-after.txt"
+        check "$vol $name was opened by the backup drive's key, not typed" grep -qx "  $name drive" "$ATTEMPT/unlock-after.txt"
     done < <(tail -n +2 "$RUN/baseline/unlock.txt")
 fi
 # Where GRUB names its LV by UUID, before or now: the restored LV's, in every

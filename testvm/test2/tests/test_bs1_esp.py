@@ -309,5 +309,124 @@ cp -R "$src"/. "$tgt"/
         self.assertNotIn("PART_ENTRY_UUID", text)
 
 
+# FreeBSD's efibootmgr (base, 15.1), faked with its state in files: the
+# list as it prints it ("+Boot0004* LABEL" for BootCurrent, " Boot0000*
+# LABEL"; -v adds the device path), and -B -b, -a -c -l -L (a new entry
+# goes first in BootOrder), -o and -n -b.
+FAKE_BSD_EFIBOOTMGR = r"""#!/bin/sh
+s=@STATE@
+echo "efibootmgr $*" >>$s/calls
+case "$1" in
+""|-v)
+    echo "BootCurrent: $(cat $s/current)"
+    echo "Timeout    : 1 seconds"
+    echo "BootOrder  : $(sed 's/,/, /g' $s/order)"
+    while read -r n label; do
+        m=" "; [ "$n" = "$(cat $s/current)" ] && m=+
+        if [ "$1" = -v ]; then echo "${m}Boot$n* $label $(cat $s/path-$n 2>/dev/null)"; else echo "${m}Boot$n* $label"; fi
+    done <$s/entries
+    ;;
+-B) n=$3; grep -v "^$n " $s/entries >$s/e; mv $s/e $s/entries
+    sed -e "s/$n,\{0,1\}//" -e 's/,$//' $s/order >$s/o; mv $s/o $s/order ;;
+-a) n=$(awk '{ print $1 }' $s/entries | sort | tail -n 1); n=$(printf '%04X' $((0x$n + 1)))
+    echo "$n $6" >>$s/entries; echo "$4" >$s/loader-$n
+    o=$(cat $s/order); echo "$n${o:+,$o}" >$s/order ;;
+-o) echo "$2" >$s/order ;;
+-n) echo "$3" >$s/next ;;
+*) echo "efibootmgr $*: not faked" >&2; exit 1 ;;
+esac
+"""
+
+
+@unittest.skipUnless(BASH, "needs bash")
+class FreeBsdEfi(unittest.TestCase):
+    """bs1-restore's FreeBSD BootNext (docs/design/freebsd-bs1.md): base's
+    efibootmgr in place of bs1-efi, a one-shot "BKO restored" left out of
+    BootOrder; and bs1-verify's BootCurrent check from efibootmgr -v."""
+
+    def setUp(self):
+        self.t = Path(tempfile.mkdtemp(prefix="bs1-bsdefi-"))
+        self.addCleanup(shutil.rmtree, self.t, True)
+        (self.t / "bin").mkdir()
+        exe(self.t / "bin" / "efibootmgr", FAKE_BSD_EFIBOOTMGR.replace("@STATE@", str(self.t)))
+        self.state(current="0004", order="0004,0000",
+                   entries={"0000": "UiApp", "0002": "BKO restored", "0003": "BKO restored 2",
+                            "0004": "FreeBSD", "0005": "BKO restored"})
+        self.lib = "\n".join([
+            "set -uo pipefail",
+            'say() { echo "$*"; }',
+            'die() { echo "STOPPED: $*"; exit 1; }',
+            'run() { say "$ $*"; "$@"; }',
+            'must() { run "$@" || die "this failed: $*"; }',
+            functions(BS1 / "bs1-restore", "bsd_entries_named", "bsd_efi_delete", "bsd_efi_oneshot"),
+            functions(BS1 / "bs1-verify", "bsd_booted_the_restored_esp"),
+        ])
+
+    def state(self, current, order, entries, paths=None):
+        (self.t / "current").write_text(current + "\n")
+        (self.t / "order").write_text(order + "\n")
+        (self.t / "entries").write_text("".join(f"{n} {label}\n" for n, label in entries.items()))
+        for n, p in (paths or {}).items():
+            (self.t / f"path-{n}").write_text(p + "\n")
+
+    def bash(self, script, esps=""):
+        stub = f"disk=nda0\ndisk_esps() {{ printf '%b' {esps!r}; }}\n"
+        env = dict(os.environ, PATH=f"{self.t / 'bin'}:{os.environ['PATH']}")
+        return subprocess.run([BASH, "-c", f"{self.lib}\n{stub}\n{script}"], capture_output=True, text=True, env=env, timeout=30)
+
+    def entries(self):
+        return dict(line.split(" ", 1) for line in (self.t / "entries").read_text().splitlines())
+
+    def test_delete_takes_every_entry_of_that_label_alone(self):
+        r = self.bash('bsd_efi_delete "BKO restored"')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.entries(), {"0000": "UiApp", "0003": "BKO restored 2", "0004": "FreeBSD"})
+
+    def test_oneshot_is_bootnext_and_not_in_bootorder(self):
+        r = self.bash('bsd_efi_oneshot "BKO restored" /dev/nda0p1 /EFI/BOOT/BOOTX64.EFI')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.entries()["0006"], "BKO restored")
+        self.assertEqual((self.t / "loader-0006").read_text().strip(), "nda0p1:/EFI/BOOT/BOOTX64.EFI")
+        self.assertEqual((self.t / "order").read_text().strip(), "0004,0000")
+        self.assertEqual((self.t / "next").read_text().strip(), "0006")
+        self.assertIn("efibootmgr -a -c -l nda0p1:/EFI/BOOT/BOOTX64.EFI -L BKO restored", (self.t / "calls").read_text())
+
+    def test_oneshot_with_no_bootorder(self):
+        (self.t / "order").write_text("\n")
+        r = self.bash('bsd_efi_oneshot "BKO restored" /dev/nda0p1 /EFI/BOOT/BOOTX64.EFI')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual((self.t / "next").read_text().strip(), "0006")
+        self.assertNotIn("efibootmgr -o", (self.t / "calls").read_text())
+
+    GUID = "f859c46d-19ee-11f1-b4ca-002590ec6166"
+
+    def booted(self, path, esps):
+        self.state(current="0004", order="0004", entries={"0004": "FreeBSD"}, paths={"0004": path})
+        return self.bash("bsd_booted_the_restored_esp; echo rc $?", esps)
+
+    def test_booted_the_restored_esp_on_gpt(self):
+        r = self.booted(f"HD(1,GPT,{self.GUID.upper()},0x28,0x82000)/File(\\EFI\\freebsd\\loader.efi)",
+                        f"/dev/nda0p1 {self.GUID}\n")
+        self.assertIn("rc 0", r.stdout, r.stdout + r.stderr)
+
+    def test_another_esp_fails(self):
+        r = self.booted("HD(1,GPT,00000000-1111-4222-8333-444444444444,0x28,0x82000)/File(\\EFI\\freebsd\\loader.efi)",
+                        f"/dev/nda0p1 {self.GUID}\n")
+        self.assertIn("rc 1", r.stdout)
+
+    def test_mbr_key_without_leading_zeros(self):
+        r = self.booted("HD(1,MBR,0x0e30bd8c7,0x1000,0x96000)/File(\\EFI\\BOOT\\BOOTX64.EFI)",
+                        "/dev/nda0s1 mbr,0xe30bd8c7,0x1000\n")
+        self.assertIn("rc 0", r.stdout, r.stdout + r.stderr)
+
+    def test_firmware_entry_for_a_whole_disk_passes(self):
+        r = self.booted("PciRoot(0x0)/Pci(0x1d,0x0)/NVMe(0x1,00-00-00-00-00-00-00-00)", f"/dev/nda0p1 {self.GUID}\n")
+        self.assertIn("rc 0", r.stdout)
+
+    def test_no_esp_fails(self):
+        r = self.booted(f"HD(1,GPT,{self.GUID},0x28,0x82000)", "")
+        self.assertIn("rc 1", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

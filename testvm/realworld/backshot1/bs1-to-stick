@@ -7,23 +7,13 @@
 # disk changes.  By efibootmgr, or without it (AerynOS packages none) by bs1-efi,
 # through efivarfs, with the same bytes; BS1_EFI=efivarfs takes bs1-efi's way
 # where efibootmgr is there too.  First, it stops unless the stick has the SSH
-# keys that make it start sshd (check_stick_keys).
+# keys that make it start sshd (check_stick_keys).  On FreeBSD, by base
+# efibootmgr, behind bs1-lane's guard (bsd_to_stick, below).
 
 # shellcheck disable=SC1091
 . "$(dirname "$(readlink -f "$0")")/bs1-common"
 
 LABEL="BKO rescue"
-
-[[ -d /sys/firmware/efi ]] || die "this system wasn't booted by UEFI"
-if [[ ${BS1_EFI:-} == efivarfs ]] || ! command -v efibootmgr >/dev/null; then via=efivarfs; else via=efibootmgr; fi
-findmnt -rn /sys/firmware/efi/efivars >/dev/null || mount -t efivarfs efivarfs /sys/firmware/efi/efivars || die "can't reach the firmware's variables"
-
-# The stick is what holds the BACKOTTER configuration partition.
-config=$(blkid -L BACKOTTER) || die "no stick here: nothing is labelled BACKOTTER"
-disk=$(disk_of "$config")
-[[ -n $disk && $(lsblk -dno TRAN "/dev/$disk") == usb ]] || die "BACKOTTER is on $config, which isn't a USB disk"
-internal=$(internal_disk) || die "no single disk has serial $INTERNAL_SERIAL"
-[[ $disk != "$internal" ]] || die "the stick can't be the internal disk"
 
 # The stick starts sshd only if its BACKOTTER partition lets a key in
 # (stick/layer/usr/lib/backotter/key-access, which is silent without one).
@@ -55,7 +45,11 @@ check_stick_keys() {
     # A desktop (udisks, /run/media/...) may have BACKOTTER mounted read-write
     # already, and Linux won't mount it read-only beside that: read it there.
     # findmnt -r writes a space as \x20.
-    m=$(findmnt -rno TARGET -S "$config" 2>/dev/null | head -n 1)
+    # FreeBSD: by mount -p, which writes a space as \040 (GhostBSD's desktop
+    # may have it mounted).
+    if [[ $OSTYPE == freebsd* ]]; then m=$(bsd_mount_of "$config")
+    else m=$(findmnt -rno TARGET -S "$config" 2>/dev/null | head -n 1)
+    fi
     if [[ -n $m ]]; then
         m=$(printf '%b' "$m")
         say "the stick's BACKOTTER ($config) is mounted at $m already: reading it there"
@@ -63,7 +57,11 @@ check_stick_keys() {
     else
         mkdir "$kt/mnt" || die "can't make a mount point in $kt"
         stick_own=1
-        mount -t vfat -o ro,nosuid,nodev,noexec "$config" "$kt/mnt" || die "can't mount $config, the stick's BACKOTTER partition"
+        if [[ $OSTYPE == freebsd* ]]; then
+            mount -t msdosfs -o ro,nosuid,noexec "$config" "$kt/mnt" || die "can't mount $config, the stick's BACKOTTER partition"
+        else
+            mount -t vfat -o ro,nosuid,nodev,noexec "$config" "$kt/mnt" || die "can't mount $config, the stick's BACKOTTER partition"
+        fi
         cfg=$kt/mnt/backotter
     fi
     # FAT, perhaps edited on Windows: no carriage returns.
@@ -106,6 +104,133 @@ check_stick_keys() {
     fi
     say "the stick's BACKOTTER ($config) has the SSH keys"
 }
+
+# FreeBSD (docs/design/freebsd-bs1.md): the same, by base efibootmgr, on the
+# FreeBSD stick: BACKOTTER is /dev/msdosfs/BACKOTTER on a umass disk whose
+# ident is STICK_SERIAL, and its ESP is MBR slice 1 (stick/freebsd/build.sh),
+# found by slice, not by label.  Behind D3's guard (bs1-lane guard --lane).
+# Every "BKO rescue" entry goes first (an older stick's, or the Linux
+# lane's: the same NVRAM), then -a -c makes the new one, active (-c alone
+# leaves it inactive), and BootOrder, which -c puts it at the head of, is
+# set back as it was, so the entry is used by BootNext alone.
+BSD_CONFIG=/dev/msdosfs/BACKOTTER
+
+# bsd_mount_of DEV: where DEV (by any of its names: a label or the
+# partition) is mounted, \040 for a space, or nothing.
+bsd_mount_of() {
+    local p src target _
+    p=$(bsd_provider "$1")
+    [[ -n $p ]] || return 0
+    while read -r src target _; do
+        [[ $src == /dev/* && $(bsd_provider "$src") == "$p" ]] || continue
+        printf '%s\n' "$target"
+        return 0
+    done < <(bsd_mounts)
+}
+
+# FreeBSD's efibootmgr: "+Boot0004* FreeBSD" ("+" BootCurrent, "*" active),
+# "BootOrder  : 0004, 0000", "BootNext : 0005".  An entry out of BootOrder
+# (ours, once set up) comes after "Unreferenced Variables:" with its device
+# path after the label: " Boot0009* BKO rescue HD(1,MBR,...)/File(...)".
+bsd_entries() {
+    efibootmgr | awk -v l="$LABEL" '
+        match($0, /^[+ ]?Boot[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][* ] /) {
+            d = substr($0, RSTART + RLENGTH); sub(/[ \t]+$/, "", d)
+            if (d == l || index(d, l " ") == 1) print toupper(substr($0, RSTART + RLENGTH - 6, 4))
+        }'
+}
+bsd_var() {
+    efibootmgr | awk -v v="$1" '$0 ~ ("^" v " *:") { s = $0; sub(/^[^:]*:/, "", s); gsub(/[ \t]/, "", s); print toupper(s) }'
+}
+
+bsd_esp_mnt='' bsd_esp_own=''
+bsd_esp_cleanup() {
+    [[ -n $bsd_esp_own ]] || return 0
+    umount "$bsd_esp_mnt" 2>/dev/null
+    rmdir "$bsd_esp_mnt" 2>/dev/null
+    bsd_esp_own=''
+}
+
+bsd_to_stick() {
+    local internal esp found loader order n entry m ids
+    [[ $(sysctl -n machdep.bootmethod 2>/dev/null) == UEFI ]] || die "this system wasn't booted by UEFI (machdep.bootmethod)"
+    command -v efibootmgr >/dev/null || die "no efibootmgr here"
+    efibootmgr >/dev/null 2>&1 || die "can't reach the firmware's variables (efibootmgr)"
+    # D3: the internal disk, the lane drive and the stick, and nothing else.
+    sh "$HERE/bs1-lane" guard --lane || die "bs1-lane's guard refused: BootNext is left alone"
+    [[ -n ${STICK_SERIAL:-} ]] || die "bs1.conf has no STICK_SERIAL"
+
+    # The stick is what holds the BACKOTTER configuration partition.
+    config=$BSD_CONFIG
+    [[ -e $config ]] || die "no stick here: nothing is labelled BACKOTTER ($config)"
+    disk=$(disk_of "$config")
+    if [[ -z $disk ]] || ! bsd_umass "$disk"; then die "BACKOTTER is on ${disk:-an unknown disk}, which isn't a USB disk"; fi
+    ids=$(bsd_ident "$disk")
+    [[ $ids == "$STICK_SERIAL" ]] || die "BACKOTTER is on $disk, whose ident ${ids:-(none)} isn't the stick's, $STICK_SERIAL"
+    internal=$(internal_disk) || die "no single disk has serial $INTERNAL_SERIAL"
+    [[ $disk != "$internal" ]] || die "the stick can't be the internal disk"
+    check_stick_keys
+
+    [[ $(bsd_scheme "$disk") == MBR ]] || die "$disk isn't sliced by MBR, as the FreeBSD stick is"
+    esp=/dev/${disk}s1
+    [[ $(fstyp "$esp" 2>/dev/null) == msdosfs ]] || die "$esp, the stick's slice 1, isn't FAT"
+    # efibootmgr -l names the loader by its path in the mounted ESP.
+    m=$(bsd_mount_of "$esp")
+    if [[ -n $m ]]; then
+        bsd_esp_mnt=$(printf '%b' "$m")
+    else
+        bsd_esp_mnt=$(mktemp -d) || die "can't make a temporary directory"
+        bsd_esp_own=1
+        trap bsd_esp_cleanup EXIT
+        mount -t msdosfs -o ro "$esp" "$bsd_esp_mnt" || { bsd_esp_own=''; rmdir "$bsd_esp_mnt"; die "can't mount $esp"; }
+    fi
+    found=$(find "$bsd_esp_mnt" -maxdepth 3 -ipath "$bsd_esp_mnt/efi/boot/bootx64.efi" | head -n 1)
+    [[ -n $found ]] || die "$esp has no EFI/BOOT/BOOTX64.EFI"
+    loader=${found#"$bsd_esp_mnt"}
+
+    order=$(bsd_var BootOrder)
+    [[ -n $order ]] || die "the firmware has no BootOrder to put back after efibootmgr -c: nothing changed"
+    # An older stick's entry names an ESP that's gone.
+    for n in $(bsd_entries); do
+        efibootmgr -B -b "$n" >/dev/null || die "can't delete Boot$n"
+        order=$(tr ',' '\n' <<<"$order" | grep -vxF "$n" | paste -s -d , -)
+    done
+    [[ -n $order ]] || die "BootOrder had only $LABEL entries: none left to put back after efibootmgr -c"
+    efibootmgr -a -c -l "$found" -L "$LABEL" >/dev/null || die "can't make a boot entry for $esp"
+    bsd_esp_cleanup
+    trap - EXIT
+    entry=$(bsd_entries)
+    [[ -n $entry && $entry != *$'\n'* ]] || die "the firmware didn't keep the new entry (Boot entries labelled $LABEL: ${entry:-none})"
+    # -c put it first; the machine's own boot order stays as it was.
+    efibootmgr -o "$order" >/dev/null || die "can't put BootOrder back ($order)"
+    [[ $(bsd_var BootOrder) == "$order" ]] || die "BootOrder is $(bsd_var BootOrder), not $order as it was"
+    efibootmgr -n -b "$entry" >/dev/null || die "can't set BootNext"
+    n=$(bsd_var BootNext)
+    [[ $n == "$entry" ]] || die "BootNext reads ${n:-nothing}, not $entry"
+    efibootmgr | grep -E '^(BootNext|BootOrder)'
+    efibootmgr -v | grep -A 2 -E "^[+ ]?Boot$entry"
+    say "rebooting into the stick ($esp, ${loader//\//\\}), once"
+    sync
+    # After a moment, so the controller hears that this worked; daemon(8)
+    # detaches it from the SSH session.
+    daemon -f /bin/sh -c 'sleep 2; exec /sbin/shutdown -r now' </dev/null >/dev/null 2>&1
+}
+if [[ $OSTYPE == freebsd* ]]; then
+    bsd_to_stick
+    exit 0
+fi
+
+[[ -d /sys/firmware/efi ]] || die "this system wasn't booted by UEFI"
+if [[ ${BS1_EFI:-} == efivarfs ]] || ! command -v efibootmgr >/dev/null; then via=efivarfs; else via=efibootmgr; fi
+findmnt -rn /sys/firmware/efi/efivars >/dev/null || mount -t efivarfs efivarfs /sys/firmware/efi/efivars || die "can't reach the firmware's variables"
+
+# The stick is what holds the BACKOTTER configuration partition.
+config=$(blkid -L BACKOTTER) || die "no stick here: nothing is labelled BACKOTTER"
+disk=$(disk_of "$config")
+[[ -n $disk && $(lsblk -dno TRAN "/dev/$disk") == usb ]] || die "BACKOTTER is on $config, which isn't a USB disk"
+internal=$(internal_disk) || die "no single disk has serial $INTERNAL_SERIAL"
+[[ $disk != "$internal" ]] || die "the stick can't be the internal disk"
+
 check_stick_keys
 
 esp=$(lsblk -lnpo NAME,FSTYPE,LABEL "/dev/$disk" | awk '$2 == "vfat" && $3 == "ESP" { print $1; exit }')

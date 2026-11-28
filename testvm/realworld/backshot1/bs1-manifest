@@ -15,7 +15,10 @@ remakes on purpose (the initramfs, grub.cfg and the ESP's loader).
 
 Each file's extended attributes are compared too: SELinux labels, capabilities,
 POSIX ACLs and user.* attributes.  A baseline older than that has none, and
-then only the rest is compared.
+then only the rest is compared.  On FreeBSD that column holds what rustic-bko
+keeps there instead: extended attributes, ACLs, file flags and ZFS projects
+(bsd_attrs), and a FreeBSD baseline has a churn list of its own
+(FREEBSD_EXPECTED).
 
 A directory met a second time (openSUSE's root subvolume, mounted at / and
 seen again at .snapshots/N/snapshot under /.snapshots) is listed once, as an
@@ -524,6 +527,19 @@ GUIX_EXPECTED = ["etc/group", "etc/passwd", "etc/shadow", "etc/.pwd.lock", "var/
                  "run/*", "var/run/*", "var/db/nscd/*", "boot/efi/EFI/Guix/backshot1.env"]
 GUIX_REMADE = ["etc/*", "bin/sh", "usr/bin/env"]
 
+# FreeBSD (docs/design/freebsd-bs1.md; a baseline with boot/kernel/kernel,
+# GhostBSD's too).  /var/run isn't a tmpfs there: its PID files, utmpx,
+# ld-elf.so.hints, dmesg.boot and os-release are on the root file system, as
+# are bs1-common-freebsd's mount points (TREE, RO_MOUNTS); rc.d/random saves
+# entropy to /boot/entropy at each boot and shutdown, save-entropy to
+# /var/db/entropy (cron, held during the backup and the check); dhclient's
+# leases; root's sh history (sh is root's shell since 14.0); mountd's
+# mounttab; the pool cache where an older install keeps it; ntpd's drift.
+# [inferred: settled by the F7 rehearsal]
+FREEBSD_SOURCE = "boot/kernel/kernel"
+FREEBSD_EXPECTED = ["boot/entropy", "var/db/entropy/*", "var/run/*", "var/db/dhclient.leases.*", "root/.sh_history",
+                    "home/*/.sh_history", "var/db/mounttab", "boot/zfs/zpool.cache", "var/db/ntpd.drift"]
+
 # A store system's lists, by what compare() finds in the baseline.
 STORE_EXPECTED = {"nixos": NIXOS_EXPECTED, "guix": GUIX_EXPECTED}
 STORE_REMADE = {"nixos": NIXOS_REMADE, "guix": GUIX_REMADE}
@@ -537,13 +553,19 @@ BTRFS_COMPRESSION = "btrfs.compression"
 BTRFS_ALGORITHMS = (b"zstd", b"zlib", b"lzo")
 
 
+FREEBSD = sys.platform.startswith("freebsd")
+
+
 def digest(path, flags=False):
     """The file's sha256, and with FLAGS its inode flags too (as "0x..", or
-    "-" where the filesystem has none)."""
+    "-" where the filesystem has none).  FreeBSD: "-", its flags are st_flags
+    (bsd_attrs)."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
         fl = None
-        if flags:
+        if flags and FREEBSD:
+            fl = "-"
+        elif flags:
             try:
                 fl = f"{int.from_bytes(fcntl.ioctl(f.fileno(), FS_IOC_GETFLAGS, bytes(8))[:4], 'little'):#x}"
             except OSError:
@@ -555,12 +577,203 @@ def digest(path, flags=False):
 
 def xattrs(path):
     """NAME=BASE64 for each extended attribute, in order; "-" if there are none."""
+    if FREEBSD:
+        return bsd_attrs(path)
     try:
         names = sorted(os.listxattr(path, follow_symlinks=False))
         pairs = [f"{n}={base64.b64encode(os.getxattr(path, n, follow_symlinks=False)).decode()}" for n in names]
     except OSError as e:
         return f"unreadable:{e.errno}"
     return ",".join(pairs) or "-"
+
+
+# FreeBSD (docs/design/freebsd-bs1.md, Q4): what rustic-bko keeps of a file
+# besides its mode, owners and times (rustic_core's osattrs/freebsd.rs,
+# freebsd_netbsd.rs, bsd_flags.rs), in the same column as Linux's extended
+# attributes, so the comparison and its report are the same:
+#   user.NAME, system.NAME  extended attributes (extattr_list_link), but the
+#                           system ones UFS keeps ACLs in, which rustic-bko
+#                           keeps as ACLs (UFS_ACL_EXTATTRS)
+#   acl.nfs4, acl.access, acl.default
+#                           the ACLs, as acl_to_text_np(3) with numeric IDs,
+#                           where not trivial (the mode's own); NFSv4 on ZFS
+#                           and UFS mounted nfsv4acls, POSIX.1e on UFS
+#                           mounted acls
+#   bsd.flags               st_flags (chflags(1)) but SF_SNAPSHOT, as
+#                           "0x..": ZFS's uarch on every file it writes, as
+#                           rustic-bko restores it
+#   zfs.project             a ZFS project ID and inheritance, "ID" or
+#                           "ID,inherit", where either is set
+# None of these names is a Linux one's: Linux's all start user., trusted.,
+# security. or system., and FreeBSD's own are listed by namespace.
+BSD_KEPT_FLAGS = 0xffdfffff                       # but SF_SNAPSHOT (0x00200000)
+UFS_ACL_EXTATTRS = (b"posix1e.acl_access", b"posix1e.acl_default", b"nfs4.acl")
+EXTATTR_NAMESPACES = ((1, "user"), (2, "system"))  # EXTATTR_NAMESPACE_USER, _SYSTEM
+_PC_ACL_EXTENDED, _PC_ACL_NFS4 = 59, 64
+ACL_TYPE_ACCESS, ACL_TYPE_DEFAULT, ACL_TYPE_NFS4 = 2, 3, 4
+ACL_TEXT_NUMERIC_IDS = 0x04
+ZFS_IOC_FSGETXATTR = 0x401C581F                   # _IOR('X', 31, zfsxattr_t), 28 bytes
+ZFS_PROJINHERIT_FL = 0x20000000
+# Errors that mean "nothing of that kind here": EOPNOTSUPP, EINVAL, ENOTTY,
+# and EPERM/EACCES for a namespace or ACL only root may read.
+_NONE = {45, 22, 25, 1, 13}
+_libc = None
+_acl_kind = {}       # st_dev -> "nfs4", "posix" or None, from lpathconf
+_no_project = set()  # st_dev of a file system that doesn't answer the ioctl
+
+
+def bsd_libc():
+    global _libc
+    if _libc is None:
+        import ctypes
+        c = ctypes.CDLL(None, use_errno=True)
+        sz, vp, cp = ctypes.c_ssize_t, ctypes.c_void_p, ctypes.c_char_p
+        c.extattr_list_link.argtypes = [cp, ctypes.c_int, vp, ctypes.c_size_t]
+        c.extattr_list_link.restype = sz
+        c.extattr_get_link.argtypes = [cp, ctypes.c_int, cp, vp, ctypes.c_size_t]
+        c.extattr_get_link.restype = sz
+        c.lpathconf.argtypes = [cp, ctypes.c_int]
+        c.lpathconf.restype = ctypes.c_long
+        c.acl_get_link_np.argtypes = [cp, ctypes.c_int]
+        c.acl_get_link_np.restype = vp
+        c.acl_is_trivial_np.argtypes = [vp, ctypes.POINTER(ctypes.c_int)]
+        c.acl_to_text_np.argtypes = [vp, ctypes.POINTER(sz), ctypes.c_int]
+        c.acl_to_text_np.restype = vp
+        c.acl_free.argtypes = [vp]
+        _libc = (ctypes, c)
+    return _libc
+
+
+def bsd_read(call):
+    """CALL(buffer, size) -> ssize_t, the extattr(2) way: asked for the size
+    first, then read, again while what it holds changed size."""
+    ctypes, _ = bsd_libc()
+    for _ in range(5):
+        n = call(None, 0)
+        if n < 0:
+            raise OSError(ctypes.get_errno(), os.strerror(ctypes.get_errno()))
+        buf = ctypes.create_string_buffer(n + 1)
+        m = call(buf, n + 1)
+        if m < 0:
+            raise OSError(ctypes.get_errno(), os.strerror(ctypes.get_errno()))
+        if m <= n:
+            return buf.raw[:m]
+    raise OSError(11, "it kept changing size")
+
+
+def bsd_extattrs(path):
+    """NAME=BASE64 for each user and system extended attribute of PATH."""
+    ctypes, c = bsd_libc()
+    p, pairs = os.fsencode(path), []
+    for ns, label in EXTATTR_NAMESPACES:
+        try:
+            raw = bsd_read(lambda b, n: c.extattr_list_link(p, ns, b, n))
+        except OSError as e:
+            if e.errno in _NONE:
+                continue
+            raise
+        i = 0
+        while i < len(raw):
+            n = raw[i]
+            name = raw[i + 1:i + 1 + n]
+            i += 1 + n
+            if len(name) < n or (ns == 2 and name in UFS_ACL_EXTATTRS):
+                continue
+            try:
+                value = bsd_read(lambda b, m: c.extattr_get_link(p, ns, name, b, m))
+            except OSError as e:
+                if e.errno == 87:       # ENOATTR: gone since the listing
+                    continue
+                raise
+            pairs.append((f"{label}.{name.decode('utf-8', 'replace')}", value))
+    return pairs
+
+
+def bsd_acl(path, typ):
+    """PATH's ACL of TYP as text, or None if it has none beyond its mode."""
+    ctypes, c = bsd_libc()
+    acl = c.acl_get_link_np(os.fsencode(path), typ)
+    if not acl:
+        e = ctypes.get_errno()
+        if e in _NONE or e == 2:
+            return None
+        raise OSError(e, os.strerror(e))
+    try:
+        trivial = ctypes.c_int(0)
+        if typ != ACL_TYPE_DEFAULT and c.acl_is_trivial_np(acl, ctypes.byref(trivial)) == 0 and trivial.value:
+            return None
+        t = c.acl_to_text_np(acl, None, ACL_TEXT_NUMERIC_IDS)
+        if not t:
+            e = ctypes.get_errno()
+            raise OSError(e, os.strerror(e))
+        try:
+            text = ctypes.string_at(t)
+        finally:
+            c.acl_free(t)
+    finally:
+        c.acl_free(acl)
+    return text.strip() or None
+
+
+def bsd_acls(path, st):
+    """PATH's ACLs as rustic-bko reads them: NFSv4 where the file system has
+    those, else POSIX.1e access (and default, for a directory) where it has
+    those.  lpathconf once per file system, from a directory or a file."""
+    _, c = bsd_libc()
+    kind = _acl_kind.get(st.st_dev, ...)
+    if kind is ...:
+        p = os.fsencode(path)
+        kind = "nfs4" if c.lpathconf(p, _PC_ACL_NFS4) == 1 else "posix" if c.lpathconf(p, _PC_ACL_EXTENDED) == 1 else None
+        if stat.S_ISDIR(st.st_mode) or stat.S_ISREG(st.st_mode):
+            _acl_kind[st.st_dev] = kind
+    if kind == "nfs4":
+        types = [("acl.nfs4", ACL_TYPE_NFS4)]
+    elif kind == "posix":
+        types = [("acl.access", ACL_TYPE_ACCESS)] + ([("acl.default", ACL_TYPE_DEFAULT)] if stat.S_ISDIR(st.st_mode) else [])
+    else:
+        return []
+    return [(name, text) for name, typ in types if (text := bsd_acl(path, typ)) is not None]
+
+
+def bsd_project(path, st):
+    """PATH's ZFS project, "ID" or "ID,inherit", for a regular file or a
+    directory that has an ID or inheritance, else None.  A file system that
+    doesn't answer (UFS: ENOTTY) isn't asked again."""
+    if st.st_dev in _no_project or not (stat.S_ISDIR(st.st_mode) or stat.S_ISREG(st.st_mode)):
+        return None
+    how = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | (os.O_DIRECTORY if stat.S_ISDIR(st.st_mode) else 0)
+    try:
+        fd = os.open(path, how)
+    except OSError:
+        return None
+    try:
+        zx = fcntl.ioctl(fd, ZFS_IOC_FSGETXATTR, bytes(28))
+    except OSError:
+        _no_project.add(st.st_dev)
+        return None
+    finally:
+        os.close(fd)
+    xflags, projid = int.from_bytes(zx[0:4], "little"), int.from_bytes(zx[12:16], "little")
+    if projid or xflags & ZFS_PROJINHERIT_FL:
+        return f"{projid}" + (",inherit" if xflags & ZFS_PROJINHERIT_FL else "")
+    return None
+
+
+def bsd_attrs(path):
+    """The attributes column on FreeBSD (above): NAME=BASE64, sorted."""
+    b64 = lambda v: base64.b64encode(v if isinstance(v, bytes) else v.encode()).decode()  # noqa: E731
+    try:
+        st = os.lstat(path)
+        pairs = bsd_extattrs(path) + bsd_acls(path, st)
+        project = bsd_project(path, st)
+    except OSError as e:
+        return f"unreadable:{e.errno}"
+    flags = getattr(st, "st_flags", 0) & BSD_KEPT_FLAGS
+    if flags:
+        pairs.append(("bsd.flags", f"{flags:#x}"))
+    if project is not None:
+        pairs.append(("zfs.project", project))
+    return ",".join(f"{n}={b64(v)}" for n, v in sorted(pairs)) or "-"
 
 
 def write(root, out):
@@ -875,6 +1088,9 @@ def compare(old_path, new_path, reformatted=False):
         print(f"TrueNAS: written again from the middleware's database at every boot, so with new mtimes, but the same otherwise: "
               f"{' '.join(tn_remade)}; other bytes expected: {' '.join(tn_changed)} (the database compared by its rows, "
               f"bs1-verify), and the running system's {' '.join(tn_expected)}")
+    bsd = FREEBSD_EXPECTED if FREEBSD_SOURCE in old else []
+    if bsd:
+        print(f"FreeBSD: changed, made or gone at a boot: {' '.join(bsd)}")
     changed = sorted(p for p in set(old) & set(new) if not same(p, old[p], new[p], store, odef, apre, pve + mx + slk_remade + tn_remade))
     both = [p for p in set(old) & set(new) if len(old[p]) > 6 and len(new[p]) > 6]
     relabeled = sorted(p for p in both if old[p][6] != new[p][6])
@@ -893,7 +1109,7 @@ def compare(old_path, new_path, reformatted=False):
         unexpected = [p for p in paths if kept(p, held) and not held_ok(label, p, old, new, present)]
         unexpected += [p for p in paths if not kept(p, held) and not expected(p, store, mapping[label], label == "added", amapping[label]) and p not in snapper
                        and p not in qol
-                       and not any(fnmatch.fnmatch(p, pat) for pat in slk_expected + tn_expected)
+                       and not any(fnmatch.fnmatch(p, pat) for pat in slk_expected + tn_expected + bsd)
                        and not (label == "changed" and tn_changed_ok(p, old[p], new[p], tn_changed))
                        and not gcov_ok(label, p, old, new)
                        and not (reformatted and any(fnmatch.fnmatch(p, pat) for pat in REFORMAT_EXPECTED))

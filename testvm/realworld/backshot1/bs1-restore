@@ -16,6 +16,12 @@
 # can't stop it halfway: output in /run/backotter/restore.out, and its exit status
 # in /run/backotter/restore.exit once it ends.
 #
+# FreeBSD (docs/design/freebsd-bs1.md), on the FreeBSD stick: the same steps
+# by FreeBSD's tools (bs1-common-freebsd), /var/run for /run, daemon(8) for
+# setsid, D3's guard (bs1-lane) beside the three-disk one, the old disk's
+# GELI and ZFS labels cleared before load's --erase, and BootNext by base's
+# efibootmgr.
+#
 # --reformat MOUNT=TYPE is bko-holt load's (docs/design/reformat.md): the
 # filesystem at MOUNT comes back as TYPE.  The attempt's reformat file lists
 # them, for bs1-verify.
@@ -26,6 +32,10 @@
 ERASE= PLAN_ONLY=no DETACH=no RUN_NAME= WIPED=no
 ARGS=() REFORMAT=()
 FIT=
+FREEBSD=
+[[ $OSTYPE != freebsd* ]] || FREEBSD=1
+RUNDIR=/run/backotter HOLT_RUN=/run/bko-holt
+[[ -z $FREEBSD ]] || RUNDIR=/var/run/backotter HOLT_RUN=/var/run/bko-holt
 while [[ $# -gt 0 ]]; do
     case $1 in
         --erase-serial) ERASE=$2; ARGS+=("$1" "$2"); shift 2 ;;
@@ -47,6 +57,18 @@ if [[ $ERASE != "$INTERNAL_SERIAL" ]]; then
     exit 1
 fi
 
+if [[ $DETACH == yes && -n $FREEBSD ]]; then
+    # daemon -o appends the child's output there (-f would send it to
+    # /dev/null); bash by its own path, the tool root's on the stick.
+    install -d -m 700 $RUNDIR
+    rm -f $RUNDIR/restore.exit
+    : >$RUNDIR/restore.out
+    # shellcheck disable=SC2016
+    daemon -o $RUNDIR/restore.out "$BASH" -c '"$0" "$@"; echo $? >'$RUNDIR'/restore.exit' "$BASH" "$(readlink -f "$0")" "${ARGS[@]}" </dev/null >/dev/null 2>&1 ||
+        { echo "daemon couldn't start the restore" >&2; exit 2; }
+    echo "started: output in $RUNDIR/restore.out"
+    exit 0
+fi
 if [[ $DETACH == yes ]]; then
     mkdir -p -m 700 /run/backotter
     rm -f /run/backotter/restore.exit
@@ -71,11 +93,17 @@ finish() {
     else
         say "RESULT: FAIL during \"$STEP\"; the internal disk has $([[ $WIPED == yes ]] || echo "not ")been wiped"
     fi
+    if [[ -n $FREEBSD ]]; then
+        { gpart show -lp; bsd_disk_list; mount -p; } >"$ATTEMPT/gpart-rescue.txt" 2>&1
+        efibootmgr -v >"$ATTEMPT/efibootmgr-rescue.txt" 2>&1
+        dmesg -a >"$ATTEMPT/dmesg-rescue.txt" 2>&1
+    else
     lsblk -o NAME,SIZE,TYPE,TRAN,FSTYPE,LABEL,UUID,PARTUUID,MOUNTPOINT,MODEL,SERIAL >"$ATTEMPT/lsblk-rescue.txt" 2>&1
     efibootmgr -v >"$ATTEMPT/efibootmgr-rescue.txt" 2>&1
     dmesg -T >"$ATTEMPT/dmesg-rescue.txt" 2>&1
     journalctl -b --no-pager 2>/dev/null | gzip -c >"$ATTEMPT/journal-rescue.txt.gz"
-    [[ -d /run/bko-holt/log ]] && cp -r /run/bko-holt/log "$ATTEMPT/bko-holt-log"
+    fi
+    [[ -d $HOLT_RUN/log ]] && cp -r $HOLT_RUN/log "$ATTEMPT/bko-holt-log"
     if [[ $rc -ne 0 && ${LOADED:-no} == yes ]]; then
         "$BIN/bko-holt" report-bug --output "$ATTEMPT/bko-report.txt" >>"$LOG" 2>&1
     fi
@@ -85,24 +113,74 @@ finish() {
 trap finish EXIT
 trap 'die "interrupted"' INT TERM HUP
 
+# FreeBSD: each disk with its ident, for the logs.
+bsd_disk_list() {
+    local d
+    for d in $(bsd_disks); do printf '%s %s\n' "$d" "$(bsd_ident "$d")"; done
+}
+# FreeBSD: the attached GELI providers and imported pools on DISK, and what
+# of it is mounted or a swap: what would hold it busy, or be lost.
+bsd_busy() {
+    local src
+    while read -r src _; do
+        [[ $src == /dev/* && $(disk_of "$src") == "$1" ]] && echo "$src (mounted)"
+    done < <(bsd_mounts)
+    # shellcheck disable=SC2119
+    for src in $(swap_names); do [[ $(disk_of "$src") != "$1" ]] || echo "$src (swap)"; done
+    bsd_pools "$1" | sed 's/$/ (an imported pool)/'
+    geli status -s 2>/dev/null | awk '{ print $3 }' | while read -r src; do
+        [[ $(disk_of "$src") != "$1" ]] || echo "$src.eli (attached GELI)"
+    done
+}
+
 step "preflight"
 say "restoring run $RUN_NAME, attempt $(basename "$ATTEMPT")"
-[[ -f /cdrom/.disk/backotter.json ]] || die "this isn't the BackOtter rescue stick"
-run cat /cdrom/.disk/backotter.json
+MARKER=/cdrom/.disk/backotter.json
+[[ -z $FREEBSD ]] || MARKER=/.disk/backotter.json
+[[ -f $MARKER ]] || die "this isn't the BackOtter rescue stick"
+run cat "$MARKER"
 run uname -a
 [[ -f $RUN/PHASE1_OK ]] || die "this run's backup never passed its check"
-[[ $(sha256sum "$RUN/layout.json" | cut -d' ' -f1) == "$(cat "$RUN/PHASE1_OK")" ]] || die "layout.json changed since phase 1"
+if [[ -n $FREEBSD ]]; then sum=$(sha256 -q "$RUN/layout.json"); else sum=$(sha256sum "$RUN/layout.json" | cut -d' ' -f1); fi
+[[ $sum == "$(cat "$RUN/PHASE1_OK")" ]] || die "layout.json changed since phase 1"
+# D3: every disk here the internal disk, the lane drive or the stick, by
+# ident, and none mybig512's, before the three-disk guard below.
+[[ -z $FREEBSD ]] || must sh "$HERE/bs1-lane" guard --lane
 disk=$(internal_disk) || die "no single disk has serial $INTERNAL_SERIAL"
 drive=$(backup_disk "$disk") || die "LABEL=$BACKUP_LABEL isn't a USB drive apart from $disk"
+if [[ -n $FREEBSD ]]; then
+    # The stick's root is its UFS slice, by label (/dev/ufs/...); a ZFS
+    # root's (a rescue system on ZFS, the rehearsal's guest) by its pool's
+    # first vdev.
+    medium=$(root_source)
+    if [[ $medium != /dev/* ]]; then
+        medium=$(zpool list -vHP "${medium%%/*}" 2>/dev/null | awk '$1 ~ /^\/dev\// { print $1; exit }')
+    fi
+    [[ $medium == /dev/* ]] || die "the stick's root isn't mounted from a disk ($(root_source))"
+else
 medium=$(findmnt -nro SOURCE /cdrom) || die "the live medium isn't mounted"
+fi
 stick=$(disk_of "$medium")
 [[ -n $stick && $stick != "$disk" && $stick != "$drive" ]] || die "can't tell the stick ($stick) from the disks"
+if [[ -n $FREEBSD ]]; then
+    others=$(bsd_disks | awk -v a="$disk" -v b="$drive" -v c="$stick" '$1 !~ /^cd[0-9]/ && $1 != a && $1 != b && $1 != c')
+    others=${others//$'\n'/ }
+else
 others=$(lsblk -dnro NAME,TYPE,TRAN | awk -v a="$disk" -v b="$drive" -v c="$stick" '$2 == "disk" && $1 != a && $1 != b && $1 != c { print $1 }')
+fi
 [[ -z $others ]] || die "unexpected disks here: $others"
-if lsblk -lnpo MOUNTPOINT "/dev/$disk" | grep -q .; then die "something on $disk is mounted"; fi
+if [[ -n $FREEBSD ]]; then
+    busy=$(bsd_busy "$disk")
+    [[ -z $busy ]] || die "something on $disk is in use: ${busy//$'\n'/; }"
+elif lsblk -lnpo MOUNTPOINT "/dev/$disk" | grep -q .; then die "something on $disk is mounted"; fi
 say "internal: $disk; backup drive: $drive; stick: $stick"
 run "$BIN/bko-holt" --version
+if [[ -n $FREEBSD ]]; then
+    run gpart show -lp
+    run bsd_disk_list
+else
 run lsblk -o NAME,SIZE,TYPE,TRAN,FSTYPE,LABEL,MOUNTPOINT,MODEL,SERIAL
+fi
 
 rustic_in "$RUN"
 step "reading the whole backup again, from the rescue system"
@@ -110,7 +188,10 @@ must "${RUSTIC[@]}" snapshots
 must "${RUSTIC[@]}" check --read-data
 
 step "planning the restore"
-if layout_is_uefi "$RUN/layout.json" && [[ ! -d /sys/firmware/efi ]]; then
+if [[ -n $FREEBSD ]]; then
+    [[ $(sysctl -n machdep.bootmethod 2>/dev/null) == UEFI ]] && efi=yes || efi=no
+elif [[ -d /sys/firmware/efi ]]; then efi=yes; else efi=no; fi
+if layout_is_uefi "$RUN/layout.json" && [[ $efi == no ]]; then
     die "the system is UEFI but the stick booted BIOS, so it can't write boot entries; boot the stick in UEFI mode"
 fi
 LOAD=("$BIN/bko-holt" load "$RUN/layout.json" --map "$disk=/dev/$disk" --erase "/dev/$disk"
@@ -137,6 +218,23 @@ if [[ $PLAN_ONLY == yes ]]; then
 fi
 
 step "wiping the internal disk"
+if [[ -n $FREEBSD ]]; then
+    [[ -n $(bsd_ident "$disk") && $(bsd_ident "$disk") == "$ERASE" ]] || die "$disk's serial changed"
+    busy=$(bsd_busy "$disk")
+    [[ -z $busy ]] || die "still active on $disk: ${busy//$'\n'/; }; nothing has been erased"
+    WIPED=yes
+    # load's --erase is gpart destroy -F and a 1 MiB dd: a GELI provider's
+    # metadata (its last sector), ZFS's labels L2 and L3 (the last 512 KiB)
+    # and the backup GPT would outlive it, and the new partitions, at the
+    # same offsets, would taste as the old ones.  So each partition's first.
+    while read -r p _; do
+        [[ -n $p ]] || continue
+        if geli dump "/dev/$p" >/dev/null 2>&1; then must geli clear "/dev/$p"; fi
+        if [[ $(fstyp "/dev/$p" 2>/dev/null) == zfs ]]; then must zpool labelclear -f "/dev/$p"; fi
+    done < <(bsd_parts "$disk")
+    if [[ -n $(bsd_scheme "$disk") ]]; then must gpart destroy -F "$disk"; fi
+    ! gpart show "$disk" >/dev/null 2>&1 || die "$disk still has a partition table after gpart destroy -F"
+else
 [[ -n $(lsblk -dno SERIAL "/dev/$disk") && $(lsblk -dno SERIAL "/dev/$disk") == "$ERASE" ]] || die "$disk's serial changed"
 # Whatever the rescue system's udev assembled from the old disk holds it busy.
 command -v vgchange >/dev/null && run vgchange -an
@@ -152,6 +250,7 @@ done < <(lsblk -lnpo NAME,TYPE "/dev/$disk")
 must wipefs --all "/dev/$disk"
 must blockdev --rereadpt "/dev/$disk"
 must udevadm settle
+fi
 
 step "repartitioning, reformatting and restoring"
 must "${LOAD[@]}" --through restore --commit
@@ -168,12 +267,30 @@ step "comparing the restored files with the backup"
 # would then put each one back with a touch of its own, for a quarter of an hour.
 # So noatime for this, and each mount as it was afterwards.  If a filesystem
 # won't have it, that's only slower.
+# FreeBSD: mount -u, on UFS and ZFS alike (ZFS takes it as the temporary
+# atime=off, which the pool doesn't keep), and back to atime unless it was
+# noatime; mount -p's FSTYPE and OPTIONS are its third and fourth fields.
+if [[ -n $FREEBSD ]]; then
+    target_mounts=$(bsd_mounts | awk '$2 == "/mnt/bko-target" || index($2, "/mnt/bko-target/") == 1 { print $2, $4 }')
+    while read -r m _; do
+        [[ -n $m ]] || continue
+        mount -u -o noatime "$m" || say "couldn't make $m noatime: the boot stage will take longer"
+    done <<<"$target_mounts"
+else
 target_mounts=$(findmnt -R -rno TARGET,OPTIONS /mnt/bko-target)
 while read -r m _; do
     mount -o remount,noatime "$(printf %b "$m")" || say "couldn't make $m noatime: the boot stage will take longer"
 done <<<"$target_mounts"
+fi
 "${RUSTIC[@]}" diff "latest:$SNAP" /mnt/bko-target >"$ATTEMPT/diff.txt" 2>&1
 rc=$?
+if [[ -n $FREEBSD ]]; then
+    while read -r m opts; do
+        [[ -n $m ]] || continue
+        case ,$opts, in *,noatime,*) continue ;; esac
+        mount -u -o atime "$m" || say "couldn't put $m back to atime"
+    done <<<"$target_mounts"
+else
 # With atime too: a ZFS dataset keeps noatime (atime=off temporary) through a
 # remount,relatime, and dracut in the boot stage would write it into the
 # restored initramfs's rootflags (run ubuntu-26.10-20261119-050205).  A mount
@@ -187,6 +304,7 @@ while read -r m opts; do
     case ,$opts, in *,nodiratime,*) a=$a,nodiratime ;; esac
     mount -o "remount,$a" "$(printf %b "$m")" || say "couldn't put $m back to $a"
 done <<<"$target_mounts"
+fi
 tail -n 20 "$ATTEMPT/diff.txt" | tee -a "$LOG"
 [[ $rc -eq 0 ]] || die "rustic-bko diff failed (exit $rc)"
 changes=$(awk '
@@ -214,8 +332,8 @@ done
 # can't hold them, so the diff lists each as removed.  Only under --reformat: a
 # btrfs load remakes has its shared snapshots and aliases back by now, so the
 # file names nothing the diff would list then.
-if [[ ${#REFORMAT[@]} -gt 0 && -s /run/bko-holt/restore.globs ]]; then
-    cp /run/bko-holt/restore.globs "$ATTEMPT/restore.globs"
+if [[ ${#REFORMAT[@]} -gt 0 && -s $HOLT_RUN/restore.globs ]]; then
+    cp $HOLT_RUN/restore.globs "$ATTEMPT/restore.globs"
     left=$(awk 'NR == FNR { if (sub(/^!\//, "") && sub(/\/\*\*$/, "")) p[n++] = "-    \"" $0 "/"; next }
                 { for (i = 0; i < n; i++) if (index($0, p[i]) == 1) { c++; break } }
                 END { print c + 0 }' "$ATTEMPT/restore.globs" "$ATTEMPT/diff.txt")
@@ -231,9 +349,11 @@ fi
 # alone, whatever is mounted under them is ZFS, and the diff lists them as
 # added and nothing else under them.  The booted system's /run hides them
 # (run void-20261119-104402, void-zbm-enc).
+# FreeBSD's mount -p has the same fields as /proc/self/mounts' first three.
 bedir=/mnt/bko-target/run/bko-be
+if [[ -n $FREEBSD ]]; then mounts_now=$(bsd_mounts); else mounts_now=$(cat /proc/self/mounts); fi
 if [[ -d $bedir && ! -L $bedir ]] &&
-    ! awk -v p="$bedir" '($2 == p || index($2, p "/") == 1) && $3 != "zfs" { f = 1 } END { exit !f }' /proc/self/mounts &&
+    ! awk -v p="$bedir" '($2 == p || index($2, p "/") == 1) && $3 != "zfs" { f = 1 } END { exit !f }' <<<"$mounts_now" &&
     [[ -z $(find "$bedir" -xdev ! -type d -print -quit 2>/dev/null) ]]; then
     be_all=$(grep -cE '^[-+MUT][[:space:]]+"run/bko-be(/|")' "$ATTEMPT/diff.txt")
     be_add=$(grep -cE '^\+ +"run/bko-be(/[^"]*)?"$' "$ATTEMPT/diff.txt")
@@ -258,12 +378,35 @@ tee -a "$LOG" <"$ATTEMPT/status.txt"
 [[ $rc -eq 0 ]] && grep -q '^next: nothing; every stage is done' "$ATTEMPT/status.txt" ||
     die "the disk doesn't match the layout (status.txt)"
 
+# FreeBSD: base's efibootmgr in place of bs1-efi.  Its list: "+Boot0004*
+# LABEL" (+ for BootCurrent, * for active), then -v's device paths.
+bsd_entries_named() {
+    efibootmgr | sed -nE 's/^[+ ]?Boot([0-9A-Fa-f]{4})\*? (.*)$/\1 \2/p' | awk -v l="$1" '{ n = $1; sub(/^[^ ]* /, ""); if ($0 == l) print n }'
+}
+bsd_efi_delete() {
+    local n
+    for n in $(bsd_entries_named "$1"); do must efibootmgr -B -b "$n"; done
+}
+# bsd_efi_oneshot LABEL ESP LOADER: a new active entry for ESP's LOADER as
+# BootNext, left out of BootOrder (efibootmgr -c puts it first).
+bsd_efi_oneshot() {
+    local order before n
+    order=$(efibootmgr | sed -n 's/^BootOrder *: *//p' | tr -d ' ')
+    before=$(bsd_entries_named "$1")
+    must efibootmgr -a -c -l "${2#/dev/}:$3" -L "$1"
+    n=$(bsd_entries_named "$1" | grep -vxF "${before:-////}" | tail -n 1)
+    [[ -n $n ]] || die "efibootmgr made no \"$1\" entry"
+    if [[ -n $order ]]; then must efibootmgr -o "$order"; fi
+    must efibootmgr -n -b "$n"
+}
+
 step "booting the restored system next"
-must udevadm settle
+[[ -n $FREEBSD ]] || must udevadm settle
 if layout_is_uefi "$RUN/layout.json"; then
     # An earlier round's one-shot entry (below) names this ESP too, maybe at
     # another size: it goes first, so only the system's own entries match.
-    must python3 "$HERE/bs1-efi" delete "BKO restored"
+    if [[ -n $FREEBSD ]]; then bsd_efi_delete "BKO restored"
+    else must python3 "$HERE/bs1-efi" delete "BKO restored"; fi
     # The first in BootOrder that names a restored ESP, as the firmware would
     # pick it, then any: with two on one ESP (ZFSBootMenu's VMLINUZ.EFI and
     # VMLINUZ-BACKUP.EFI, the backup made first and so numbered lower) the
@@ -280,7 +423,9 @@ if layout_is_uefi "$RUN/layout.json"; then
         entry=$(boot_entry_for "$key" <<<"$nv")
         [[ -z $entry ]] || { say "$espdev ($key) is Boot$entry's"; break; }
     done <<<"$esps"
-    if [[ -n $entry ]]; then
+    if [[ -n $entry && -n $FREEBSD ]]; then
+        must efibootmgr -n -b "$entry"
+    elif [[ -n $entry ]]; then
         must efibootmgr --bootnext "$entry"
     else
         # None names a restored ESP (AerynOS: blsforme and bootctl install
@@ -292,7 +437,8 @@ if layout_is_uefi "$RUN/layout.json"; then
         read -r esp loader < <(removable_loader "$disk") ||
             die "no boot entry names a restored ESP, and no ESP of $disk has EFI/BOOT/BOOTX64.EFI: ${esps//$'\n'/; }"
         say "no boot entry names a restored ESP: BootNext is a one-shot \"BKO restored\" for $esp's $loader"
-        must python3 "$HERE/bs1-efi" oneshot "BKO restored" "$esp" "${loader//\//\\}"
+        if [[ -n $FREEBSD ]]; then bsd_efi_oneshot "BKO restored" "$esp" "$loader"
+        else must python3 "$HERE/bs1-efi" oneshot "BKO restored" "$esp" "${loader//\//\\}"; fi
     fi
     run efibootmgr -v
 fi

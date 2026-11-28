@@ -10,6 +10,10 @@
 # the system lacks them, under whichever init system it has.  On TrueNAS the
 # hostname, the host key, sshd and mDNS go into its middleware's database, and
 # the preflight wants a reboot after it (truenas_hostname and the rest, below).
+# On FreeBSD (docs/design/freebsd-bs1.md, from the lane drive) it runs the
+# lane's disk guard first (bs1-lane, D3), puts the hostname and services in
+# rc.conf (sysrc), installs bash, python3 and avahi-app from pkg, and checks
+# that a UEFI boot's ESP is mounted from fstab at /boot/efi.
 #
 # Then, on an install with LUKS, sets its initramfs to unlock with the
 # passphrase in keys/disk-passphrase on this drive, falling back to the prompt
@@ -36,6 +40,13 @@ apk_add() {
 # Alpine and Chimera come without bash, so this much has to be plain sh
 # (Chimera's is FreeBSD's).
 if [ -z "${BASH_VERSION:-}" ]; then
+    # FreeBSD (docs/design/freebsd-bs1.md): pkg's bash, by its full path,
+    # since root's PATH over ssh needn't have /usr/local/bin.
+    if [ "$(uname -s)" = FreeBSD ]; then
+        [ -x /usr/local/bin/bash ] || env ASSUME_ALWAYS_YES=yes pkg install -y bash ||
+            { echo "bs1-adopt: this needs bash (pkg install -y bash failed)" >&2; exit 2; }
+        exec /usr/local/bin/bash "$0" "$@"
+    fi
     command -v bash >/dev/null || apk_add bash || { echo "bs1-adopt: this needs bash" >&2; exit 2; }
     exec bash "$0" "$@"
 fi
@@ -66,6 +77,8 @@ SLEEP_DROPINS="/etc/systemd/sleep.conf.d/90-backshot1.conf /etc/elogind/sleep.co
 SLEEP_HEAD="# BackShot1 (bs1-adopt): this testbed never sleeps"
 no_sleep() {
     local sd=${SLEEP_DROPINS%% *} el=${SLEEP_DROPINS##* } f content
+    # FreeBSD's base system suspends only when asked (acpiconf, zzz).
+    if [[ $init == bsd ]]; then echo "FreeBSD: nothing here suspends by itself; nothing set"; return 0; fi
     if [[ $init == systemd ]]; then f=$sd
     elif [[ -d ${el%/sleep.conf.d/*} ]]; then f=$el
     else
@@ -149,7 +162,18 @@ init_system() {
         ;;
     esac
 }
-init=$(init_system "$(cat /proc/1/comm)")
+# FreeBSD has no /proc to ask, and one init: rc.d, started by sysrc and
+# service (bsd, below).
+bsd=no
+[[ $OSTYPE != freebsd* ]] || bsd=yes
+if [[ $bsd == yes ]]; then
+    init=bsd
+    # D3: nothing here touches a disk, but the lane's every step runs the
+    # guard, so a mybig512 left plugged in is named before anything changes.
+    sh "$here/bs1-lane" guard --lane || exit 1
+else
+    init=$(init_system "$(cat /proc/1/comm)")
+fi
 echo "== $distro, under $init"
 echo "== sleep: never, on this testbed"
 no_sleep
@@ -474,6 +498,16 @@ start_service() {   # start_service NAME...: the first name this system knows
             "$RC_D/rc.$s" restart || "$RC_D/rc.$s" start || continue
             return 0
             ;;
+        bsd)
+            # FreeBSD: base's scripts in /etc/rc.d, pkg's in
+            # /usr/local/etc/rc.d; NAME_enable in rc.conf (a dash in the
+            # name is an underscore there: avahi_daemon_enable).  sshd's
+            # restart stops only the listener, so the sessions stay.
+            [[ -x /etc/rc.d/$s || -x /usr/local/etc/rc.d/$s ]] || continue
+            sysrc "${s//-/_}_enable=YES" >/dev/null || return 1
+            service "$s" restart || service "$s" start || continue
+            return 0
+            ;;
         s6)
             [[ -d /etc/s6/sv/$s-srv ]] || continue
             s6 repository sync
@@ -489,7 +523,11 @@ start_service() {   # start_service NAME...: the first name this system knows
     return 1
 }
 
-running() { grep -Eqx "$1" /proc/[0-9]*/comm 2>/dev/null; }
+running() {
+    # shellcheck disable=SC2009
+    if [[ $init == bsd ]]; then ps -axo comm= 2>/dev/null | grep -Eqx "$1"; return; fi
+    grep -Eqx "$1" /proc/[0-9]*/comm 2>/dev/null
+}
 
 set_hostname() {
     if [[ $truenas == yes ]]; then
@@ -502,6 +540,13 @@ set_hostname() {
     fi
     if [[ $distro == slackware ]]; then
         slk_hostname
+        return
+    fi
+    # FreeBSD: rc.conf's hostname, which rc.d/hostname sets at boot; and
+    # the running kernel's now.
+    if [[ $init == bsd ]]; then
+        sysrc hostname="$SOURCE_HOST"
+        hostname "$SOURCE_HOST"
         return
     fi
     echo "$SOURCE_HOST" >/etc/hostname
@@ -643,7 +688,45 @@ truenas_stamp() {
     fi
 }
 
+# FreeBSD: sshd, efibootmgr and everything else the scripts use but bash and
+# python3 are in base; those two come from pkg (bash is there already: the
+# sh above installed it).  ASSUME_ALWAYS_YES: pkg would ask to bootstrap
+# itself, or to install, on a terminal.
+bsd_pkg() { env ASSUME_ALWAYS_YES=yes pkg install -y "$@"; }
+bsd_tools() {
+    local py=/usr/local/bin/python3 v
+    if [[ -x $py ]]; then echo "unchanged: python3"
+    else bsd_pkg python3 || return 1
+    fi
+    # FreeBSD's python packages its sqlite3 module apart (pyXY-sqlite3), and
+    # bs1-manifest imports it: phase 1 stopped at "No module named
+    # '_sqlite3'" on freebsd15 without it.
+    if "$py" -c 'import sqlite3' 2>/dev/null; then echo "unchanged: python3's sqlite3"
+    else
+        v=$("$py" -c 'import sys; print("%d%d" % sys.version_info[:2])') || return 1
+        bsd_pkg "py$v-sqlite3" || return 1
+    fi
+}
+# bsd_esp_check: a system booted by UEFI must mount its ESP from fstab, at
+# /boot/efi as bsdinstall sets it up: an ESP left unmounted isn't in the
+# backup, and the restore would make it empty (the spec's Risks, "The
+# restored boot entry").  Nothing on a BIOS boot.
+bsd_esp_check() {
+    local src
+    if [[ $(sysctl -n machdep.bootmethod 2>/dev/null) != UEFI ]]; then
+        echo "booted by $(sysctl -n machdep.bootmethod 2>/dev/null || echo BIOS): no ESP to check"
+        return 0
+    fi
+    awk '!/^[[:space:]]*#/ && $2 == "/boot/efi" { f = 1 } END { exit !f }' /etc/fstab ||
+        { echo "bs1-adopt: /etc/fstab doesn't mount the ESP at /boot/efi: add it (msdosfs), or the backup won't hold it" >&2; return 1; }
+    src=$(mount -p | awk '$2 == "/boot/efi" { print $1 " (" $3 ")" }')
+    [[ -n $src ]] || mount /boot/efi || { echo "bs1-adopt: /boot/efi is in fstab but won't mount" >&2; return 1; }
+    src=$(mount -p | awk '$2 == "/boot/efi" { print $1 " (" $3 ")" }')
+    echo "the ESP: $src at /boot/efi, from fstab"
+}
+
 install_tools() {
+    if [[ $init == bsd ]]; then bsd_tools; return; fi
     command -v sshd >/dev/null || [[ -x /usr/sbin/sshd ]] ||
         pkg_install openssh-server openssh-server openssh "$(with_script openssh)" openssh openssh openssh-server openssh net-misc/openssh openssh-server openssh
     # BusyBox's df, umount and blkid lack options the scripts use, and it has no
@@ -703,6 +786,13 @@ allow_root_key_login() {
 }
 
 start_mdns() {
+    # FreeBSD: avahi-app from pkg (it brings dbus); both by rc.conf.
+    if [[ $init == bsd ]]; then
+        [[ -x /usr/local/sbin/avahi-daemon ]] || bsd_pkg avahi-app || return 1
+        running dbus-daemon || start_service dbus || return 1
+        start_service avahi-daemon
+        return
+    fi
     command -v avahi-daemon >/dev/null || [[ -x /usr/sbin/avahi-daemon ]] ||
         pkg_install avahi-daemon avahi avahi "$(with_script avahi)" "avahi dbus" "avahi dbus" avahi avahi "net-dns/avahi sys-apps/dbus" avahi \
             "avahi libdaemon nss-mdns dbus"
@@ -746,7 +836,16 @@ slk_mdns() {
 # firewalld zone allows only ssh and DHCPv6, so $SOURCE_HOST.local never
 # resolved; openSUSE's doesn't allow ssh.  NixOS's avahi module opens its own.
 open_firewall() {
-    local z
+    local z f
+    # FreeBSD: base has neither on by default; a ruleset of the person's own
+    # (GhostBSD's, F13) isn't rewritten here, only named.
+    if [[ $init == bsd ]]; then
+        for f in pf ipfw; do
+            [[ $(sysrc -n "${f}_enable" 2>/dev/null) == [Yy][Ee][Ss] ]] || continue
+            echo "bs1-adopt: $f is enabled: check that its rules pass 22/tcp and 5353/udp in, or $SOURCE_HOST.local won't answer" >&2
+        done
+        return 0
+    fi
     if command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
         # --get-active-zones: "public (default)", then indented "interfaces: ..."
         for z in $( { firewall-cmd --get-default-zone; firewall-cmd --get-active-zones | awk '!/^[[:space:]]/ { print $1 }'; } | sort -u); do
@@ -879,6 +978,10 @@ elif [[ ! -e /etc/NIXOS ]]; then
     fi
     echo "== what's missing"
     install_tools
+    if [[ $init == bsd ]]; then
+        echo "== FreeBSD: the ESP"
+        bsd_esp_check || exit 1
+    fi
 fi
 
 echo "== root's authorized_keys"
@@ -916,7 +1019,14 @@ else
     fi
     # sshd -t, and sshd itself, stop without its privilege separation
     # directory, which only the service's own start makes on Debian and Ubuntu.
-    mkdir -p /run/sshd
+    # Not on FreeBSD: it has no /run, and a /run made here would be on the
+    # root, in the backup.  Its rc.d/sshd makes every host key type it is
+    # enabled for that is missing: only the fixed ed25519 one stays.
+    if [[ $init == bsd ]]; then
+        sysrc sshd_rsa_enable=NO sshd_ecdsa_enable=NO >/dev/null
+    else
+        mkdir -p /run/sshd
+    fi
     "$(command -v sshd || echo /usr/sbin/sshd)" -t
     start_service ssh sshd
     echo "== mDNS, for $SOURCE_HOST.local"

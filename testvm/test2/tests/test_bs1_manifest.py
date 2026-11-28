@@ -15,6 +15,7 @@ import importlib.util
 import io
 import os
 import shutil
+import sys
 import tempfile
 import time
 import unittest
@@ -234,6 +235,78 @@ class SlackwareChurn(unittest.TestCase):
         self.assertNotIn("Slackware", out)
         self.assertIn("changed: usr/share/mime/aliases", out)
         self.assertIn("added: etc/adjtime", out)
+
+
+class FreeBsdChurn(unittest.TestCase):
+    """FreeBSD's boot (docs/design/freebsd-bs1.md): /var/run on the root file
+    system, the saved entropy, dhclient's leases, root's sh history; only on
+    a FreeBSD baseline (boot/kernel/kernel).  And its attributes column: a
+    changed file flag, extended attribute or ACL is reported as an xattrs
+    difference, with what changed."""
+
+    BOOT = ["var/run/dmesg.boot", "var/run/ld-elf.so.hints", "boot/entropy", "var/db/entropy/saved-entropy.1",
+            "var/db/dhclient.leases.vtnet0", "root/.sh_history"]
+
+    def setUp(self):
+        self.t = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.t)
+        self.root = self.t / "root"
+        for rel in ["boot/kernel/kernel", "etc/rc.conf", "bin/sh"] + self.BOOT:
+            put(self.root, rel, f"{rel}\n")
+        self.attrs = {}
+
+    def compare(self, change):
+        a, b = self.t / "a.tsv", self.t / "b.tsv"
+        attrs = lambda p: self.attrs.get(os.path.relpath(p, self.root), "-")  # noqa: E731
+        with mock.patch.object(M, "xattrs", attrs):
+            M.write(str(self.root), str(a))
+            change()
+            M.write(str(self.root), str(b))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = M.compare(str(a), str(b))
+        return rc, buf.getvalue()
+
+    def boot(self):
+        for rel in self.BOOT:
+            put(self.root, rel, "written at this boot\n")
+        put(self.root, "var/run/sshd.pid", "812\n")
+        (self.root / "var/db/entropy/saved-entropy.1").unlink()
+
+    def test_a_boot(self):
+        rc, out = self.compare(self.boot)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("FreeBSD: changed, made or gone at a boot", out)
+
+    def test_the_rest_is_held(self):
+        rc, out = self.compare(lambda: put(self.root, "etc/rc.conf", "other\n"))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("changed: etc/rc.conf", out)
+
+    def test_not_freebsd(self):
+        (self.root / "boot/kernel/kernel").unlink()
+        rc, out = self.compare(self.boot)
+        self.assertEqual(rc, 1, out)
+        self.assertNotIn("FreeBSD", out)
+        self.assertIn("changed: var/run/dmesg.boot", out)
+
+    def flags(self, value):
+        return "bsd.flags=" + base64.b64encode(value.encode()).decode()
+
+    def test_a_lost_flag_is_reported(self):
+        self.attrs["bin/sh"] = self.flags("0x20800")
+        rc, out = self.compare(lambda: self.attrs.update({"bin/sh": self.flags("0x800")}))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("xattrs: bin/sh (bsd.flags: b'0x20800' -> b'0x800')", out)
+
+    def test_same_attributes_pass(self):
+        self.attrs["bin/sh"] = self.flags("0x800") + ",user.x=" + base64.b64encode(b"v").decode()
+        rc, out = self.compare(lambda: None)
+        self.assertEqual(rc, 0, out)
+
+    def test_bsd_attrs_off_freebsd(self):
+        # Only FreeBSD's python3 takes that branch: elsewhere xattrs() is Linux's.
+        self.assertEqual(M.FREEBSD, sys.platform.startswith("freebsd"))
 
 
 class GcovChurn(unittest.TestCase):

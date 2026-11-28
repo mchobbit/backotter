@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import struct
@@ -2925,6 +2926,98 @@ class GuixPieces(Tmp):
 # pe()'s own source, for the fake objcopy.
 import inspect  # noqa: E402
 PE_SRC = "import struct\n" + inspect.getsource(pe)
+
+
+@unittest.skipUnless(BASH, "needs bash 4 or newer")
+class AdoptBsd(Tmp):
+    """luks_adopt on FreeBSD (freebsd-bs1.md, D7): a guard.  GELIBOOT or a
+    passphrase provider is attended, key files alone own, with a record; ZFS
+    encryption alone, attended with none; the drive's key must open what
+    asks; nothing else changes, and --luks-off takes the record away."""
+
+    def setUp(self):
+        super().setUp()
+        self.here = self.t / "drive/backshot1"
+        (self.here / "keys").mkdir(parents=True)
+        (self.here / "keys/disk-passphrase").write_text("s3cret")
+
+    def adopt(self, providers="", zfs="", key_ok=True, what="luks_adopt", rc=0):
+        t = self.t
+        script = textwrap.dedent(f"""\
+            . "{BS1}/bs1-luks"
+            OSTYPE=freebsd15.0
+            LUKS_DIR="{t}/etc/backshot1" LUKS_ORIG="{t}/etc/backshot1/orig" LUKS_MADE="{t}/etc/backshot1/made" LUKS_REC="{t}/etc/backshot1/luks-unlock"
+            here="{self.here}" BACKUP_LABEL=BS1BSD INTERNAL_SERIAL=S1
+            internal_disk() {{ echo nda0; }}
+            geli_providers() {{ printf '%s' {shlex.quote(providers)}; }}
+            zfs_passphrase_roots() {{ printf '%s' {shlex.quote(zfs)}; }}
+            geli_key_test() {{ echo "key-test $*" >>"{t}/key-tests"; {"true" if key_ok else "echo \"the drive's key doesn't open the GELI provider nda0p3\"; false"}; }}
+            lk_luks_volumes() {{ echo "Linux path taken" >&2; exit 9; }}
+            lk_remake() {{ echo "remade $1" >>"{t}/remakes"; }}
+            """) + f"\n{what}\n"
+        r = subprocess.run([BASH, "-c", script], capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, rc, r.stdout + r.stderr)
+        return r.stdout + r.stderr
+
+    def rec(self):
+        return (self.t / "etc/backshot1/luks-unlock").read_text()
+
+    def test_nothing_encrypted(self):
+        out = self.adopt()
+        self.assertIn("no GELI provider or ZFS encryption on nda0: nothing to do", out)
+        self.assertFalse((self.t / "etc").exists())
+
+    def test_zfs_alone_is_attended_without_a_record(self):
+        out = self.adopt(zfs="zroot\n")
+        self.assertIn("ZFS native encryption on nda0 (zroot), no GELI: attended; nothing changes", out)
+        self.assertFalse((self.t / "etc").exists())
+
+    def test_geliboot_is_attended_and_off_removes_the_record(self):
+        out = self.adopt(providers="nda0p3 128 289000\n")
+        self.assertIn("the drive's key opens every GELI provider on nda0 that asks: nda0p3", out)
+        self.assertIn("A: the loader asks for the passphrase of the GELIBOOT provider nda0p3; nothing else changes", out)
+        self.assertEqual((self.t / "key-tests").read_text(), f"key-test nda0 {self.here}/keys/disk-passphrase\n")
+        rec = self.rec()
+        for line in ("family=A", "generator=geli", "label=BS1BSD", "fstype=ufs", "volumes=''", "own=''"):
+            self.assertIn(line + "\n", rec)
+        self.assertIn("reason='the loader asks for the passphrase of the GELIBOOT provider nda0p3'", rec)
+        self.assertNotIn("wrote", self.adopt(providers="nda0p3 128 289000\n"))
+        out = self.adopt(what="luks_off")
+        self.assertIn("removed", out)
+        self.assertFalse((self.t / "etc/backshot1").exists())
+        self.assertFalse((self.t / "remakes").exists(), "nothing to remake on FreeBSD")
+
+    def test_bootpool_layout_waits_for_family_f(self):
+        out = self.adopt(providers="nda0p2 0 289000\nnda0p4 128 289000\n")
+        self.assertIn("A: the loader asks for the passphrase of the GELIBOOT provider nda0p4; nda0p2 asks for a passphrase at boot, "
+                      "and unlocking it from the drive (family F) isn't built yet (freebsd-bs1.md F11)", out)
+
+    def test_key_files_alone_are_own(self):
+        out = self.adopt(providers="nda0p3 0 -1\n")
+        self.assertIn("own: every GELI provider opens with no one typing (key files only)", out)
+        self.assertFalse((self.t / "key-tests").exists())
+        self.assertIn("own='nda0p3'\n", self.rec())
+
+    def test_own_geli_with_zfs_encryption_is_attended(self):
+        out = self.adopt(providers="nda0p3 0 -1\n", zfs="zroot\n")
+        self.assertIn("A: every GELI provider opens with no one typing (key files only); ZFS native encryption asks for zroot", out)
+
+    def test_wrong_key_changes_nothing(self):
+        out = self.adopt(providers="nda0p3 128 289000\n", key_ok=False, rc=1)
+        self.assertIn("the drive's key doesn't open the GELI provider nda0p3", out)
+        self.assertFalse((self.t / "etc").exists())
+
+    def test_no_key_changes_nothing(self):
+        (self.here / "keys/disk-passphrase").unlink()
+        out = self.adopt(providers="nda0p3 128 289000\n", rc=1)
+        self.assertIn("need the passphrase in", out)
+        self.assertFalse((self.t / "etc").exists())
+
+    def test_skipped(self):
+        r = subprocess.run([BASH, "-c", f'. "{BS1}/bs1-luks"; OSTYPE=freebsd15.0; BS1_LUKS=no luks_adopt'],
+                           capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("skipped (BS1_LUKS=no)", r.stdout)
 
 
 if __name__ == "__main__":

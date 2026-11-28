@@ -63,6 +63,15 @@
 # The preflight and phase 1 hold a sleep, idle and lid-switch inhibitor
 # while they run (hold_awake in bs1-common): an idle desktop suspended a
 # phase 1 once.
+#
+# On FreeBSD (docs/design/freebsd-bs1.md) the functions are
+# bs1-common-freebsd's: the tree is nullfs, hold_awake holds cron
+# (hold_periodic), and the GELI providers that ask are tested with the
+# drive's key.  Both the preflight and phase 1 first run the lane's disk
+# guard (bs1-lane guard --lane, D3), and stop on a ZFS root with any boot
+# environment but the booted one (bsd_be_check, D9), in place of
+# unhinted_check.  The baseline has gpart's view (gpart.txt,
+# gpart-backup.txt) in place of lsblk.txt and sfdisk.txt.
 
 # shellcheck disable=SC1091
 . "$(dirname "$(readlink -f "$0")")/bs1-common"
@@ -72,6 +81,10 @@ trap 'die "interrupted"' INT TERM HUP
 hold_awake "bs1-backup${1:+ $1}: a suspend would cut the controller's SSH"
 
 step "preflight"
+# FreeBSD: the lane's disk guard (D3) before anything else.
+if [[ $OSTYPE == freebsd* ]]; then
+    sh "$HERE/bs1-lane" guard --lane || die "the lane's disk guard (bs1-lane, D3) stopped it"
+fi
 [[ $(this_host) == "$SOURCE_HOST" ]] || die "this is $(this_host), not $SOURCE_HOST"
 disk=$(internal_disk) || die "no single disk has serial $INTERNAL_SERIAL"
 on_disk "$(root_source)" "$disk" || die "$(root_mount) isn't on $disk"
@@ -81,6 +94,25 @@ ls /boot/efi /efi /boot >/dev/null 2>&1
 # coverage check, the dump and the tree (bs1-common).
 esp=$(mount_cbm_esp "$disk") || die "Solus's ESP: $esp"
 [[ -z $esp ]] || say "$esp"
+# FreeBSD (docs/design/freebsd-bs1.md): the boot environments (D9), before
+# the coverage check, which would stop at an inactive BE with less to say.
+# bsd_be_check: on a ZFS root, every boot environment bectl lists but the
+# booted one stops it, by name: bko-holt backs up no FreeBSD BE
+# (holt/src/zfs_be.rs), so the restore wouldn't have it.  One activated for
+# the next boot (R or T, without N) too: an upgrade is pending.  canmount=off
+# containers aren't BEs, and bectl doesn't list them.  Says why, and false.
+bsd_be_check() {
+    local out bad
+    [[ $(bsd_mounts | awk '$2 == "/" { print $3 }') == zfs ]] || return 0
+    out=$(bectl list -H 2>&1) || { echo "bectl list failed on this ZFS root: $out"; return 1; }
+    bad=$(awk -F'\t' 'NF && $2 !~ /N/ { printf "%s%s (%s)", (n++ ? ", " : ""), $1, ($2 ~ /[RT]/ ? "activated for the next boot" : "inactive") }' <<<"$out")
+    [[ -z $bad ]] && return 0
+    echo "boot environments other than the booted one, which BackShot1 doesn't back up, so the restore wouldn't have them (D9): $bad; bectl destroy them, or boot the one to keep"
+    return 1
+}
+if [[ $OSTYPE == freebsd* ]]; then
+    why=$(bsd_be_check) || die "$why"
+fi
 # ABRoot's other root and init LV are mounted by nothing: checked once the
 # dump has named them (its backup_sources' mount hints), below.
 is_abroot || check_coverage "$disk"
@@ -126,6 +158,12 @@ unlock_check() {
     if [[ -n $(luks_devices "$disk") ]]; then
         [[ -s $key ]] || { echo "encrypted volumes need the passphrase in $key"; return 1; }
         luks_key_test "$disk" "$key" || return 1
+    fi
+    # FreeBSD: the GELI providers that ask for a passphrase (geli_providers'
+    # ITERATIONS isn't -1), by geli attach -C, which attaches nothing.
+    if [[ $OSTYPE == freebsd* ]] && geli_providers "$disk" | awk '$3 != -1 { f = 1 } END { exit !f }'; then
+        [[ -s $key ]] || { echo "GELI providers need the passphrase in $key"; return 1; }
+        geli_key_test "$disk" "$key" || return 1
     fi
     gen=$(luks_rec generator) || gen=
     if [[ -n $gen && $(luks_rec family) =~ ^[SDEBP]$ ]]; then
@@ -271,8 +309,9 @@ PY
 # have to be in the tree, but only ABRoot's are mounted for it (mount_hints):
 # elsewhere the backup wouldn't hold them, and load would make them empty.
 # So it stops, naming them; ABRoot passes.
+# FreeBSD's dump has no backup_sources: bsd_be_check, above, is its check.
 unhinted_check() {
-    if is_abroot || is_ostree; then return 0; fi
+    if is_abroot || is_ostree || [[ $OSTYPE == freebsd* ]]; then return 0; fi
     python3 - "$1" <<'PY'
 import json, sys
 left = [s.get("path") or "?" for s in json.load(open(sys.argv[1]))["storage"].get("backup_sources") or [] if s.get("from") is None]
@@ -346,7 +385,7 @@ say "internal: $disk (serial $INTERNAL_SERIAL), backup drive: $drive, run: $RUN"
 run "$BIN/bko-holt" --version
 run "$BIN/rustic-bko" --version
 run sha256sum "$BIN/bko-holt" "$BIN/rustic-bko"
-run lsblk -o NAME,SIZE,TYPE,TRAN,FSTYPE,LABEL,MOUNTPOINTS
+if [[ $OSTYPE == freebsd* ]]; then run gpart show -lp; else run lsblk -o NAME,SIZE,TYPE,TRAN,FSTYPE,LABEL,MOUNTPOINTS; fi
 if is_ostree; then
     for u in $UPDATERS; do
         if systemctl is-active -q "$u.timer"; then must systemctl stop "$u.timer"; say "stopped $u.timer for this boot"; fi
@@ -407,7 +446,11 @@ say "in use: $((need / 1048576)) MiB; free on the drive: $((free / 1048576)) MiB
 
 step "the tree to back up"
 make_tree "$disk" "$RUN/layout.json"
-run findmnt -R "$TREE"
+if [[ $OSTYPE == freebsd* ]]; then
+    run awk -v t="$TREE" '$2 == t || index($2, t "/") == 1' <(bsd_mounts)
+else
+    run findmnt -R "$TREE"
+fi
 
 step "the baseline"
 B=$RUN/baseline
@@ -418,8 +461,15 @@ if command -v efibootmgr >/dev/null || [[ ! -d /sys/firmware/efi ]]; then
 else
     python3 "$HERE/bs1-efi" list >"$B/efibootmgr.txt" 2>&1
 fi
-lsblk -o NAME,SIZE,TYPE,TRAN,FSTYPE,LABEL,UUID,PARTUUID,MOUNTPOINTS,MODEL,SERIAL >"$B/lsblk.txt" 2>&1
-sfdisk -d "/dev/$disk" >"$B/sfdisk.txt" 2>&1
+if [[ $OSTYPE == freebsd* ]]; then
+    # FreeBSD: the partitions with their labels, and the table as gpart
+    # restore takes it, in place of lsblk's and sfdisk's.
+    { gpart show -lp; gpart list "$disk"; } >"$B/gpart.txt" 2>&1
+    gpart backup "$disk" >"$B/gpart-backup.txt" 2>&1
+else
+    lsblk -o NAME,SIZE,TYPE,TRAN,FSTYPE,LABEL,UUID,PARTUUID,MOUNTPOINTS,MODEL,SERIAL >"$B/lsblk.txt" 2>&1
+    sfdisk -d "/dev/$disk" >"$B/sfdisk.txt" 2>&1
+fi
 cp /etc/fstab "$B/fstab" 2>/dev/null
 swap_names >"$B/swap-names.txt"
 lvmid_record >"$B/lvmid.txt" 2>&1

@@ -13,10 +13,12 @@ powers off), and each test waits for it before its fakes go (it rebooted
 the Thinkpad, run as root there, 2026-11-22; no bs1 test runs as root
 now)."""
 
+import json
 import os
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -79,8 +81,9 @@ def keygen(path, comment):
     subprocess.run([KEYGEN, "-q", "-t", "ed25519", "-N", "", "-C", comment, "-f", str(path)], check=True)
 
 
-@unittest.skipUnless(BASH and KEYGEN and shutil.which("readlink"), "needs bash and ssh-keygen")
-class ToStick(unittest.TestCase):
+class StickFakes(unittest.TestCase):
+    """The fakes and helpers both classes use."""
+
     def setUp(self):
         self.t = Path(tempfile.mkdtemp(prefix="bs1-to-stick-"))
         self.addCleanup(shutil.rmtree, self.t, True)
@@ -223,6 +226,9 @@ echo "Boot0001* Linux"
             self.assertIn(w, r.stdout)
         self.assert_clean()
 
+
+@unittest.skipUnless(BASH and KEYGEN and shutil.which("readlink"), "needs bash and ssh-keygen")
+class ToStick(StickFakes):
     def test_keys_present_proceeds(self):
         self.stick_keys()
         r = self.run_it()
@@ -339,6 +345,226 @@ echo "Boot0001* Linux"
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(self.efi_calls(), "")
         self.assertIn(" oneshot BKO rescue /dev/sdz2 \\EFI\\BOOT\\BOOTX64.EFI", self.efi_calls("efivarfs.log"))
+        self.assert_clean()
+
+
+FAKE_EFIBOOTMGR = r"""#!%(py)s
+# FreeBSD's efibootmgr, on a state file: entries, BootOrder, BootNext.
+import json, sys
+st_path = %(state)r
+st = json.load(open(st_path))
+a = sys.argv[1:]
+if a and a != ["-v"]:
+    open(%(log)r, "a").write(" ".join(a) + "\n")
+def arg(f):
+    return a[a.index(f) + 1]
+ents = st["entries"]
+if "-B" in a:
+    n = arg("-b")
+    if n not in ents:
+        sys.exit(1)
+    del ents[n]
+    st["order"] = [o for o in st["order"] if o != n]
+elif "-c" in a:
+    n = next("%%04X" %% i for i in range(0x10000) if "%%04X" %% i not in ents)
+    ents[n] = {"desc": arg("-L"), "active": "-a" in a, "path": arg("-l")}
+    if not st.get("drop-create"):
+        st["order"].insert(0, n)
+    else:
+        del ents[n]
+elif "-o" in a:
+    st["order"] = arg("-o").split(",")
+elif "-n" in a:
+    st["next"] = arg("-b")
+json.dump(st, open(st_path, "w"))
+if a and a != ["-v"]:
+    sys.exit(0)
+print("BootCurrent: 0001")
+print("Timeout    : 0 seconds")
+if st.get("next"):
+    print("BootNext : " + st["next"])
+print("BootOrder  : " + ", ".join(st["order"]))
+# As FreeBSD's does: BootOrder's entries, then the others with their paths
+# (with -v, every entry's).
+def line(n, e, path):
+    s = "%%sBoot%%s%%s %%s" %% ("+" if n == "0001" else " ", n, "*" if e.get("active", True) else " ", e["desc"])
+    return s + (" HD(1,MBR,0x0,0x20,0x20000)/File(" + e.get("path", "x") + ")" if path else "")
+for n in st["order"]:
+    print(line(n, ents[n], a == ["-v"]))
+print("\n\nUnreferenced Variables:")
+for n, e in sorted(ents.items()):
+    if n not in st["order"]:
+        print(line(n, e, True))
+"""
+
+
+@unittest.skipUnless(BASH and KEYGEN and shutil.which("readlink"), "needs bash and ssh-keygen")
+class ToStickBsd(StickFakes):
+    """The FreeBSD branch: base efibootmgr's options, the stick by
+    /dev/msdosfs/BACKOTTER and its ident, the ESP by MBR slice 1, behind
+    bs1-lane's guard, and the reboot by daemon(8) and shutdown -r."""
+
+    def setUp(self):
+        super().setUp()
+        t, b = self.t, self.bin
+        text = (BS1 / "bs1-to-stick").read_text()
+        self.assertIn("BSD_CONFIG=/dev/msdosfs/BACKOTTER\n", text)
+        text = text.replace("BSD_CONFIG=/dev/msdosfs/BACKOTTER\n", f"BSD_CONFIG={t}/dev/msdosfs/BACKOTTER\n")
+        exe(self.here / "bs1-to-stick", text)
+        (t / "dev/msdosfs").mkdir(parents=True)
+        (t / "dev/msdosfs/BACKOTTER").touch()
+        (self.here / "bs1-common").write_text(f"""set -uo pipefail
+OSTYPE=freebsd15.0
+HERE={self.here}
+LOG=/dev/null STEP=to-stick INTERNAL_SERIAL=X STICK_SERIAL=STICK001
+say() {{ printf '%s\\n' "$*"; }}
+die() {{ say "STOPPED: $*"; exit 1; }}
+internal_disk() {{ echo nda0; }}
+disk_of() {{ echo da1; }}
+bsd_umass() {{ [ ! -e {t}/not-usb ]; }}
+bsd_ident() {{ cat {t}/ident 2>/dev/null || echo STICK001; }}
+bsd_scheme() {{ echo MBR; }}
+bsd_provider() {{ case $1 in */BACKOTTER) echo da1s3 ;; *) echo "${{1#/dev/}}" ;; esac; }}
+bsd_mounts() {{ cat {t}/mount-p 2>/dev/null; }}
+""")
+        exe(self.here / "bs1-lane", f'#!/bin/sh\necho "lane $*" >>{t}/lane.log\n[ ! -e {t}/guard-fails ]\n')
+        for f in ("blkid", "lsblk", "findmnt", "python3"):
+            (b / f).unlink()
+        exe(b / "sysctl", f'#!/bin/sh\n[ "$*" = "-n machdep.bootmethod" ] && {{ cat {t}/bootmethod 2>/dev/null || echo UEFI; }}\n')
+        exe(b / "fstyp", '#!/bin/sh\n[ "$1" = /dev/da1s1 ] && echo msdosfs\n')
+        exe(b / "mount", f"""#!/bin/sh
+echo "mount $*" >>{t}/mounts
+for a; do dev=$tgt; tgt=$a; done
+case $dev in
+*/msdosfs/BACKOTTER) [ ! -e {t}/mount-fails ] || exit 32; cp -R {t}/backotter-part/. "$tgt"/ ;;
+/dev/da1s1) mkdir -p "$tgt/EFI/BOOT" && : >"$tgt/EFI/BOOT/BOOTX64.EFI" ;;
+*) exit 32 ;;
+esac
+""")
+        self.state = t / "efi-state.json"
+        self.efi_state(entries={"0001": {"desc": "FreeBSD"}, "0000": {"desc": "UiApp"},
+                                "0003": {"desc": "BKO rescue", "active": False},
+                                "0004": {"desc": "BKO rescue"}},
+                       order=["0001", "0003", "0000"])
+        exe(b / "efibootmgr", FAKE_EFIBOOTMGR % {"py": sys.executable, "state": str(self.state), "log": str(t / "efi.log")})
+        exe(b / "daemon", f'#!/bin/sh\necho "daemon $*" >>{t}/reboot.log\n')
+
+    def efi_state(self, **st):
+        self.state.write_text(json.dumps(st))
+
+    def st(self):
+        return json.loads(self.state.read_text())
+
+    def run_it(self, **extra):
+        env = {"PATH": f"{self.bin}:{self.sys_bin}", "LC_ALL": "C", "TMPDIR": str(self.t / "tmp"), **extra}
+        return subprocess.run([BASH, str(self.here / "bs1-to-stick")], capture_output=True, text=True,
+                              timeout=30, env=env)
+
+    def assert_clean(self):
+        mounts = self.mounts()
+        self.assertEqual(sum(m.startswith("mount ") for m in mounts),
+                         sum(m.startswith("umount ") for m in mounts), mounts)
+        self.assertIn(f"mount -t msdosfs -o ro,nosuid,noexec {self.t}/dev/msdosfs/BACKOTTER", mounts[0])
+        self.assert_no_temp()
+
+    def test_keys_present_proceeds(self):
+        self.stick_keys()
+        r = self.run_it()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("has the SSH keys", r.stdout)
+        self.assertEqual((self.t / "lane.log").read_text(), "lane guard --lane\n")
+        st = self.st()
+        # The stale entries gone, the new one at the lowest free number, active,
+        # out of BootOrder, and BootNext.
+        self.assertEqual(sorted(st["entries"]), ["0000", "0001", "0002"])
+        new = st["entries"]["0002"]
+        self.assertEqual(new["desc"], "BKO rescue")
+        self.assertTrue(new["active"])
+        self.assertTrue(new["path"].endswith("/EFI/BOOT/BOOTX64.EFI"), new)
+        self.assertEqual(st["order"], ["0001", "0000"])
+        self.assertEqual(st["next"], "0002")
+        calls = self.efi_calls().splitlines()
+        # Both stale ones, in BootOrder or not (an out-of-order one is
+        # listed with its path after the label).
+        self.assertEqual(calls[:2], ["-B -b 0003", "-B -b 0004"])
+        self.assertTrue(calls[2].startswith("-a -c -l ") and calls[2].endswith(" -L BKO rescue"), calls)
+        self.assertEqual(calls[3:], ["-o 0001,0000", "-n -b 0002"])
+        self.assertIn("BootNext : 0002", r.stdout)
+        self.assertIn("rebooting into the stick (/dev/da1s1, \\EFI\\BOOT\\BOOTX64.EFI), once", r.stdout)
+        self.assertEqual(self.reboots(), "daemon -f /bin/sh -c sleep 2; exec /sbin/shutdown -r now\n")
+        self.assertIn("mount -t msdosfs -o ro /dev/da1s1", "\n".join(self.mounts()))
+        self.assert_clean()
+
+    def test_twice_makes_one_entry(self):
+        self.stick_keys()
+        for _ in range(3):
+            self.assertEqual(self.run_it().returncode, 0)
+        st = self.st()
+        self.assertEqual([e["desc"] for e in st["entries"].values()].count("BKO rescue"), 1)
+        self.assertEqual(st["order"], ["0001", "0000"])
+
+    def stopped_unchanged(self, r, why):
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn(why, r.stdout)
+        self.assertEqual(self.efi_calls(), "", "efibootmgr changed something")
+        self.assertEqual(self.reboots(), "")
+        self.assert_no_temp()
+
+    def test_guard_refuses(self):
+        self.stick_keys()
+        (self.t / "guard-fails").touch()
+        self.stopped_unchanged(self.run_it(), "bs1-lane's guard refused: BootNext is left alone")
+        self.assertEqual(self.mounts(), [])
+
+    def test_not_uefi(self):
+        (self.t / "bootmethod").write_text("BIOS\n")
+        self.stopped_unchanged(self.run_it(), "this system wasn't booted by UEFI")
+        self.assertFalse((self.t / "lane.log").exists())
+
+    def test_not_the_sticks_ident(self):
+        self.stick_keys()
+        (self.t / "ident").write_text("012345678921\n")
+        self.stopped_unchanged(self.run_it(), "whose ident 012345678921 isn't the stick's, STICK001")
+        self.assertEqual(self.mounts(), [])
+
+    def test_not_usb(self):
+        self.stick_keys()
+        (self.t / "not-usb").touch()
+        self.stopped_unchanged(self.run_it(), "BACKOTTER is on da1, which isn't a USB disk")
+
+    def test_reflashed_stick_stops(self):
+        self.stick_keys(auth=False, host=False)
+        r = self.run_it()
+        self.stopped_unchanged(r, "BootNext is left alone")
+        self.assertIn("no backotter/authorized_keys", r.stdout)
+        self.assert_clean()
+
+    def test_mounted_stick_and_esp_are_read_where_they_are(self):
+        self.stick_keys()
+        at = self.t / "media" / "B K O"
+        shutil.copytree(self.part.parent, at)
+        esp = self.t / "media" / "E S P"
+        (esp / "efi/boot").mkdir(parents=True)
+        (esp / "efi/boot/bootx64.efi").touch()
+        enc = lambda p: str(p).replace(" ", "\\040")
+        (self.t / "mount-p").write_text(f"/dev/da1s3\t{enc(at)}\tmsdosfs\trw\t0\t0\n/dev/da1s1\t{enc(esp)}\tmsdosfs\trw\t0\t0\n")
+        r = self.run_it()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"is mounted at {at} already", r.stdout)
+        self.assertEqual(self.mounts(), [])
+        self.assertEqual(self.st()["entries"]["0002"]["path"], f"{esp}/efi/boot/bootx64.efi")
+        self.assert_no_temp()
+
+    def test_firmware_drops_the_new_entry(self):
+        self.stick_keys()
+        st = self.st()
+        st["drop-create"] = True
+        self.efi_state(**st)
+        r = self.run_it()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("the firmware didn't keep the new entry", r.stdout)
+        self.assertNotIn("next", self.st())
+        self.assertEqual(self.reboots(), "")
         self.assert_clean()
 
 

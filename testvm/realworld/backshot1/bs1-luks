@@ -1326,6 +1326,57 @@ lk_p_check() {
     [[ $bad -eq 0 ]]
 }
 
+# lk_bsd_adopt DISK: luks_adopt on FreeBSD (docs/design/freebsd-bs1.md, D7),
+# a guard only: no LUKS and no initramfs.  What may ask at boot is GELI (the
+# loader, for a GELIBOOT provider; the kernel, for one without) and ZFS
+# native encryption.  Nothing here makes either unlock from the drive yet
+# (family F, a GELI boot pool keyed by passphrase and key file, is F11), so
+# nothing changes but the record: own where every provider opens by key
+# files alone, else attended, with why.  ZFS encryption alone writes no
+# record, as on Linux without ZFSBootMenu.  A provider that asks needs the
+# drive's key to open it (geli attach -C, which attaches nothing), as
+# Linux's volumes do: the restore makes it again with that passphrase.
+lk_bsd_adopt() {
+    local disk=$1 name flags it zfs reason='' family why
+    local asks=() boot=() typed=() own_list=()
+    zfs=$(zfs_passphrase_roots "$disk" | paste -s -d ' ' -)
+    while read -r name flags it; do
+        [[ -n $name ]] || continue
+        if [[ $it == -1 ]]; then own_list+=("$name")
+        else
+            asks+=("$name")
+            # G_ELI_FLAG_GELIBOOT
+            if (( flags & 0x80 )); then boot+=("$name"); else typed+=("$name"); fi
+        fi
+    done < <(geli_providers "$disk")
+    if [[ ${#asks[@]} -eq 0 && ${#own_list[@]} -eq 0 ]]; then
+        if [[ -n $zfs ]]; then lk_say "ZFS native encryption on $disk ($zfs), no GELI: attended; nothing changes"
+        else lk_say "no GELI provider or ZFS encryption on $disk: nothing to do"
+        fi
+        [[ ! -e $LUKS_REC ]] || lk_say "($LUKS_REC is from before; bs1-adopt --luks-off removes it)"
+        return 0
+    fi
+    if [[ ${#asks[@]} -gt 0 ]]; then
+        LK_KEY=$here/keys/disk-passphrase
+        [[ -s $LK_KEY ]] || { lk_err "GELI providers that ask (${asks[*]}) need the passphrase in $LK_KEY (printf '%s' PASSPHRASE, no final newline)"; return 1; }
+        chmod 600 "$LK_KEY" 2>/dev/null || true
+        if ! why=$(geli_key_test "$disk" "$LK_KEY"); then
+            lk_err "$why ($LK_KEY): is it the passphrase, with no final newline?"
+            return 1
+        fi
+        lk_say "the drive's key opens every GELI provider on $disk that asks: ${asks[*]}"
+        family=A
+        [[ ${#boot[@]} -eq 0 ]] || reason="the loader asks for the passphrase of the GELIBOOT provider ${boot[*]}"
+        [[ ${#typed[@]} -eq 0 ]] || reason+="${reason:+; }${typed[*]} asks for a passphrase at boot, and unlocking it from the drive (family F) isn't built yet (freebsd-bs1.md F11)"
+    else
+        family=own reason="every GELI provider opens with no one typing (key files only)"
+    fi
+    [[ -z $zfs ]] || { family=A; reason+="${reason:+; }ZFS native encryption asks for $zfs"; }
+    lk_say "$family: $reason; nothing else changes"
+    mkdir -p "$LUKS_DIR" || return 1
+    lk_put "$LUKS_REC" 644 "$(lk_record "$family" geli ufs "" "${own_list[*]}" "$reason")"
+}
+
 # luks_adopt: the step itself.  False, having changed nothing, if it can't.
 luks_adopt() {
     local disk key fstype gen family='' reason='' cmdline vols dev uuid name line k o how kf
@@ -1334,6 +1385,10 @@ luks_adopt() {
     if [[ ${BS1_LUKS:-yes} == no ]]; then lk_say "skipped (BS1_LUKS=no)"; return 0; fi
     disk=$(internal_disk) || { lk_err "no single disk has serial $INTERNAL_SERIAL"; return 1; }
     LK_DISK=$disk
+    if [[ $OSTYPE == freebsd* ]]; then
+        lk_bsd_adopt "$disk"
+        return
+    fi
     vols=$(lk_luks_volumes "$disk")
     # No LUKS, but ZFS native encryption that asks: ZFSBootMenu's (family Z).
     if [[ -z $vols ]] && declare -F zfs_passphrase_roots >/dev/null && [[ -n $(zfs_passphrase_roots "$disk") ]]; then

@@ -1,0 +1,104 @@
+#!/bin/bash
+# bs2all: BackShot2All from the Mac, start to report, without typing the run's name.
+#
+#   bs2all start          bs2 BackShot2All; the run's name saved in ~/backotter-work/bs2all-last
+#   bs2all finish [RUN]   wait for RUN's host queues, then its corpus, its leftovers set
+#                         (and wait for it), then its report
+#   bs2all all            start, then finish
+#   bs2all name           the run finish and report would use
+#   bs2all wait [RUN]     only wait for RUN's queues
+#   bs2all report [RUN]   only its report (now, finished or not)
+#
+# RUN, when not given: the name `bs2all start` saved, else the newest
+# /bkoscratch/backshot2/runs/bs2all-* on chopin.  BS2_WT (default bs2all-wt) is
+# passed on to bs2, as every other BS2_ variable is.  POLL (default 300) is the
+# seconds between checks.  A host's work for RUN is "live" while any process of
+# m there has "bs2-host" and RUN in its command line: the tier 0 sweeps (RUN-t0),
+# the queue (queue RUN) and the leftovers set (RUN-lo).  Exit: the report's
+# (0 PASS or PARTIAL PASS, 1 FAIL or INCOMPLETE); 2 for a usage or setup error.
+set -uo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+bs2=$here/bs2
+export BS2_WT=${BS2_WT:-bs2all-wt}
+POLL=${POLL:-300}
+last=$HOME/backotter-work/bs2all-last
+die() { echo "bs2all: $*" >&2; exit 2; }
+
+# The enabled amd64 hosts' ssh targets, from testvm/hosts.json (as bs2's RUN_HOSTS).
+hosts() {
+    python3 -I -c 'import json,sys
+for h in json.load(open(sys.argv[1]))["hosts"]:
+    if h.get("enabled") and h.get("arch", "amd64") == "amd64": print(h["ssh"])' "$here/../hosts.json"
+}
+
+resolve() {   # resolve [RUN]: prints the run to use
+    local r=${1:-}
+    if [[ -z $r && -s $last ]]; then r=$(<"$last"); fi
+    if [[ -z $r ]]; then
+        r=$(ssh -o BatchMode=yes -o ConnectTimeout=8 m@chopin.local \
+            'ls -dt /bkoscratch/backshot2/runs/bs2all-* 2>/dev/null | grep -E "/bs2all-[0-9]{8}-[0-9]{6}$" | head -1' |
+            xargs -r basename)
+    fi
+    [[ $r =~ ^bs2all-[0-9]{8}-[0-9]{6}$ ]] || die "no BackShot2All run found (name one: bs2all finish bs2all-YYYYMMDD-HHMMSS)"
+    echo "$r"
+}
+
+live() {   # live RUN [SUFFIX]: prints "host N" for each host with live bs2-host work of RUN
+    local run=$1 sfx=${2:-} h n
+    # [b]s2-host: the pattern doesn't match the bash -c that carries it.
+    for h in $(hosts); do
+        n=$(ssh -n -o BatchMode=yes -o ConnectTimeout=8 "$h" "pgrep -u m -f -- '[b]s2-host.*$run$sfx' | wc -l" 2>/dev/null) ||
+            { echo "bs2all: $h didn't answer: not counted as busy" >&2; continue; }
+        if [[ ${n:-0} -gt 0 ]]; then echo "$h $n"; fi
+    done
+    return 0
+}
+
+wait_for() {   # wait_for RUN [SUFFIX] WHAT
+    local run=$1 sfx=$2 what=$3 busy
+    while busy=$(live "$run" "$sfx") && [[ -n $busy ]]; do
+        echo "$(date +%H:%M) $what still running: $(echo "$busy" | tr '\n' ';' | sed 's/;$//')"
+        sleep "$POLL"
+    done
+    echo "$(date +%H:%M) $what: done"
+}
+
+start() {
+    local out name
+    out=$(mktemp)
+    "$bs2" BackShot2All 2>&1 | tee "$out"
+    local rc=${PIPESTATUS[0]}
+    name=$(grep -oE '^BackShot2All bs2all-[0-9]{8}-[0-9]{6}' "$out" | head -1 | cut -d' ' -f2)
+    rm -f "$out"
+    [[ -n $name ]] || die "bs2 BackShot2All exited $rc and printed no run name"
+    mkdir -p "$(dirname "$last")" && echo "$name" > "$last"
+    echo "bs2all: run $name (saved in $last; bs2 exited $rc)"
+    [[ $rc -eq 0 ]] || echo "bs2all: bs2 exited $rc: some host may not have started (its cases show as INCOMPLETE)" >&2
+}
+
+finish() {
+    local run
+    run=$(resolve "${1:-}") || exit 2
+    echo "bs2all: finishing $run"
+    wait_for "$run" "" "the queues"
+    echo "$(date +%H:%M) the corpus"
+    "$bs2" BackShot2All corpus "$run" || echo "bs2all: corpus exited $?: going on (the report says)" >&2
+    echo "$(date +%H:%M) the leftovers set"
+    if "$bs2" BackShot2All leftovers "$run"; then
+        sleep 30
+        wait_for "$run" "-lo" "the leftovers set"
+    else
+        echo "bs2all: leftovers exited $?: going on (the report says)" >&2
+    fi
+    "$bs2" BackShot2All report "$run"
+}
+
+case ${1:-} in
+    start) start ;;
+    finish) finish "${2:-}" ;;
+    all) start && finish "$(<"$last")" ;;
+    name) resolve "${2:-}" ;;
+    wait) run=$(resolve "${2:-}") || exit 2; wait_for "$run" "" "the queues" ;;
+    report) run=$(resolve "${2:-}") || exit 2; "$bs2" BackShot2All report "$run" ;;
+    *) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

@@ -418,6 +418,13 @@ SKIPPED: every run until A3-A6 and A8 are in) or PASS.  Its rows in Test2's
 ledger say word `BackShot2All` (`BS2_WORD`, passed on like `BS2_HOLT`);
 BackShot2's say `BackShot2`.
 
+`bs2all` wraps the words above so you never type the run's name: `bs2all
+start` runs `bs2 BackShot2All` and saves the name in
+`~/backotter-work/bs2all-last`; `bs2all finish [RUN]` waits until no host has
+`bs2-host` work of RUN left (polling every `POLL` s, 300), runs the corpus, starts
+the leftovers set and waits for it, then prints the report; `bs2all all` does
+both.  RUN defaults to the saved name, else chopin's newest `bs2all-*` run.
+
 First runs (2026-11-24, `BS2_WT=bs2all-wt`): bs2a-20261124-1738, nine
 sources on five hosts (debian13, fedora44-uefi, arch, rocky10, mint22,
 cachyos, nixos2605, zorin18, aerynos; 2 tier 1, 1 tier 2 a UEFI source):

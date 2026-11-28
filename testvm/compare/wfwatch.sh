@@ -15,13 +15,24 @@
 #   STALL_MIN  minutes with no file under RUN_DIR written before it calls
 #              the run stalled (default 20)
 #   WFWATCH_POLL  seconds between checks (default 60; for tests)
+#   WFWATCH_SLACK seconds the state file may trail RUN_DIR's newest write
+#                 and still mark the end (default 5)
 # Prints one line and exits:
 #   0  DONE RUN status=STATUS: the run is over.  The marker is the run's
 #      state file, SESSION/workflows/wf_XXXX.json (RUN_DIR's ../../../workflows),
 #      which Claude Code writes only when the run ends, its top-level
 #      "status" completed or killed (no journal line marks the end: a
 #      journal holds launched, started, result and failed lines only).
-#      A killed run is DONE too; STATUS says which.
+#      A killed run is DONE too; STATUS says which.  A run resumed with
+#      resumeFromRunId keeps its id and dir, and the earlier end's state
+#      file stays until the resumed run ends and rewrites it; the resume
+#      writes no second "launched" line and the state file carries no
+#      attempt field, so mtimes decide: the state file counts only when
+#      it is no more than WFWATCH_SLACK seconds (default 5) older than the
+#      newest file or directory under RUN_DIR (journal.jsonl, agent
+#      transcripts).  A state file older than the watchdog's own start
+#      must also pass that test on two checks one poll apart, so a resume
+#      that has not yet written its first journal line is not DONE.
 #   2  STALL RUN idle N min; last file PATH at TIME; agents running: LIST
 #      (LIST: each agent-ID.jsonl written in the last 2*STALL_MIN minutes
 #      whose ID has no result or failed line in journal.jsonl, with its
@@ -40,7 +51,9 @@ dir=${1%/}
 stall_min=${2:-20}
 poll=${WFWATCH_POLL:-60}
 case $stall_min in ''|*[!0-9]*) usage ;; esac
+slack=${WFWATCH_SLACK:-5}
 case $poll in ''|*[!0-9]*) usage ;; esac
+case $slack in ''|*[!0-9]*) usage ;; esac
 [ "$stall_min" -ge 1 ] || usage
 [ "$poll" -ge 1 ] || usage
 
@@ -92,12 +105,42 @@ EOF
     echo "${out# }" | sed 's/^$/none/'
 }
 
+# Seconds since the epoch the file $1 was last written, or nothing.
+mtime_of() {
+    local o
+    o=$(stat "${statfmt[@]}" "$1" 2>/dev/null) || return 0
+    echo "${o%% *}"
+}
+
+started=$(date +%s)
+old_ok=0          # checks in a row a pre-start state file has passed
+
 while :; do
     if [ ! -d "$dir" ]; then
         echo "MISSING $run: $dir has gone"
         exit 3
     fi
+    now=$(date +%s)
+    newest=$(find "$dir" -exec stat "${statfmt[@]}" {} + 2>/dev/null | sort -n | tail -n 1)
+    newest_t=${newest%% *}
+    newest_f=${newest#* }
+    case $newest_t in ''|*[!0-9]*) newest_t=$now newest_f=? ;; esac
+    ended=0
     if [ -f "$state" ]; then
+        st=$(mtime_of "$state")
+        case $st in ''|*[!0-9]*) st=0 ;; esac
+        if [ $(( st + slack )) -ge "$newest_t" ]; then
+            if [ "$st" -ge "$started" ]; then
+                ended=1
+            else                        # older than this watch: resumed?
+                old_ok=$(( old_ok + 1 ))
+                [ "$old_ok" -ge 2 ] && ended=1
+            fi
+        else
+            old_ok=0                    # stale: a resumed run is working
+        fi
+    fi
+    if [ "$ended" = 1 ]; then
         s=$(status_of "$state")
         if [ -z "$s" ]; then             # caught mid-write: read again
             sleep 2
@@ -106,13 +149,9 @@ while :; do
         echo "DONE $run status=${s:-unknown}"
         exit 0
     fi
-    now=$(date +%s)
-    newest=$(find "$dir" -exec stat "${statfmt[@]}" {} + 2>/dev/null | sort -n | tail -n 1)
-    newest_t=${newest%% *}
-    newest_f=${newest#* }
-    case $newest_t in ''|*[!0-9]*) newest_t=$now newest_f=? ;; esac
     idle=$(( (now - newest_t) / 60 ))
-    if [ "$idle" -ge "$stall_min" ]; then
+    # A state file awaiting its second check is an end, not a stall.
+    if [ "$old_ok" = 0 ] && [ "$idle" -ge "$stall_min" ]; then
         agents=$(running_agents $(( now - 2 * stall_min * 60 )))
         echo "STALL $run idle $idle min; last file $newest_f at $(when "$newest_t"); agents running: $agents"
         exit 2

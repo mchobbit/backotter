@@ -169,6 +169,12 @@ symlink there, so the paths are unchanged. Since the 2026-11-25 cutover every
 `vms/G` there is a link into the cache (cachyos-zfs, slackware15 and
 slackware15-uefi still full folders); its cache is cap 420G, floor 30G (all
 the CN600 allows; the cap was 400G) until its test disk arrives (2026-12-01).
+On 2026-11-28 `/bkoscratch/fast` moved off the CN600 onto a 1 TB SK900
+NVMe fitted inside Cinqcent (XFS label `cinq-fast`, UUID 17e485d9-...,
+the CN600's mkfs options; rsync -aHAXS, checksum compare 0 differences;
+fstab backup `/etc/fstab.bak-20261128-sk900`). The CN600 sits in a USB
+enclosure, relabelled `cinq-fast-us`, and nothing mounts it; the cache's
+cap and floor are unchanged.
 
 vm-update updates every guest it can reach over SSH. Sculpt OS
 (`sculpt2610`) has no sshd: its `no-ssh` makes vm-update refuse it, and

@@ -148,7 +148,7 @@ class TestUsage(unittest.TestCase):
 class TestInGuest(unittest.TestCase):
     TEXT = (TESTVM / "update" / "in-guest.sh").read_text()
     NAMES = {"prologue", "NixOS", "Guix", "Linux.portage", "Linux.slackpkg", "Linux.abroot", "Linux.common", "Linux.apt", "Linux.ostree",
-             "Linux.dnf", "Linux.pacman",
+             "Linux.urpmi", "Linux.dnf", "Linux.pacman",
              "Linux.tukit", "Linux.zypper", "Linux.snapcore",
              "Linux.xbps", "Linux.apk", "Linux.eopkg", "Linux.moss", "FreeBSD", "DragonFly", "OpenBSD", "NetBSD", "SunOS",
              "Haiku", "Redox"}
@@ -178,6 +178,8 @@ class TestInGuest(unittest.TestCase):
                              ("Linux.ostree", "rpm-ostree cleanup -b -m"),
                              ("Linux.zypper", "history"), ("Linux.zypper", "install DVD"), ("Linux.common", "has zypper"),
                              ("Linux.moss", "unstable stream"), ("Linux.common", "has moss"),
+                             ("Linux.common", "^ID=mageia$"), ("Linux.urpmi", "urpmi --auto --auto-update"),
+                             ("Linux.urpmi", "remove-old-kernels -a -m -n 2"), ("Linux.urpmi", "install DVD's media"),
                              ("Linux.common", "has eopkg"), ("Linux.eopkg", "eopkg up -y"), ("Linux.eopkg", "eopkg dc"),
                              ("Linux.common", "has xbps-install"), ("Linux.apk", "apk upgrade"),
                              ("prologue", "/etc/gentoo-release"), ("Linux.portage", "emerge --sync"),

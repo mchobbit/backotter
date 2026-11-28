@@ -24,6 +24,8 @@
 #   nixos         nixos2605       bcachefs   NixOS 26.05's nixpkgs
 #   slackware     slackware15     ext4       Slackware 15.0's series a, ap, d, l, n (BSD-style rc), LILO, no initrd
 #   slackware-uefi slackware15-uefi XFS      the same, for UEFI, ELILO, mkinitrd (below)
+#   pclinuxos     pclinuxos       ext4       PCLinuxOS's KDE ISO (livecd.sqfs), by pclinuxos/install.sh, for UEFI (below)
+#   pclinuxos-bios pclinuxos-bios XFS        the same, BIOS, Manual mode's /boot + swap + XFS / (below)
 #
 # The versions are fixed below.  The Arch ISO (with its .sig and
 # sha256sums.txt) and the distribution's root file system tarball, if it has
@@ -48,6 +50,12 @@
 # each package against its MD5 there and its own .asc.  Its 15.0 tree is
 # frozen; the patches come later, by vm-update, but for SLACKWARE_PATCHED's,
 # whose version is the one the tree's CHECKSUMS.md5 lists.
+# PCLinuxOS's ISO (PCLINUXOS_ISO) and openssh-server RPM (PCLINUXOS_SSH_RPM)
+# are read from WORK_DIR (rebuild-one.sh links them in from
+# /bkoscratch/rebuild-inputs/pclinuxos), else downloaded from NLUUG, and
+# checked against the SHA-256s pinned below (PCLinuxOS signs neither: the
+# ISO's MD5 was checked against NLUUG's and freedif's .md5sum when it was
+# pinned, docs/design/pclinuxos.md PC1).
 # bcachefs needs an Arch ISO whose kernel still has it (6.12), so NixOS's
 # install uses an older one.
 #
@@ -72,6 +80,15 @@
 # kernel with mkinitrd's initrd, ELILO in EFI/Slackware and EFI/BOOT.  Both
 # 20 GiB, fstab and root= by device name, as Slackware's setup writes them
 # (docs/design/slackware.md).
+# pclinuxos, pclinuxos-bios (docs/design/pclinuxos.md): bootstrap/pclinuxos.sh
+# alone (no common.sh) runs pclinuxos/install.sh, the replay of PCLinuxOS's
+# mylive-install, with the PCLinuxOS ISO on a second CD (/dev/sr1).  32 GiB.
+# pclinuxos: the installer's Automated layout on GPT (ESP 300 MB at
+# /boot/EFI, swap 1024 MB, / ext4), grub2-efi under the id pclinuxos with
+# --no-nvram and again at EFI/BOOT/BOOTX64.EFI; pclinuxos-bios: msdos,
+# /boot ext4 1 GiB, swap 1 GiB, / XFS, grub2 i386-pc in the MBR.  Both:
+# mkinitrd's (nash) initrd-K.img, runlevel 3 with a ttyS0 getty, sshd from
+# the pinned RPM, root and tester sharing root-password.
 # The guest: BIOS + MBR, /boot (1 GiB ext4), swap (2 GiB), / (the rest), 2 GB
 # RAM, no desktop, console on the serial port too, DHCP and sshd.  The UEFI
 # ones, GPT with GRUB in a 512 MiB ESP at /boot/efi (bootstrap/common.sh's
@@ -151,13 +168,21 @@ SLACKWARE_SERIES="a ap d l n"
 # issuer CN=SSL.com TLS Issuing RSA CA R1 can't be verified), so slackpkg
 # and vm-update (its wget of the mirror's GPG-KEY) can't fetch from it.
 SLACKWARE_PATCHED="ca-certificates"
+# PCLinuxOS's KDE ISO of 2026-11-21 and openssh-server (not on the ISO), by
+# SHA-256 (docs/design/pclinuxos.md PC1, Decisions 5 and 6).  ISO MD5
+# 488ae2664b13c40a88fdfe4d298cc079, as NLUUG's and freedif's .md5sum say.
+PCLINUXOS_MIRROR=https://ftp.nluug.nl/os/Linux/distr/pclinuxos
+PCLINUXOS_ISO=pclinuxos64-kde-2026.11.iso
+PCLINUXOS_ISO_SHA256=8844514243f1923dd4f03a4e8bff89f52c4c0998aa4bd910eb0b836a91a85dbb
+PCLINUXOS_SSH_RPM=openssh-server-9.8p1-2pclos2024.x86_64.rpm
+PCLINUXOS_SSH_RPM_SHA256=9e8317306ca7e022215230a08e68b7d502d38bcc2f3445aa17451014b808f5ae
 
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-bootstrap: $*" >&2; exit 1; }
 
 arch=amd64
 if [[ ${1:-} == --arch ]]; then arch=${2:-}; shift 2 || die "--arch takes amd64 or arm64"; fi
-[[ $# -eq 2 ]] || die "usage: $0 [--arch amd64|arm64] alpine|alpine-uefi|alpine-lvm|alpine-luks|void|chimera|chimera-uefi|gentoo|gentoo-systemd|artix-dinit|artix-s6|nixos|slackware|slackware-uefi WORK_DIR"
+[[ $# -eq 2 ]] || die "usage: $0 [--arch amd64|arm64] alpine|alpine-uefi|alpine-lvm|alpine-luks|void|chimera|chimera-uefi|gentoo|gentoo-systemd|artix-dinit|artix-s6|nixos|slackware|slackware-uefi|pclinuxos|pclinuxos-bios WORK_DIR"
 distro=$1
 case $arch in
     amd64) ;;
@@ -196,6 +221,12 @@ case $distro in
         extra=(KERNEL=huge) ;;
     slackware-uefi) name=slackware15-uefi root_fs=xfs script=slackware firmware=uefi layout=uefi DISK_SIZE=20G
         extra=(KERNEL=generic) ;;
+    # install.sh's LAYOUTs: the installer's Automated one (UEFI), Manual
+    # mode's /boot + swap + XFS / (BIOS).
+    pclinuxos) name=pclinuxos root_fs=ext4 script=pclinuxos firmware=uefi layout=auto DISK_SIZE=32G
+        extra=("SSH_RPM=$PCLINUXOS_SSH_RPM" "SSH_RPM_SUM=$PCLINUXOS_SSH_RPM_SHA256") ;;
+    pclinuxos-bios) name=pclinuxos-bios root_fs=xfs script=pclinuxos firmware=bios layout=manual-xfs DISK_SIZE=32G
+        extra=("SSH_RPM=$PCLINUXOS_SSH_RPM" "SSH_RPM_SUM=$PCLINUXOS_SSH_RPM_SHA256") ;;
     *) die "unknown DISTRO $distro" ;;
 esac
 # arm64: alpine324's twin for UEFI, alpine-uefi's disk with / on XFS.
@@ -250,6 +281,7 @@ fi
 
 work=$(mktemp -d)
 server=""
+second_cd=""                           # pclinuxos: its ISO, the VM's second CD
 # Files and directories extracted from the ISO are read-only.
 cleanup() { [[ -n $server ]] && kill "$server" 2>/dev/null; chmod -R u+w "$work"; rm -rf "$work"; }
 trap cleanup EXIT
@@ -365,6 +397,17 @@ case $script in
         # The key, by its fingerprint, for slackpkg's keyring in the guest.
         cp slackware-key.gpg "$work/www/slackware-key.gpg"
         ;;
+    pclinuxos)
+        fetch "$PCLINUXOS_MIRROR/iso/$PCLINUXOS_ISO"
+        fetch "$PCLINUXOS_MIRROR/apt/pclinuxos/64bit/RPMS.x86_64/$PCLINUXOS_SSH_RPM"
+        echo "$PCLINUXOS_ISO_SHA256  $PCLINUXOS_ISO" | sha256sum -c --quiet - ||
+            die "$PCLINUXOS_ISO does not match its pinned SHA-256"
+        echo "$PCLINUXOS_SSH_RPM_SHA256  $PCLINUXOS_SSH_RPM" | sha256sum -c --quiet - ||
+            die "$PCLINUXOS_SSH_RPM does not match its pinned SHA-256"
+        cp "$here/pclinuxos/install.sh" "$work/www/install-pclinuxos.sh"
+        ln -s "$PWD/$PCLINUXOS_SSH_RPM" "$work/www/$PCLINUXOS_SSH_RPM"
+        second_cd=$PWD/$PCLINUXOS_ISO
+        ;;
 esac
 
 # --- The live system's kernel, initramfs and boot options ---------------------------
@@ -418,7 +461,10 @@ settings=(DISTRO="$distro" ARCH="$arch" SERIAL_TTY="$serial_tty"
     ROOT_FS="$root_fs" FIRMWARE="$firmware" LAYOUT="$layout" LUKS_KEY="$luks_key" HOSTNAME="$name"
     ROOT_PASSWORD="$password" ROOT_PASSWORD_HASH="$hash" AUTHORIZED_KEY="$(cat id_ed25519.pub)"
     SERVER="http://10.0.2.2:$port" "${extra[@]}")
-python3 - "$work/www/install.sh" "$here/bootstrap/common.sh" "$here/bootstrap/$script.sh" \
+# pclinuxos: its script alone (pclinuxos/install.sh partitions the disk).
+common=$here/bootstrap/common.sh
+[[ $script != pclinuxos ]] || common=/dev/null
+python3 - "$work/www/install.sh" "$common" "$here/bootstrap/$script.sh" \
     "${settings[@]}" <<'EOF'
 import re, sys
 out, parts, settings = sys.argv[1], sys.argv[2:4], dict(a.split("=", 1) for a in sys.argv[4:])
@@ -506,6 +552,7 @@ timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     -enable-kvm -cpu host -smp 4 -m "$INSTALL_MEMORY" -machine pc \
     -drive "file=$DISK,if=virtio,format=qcow2" \
     -drive "file=$ISO,media=cdrom,readonly=on" \
+    ${second_cd:+-drive "file=$second_cd,media=cdrom,readonly=on"} \
     -nic user,model=virtio-net-pci \
     -kernel "$work/vmlinuz" -initrd "$work/initramfs.img" \
     -append "$options cow_spacesize=$((INSTALL_MEMORY / 2))M console=tty0 console=ttyS0,115200n8 script=http://10.0.2.2:$port/install.sh" \

@@ -113,7 +113,7 @@ about 0.75 d and an hour of the user's time (≈ 4.45 d in all).
   shim (Qubes, the other non-shim `/boot/grub2` system, is caught by its
   own arm first).
 - **A Mandriva-lineage system.** It carries rc.sysinit's boot-time
-  rewrites (`/etc/mtab` as a regular file, `/etc/issue`, speedboot). The
+  rewrites (`/etc/mtab`, `/etc/issue`, speedboot). The
   BackShot1 manifest and the boot-state checks have to learn them.
 - **Popularity.** It is DistroWatch rank 27 over six months (33 over 12
   months, 40 over 4 weeks), and still has an active user base with its own
@@ -127,8 +127,8 @@ about 0.75 d and an hour of the user's time (≈ 4.45 d in all).
 | os-release | **Verified** (pclinuxos-release-2026): `ID=pclinuxos`, `ID_LIKE="mandriva"`, `VERSION_ID=2026`. Also `/etc/pclinuxos-release` ("PCLinuxOS release 2026 (PCLinuxOS) for x86_64"), plus Mandriva-compatible `mandriva-release`, `mandrake-release`, `redhat-release` and `/etc/sysconfig/system`. *Inferred:* VERSION_ID is the release package's year, so it changes to 2027 through an ordinary update | Arch (no version that means a stack) |
 | Packages | **Verified.** rpm 6.1.0 with the **ndb** backend in **`/var/lib/rpm`** (`Packages.db`), not `/usr/lib/sysimage`. **DNF5**, with the "DNF Package Manager" GUI, has been the default since the 2025.08 ISOs (https://pclosmag.com/html/Issues/202510/page01.html, which gives no version; 5.4.8 is the repodata's). apt-rpm and Synaptic are retired (https://pclosmag.com/html/Issues/202605/page05.html, https://pclosmag.com/html/Issues/202606/page01.html); the apt pkglists stopped on 2026-08-06, and the 2026.11 ISO has neither. Repos are in **`/etc/repo.d/default.repo`** (not yum.repos.d): `type=rpm-md`, **`gpgcheck=0`**, sections `x86_64`, `kde6`, `mate`, `xfce4` on. Updates are `dnf check-update; dnf distro-sync`. Release tags look like `-1pclos2026`. Library packages use Mandriva's `lib64` names (`lib64nss-mdns2`) | Fedora (rpm + dnf), with other names and no signatures |
 | Init | **Verified.** sysvinit 3.18, initscripts 9.27 Mandriva-style (`/etc/rc.d/rc.sysinit`, `/etc/rc.d/init.d/*`, `mandrake_everytime`, `mandrake_firstime`), chkconfig 1.3.37 (`chkconfig X on`, `service X start`). udev 262 without systemd, ConsoleKit 1.2.7, **no elogind** | Devuan and MX (sysvinit), but with chkconfig instead of `update-rc.d` |
-| Kernel | **Verified.** The version is in the package *name*: `kernel-6.18.65-pclos1` installs `/boot/vmlinuz-6.18.65-pclos1`, `System.map-`, `config-`. `kernel-latest` is a virtual package, and the 6.12.y series is the alternative. The ISO has 6.18.60, the repo 6.18.65. The kernel's `%post` runs `depmod` and then `/sbin/installkernel V` | none (dnf's installonly is never involved) |
-| Initramfs | **Verified** (mkinitrd-6.0.93 source). Red Hat **mkinitrd 6.0.93**, nash-based (the image's init is `#!/bin/nash`; nash is on the ISO). It has no dracut code. Its config is `/etc/sysconfig/mkinitrd`. The chain on a kernel install is `installkernel` → `bootloader-config --kernel-version V --initrd-options "$INITRDOPTS"` → drakx's `bootloader::mkinitrd` (`bootloader.pm:129`) → `mkinitrd -f /boot/initrd-V.img V [opts]`, options last, then `add_boot_splash` (a no-op unless the entry sets `vga`). `INITRDOPTS` (`/etc/sysconfig/installkernel`) is `--with nvme_rdma --with nvme_fcloop --with nvme_loop --with nvmet_fc --with nvmet_rdma --with nvmet --with nvmem_core`: NVMe-over-fabrics and target modules, and nvmem_core, which isn't NVMe. **The PCIe `nvme` and `nvme_core` drivers are not in it**; they land in an image only if mkinitrd's probe of `/sys` finds the root on them. A whole rebuild is `bootloader-config --action rebuild-initrds`, which the installer uses: `bootloader::rebuild_initrds` (`bootloader.pm:918`) loops over the grub entries, renames each image to `initrd-V.img.old` (`rebuild_initrd`, :176) and calls `bootloader::mkinitrd` with *the entry's own* `initrd_options`, not INITRDOPTS. It writes no loader configuration. So the installer's images are built without INITRDOPTS, a later kernel's with them, and an installed system keeps `initrd-V.img.old` files. The image is a newc cpio, gzip -9 (mkinitrd:1903-1906, `compress=1` at :81). dracut 112 is in the repo but **not on the ISO** | none. Slackware's `mkinitrd` is another program with the same name |
+| Kernel | **Verified.** The version is in the package *name*: `kernel-6.18.65-pclos1` installs `/boot/vmlinuz-6.18.65-pclos1`, `System.map-`, `config-`. `kernel-latest` is a virtual package, and the 6.12.y series is the alternative. The ISO has 6.18.64 (PC1; 6.18.60 was a misreading), the repo 6.18.65. The kernel's `%post` runs `depmod` and then `/sbin/installkernel V` | none (dnf's installonly is never involved) |
+| Initramfs | **Verified** (mkinitrd-6.0.93 source). Red Hat **mkinitrd 6.0.93**, nash-based (the image's init is `#!/bin/nash`; nash is on the ISO). It has no dracut code. Its config is `/etc/sysconfig/mkinitrd`. The chain on a kernel install is `installkernel` → `bootloader-config --kernel-version V --initrd-options "$INITRDOPTS"` → drakx's `bootloader::mkinitrd` (`bootloader.pm:129`) → `mkinitrd -f /boot/initrd-V.img V [opts]`, options last, then `add_boot_splash` (a no-op unless the entry sets `vga`). `INITRDOPTS` (`/etc/sysconfig/installkernel`) is `--with nvme_rdma --with nvme_fcloop --with nvme_loop --with nvmet_fc --with nvmet_rdma --with nvmet --with nvmem_core`: NVMe-over-fabrics and target modules, and nvmem_core, which isn't NVMe. **The PCIe `nvme` and `nvme_core` drivers are not in it**, and need not be: PC1 found them built into the kernel (`CONFIG_BLK_DEV_NVME=y`, `CONFIG_NVME_CORE=y`), as are ext4, btrfs and AHCI; `virtio_blk`, `xfs` and `f2fs` are modules, which an image holds only if mkinitrd's probe of `/sys` finds the root on them. A whole rebuild is `bootloader-config --action rebuild-initrds`, which the installer uses: `bootloader::rebuild_initrds` (`bootloader.pm:918`) loops over the grub entries, renames each image to `initrd-V.img.old` (`rebuild_initrd`, :176) and calls `bootloader::mkinitrd` with *the entry's own* `initrd_options`, not INITRDOPTS. It writes no loader configuration. So the installer's images are built without INITRDOPTS, a later kernel's with them, and an installed system keeps `initrd-V.img.old` files. The image is a newc cpio, gzip -9 (mkinitrd:1903-1906, `compress=1` at :81). dracut 112 is in the repo but **not on the ISO** | none. Slackware's `mkinitrd` is another program with the same name |
 | LUKS in the initrd | **Verified** (mkinitrd ~549-590, ~1763-1800). It finds dm-crypt slaves of the root and checks them with `cryptsetup isLuks`. It emits `cryptsetup luksOpen` with `plymouth ask-for-password`, taking names from `/etc/crypttab`. It handles crypt on partitions, RAID and LVM. **Key files are ignored for the root**: it always asks. Non-root crypttab entries are opened by rc.sysinit's `init_crypto`, which does honour key files. cryptsetup 2.6.1 is on the ISO; lvm2 is in the repo only | Alpine mkinitfs (asks; family A) |
 | Boot loader | **Verified.** grub2 and grub2-efi 2.14 (both on the ISO), os-prober, efibootmgr 0.12. Files are in `/boot/grub2/` (`grub.cfg`, `custom.cfg`), `/etc/default/grub`, `/etc/grub.d/` (`00_header` ... `41_custom`). **No shim, no mokutil**, and the live `bootx64.efi` is unsigned (`grub2-mkimage`). The ESP is mounted at **`/boot/EFI`**: mylive-install's `frontend/partitioning.py:26` (`EFI_MOUNT_POINT`), the fstab line it writes (`installer.py:570`, `/boot/EFI  vfat defaults 0 1`) and `configs/distribution/pclinuxos.yaml`'s `additional_efi_mountpoints`. drakx agrees: the EFI image is at **`/boot/EFI/EFI/pclinuxos/grubx64.efi`** (drakxtools-backend `bootloader.pm:263`), so the bootloader-id is `pclinuxos`. The magazine's installer article (https://pclosmag.com/html/Issues/202309/page06.html) says "/boot/efi" in its prose; the code is taken over it. `/boot/EFI` is a directory on the ext4 root, so its case matters; only the names inside the ESP are case-insensitive. *Inferred:* this grub2 is patched to look for `/boot/EFI` (the installer passes no `--efi-directory`, and upstream grub-install probes `BOOTDIR/efi`, then `BOOTDIR`), and Secure Boot has to be off. *Check:* both, and whether an `EFI/BOOT/BOOTX64.EFI` fallback is written | Fedora's grub2 layout, without its shim |
 | Install | **Verified** (mylive-install 1.0.26; https://pclosmag.com/html/Issues/202309/page06.html). A GTK fork of the LMDE live-installer, run from the live session. There is **no unattended mode** (`main.py`: `--test --expert --version --welcome --fullscreen`; `tui_interface.py` exists but nothing calls it). **No LUKS, no LVM**: `config.yaml` has them commented out, and `initramfs_systems/initrd.yaml` says "luks not supported yet". Automated layout: ESP vfat 300 MB at `/boot/EFI`, an optional ext4 `/boot` of 1 GB, swap of 1024 MB, ext4 `/`, and an ext4 `/home` only on disks of 100 GB or more. Manual mode offers every `mkfs.*` on the live system: ext4, xfs, btrfs, f2fs, jfs, reiserfs. The user's password becomes root's too | Mint and MX (live copy then chroot steps) |
@@ -136,7 +136,7 @@ about 0.75 d and an hour of the user's time (≈ 4.45 d in all).
 | Live media | **Verified** (mylivecd's `linuxrc`). `/livecd.sqfs` at the ISO root. BIOS boots through `isolinux/`, EFI through `isolinux/efiboot.img` and `/EFI/BOOT/bootx64.efi`. At run time it mounts `/initrd/cdrom` and `/initrd/loopfs`, with an overlay at `/union`. Boot options include `livecd=` and `unionfs=no` | MX's `/antiX/linuxfs` |
 | sshd | **Verified.** openssh-server 9.8p1 is in the repo but **not on the ISO** (only openssh and openssh-clients are), with `/etc/rc.d/init.d/sshd` and `sshd_config.d/50-pclinuxos.conf` | Slackware (needs adding) |
 | Network, mDNS | **Verified.** NetworkManager 1.58 (an init script), the legacy `network` service, dhcpcd. initscripts' `network-scripts` honour `HWADDR=` in `ifcfg-*` files. avahi 0.8 and `lib64nss-mdns2` are on the ISO, and the installer turns avahi-daemon on. ufw 0.36 is on the ISO. *Check:* whether `nsswitch.conf` has `mdns4_minimal`, whether ufw is on, and whether the image writes MAC-keyed names (`70-persistent-net.rules`, `ifcfg-*` with `HWADDR=`) | MX (NetworkManager, ufw) |
-| Boot-time rewrites | **Verified** (rc.sysinit, mandrake_everytime). **`/etc/mtab` is a regular file**, truncated and refilled by `mount -f` on every boot. `/etc/issue` and `issue.net` are rewritten when `REWRITEISSUE=rewrite`. `/var/lib/random-seed`, `utmp`, `wtmp` and `btmp`, `/var/lock` and `/var/run` are rewritten too. `/var/lib/speedboot/status` tracks the booted uname. `/etc/rc.d/init.d/rpmdb-rc` (off by default) would rebuild the rpmdb and rewrite `/usr/lib/rpm/macros`, which rpm's own `%post` edits with `sed -i`, so `rpm -V rpm` already shows it as changed | Slackware's `rc.M` list in bs1-manifest |
+| Boot-time rewrites | **Verified** (rc.sysinit, mandrake_everytime). rc.sysinit truncates and refills `/etc/mtab` with `mount -f` on every boot, but in 2026.11 it is a symlink to `/proc/self/mounts` (PC1, in the image and on a booted guest), so that does nothing. `/etc/issue` and `issue.net` are rewritten when `REWRITEISSUE=rewrite`. `/var/lib/random-seed`, `utmp`, `wtmp` and `btmp`, `/var/lock` and `/var/run` are rewritten too. `/var/lib/speedboot/status` tracks the booted uname. `/etc/rc.d/init.d/rpmdb-rc` (off by default) would rebuild the rpmdb and rewrite `/usr/lib/rpm/macros`, which rpm's own `%post` edits with `sed -i`, so `rpm -V rpm` already shows it as changed | Slackware's `rc.M` list in bs1-manifest |
 | MAC | **Verified.** No AppArmor, and a SELinux library without a policy. *Inferred:* no MAC is active | Arch |
 | File systems | **Verified** (ISO list). e2fsprogs 1.47.4, xfsprogs 7.2.1, btrfs-progs 5.9 (old), f2fs-tools, jfsutils, reiserfsprogs, mdadm 3.4, dosfstools 3.0.28 | |
 
@@ -225,9 +225,8 @@ about 0.75 d and an hour of the user's time (≈ 4.45 d in all).
     configuration, but it picks kernels from the grub entries, not from
     `/lib/modules`, goes through drakx's Perl, and leaves an `.old` copy
     of each image.
-  - If PC1 or the PC8 rehearsal finds that the probe leaves `nvme` out on
-    an NVMe root, the command gains `--with nvme` (`nvme_core` comes in as
-    its dependency, *check*).
+  - PC1 found `nvme` and `nvme_core` built into the kernel, so no
+    `--with nvme` is needed on an NVMe root.
   - mkinitrd reads the root's type and device from the target's
     `/etc/fstab`, so it must run after fstab is rewritten. *Check* that
     the boot stage's order already guarantees this. It does for dracut on
@@ -351,19 +350,35 @@ separate `/boot` and a root module that is a loadable module in the image.
 
 1. **Recommended: one install script that replays `installer.py`, used
    for the guests and the A100 alike.**
-   - The script is `testvm/pclinuxos/install.sh TARGET_DISK LAYOUT
-     SQFS ...`. It does `installer.py`'s steps 1-14 (in the table above),
-     in the same order and with the same files:
-     - it unsquashes `livecd.sqfs` onto the target, as the installer's
-       fallback does, then empties the installer's own exclude list
-       (`installer.py:125-130`, copied as it is, with `data/user/*`), so the
-       tree is what the rsync path leaves;
-     - it writes fstab by UUID, `/etc/hostname`, `/etc/hosts`,
-       `/etc/sysconfig/clock`, `/etc/sysconfig/network`'s `HOSTNAME=` and
-       the keyboard file;
+   - The script is `testvm/pclinuxos/install.sh [OPTIONS] DISK LAYOUT
+     ISO` (PC1; LAYOUT `auto` or `manual-xfs`, the options in its header).
+     It does `installer.py`'s steps 1-14 (in the table above), in the same
+     order and with the same files:
+     - it mounts `livecd.sqfs` under a tmpfs overlay, as the live session's
+       `/union` is, and runs every live-side tool (parted, mkfs, blkid,
+       rsync) chrooted there, so they are the ISO's own. The copy is the
+       installer's own rsync command and exclude list, from that union
+       (PC1 changed this from `unsquashfs`: the rsync path is the one the
+       installer takes);
+     - before that, it writes what the live session's boot writes into
+       `/union` and the installer then copies (PC1 found these by diffing,
+       below): mylivecd's `setupinit()` sed lines (rc.sysinit's depmod,
+       `sysconfig/network`, `init.d/netfs`), `sysconfig/finish-install`,
+       `service_harddrake --force` (xorg.conf, modprobe.conf,
+       `harddrake2/*`) and an `ifcfg-ethN` per wired interface (udev's
+       net_create_ifcfg: DEVICE, BOOTPROTO=dhcp, ONBOOT=yes; without it the
+       installed system has no network);
+     - it removes the guest user, adds the installer's (`tester`) with its
+       groups, password, sudoers drop-in, and copies the installer's
+       `sddm.conf` and gdm `custom.conf`;
+     - it writes fstab by UUID as `write_fstab` does (Automated and Manual
+       forms), `/etc/hostname`, `/etc/hosts`, `locale.gen`, the time zone,
+       `/etc/sysconfig/clock` and the keyboard files (`00-keyboard.conf`,
+       console-setup, vconsole.conf, default/keyboard, the GNOME override,
+       rewritten with installer.py's own logic in the target's python3);
      - it runs `cleanup.sh` from the ISO's own mylive-install, unchanged;
-     - it runs `grub2-install`, `grub2-mkconfig` and `bootloader-config
-       --action rebuild-initrds` in the chroot;
+     - it runs `grub2-install`, `grub2-mkconfig` (twice) and
+       `bootloader-config --action rebuild-initrds` in the chroot;
      - it runs the same `chkconfig ... on` list.
    - **The EFI step differs by where it runs.** On the A100 (from the
      stick, with efivarfs bound) it is the installer's bare
@@ -377,6 +392,23 @@ separate `/boot` and a root module that is a loadable module in the image.
      the install under OVMF instead, as make-bootstrap's arm64 path does at
      :496-502, and keeping `uefi-vars.fd`, would give the guest its NVRAM
      entry, but it is a new x86 path in make-bootstrap for one guest.)
+     drakx finds a UEFI GRUB only when `/sys/firmware/efi` exists
+     (`common.pm` `is_uefi`, `bootloader.pm` `read`), so for `--no-nvram`
+     `install.sh` gives the chroot an empty one (a tmpfs over
+     `/sys/firmware`) for the `rebuild-initrds` step alone.
+   - **A separate `/boot` gets no new initrd from the installer** (PC1):
+     drakx reads each entry's initrd as grub.cfg names it on `/boot`'s own
+     file system (`/initrd-K.img`), so `rebuild_initrd`'s rename to the
+     `.old` name on `/` fails across file systems and `bootloader::mkinitrd`
+     then skips an image that "already exists" (`bootloader.pm:136-138`,
+     176-186). The system keeps the live image's initrd, built on the ISO
+     builder's machine, with no `virtio_blk` and no `xfs`: a real install
+     with a separate `/boot` and an XFS (or f2fs) root, or on virtio, can't
+     mount its root. Where the installed image is still the live one,
+     `install.sh` runs `mkinitrd -f /boot/initrd-K.img K`, as
+     `rebuild_initrd` meant to (no options), and says so. This is a
+     deviation from the installer for `pclinuxos-bios`; the Automated
+     layout (no `/boot`) is rebuilt by the installer's own step.
    - Then it does what every bko guest gets:
      - openssh-server from pinned RPMs (Decision 5), and `chkconfig sshd
        on`;
@@ -391,11 +423,15 @@ separate `/boot` and a root module that is a loadable module in the image.
      `testvm/pclinuxos/install.sh`, with the PCLinuxOS ISO on a second CD.
      The build runs mkinitrd inside a VM, so its probe of `/sys` sees a
      virtio disk, as the guest has.
-   - PC1 also does **one GUI install by hand** of each layout in QEMU,
-     through mylive-install. It diffs both trees (file list, modes, the
-     files steps 3-14 write) against the script's result and records the
-     differences here, as Slackware's S1 did with `liloconfig`. That GUI
-     image is thrown away afterwards.
+   - PC1 compared it with the installer itself instead of a GUI install by
+     hand: mylive-install's own engine (`InstallerEngine`, its
+     `start_installation` and `finish_installation`, with a `Setup` as the
+     GTK pages fill it) run headless in the real live session, booted under
+     OVMF from a root login on tty2. The GUI only fills that `Setup`, so
+     this is the installer's code path with its live environment, and
+     scriptable. The trees were diffed (every entry's type, mode, owner,
+     size and link; SHA-256 of `/etc`, `/boot`, `/root`, `/home`,
+     `/var/lib` and the ESP); the results are under "What PC1 found".
 2. **Extend `testvm/make-from-live.sh`**, the repo's live-ISO replay
    (Mint, Zorin, Pop!_OS, elementary, neon, MX): it unsquashes the live
    image onto a loop disk on the host and runs the installer's chroot
@@ -468,7 +504,7 @@ layout from the guest, as Gentoo's and PikaOS's do.
   root whose case matters; only the ESP's own `EFI/` is on FAT.
 - `pclinuxos-bios`: gentoo's XFS fixture with an ext4 `/boot`.
 - Real examples in both:
-  - `/etc/mtab` as a regular file;
+  - `/etc/mtab` as a symlink to `/proc/self/mounts`;
   - `/etc/rc.d/rc[0-6].d` links;
   - `/var/lib/rpm/Packages.db`;
   - `/boot/initrd-K.img`;
@@ -683,6 +719,127 @@ its NVMe). *Check* in PC8 which of the two bs1-qemu.py takes; the restored
 image is then made by load's probe alone, which is what the A100 needs. The run waits for a slot when the A100 isn't
 needed for BackShot1All.
 
+## What PC1 found
+
+PC1 ran 2026-11-27 (Medium effort). Each *check* above is settled here;
+the spec's text above was corrected where it was wrong.
+
+**Inputs, in `/bkoscratch/rebuild-inputs/pclinuxos/` on Chopin and
+Cinqcent** (with the Arch ISO it boots, hard-linked from `gentoo/` on
+Chopin):
+
+- `pclinuxos64-kde-2026.11.iso`, 4,309,647,360 bytes, volume
+  `livecd_2026112020:38`. MD5 `488ae2664b13c40a88fdfe4d298cc079`, as both
+  NLUUG's and freedif's `.md5sum` say (both saved beside it). SHA-256
+  `8844514243f1923dd4f03a4e8bff89f52c4c0998aa4bd910eb0b836a91a85dbb`,
+  pinned in `make-bootstrap.sh` (`PCLINUXOS_ISO_SHA256`).
+- `openssh-server-9.8p1-2pclos2024.x86_64.rpm`, SHA-256
+  `9e8317306ca7e022215230a08e68b7d502d38bcc2f3445aa17451014b808f5ae`, the
+  same as the repo's `primary.xml`; pinned in `make-bootstrap.sh`. It is
+  the only RPM needed: every dependency (libwrap, rpm-helper, pam,
+  openssh, openssh-clients) is on the ISO, and `rpm -i` installs it with
+  no `--nodeps`.
+
+**The image and the installer:**
+
+- os-release as Verified above. The ISO's kernel is 6.18.64-pclos1.
+- `nvme` and `nvme_core` are built into the kernel
+  (`CONFIG_BLK_DEV_NVME=y`, `CONFIG_NVME_CORE=y`), as are ext4, btrfs and
+  `ahci`; `virtio_blk`, `virtio_pci`, `xfs` and `f2fs` are modules. So an
+  NVMe root needs nothing in the image, and Decision 2's `--with nvme` is
+  dropped.
+- The grub entries carry no `initrd_options`: drakx's `read_grub2`
+  (`bootloader.pm:304-353`) never sets them, so `rebuild-initrds` runs
+  plain `mkinitrd -f /boot/initrd-K.img K`. The installed images hold
+  none of INITRDOPTS' modules; the live image's (made on the builder's
+  machine, by installkernel) holds them all.
+- The installed images, by mkinitrd's probe: `pclinuxos` (virtio, ext4)
+  has `virtio_blk`, `virtio_pci` and their deps, no fs module (ext4 is
+  built in); `pclinuxos-bios` has the same plus `xfs`. Both also carry
+  `/etc/modprobe.preload`'s and the live session's loaded modules (fuse,
+  uinput, vhost, snd, bluetooth, ...). The init is `#!/bin/nash`. The
+  `.old` image is left beside each rebuilt one.
+- A separate `/boot` gets no new image from the installer: see "How they
+  are built". An installer bug; `install.sh` remakes the image there.
+- `/boot/vmlinuz` and `/boot/initrd.img` links exist (from the image).
+- The ESP is at `/boot/EFI` in the real installer's fstab
+  (`UUID=... /boot/EFI  vfat defaults 0 1`). Under OVMF the bare
+  `grub2-install` finds it with no `--efi-directory` (PCLinuxOS's grub2 is
+  patched for `/boot/EFI`), writes `EFI/pclinuxos/grubx64.efi` and the NVRAM
+  entry `pclinuxos` (`HD(1,GPT,...)/\EFI\pclinuxos\grubx64.efi`), and
+  writes **no** `EFI/BOOT/BOOTX64.EFI` fallback. `grub2-mkconfig` under UEFI
+  adds a "UEFI Firmware Settings" entry that a BIOS-run build doesn't.
+- livecd.sqfs carries its builder's ESP in `/boot/EFI`; the installer
+  removes only `/boot/EFI/EFI/*`, so every UEFI install's ESP also gets
+  four empty "System Volume Information" folders.
+- livecd.sqfs has no `/etc/machine-id` and a `/var/lib/dbus/machine-id`
+  from 2011, which the installer copies unchanged: every PCLinuxOS
+  install shares one D-Bus machine id. `install.sh` keeps it, as the
+  installer does.
+- The live image's host name is `localhost` (`/etc/hostname`,
+  `HOSTNAME=`), already in `GENERIC_HOSTS`; the installer writes the one
+  typed, and `cleanup.sh` copies it to `/etc/sysconfig/network`.
+- mylive-install and mylivecd stay installed (`remove_packages` is
+  commented out).
+- `/etc/init.d` is a link to `rc.d/init.d`; `/sbin/service` and
+  `/sbin/chkconfig` exist. The default runlevel is 5, the display manager
+  `sddm` (`/etc/sysconfig/desktop`). `finish-install` (keyboard only) is
+  armed for the first graphical login: rc.sysinit's livecd block writes it
+  and the installer copies it.
+- `nsswitch.conf` has `hosts: mdns4_minimal files nis dns`. ufw is linked
+  in rc3.d but `ENABLED=no`, and `ufw status` is inactive.
+- Network names: no MAC-keyed files on the guests. `ifcfg-eth0` has no
+  `HWADDR=`; `75-persistent-net-generator.rules` and `write_net_rules`
+  exist but skip QEMU's MACs (52:54:00), so a real NIC (the A100) may get a
+  `70-persistent-net.rules` at its first boot (PC8). The NIC is `eth0`.
+- `/etc/mtab` is a symlink to `/proc/self/mounts`.
+- rpm 6.1 with ndb answers `rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n'`
+  (holt's `rpm_packages()` form): 2,457 packages on `pclinuxos`. The
+  kernel package is `kernel-6.18.64-pclos1-1-1pclos2026`. `dnf`, `nash`,
+  `mkinitrd`, `bootloader-utils`, `drakxtools-backend`, `grub2`,
+  `grub2-efi`, `efibootmgr`, `python3`, `avahi` are installed; there is no
+  package named `util-linux` (PC8's bs1-adopt check).
+- `/etc/repo.d/default.repo`: sections `x86_64`, `kde6`, `mate`, `xfce4`
+  on, `kernel`, `test`, `nvidia340` and others off, all `gpgcheck=0`.
+- openssh-server's sshd: `PermitRootLogin without-password`.
+- The live session has no serial login (gettys on tty1-6 only); root logs
+  in on tty2 with the password `root`. That is how the engine run below
+  was driven (QEMU monitor `sendkey`).
+- Secure Boot was not tried; the question stays open.
+
+**The installer compared** (the engine run under OVMF, Automated layout,
+against the `pclinuxos` guest; manifests of every entry):
+
+- The partition table is identical (GPT; ESP 2-302 MB, swap 1024 MB, `/`
+  from 1328 MB: the installer's `MB` units leave `/` unaligned, 2593750 %
+  2048 != 0, on both), and so is fstab's form.
+- Differences that remain, all expected:
+  - the guest's bko additions (sshd and its links, `root/.ssh`, inittab,
+    securetty, `GRUB_CMDLINE_LINUX`, grub.cfg's console, `EFI/BOOT`);
+  - hardware-dependent files: `xorg.conf`, `modprobe.conf`,
+    `modprobe.preload`, `harddrake2/*`, the initrd's modules (the engine
+    ran on q35 with AHCI CDs, the build on `pc`);
+  - the live session's run-time leftovers the installer copies and the
+    replay doesn't: `var/lock/subsys/*`, `var/run/*.pid`, `wtmp`, `btmp`,
+    `dmesg`, `root/.bash_history`, NetworkManager and alsa state,
+    `70-persistent-cd.rules` (rc.sysinit and udev redo them at boot);
+  - passwords, UUIDs, `random-seed`, `blkid.tab`, `issue`, `resolv.conf`,
+    a gstreamer gconf timestamp;
+  - the font caches in `/usr/lib/fontconfig/cache`, which the live session
+    makes at run time: mode 644 there, 600 from the replay's
+    `service_harddrake` (same content);
+  - `cups-browsed`'s kill links: `K00` from the engine, `K49` from the
+    replay (the same `chkconfig cups-browsed on`; not explained).
+- The first replay lacked `ifcfg-eth0`, `finish-install`, the netfs edit
+  and `xorg.conf`, and the installed system had no network: those are why
+  `install.sh` writes the live boot's files.
+- BIOS: (filled in below when the engine's BIOS run is in).
+
+**The guests:** see "Evidence" in the PC1 commit's report; both boot
+alone from their own disk (`pclinuxos` through the firmware's entry for
+the disk and `EFI/BOOT/BOOTX64.EFI`, with an empty variable store) and
+SSH answers.
+
 ## Pieces to build (ordered, est.)
 
 | # | Piece | Effort |
@@ -737,7 +894,8 @@ needed for BackShot1All.
   and `nvme_core` drivers, so they come only from the probe of `/sys` in
   the chroot. The guests are virtio, so HoltTest1 can't show it; PC1 lists
   each image's modules, and the PC8 rehearsal (NVMe) and the A100's
-  install and readback check for both. The remedy is `--with nvme` in
+  install and readback check for both. (PC1: moot, both are built into
+the kernel.) The remedy would have been `--with nvme` in
   load's command (see load's `mkinitrd-rh` arm).
 - **The `/boot/grub2` arm's guard and the fallback change touch shared
   boot-stage code.** The guard is keyed on `os.id`, so no other system's

@@ -1318,6 +1318,28 @@ print(d[0]["checksum"] if d else "")' "$1"
             step "ostree: deployment $staged staged, in place of $was"
         fi
         rpm-ostree cleanup -b -m || exit 1
+    # t2-section: Linux.urpmi
+    # Mageia, before dnf: dnf5 is installed there too, but urpmi is
+    # Mageia's own tool (what mgaapplet runs), docs/design/mageia.md
+    # Decision 3.
+    # t2-section: Linux.common
+    elif grep -qs '^ID=mageia$' /etc/os-release && has urpmi; then
+        # t2-section: Linux.urpmi
+        # The install DVD's media, if a guest still has them (make-mageia.sh
+        # swaps them for the online ones at its first boot): no DVD here.
+        if urpmq --list-media 2>/dev/null | grep -q '(Installer)$'; then
+            step "urpmi: the install DVD's media dropped for Mageia's online ones"
+            urpmi.removemedia -a && urpmi.addmedia --distrib --mirrorlist '$MIRRORLIST' || exit 1
+        fi
+        urpmi.update -a || exit 1
+        urpmi --auto --auto-update || exit 1
+        # Kernels beyond the newest two per flavour, by Mageia's own
+        # remove-old-kernels (1.0.6): -a no questions, -m no colours, -n 2
+        # this run only (its minimum).  It never removes the running kernel
+        # or the *-latest metapackages, and does nothing while there are
+        # fewer than two.
+        if has remove-old-kernels; then remove-old-kernels -a -m -n 2 || exit 1; fi
+        urpmi --clean || exit 1
     # t2-section: Linux.dnf
     # Not BigLinux's dnf (and yum), a script that only execs pamac.
     # t2-section: Linux.common

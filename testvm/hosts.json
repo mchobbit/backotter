@@ -37,7 +37,7 @@
   {
    "name": "chopin",
    "ssh": "m@chopin.local",
-   "ip": "192.168.68.194",
+   "ip": "192.168.68.184",
    "host_key_alias": "chopin.local",
    "slot_range": "2700-2799",
    "stic_ports": [2780, 2799],

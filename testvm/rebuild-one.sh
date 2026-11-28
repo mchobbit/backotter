@@ -203,6 +203,11 @@ anduinos2)  cmd=(asm $T/make-anduinos.sh "$SRC/AnduinOS-2.0.5-amd64.iso" "$W" an
 # the guest's own dir), its SHA-256 pinned in the builder (.sha256sum.sign
 # checked on download); eopkg up from the Polaris repository at the rebuild.
 solus49)    cmd=(asm $T/make-solus.sh "$SRC/Solus-Xfce-Release-2026-04-18.iso" "$W" solus49) ;;
+# mageia10: DrakX's own auto_install from Mageia 10's classic DVD in
+# /bkoscratch/rebuild-inputs/mageia10 (its SHA-512 and the release key's
+# fingerprint pinned in the builder, the signed .sha512.gpg checked); the
+# DVD's packages, then Mageia's online urpmi media.
+mageia10)   cmd=(asm $T/make-mageia.sh mageia10 "$SRC/Mageia-10-x86_64.iso" "$W") ;;
 # guix15, guix15-bios, guix15-luks: from Guix's 1.5.0 installation ISO in
 # /bkoscratch/rebuild-inputs/guix15 (its SHA-256 pinned in the builder, its
 # .sig checked on download), with 1.5.0's substitutes at the rebuild
@@ -285,7 +290,7 @@ IMG=$G; case $G in freebsd15-ufs|freebsd15-geli|freebsd15-geli-bios|freebsd15-ge
 if [ $MODE = build ] && ss -ltnH "sport = :$((2230 + SLOT))" | grep -q .; then echo "port $((2230 + SLOT)) is taken" >&2; exit 2; fi
 # The ISO: the recipe's .iso argument, wherever options put it.
 ISO="" what=ISO
-case $G in mx25|mint22|pop24|zorin18|neon24|elementary8|elementary8-luks|anduinos2|solus49)
+case $G in mx25|mint22|pop24|zorin18|neon24|elementary8|elementary8-luks|anduinos2|solus49|mageia10)
     for a in "${cmd[@]}"; do case $a in *.iso) ISO=$a ;; esac; done ;;
 proxmox9|proxmox9-mirror) ISO=$IN/proxmox9/proxmox-ve_9.2-1.iso ;;
 truenas25|truenas25-mirror) ISO=$IN/truenas25/TrueNAS-SCALE-25.10.6.iso ;;

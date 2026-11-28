@@ -1,0 +1,79 @@
+#!/usr/bin/perl -cw
+# DrakX's auto_install profile for BackOtter's mageia10 test guest, filled in
+# by testvm/make-mageia.sh (its at-sign placeholders) and read by the
+# installer from a USB key as auto_inst.cfg.pl (kickstart=floppy).  DrakX
+# eval()s this file into its own hash (install/any.pm loadO_), so it may hold
+# Perl code; a manual install writes the same shape of file to
+# /root/drakx/auto_inst.cfg.pl.  docs/design/mageia.md, "Guests", is the design.
+
+# The network card's name as the installer's udev named it (the same
+# predictable name the installed system gives it on the same hardware).
+# configure_network writes ifcfg-NAME with DHCP, and shorewall's net zone
+# takes it, so sshd answers.
+my ($bko_if) = sort grep { $_ ne 'lo' && -e "/sys/class/net/$_/device" }
+    map { (split m!/!)[-1] } glob('/sys/class/net/*');
+$bko_if ||= 'enp1s0';
+print STDERR "bko: network card $bko_if\n";
+
+# Run in the installed system's chroot at exitInstall (install/steps.pm),
+# after everything else.  Its log stays at /root/drakx/bko-post-install.log.
+my $bko_post = <<'BKO_POST';
+@POST_INSTALL@
+BKO_POST
+
+$o = {
+    # Every disk but the profile's USB key: clearall would wipe that too.
+    partitioning => { clear => [ 'vda' ], auto_allocate => 1, eraseBadPartitions => 1 },
+    # DrakX's "simple" layout as its partitioning wizard offers it on UEFI:
+    # fsedit.pm's %suggestions{simple}, with the ESP init_mntpnt_suggestions
+    # puts first when there is none.  Only the wizard and diskdrake call
+    # that, so an auto install's auto_allocate without partitions gets no
+    # ESP and dies in fs::any ("You must have a ESP FAT32 partition mounted
+    # in /boot/EFI"; the first M2 build).  Sizes in 512-byte sectors (MB()).
+    # /home needs a disk of 51200 MB or more (min_hd_size), as there.
+    partitions => [
+        { mntpoint => '/boot/EFI', size => 100 * 2048, pt_type => 0xef, ratio => 1, maxsize => 300 * 2048 },
+        { mntpoint => '/', size => 300 * 2048, fs_type => 'ext4', ratio => 6, maxsize => 51500 * 2048 },
+        { mntpoint => 'swap', size => 256 * 2048, fs_type => 'swap', ratio => 1, maxsize => 4096 * 2048 },
+        { mntpoint => '/home', size => 300 * 2048, fs_type => 'ext4', ratio => 12, min_hd_size => 51200 * 2048 },
+    ],
+    # DrakX's "standard" level, as a user gets it.  Numeric: the string
+    # 'standard' numifies to 0 (security/level.pm).
+    security => 1,
+    # The DVD's media to install from, as the media screen offers them
+    # here: Core, and Nonfree only when the hardware needs firmware (none
+    # in QEMU).  An auto install skips that screen, and without this every
+    # medium stays ignored: "no choosen media" (install/any.pm setPackages,
+    # the second M2 build).
+    enabled_media => [ 'Core Release (Installer)' ],
+    # At security >= 1 an auto install turns shorewall on with nothing open
+    # unless this is set (install/steps.pm configure_firewall).
+    firewall_ports => '22/tcp',
+    # rpmsrate's selection, as the interactive install makes it: without
+    # compssListLevel the auto install selects nothing from rpmsrate.  The
+    # groups: Xfce Workstation, Configuration, Console Tools, SSH Server.
+    compssListLevel => 5,
+    compssUsersChoice => {
+        XFCE => 1, X => 1, THEMES => 1, ACCESSIBILITY => 1,
+        CONFIG => 1,
+        EDITORS => 1, TERMINALS => 1, TEXT_TOOLS => 1, SHELLS => 1, FILE_TOOLS => 1,
+        NETWORKING_REMOTE_ACCESS_SERVER => 1,
+    },
+    locale => { lang => 'en_US', country => 'US', utf8 => 1, langs => { en_US => 1 } },
+    keyboard => { KEYBOARD => 'us', GRP_TOGGLE => '' },
+    timezone => { timezone => 'UTC', UTC => 1, ntp => undef },
+    authentication => { shadow => 1, sha512 => 1 },
+    superuser => { pw => '@ROOT_PASSWORD_HASH@', shell => '/bin/bash', home => '/root', uid => '0', gid => '0', realname => 'root' },
+    users => [ { name => '@USERNAME@', realname => '@USERNAME@', pw => '@ROOT_PASSWORD_HASH@', shell => '/bin/bash', icon => 'default', groups => [] } ],
+    net => {
+        type => 'lan',
+        net_interface => $bko_if,
+        network => { NETWORKING => 'yes', HOSTNAME => '@HOSTNAME@' },
+        resolv => {},
+        ifcfg => { $bko_if => { DEVICE => $bko_if, BOOTPROTO => 'dhcp', ONBOOT => 'yes' } },
+        zeroconf => {},
+    },
+    postInstall => $bko_post,
+    autoExitInstall => 1,
+    interactive => '',
+};

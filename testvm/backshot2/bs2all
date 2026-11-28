@@ -1,6 +1,12 @@
 #!/bin/bash
 # bs2all: BackShot2All from the Mac, start to report, without typing the run's name.
 #
+#   bs2all run [--hosts H,H] [--no-build]
+#                         the whole thing: build, then start, then finish (below)
+#   bs2all build [HOST]   bs2 sync; on HOST (default chopin) build the bko-holt under test
+#                         (build-holt.sh linux) and bs2_plan from this checkout's holt/,
+#                         under a RAM-disk reservation, the old bin kept as bin.prev-DATE,
+#                         then bs2-host caps; then bs2 bin HOST to every other host
 #   bs2all start [--hosts H,H]   bs2 BackShot2All (on those hosts); the run's name saved in
 #                         ~/backotter-work/bs2all-last, only when it really started
 #   bs2all finish [RUN]   wait for RUN's host queues, then its corpus, its leftovers set
@@ -104,12 +110,54 @@ finish() {
     "$bs2" BackShot2All report "$run"
 }
 
+build() {   # build [HOST]
+    local h=${1:-chopin} ssh_h
+    ssh_h=$(hosts | grep -m1 -E "@$h(\.local)?$") || die "build: $h isn't an enabled amd64 host"
+    echo "$(date +%H:%M) bs2 sync"
+    "$bs2" sync || die "bs2 sync failed"
+    echo "$(date +%H:%M) building on $h from $(git -C "$here" rev-parse --short HEAD)$(git -C "$here" diff --quiet HEAD -- ../../holt || echo ' (holt/ has uncommitted changes)')"
+    ssh "$ssh_h" "BS2_WT=$BS2_WT bash -s" <<'EOF' || die "build on $h failed (its log: /bkoscratch/backshot2/build-log)"
+set -euo pipefail
+export PATH=$HOME/.cargo/bin:$PATH
+B=/mnt/bko-ram/bs2all-build W=$HOME/backotter-work/$BS2_WT D=/bkoscratch/backshot2
+rm -rf $D/bin.new && mkdir -p $D/bin.new $D/build-log
+WEAR_TAG=bs2all:build ~/backotter-work/cmp-run.sh --reserve 6 4 bash -c "
+  set -euo pipefail; mkdir -p $B; cd $W
+  HOLT_SRC=$W/holt HOLT_OUT=$D/bin.new HOLT_LOGS=$D/build-log HOLT_INFO=$D/bin.new/build.json \
+    TMPDIR=$B testvm/holttest1d/build-holt.sh linux
+  cd holt && CARGO_TARGET_DIR=$B/plan RUSTUP_TOOLCHAIN=1.94.1 cargo test --release --no-run --test bs2_plan
+  cp \"\$(ls -t $B/plan/release/deps/bs2_plan-* | grep -v '\.d\$' | head -1)\" $D/bin.new/bs2_plan
+  rm -rf $B"
+cd $D && { [ ! -d bin ] || mv bin bin.prev-$(date +%Y%m%d-%H%M); } && mv bin.new bin
+cd $W && WEAR_TAG=bs2all:caps ~/backotter-work/cmp-run.sh --reserve 2 2 sudo -E testvm/backshot2/bs2-host caps
+sha256sum $D/bin/bko-holt $D/bin/bs2_plan
+EOF
+    echo "$(date +%H:%M) bs2 bin $h"
+    "$bs2" bin "$h" || die "bs2 bin $h failed"
+}
+
+run() {   # run [--hosts H,H] [--no-build]
+    local args=() nobuild=
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --no-build) nobuild=1 ;;
+            --hosts) [[ $# -ge 2 ]] || die "--hosts H,H"; args+=(--hosts "$2"); shift ;;
+            *) die "run: unknown argument $1" ;;
+        esac
+        shift
+    done
+    [[ -n $nobuild ]] || build chopin
+    start "${args[@]}" && finish "$(<"$last")"
+}
+
 case ${1:-} in
+    run) shift; run "$@" ;;
+    build) build "${2:-}" ;;
     start) shift; start "$@" ;;
     finish) finish "${2:-}" ;;
     all) shift; start "$@" && finish "$(<"$last")" ;;
     name) resolve "${2:-}" ;;
     wait) run=$(resolve "${2:-}") || exit 2; wait_for "$run" "" "the queues" ;;
     report) run=$(resolve "${2:-}") || exit 2; "$bs2" BackShot2All report "$run" ;;
-    *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+    *) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
